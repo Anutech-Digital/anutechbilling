@@ -289,7 +289,7 @@ describe("R-2403 the page wires the one queue", () => {
       expect(page).toContain(l);
     }
     expect(page).toMatch(/<BulkActionBar count=\{selectedRows\.length\} noun="renewal"/);
-    expect(page).toContain("bulkStageTargets(selectedRows, emailOf)");   // R-2760: on the stage
+    expect(page).toContain("bulkStageTargets(selectedRows, emailOf, docsState.failed)");   // R-2760: on the stage
     expect(page).toContain("tickedShown.length > 0 ? tickedShown : visibleRows");   // R-2753: the one Remind button acts on the ticked rows
     expect(page.match(/"\/api\/renewals\/send-now"/g)?.length).toBe(1);   // the existing route, one call site
   });

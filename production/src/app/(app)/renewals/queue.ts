@@ -162,8 +162,8 @@ export const STAGE_FILTER_LABEL: Record<StageKey, string> = {
   "quote-closed": "Quote closed",
   invoiced: "Invoiced",
   renewed: "Renewed",
-  ending: "Won't renew",
-  stopped: "Stopped",
+  ending: "Won't renew / ended",
+  stopped: "Stopped / cancelled",
 };
 export const STAGE_FILTER_ORDER = Object.keys(STAGE_FILTER_LABEL) as StageKey[];
 
@@ -378,11 +378,16 @@ export function bulkStageTargets<T extends { stage: RenewalStage | null }>(
   rows: readonly T[],
   /** undefined = contacts not read yet; null / "" = none on file. */
   emailOf: (row: T) => string | null | undefined,
+  /** The documents read failed (no stage can be known) — say so, not "loading". */
+  docsFailed = false,
 ): { send: T[]; skipped: { row: T; reason: string }[] } {
   const send: T[] = [];
   const skipped: { row: T; reason: string }[] = [];
   for (const r of rows) {
-    if (!r.stage) { skipped.push({ row: r, reason: "still loading — try again in a moment" }); continue; }
+    if (!r.stage) {
+      skipped.push({ row: r, reason: docsFailed ? "its quotes / invoices couldn't load — reload the page" : "still loading — try again in a moment" });
+      continue;
+    }
     const d = bulkSendDecision(r.stage);
     if (!d.send) { skipped.push({ row: r, reason: d.reason }); continue; }
     const email = emailOf(r);
@@ -393,7 +398,7 @@ export function bulkStageTargets<T extends { stage: RenewalStage | null }>(
   return { send, skipped };
 }
 
-// ─── Bulk: Send renewal quote (older rule, kept for its callers) ────────────
+// ─── Bulk: Send renewal quote (older rule — no page caller since R-2760; queue.test.ts keeps its rules) ──
 
 /** R-2586: why bulk Send renewal quote skips a Later row — named in its confirm. */
 export const LATER_SKIP_REASON = "renews in 91+ days — too early to send";

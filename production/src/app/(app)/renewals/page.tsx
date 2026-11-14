@@ -75,7 +75,7 @@ import {
   QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STAGE_FILTER_LABEL, STAGE_FILTER_ORDER, NO_FILTERS, TILE_TABS,
   queueTabs, noRenewalDate, resolveBucket, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
   sortQueue, filterQueue, filterOptions, bulkStageTargets, bulkQuoteConfirm,
-  type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount, type RowStatusKey,
+  type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount,
 } from "./queue";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
 import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
@@ -207,6 +207,14 @@ function AmountCell({ amount, frequency, className }: { amount: RenewalAmount; f
  * R-2404: where the customer's decision stands, who works the renewal and when they follow up
  * next, the promise to pay. Under the ONE status chip; "Paid" / "Won't renew" are that chip already.
  */
+/** R-2760: the Due column shows a renewal quote's validity only while it is with the customer (sent / viewed) —
+    a part proforma has none, an accepted quote no longer expires for the customer. */
+function showsExpiry(item: { stage: RenewalStage | null; docs?: LastDocs }): boolean {
+  const sent = item.docs?.sent;
+  return !!sent && sent.kind === "renewal" && (sent.status === "sent" || sent.status === "viewed")
+    && item.stage?.key === "sent" && item.stage.quoteId === sent.quoteId;
+}
+
 /** R-2759: the table row's owner / next follow-up / promise, as the customer name's tooltip (the drawer, R-2740, will show them). */
 function followupWords(followup: RenewalFollowup, names: Map<string, UserName> | undefined): string {
   const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
@@ -466,7 +474,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                   <td className="min-w-0 px-2 py-2.5">
                     <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} />
                   </td>
-                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={item.docs?.sent ? quoteExpiryShort(item.docs.sent.expiresDate, todayIst) : null} /></td>
+                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-2 py-2.5 text-right">
                     <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
                     <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.gst}>{amount.gst}</p>
@@ -748,7 +756,9 @@ export default function RenewalsPage() {
   const productOptions = filterOptions(allItems.map((i) => i.sub.plan));
   const vendorOptions  = filterOptions(allItems.map((i) => i.sub.vendor));
   /* R-2760: the status filter is the row's ONE stage — the chip's words, with counts. */
-  const statusCount    = (k: StageKey) => allItems.filter((i) => i.stage?.key === k).length;
+  const stageCounts    = new Map<StageKey, number>();
+  for (const i of allItems) if (i.stage) stageCounts.set(i.stage.key, (stageCounts.get(i.stage.key) ?? 0) + 1);
+  const statusCount    = (k: StageKey) => stageCounts.get(k) ?? 0;
   const statusOptions  = STAGE_FILTER_ORDER.filter((k) => statusCount(k) > 0 || filters.status === k);
   const fuOn = fuFilters.mine || fuFilters.followUpDue || fuFilters.promiseBroken;
   const filtered = !!(filters.product || filters.status || filters.vendor || filters.commitment !== "all" || atRiskOn || fuOn);
@@ -848,7 +858,7 @@ export default function RenewalsPage() {
   async function handleSelectedQuote() {
     if (bulkSending) return;
     /* R-2760: the rows whose stage says "send the renewal" and that have an email (bulkStageTargets). */
-    const { send, skipped } = bulkStageTargets(selectedRows, emailOf);
+    const { send, skipped } = bulkStageTargets(selectedRows, emailOf, docsState.failed);
     if (send.length === 0) {
       toast.info("Nothing to send for the selected renewals", {
         description: skipped.slice(0, 3).map((s) => `${s.row.sub.customer_name} — ${s.reason}`).join("; "),

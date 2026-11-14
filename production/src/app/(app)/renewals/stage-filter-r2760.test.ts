@@ -52,7 +52,7 @@ describe("R-2760 bulk Send renewal on the stage", () => {
   });
   it("the page wires it: stage filter options + bulkStageTargets(selectedRows, emailOf)", () => {
     const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
-    expect(page).toContain("bulkStageTargets(selectedRows, emailOf)");
+    expect(page).toContain("bulkStageTargets(selectedRows, emailOf, docsState.failed)");
     expect(page).toContain("STAGE_FILTER_ORDER.filter((k) => statusCount(k) > 0 || filters.status === k)");
     expect(page).not.toContain("bulkQuoteTargets(");
   });
