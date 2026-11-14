@@ -90,6 +90,9 @@
   --hv-sec: #5E6B65;
   --hv-faint: #7C8A84;            /* 3.6:1 — the classic #8A939E is 3.1:1; small print only */
   --hv-blue: #0E6B5C;
+  --hv-green: #0F7B4F;              /* the trust green stays green in light */
+  --hv-green-t: #EEF7F0;
+  --hv-green-t2: #E7F4ED;
   --hv-blue-dk: #0A4F44;
   --hv-blue-tint: #DCEFE8;
   --hv-surf-t: #FAFBFA;
@@ -379,6 +382,9 @@
   --hv-sec: #9FB1A9;
   --hv-faint: #8A9C94;
   --hv-blue: #5ED0B3;
+  --hv-green: #6FCF9B;
+  --hv-green-t: #213A30;
+  --hv-green-t2: #233B31;
   --hv-blue-dk: #8FE3CA;
   --hv-blue-tint: #2F4F46;
   --hv-surf-t: #252E2A;
@@ -435,6 +441,9 @@
     --hv-sec: #9FB1A9;
     --hv-faint: #8A9C94;
     --hv-blue: #5ED0B3;
+    --hv-green: #6FCF9B;
+    --hv-green-t: #213A30;
+    --hv-green-t2: #233B31;
     --hv-blue-dk: #8FE3CA;
     --hv-blue-tint: #2F4F46;
     --hv-surf-t: #252E2A;

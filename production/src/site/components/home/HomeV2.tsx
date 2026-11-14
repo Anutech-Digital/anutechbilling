@@ -48,7 +48,7 @@ import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-po
    the --hv-* variables only under data-site-theme="warm". Guarded by site-warm-scope.test.ts. */
 export const C = {
   ink: "var(--hv-ink, #0C1116)", ink2: "var(--hv-ink2, #2A333D)", body: "var(--hv-body, #4A5560)", sec: "var(--hv-sec, #5C6672)", faint: "var(--hv-faint, #8A939E)",
-  blue: "var(--hv-blue, #1668E3)", blueDk: "var(--hv-blue-dk, #0A47A0)", green: "#0F7B4F", greenT: "#EEF7F0", greenT2: "#E7F4ED",
+  blue: "var(--hv-blue, #1668E3)", blueDk: "var(--hv-blue-dk, #0A47A0)", green: "var(--hv-green, #0F7B4F)", greenT: "var(--hv-green-t, #EEF7F0)", greenT2: "var(--hv-green-t2, #E7F4ED)",
   surf: "#fff", surfT: "var(--hv-surf-t, #FBFCFE)", sectT: "var(--hv-sect-t, #F7FAFD)", strip: "var(--hv-strip, #F5F7FB)", stripBd: "var(--hv-strip-bd, #E6EAF0)",
   border: "var(--hv-border, #D6DCE4)", borderL: "var(--hv-border-l, #E0E5EC)", hair: "var(--hv-hair, #EEF1F5)", strong: "var(--hv-strong, #C6CED8)", tableHead: "var(--hv-table-head, #EEF2F8)",
 };
