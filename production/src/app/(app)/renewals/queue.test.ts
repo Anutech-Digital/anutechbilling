@@ -268,7 +268,7 @@ describe("R-2403 bulk: tick rows → Send renewal quote", () => {
 });
 
 describe("R-2403 the page wires the one queue", () => {
-  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
+  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8") + readFileSync("src/app/(app)/renewals/queue-items.ts", "utf8") /* R-2764: rows are built in queue-items.ts */;
   it("tabs are QUEUE_TABS (no At risk tab); At risk is a chip that filters", () => {
     expect(page).toContain("items={QUEUE_TABS.map((t) => ({");
     expect(page).not.toMatch(/\{ id: "risk"/);

@@ -117,6 +117,9 @@ test.describe("R-2759 card test", () => {
     await openAt(page, 1280, 800);
     await fits(page);
     await rowsShort(page);
+    /* R-2764: a 1280 laptop has a 1264–1276px inner width — the Action column ("Record payment" + ⋯) fits there too */
+    await openAt(page, 1276, 800);
+    await fits(page);
     await page.context().close();
   });
 

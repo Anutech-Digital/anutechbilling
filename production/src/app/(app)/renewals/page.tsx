@@ -43,7 +43,7 @@ import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Icon } from "@/components/ui/icon";
 import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
 import { rupee, formatDate } from "@/lib/utils";
-import { daysUntilRenewal, isFlexSubscription, onRenewalsPage } from "@/lib/renewals/buckets";
+import { isFlexSubscription, onRenewalsPage } from "@/lib/renewals/buckets";
 import { cn } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -65,24 +65,25 @@ import {
   type RenewalRowLike,
 } from "./reminders";
 import { renewalRisk } from "./risk";
-import { priorTermDue, priorTermDueText } from "./prior-due";
+import { priorTermDue } from "./prior-due";
 import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
 import { renewalRowAction, type RowAction } from "./row-action";
 import { GraceOverCard } from "./grace-over-card";
 import { NoRenewalDateCard } from "./no-date-card";
-import { classifyRenewals, chasedRenewal } from "./classify";
+import { chasedRenewal } from "./classify";
 import {
   QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STAGE_FILTER_LABEL, STAGE_FILTER_ORDER, NO_FILTERS, TILE_TABS,
-  queueTabs, noRenewalDate, resolveBucket, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
+  noRenewalDate, resolveBucket, renewalAmount, QUEUE_TABLE_MIN_VIEWPORT_PX,
   sortQueue, filterQueue, filterOptions, bulkStageTargets, bulkQuoteConfirm,
-  type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount,
+  type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RenewalAmount,
 } from "./queue";
+import { buildQueueItems, firstRows, QUEUE_PAGE_ROWS, type QueueItem } from "./queue-items";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
 import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
 import { RenewalReminderDialog, type ReminderDialogState } from "./reminder-dialog";
 import { RenewalTileRow, TileViewBar } from "./tiles-card";
 import { ForecastPanel } from "./forecast-panel";
-import { renewalFrequency, renewalCommitment, type Commitment } from "./frequency";
+import { renewalCommitment } from "./frequency";
 import { useRenewalLastPaid } from "./last-paid-data";
 import { LastPaidLine } from "./last-paid-cell";
 import type { LastPaid } from "./last-paid";
@@ -91,9 +92,9 @@ import { LastDocsLines, SentDueLines } from "./last-docs-cell";
 import { paidInvoiceOf, type LastDocs } from "./last-docs";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import {
-  renewalFollowup, renewalDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
+  filterByFollowup, bulkAssignRequests, bulkAssignReport,
   NO_FOLLOWUP_FILTERS, ASSIGN_NEEDS_ROLE,
-  type RenewalFollowup, type RenewalDecision, type FollowupFilters,
+  type RenewalFollowup, type FollowupFilters,
 } from "./followup";
 import { FollowupDialog } from "@/components/features/collections/followup-dialog";
 import { postFollowup, FollowupSaveError } from "@/lib/queries/payment-followups";
@@ -106,9 +107,7 @@ import {
 import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
-import { renewalStage, type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
-import { vendorHoldState } from "@/lib/renewals/vendor-hold";
-import { stageInputFor, payHref as stagePayHref } from "./stage-input";
+import { type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 
@@ -293,29 +292,21 @@ function AssignOwnerDialog({
   );
 }
 
-// ─── The queue (table ≥1280px, cards below) ───────────────────────────────────
+// ─── The queue (table ≥1260px, cards below) ───────────────────────────────────
 
-interface QueueItem {
-  sub: Subscription;
-  daysUntil: number;
-  status: RowStatus;
-  amount: RenewalAmount;
-  contact: RowContact | undefined;
-  atRisk: boolean;
-  riskReason: string;
-  /** R-2404 */
-  followup: RenewalFollowup;
-  decision: RenewalDecision;
-  customerOwnerId: string | null;
-  /** R-2422: worked out once per row (frequency.ts) — the amount cell's words and the Commitment filter. */
-  frequency: string | null;
-  commitment: Commitment;
-  /** R-2728: last quote sent / last invoice / the renewal quote with the customer (last-docs.ts). */
-  docs: LastDocs | undefined;
-  /** R-2758 (R-2738): the row's ONE stage (chip + button); null while its documents load. */
-  stage: RenewalStage | null;
-  /** R-2758: where Record payment goes (the open quote's dialog, else the invoice's). */
-  payHref: string | null;
+/** R-2764: ONE layout in the DOM — the table from a 1260px window, else the cards. Before, both were
+    mounted and one hidden by CSS: every row's buttons and menus twice (14 Nov freeze). The server and
+    the first client frame assume the table (most reseller laptops); the queue only renders once its
+    data is read on the client anyway. */
+const TABLE_QUERY = `(min-width: ${QUEUE_TABLE_MIN_VIEWPORT_PX}px)`;
+function useTableLayout(): boolean {
+  /* one MediaQueryList per queue (banking useIsWide's pattern); no matchMedia (old browser / jsdom) → the table */
+  const [mq] = React.useState(() => (typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(TABLE_QUERY) : null));
+  const subscribe = React.useCallback((cb: () => void) => {
+    mq?.addEventListener?.("change", cb);
+    return () => mq?.removeEventListener?.("change", cb);
+  }, [mq]);
+  return React.useSyncExternalStore(subscribe, () => (mq ? mq.matches : true), () => true);
 }
 
 interface RenewalQueueProps {
@@ -344,12 +335,28 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
   const { data: openRenewals } = useOpenRenewalQuotes();
   const quoteStatus = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
   const canInvoices = canOpenInvoices(me?.role);
-  const allOn = rows.length > 0 && rows.every((r) => selected.has(r.sub.id));
-  const someOn = rows.some((r) => selected.has(r.sub.id));
-
+  /* R-2764: the row buttons read the viewer from here — no user / open-quotes read per row. */
+  /* null while the user is read: the row buttons show but stay disabled (R-2710: no click before the role is known). */
+  const viewer = React.useMemo(() => (me ? { role: me.role, tenantGracePeriodDays: me.tenantGracePeriodDays ?? 0 } : null), [me]);
+  const table = useTableLayout();
+  /* R-2764: 50 rows, then "Show N more" (the parent remounts this per tab / tile, so it starts at 50 again). */
+  const [limit, setLimit] = React.useState(QUEUE_PAGE_ROWS);
   if (rows.length === 0) {
     return <div className="py-10 text-center text-sm text-ink-3">{emptyText}</div>;
   }
+
+  const page = firstRows(rows, limit);
+  /* R-2764: "Select all renewals on screen" = the rows shown (not the ones behind Show more). */
+  const allOn = page.shown.every((r) => selected.has(r.sub.id));
+  const someOn = page.shown.some((r) => selected.has(r.sub.id));
+  const showMore = page.more > 0 && (
+    <div className="border-t border-hairline px-3 py-3 text-center">
+      <Button variant="default" size="sm" onClick={() => setLimit((n) => n + QUEUE_PAGE_ROWS)} data-testid="renewals-show-more">
+        Show {Math.min(page.more, QUEUE_PAGE_ROWS)} more
+        <span className="text-ink-3">· {page.shown.length} of {rows.length} shown</span>
+      </Button>
+    </div>
+  );
 
   const byId = new Map(rows.map((r) => [r.sub.id, r]));
   /* R-2404: owner, next date, promise, notes, "confirmed" — Payment Follow-up's dialog, for this renewal.
@@ -384,9 +391,10 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
 
   return (
     <>
-      {/* Cards — viewports < 1260px (phones and small laptops), two per row from md. */}
-      <ul className="min-[1260px]:hidden p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
-        {rows.map((item) => {
+      {/* Cards — viewports < 1260px (phones and small laptops), two per row from md. R-2764: only one layout is mounted. */}
+      {!table && (
+      <ul className="p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0" data-testid="renewals-cards">
+        {page.shown.map((item) => {
           const { sub, daysUntil: days, amount, frequency, contact, followup, stage } = item;
           const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
           return (
@@ -430,16 +438,18 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
               {docsFor(item, action, "mb-2 text-xs")}
 
               <div className="pt-2 border-t border-hairline/60">
-                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} />
+                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
               </div>
             </li>
           );
         })}
       </ul>
+      )}
 
       {/* Desktop table — R-2759: from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX; a 1280 laptop's inner width
           is 1264–1276), eight columns on the queue.ts budget, every cell at most two lines (row-cells.tsx). */}
-      <div className="hidden min-[1260px]:block" data-testid="renewals-table">
+      {table && (
+      <div data-testid="renewals-table">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             {QUEUE_TABLE_COLS.map((c) => (
@@ -456,7 +466,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                     className="cursor-pointer accent-amber"
                     checked={allOn}
                     ref={(el) => { if (el) el.indeterminate = someOn && !allOn; }}
-                    onChange={(e) => onSelect(rows.map((r) => r.sub.id), e.target.checked)}
+                    onChange={(e) => onSelect(page.shown.map((r) => r.sub.id), e.target.checked)}
                   />
                 </th>
               ) : (
@@ -465,7 +475,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
             </tr>
           </thead>
           <tbody>
-            {rows.map((item) => {
+            {page.shown.map((item) => {
               const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
               return (
                 <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
@@ -492,7 +502,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                     <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} priorDue={priorTermDue(sub)} />
                   </td>
                   <td className="min-w-0 px-2 py-2.5">
-                    <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} />
+                    <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
                   </td>
                 </tr>
               );
@@ -500,11 +510,19 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
           </tbody>
         </table>
       </div>
+      )}
+      {showMore}
     </>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+/** R-239 / R-2403: a row as the queue filters / sort read it (queue.ts filterQueue, sortQueue). */
+const asQueueRow = (i: QueueItem) => ({
+  id: i.sub.id, daysUntil: i.daysUntil, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
+  statusKey: i.status.key, stageKey: i.stage?.key ?? null, atRisk: i.atRisk, customer: i.sub.customer_name, commitment: i.commitment, item: i,
+});
 
 const SELECT_CLS = "bg-paper border border-hairline rounded-md text-xs px-2.5 py-1.5 font-medium text-ink focus:outline-none focus:border-amber cursor-pointer";
 
@@ -578,6 +596,45 @@ export default function RenewalsPage() {
     [names],
   );
 
+  /* R-2764 (R-2742 PERF-1, 14 Nov freeze): every row of every tab is built ONCE per data change
+     (queue-items.ts) — not on each tab click, tick or search keystroke. `todayDate` changes with the IST day. */
+  const todayIst = istToday(today);
+  /* noon IST of today — the rules read the IST day from it (same day as `new Date()`). */
+  const todayDate = React.useMemo(() => new Date(`${todayIst}T12:00:00+05:30`), [todayIst]);
+  const docsLoadingAll = lastDocsQ.isLoading || docsState.failed || quoteInfoLoading || openRenewalsLoading;
+  const built = React.useMemo(() => (subs ? buildQueueItems({
+    subs, openRenewalMap, quoteInfo, quoteStatusMap, docs: lastDocsQ.data, docsLoading: docsLoadingAll,
+    fuData, contacts, role: me?.role, graceDays, today: todayDate, todayIst: todayIst,
+  }) : null), [subs, openRenewalMap, quoteInfo, quoteStatusMap, lastDocsQ.data, docsLoadingAll, fuData, contacts, me?.role, graceDays, todayDate, todayIst]);
+  /* The tab from ?bucket= (old values map through resolveBucket) and every tab's narrowed rows —
+     kept until the search / filters / sort / data change, so a tab click only swaps the list shown. */
+  const counts = React.useMemo(
+    () => (built ? Object.fromEntries(QUEUE_TABS.map((t) => [t, built.tabs[t].length])) as Record<QueueTab, number> : null),
+    [built],
+  );
+  const resolved = !counts
+    ? { tab: "overdue" as QueueTab, atRisk: false }
+    : (LEGACY_BUCKETS as readonly string[]).includes(bucketRaw)
+      ? resolveBucket(bucketRaw as LegacyBucket, counts)
+      : resolveBucket(bucketRaw as QueueTab, counts);
+  const atRiskOn = filters.atRisk || resolved.atRisk;
+  const narrowed = React.useMemo(() => {
+    if (!built) return null;
+    const active: QueueFilters = { ...filters, atRisk: atRiskOn };
+    /* R-239: the search narrows the tabs (and their counts) only; R-2403: so do the filters.
+       R-2404: Mine · Follow-up due · Promise broken narrow the tabs the same way. */
+    const narrow = (list: QueueItem[]): QueueItem[] =>
+      sortQueue(filterQueue(filterByFollowup(list, fuFilters, me?.userId).filter((i) => matchesRenewalSearch(i.sub, search)).map(asQueueRow), active), sort)
+        .map((r) => r.item);
+    return { narrow, tabs: Object.fromEntries(QUEUE_TABS.map((t) => [t, narrow(built.items[t])])) as Record<QueueTab, QueueItem[]> };
+  }, [built, filters, atRiskOn, fuFilters, me?.userId, search, sort]);
+  /* R-2404 chip counts — whole queue, so a person sees "Mine (12)" before pressing it. */
+  const fuCounts = React.useMemo(() => {
+    if (!built) return { mine: 0, due: 0, broken: 0 };
+    const c = (f: Partial<FollowupFilters>) => filterByFollowup(built.allItems, { ...NO_FOLLOWUP_FILTERS, ...f }, me?.userId).length;
+    return { mine: c({ mine: true }), due: c({ followUpDue: true }), broken: c({ promiseBroken: true }) };
+  }, [built, me?.userId]);
+
   if (isLoading) {
     return (
       <div className="p-8 space-y-4">
@@ -636,22 +693,12 @@ export default function RenewalsPage() {
     );
   }
 
-  // Enrich with days-until-renewal (skip cancelled / no-date)
-  /* R-1541: the bucket rules live in lib/renewals/buckets.ts — the sidebar's Renewals badge
-     (nav_badges) counts Overdue + ≤7 days with the same numbers and opens ?bucket=urgent. */
-  const enriched = all
-    .filter(onRenewalsPage)
-    .map((s) => ({
-      sub: withRenewalQuote(s, openRenewalMap),
-      daysUntil: daysUntilRenewal(s.renewal_date!, today),
-    }));
-
   /* R-1124: ONE classification (./classify.ts) feeds every number and list on this page.
-     R-2403: a renewal whose quote is paid leaves Overdue (renewedPaid). */
+     R-2403: a renewal whose quote is paid leaves Overdue (renewedPaid). R-2764: worked out once per
+     data change (buildQueueItems, in the useMemo above) — a tab click re-uses it. */
+  if (!built || !narrowed || !counts) return null;
+  const { enriched, groups, items, allItems } = built;
   const quoteOf = (sub: Subscription) => quoteInfo?.get(sub.renewal_quote_id ?? "");
-  const paid = (r: { sub: Subscription }) => isPaidRenewalQuote(r.sub, quoteOf(r.sub));
-  const groups   = classifyRenewals(enriched, (r) => renewalRisk(r.sub).level === "high", today, paid);
-  const tabs     = queueTabs(groups);
 
   /* Forecast (audit B7): agle 6 mahine, mahina-war — "is quarter kitna aayega?"
      ab list jodne se nahi, curve se dikhta hai. */
@@ -667,68 +714,7 @@ export default function RenewalsPage() {
   /* R-2422: a flex (monthly-commitment) subscription is a renewal too (owner, 3 Nov). */
   const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90 && chasedRenewal(r.sub));
   const highRiskSubs = groups.atRisk;
-  const atRiskIds    = new Set(highRiskSubs.map((r) => r.sub.id));
 
-  /* R-2403: each listed row gets its ONE status, its renewal amount and its contact. */
-  const todayIst = istToday(today);
-  const toItem = (r: { sub: Subscription; daysUntil: number }): QueueItem => {
-    const risk = renewalRisk(r.sub);
-    const docs = lastDocsQ.data?.get(r.sub.id);
-    /* R-2728: a renewal quote / part bill with the customer, unpaid → "Renewal quote sent" (stays listed). */
-    const status = renewalRowStatus(r.sub, r.daysUntil, { tenantGraceDays: graceDays, today, renewalPaid: paid(r), quoteSent: docs?.sent ?? null });
-    /* R-2404: the renewal's follow-up state + where the decision stands. */
-    const customerOwnerId = r.sub.customer_id ? fuData?.ownerByCustomer.get(r.sub.customer_id) ?? null : null;
-    const followup = renewalFollowup(r.sub.id, fuData?.rows ?? [], { customerOwnerId, today: todayIst, paid: status.key === "renewed" });
-    const linkedQuote = quoteOf(r.sub);
-    /* R-2758 (R-2738): ONE stage per row — only once the documents are read (no flip after load),
-       only this renewal's quote / invoice (stage-input.ts). */
-    const input = stageInputFor({
-      /* code-review: also wait for the paid / linked-quote facts, and never guess when the documents read failed. */
-      sub: r.sub, todayIst, docs, docsLoading: lastDocsQ.isLoading || docsState.failed || quoteInfoLoading || openRenewalsLoading,
-      linkedStatus: r.sub.renewal_quote_id ? quoteStatusMap.get(r.sub.renewal_quote_id) ?? null : null,
-      linkedQuote: linkedQuote ?? null,
-      renewalPaid: paid(r),
-      flags: {
-        atRisk: atRiskIds.has(r.sub.id) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
-        vendorHold: vendorHoldState(r.sub, today),
-        priorTermUnpaid: priorTermDueText(r.sub),
-        promiseBroken: followup.promiseBroken ? { promisedOn: followup.promisedOn } : null,
-        followUpDue: followup.followUpDue ? { nextFollowUpOn: followup.nextFollowUpOn } : null,
-      },
-    });
-    const stage = input ? renewalStage(input) : null;
-    return {
-      stage,
-      payHref: stage ? stagePayHref(stage, docs, canOpenQuotes(me?.role)) : null,
-      sub: r.sub,
-      daysUntil: r.daysUntil,
-      status,
-      followup,
-      customerOwnerId,
-      decision: renewalDecision(r.sub, {
-        statusKey: status.key,
-        /* the draft/sent status from the open renewal quotes, else the linked quote's own */
-        quote: r.sub.renewal_quote_id
-          ? { id: r.sub.renewal_quote_id, status: quoteStatusMap.get(r.sub.renewal_quote_id) ?? linkedQuote?.status ?? null, payment_status: linkedQuote?.payment_status ?? null }
-          : null,
-        followup,
-      }),
-      amount: renewalAmount(r.sub, quoteOf(r.sub)),
-      frequency: renewalFrequency(r.sub),
-      commitment: renewalCommitment(r.sub),
-      docs,
-      contact: r.sub.customer_id ? contacts?.get(r.sub.customer_id) : undefined,
-      atRisk: atRiskIds.has(r.sub.id),
-      riskReason: [
-        ...(isNonRenewing(r.sub) ? ["Customer said they won't renew"] : []),
-        ...(r.daysUntil < 0 ? [`Renewal ${Math.abs(r.daysUntil)}d overdue, not paid`] : []),
-        ...risk.reasons.filter((x) => x !== "Seat usage not checked"),
-      ].join(" · ") || "High renewal risk",
-    };
-  };
-  const items = {} as Record<QueueTab, QueueItem[]>;
-  for (const t of QUEUE_TABS) items[t] = tabs[t].map(toItem);
-  const allItems = QUEUE_TABS.flatMap((t) => items[t]);
 
   /* R-2405: the tiles add up the rows' own renewal amounts; a pressed tile lists those rows.
      R-2586: the tiles stay on the 90-day window (TILE_TABS) — Later is a look-ahead list. */
@@ -740,27 +726,11 @@ export default function RenewalsPage() {
   const forecast = forecastWithThisMonth(forecastByDate, tileFigures.renewedMonth, month);
   const paidSubs = new Set(paidRenewalsInMonth(monthQuotes ?? [], month).map((q) => q.renewal_subscription_id ?? ""));
 
-  const counts = Object.fromEntries(QUEUE_TABS.map((t) => [t, tabs[t].length])) as Record<QueueTab, number>;
-  const resolved = (LEGACY_BUCKETS as readonly string[]).includes(bucketRaw)
-    ? resolveBucket(bucketRaw as LegacyBucket, counts)
-    : resolveBucket(bucketRaw as QueueTab, counts);
   const bucketTab = resolved.tab;
-  const atRiskOn = filters.atRisk || resolved.atRisk;
-  const activeFilters: QueueFilters = { ...filters, atRisk: atRiskOn };
-
-  /* R-239: the search narrows the tabs (and their counts) only; R-2403: so do the filters. */
-  const asQueueRow = (i: QueueItem) => ({
-    id: i.sub.id, daysUntil: i.daysUntil, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
-    statusKey: i.status.key, stageKey: i.stage?.key ?? null, atRisk: i.atRisk, customer: i.sub.customer_name, commitment: i.commitment, item: i,
-  });
-  /* R-2404: Mine · Follow-up due · Promise broken narrow the tabs the same way. */
-  const narrow = (list: QueueItem[]): QueueItem[] =>
-    sortQueue(filterQueue(filterByFollowup(list, fuFilters, me?.userId).filter((i) => matchesRenewalSearch(i.sub, search)).map(asQueueRow), activeFilters), sort)
-      .map((r) => r.item);
-  const shown = Object.fromEntries(QUEUE_TABS.map((t) => [t, narrow(items[t])])) as Record<QueueTab, QueueItem[]>;
+  const shown = narrowed.tabs;
   /* R-2405: a pressed tile lists its rows from every tab (search / filters / sort still apply). */
   /* R-2586: Later rows are not tile rows (no tileRowOf entry) — a pressed tile never lists them. */
-  const tileShown = narrow(tile ? allItems.filter((i) => {
+  const tileShown = narrowed.narrow(tile ? allItems.filter((i) => {
     const tr = tileRowOf.get(i.sub.id);
     return !!tr && tileMatches(tile, tr, month, paidSubs);
   }) : []);
@@ -774,11 +744,7 @@ export default function RenewalsPage() {
   const statusOptions  = STAGE_FILTER_ORDER.filter((k) => statusCount(k) > 0 || filters.status === k);
   const fuOn = fuFilters.mine || fuFilters.followUpDue || fuFilters.promiseBroken;
   const filtered = !!(filters.product || filters.status || filters.vendor || filters.commitment !== "all" || atRiskOn || fuOn);
-  /* R-2404: chip counts — whole queue, so a person sees "Mine (12)" before pressing it. */
-  const fuCount = (f: Partial<FollowupFilters>) => filterByFollowup(allItems, { ...NO_FOLLOWUP_FILTERS, ...f }, me?.userId).length;
-  const mineCount = fuCount({ mine: true });
-  const dueCount = fuCount({ followUpDue: true });
-  const brokenCount = fuCount({ promiseBroken: true });
+  const { mine: mineCount, due: dueCount, broken: brokenCount } = fuCounts;
 
   /* R-2751: the header counts the rows on the tabs (each row is on exactly one tab), so it equals the tabs added up;
      with a search / filter on, it also says how many of them match (= the narrowed tab counts added up). */
@@ -1156,6 +1122,7 @@ export default function RenewalsPage() {
         </div>
         <div className="border-t border-hairline">
           <RenewalQueue
+            key={tile ?? bucketTab}   /* R-2764: a new tab / tile starts at 50 rows again */
             rows={tile ? tileShown : shown[bucketTab]}
             strong={queueStrong}
             selected={selected}

@@ -89,7 +89,7 @@ describe("R-1124 bulk reminder reaches lapsed rows still in grace", () => {
 });
 
 describe("R-1124 page wiring", () => {
-  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
+  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8") + readFileSync("src/app/(app)/renewals/queue-items.ts", "utf8") /* R-2764: rows are built in queue-items.ts */;
   it("header 'at risk' and the High risk card read the same number", () => {
     expect(page).toContain("classifyRenewals(");
     expect(page).not.toMatch(/const arrAtRisk/);

@@ -89,7 +89,13 @@ export interface RenewalActionsSub extends RenewalActionSub {
   customer_id?: string | null;
 }
 
-export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId, stage, payHref }: {
+/** R-2764: who is looking — the Renewals queue reads it once and hands it to every row. */
+export interface RenewalViewer {
+  role: string | null | undefined;
+  tenantGracePeriodDays: number;
+}
+
+export interface RenewalActionsProps {
   sub: RenewalActionsSub;
   /** IST days to the renewal date; negative = past it. */
   daysUntil: number;
@@ -111,7 +117,65 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   stage?: RenewalStage | null;
   /** R-2758: where Record payment goes (stage-input.ts payHref); null = nothing to pay. */
   payHref?: string | null;
-}) {
+  /**
+   * R-2764 (14 Nov freeze): given (with a stage), the row first shows only its button + ⋯, with no hooks
+   * of its own; the full component — router, confirm, the user / open-quote reads, Renew anyway, Won't
+   * renew, Voice note — mounts on the first click and runs that click. null = the screen is still
+   * reading the user: the buttons show disabled (R-2710: no click before the role is known).
+   */
+  viewer?: RenewalViewer | null;
+}
+
+/** R-2764: which control of the row was pressed — the row's button or an item of its ⋯. */
+type StageRunFrom = "primary" | "menu";
+
+/** R-2764: the click that mounted the full component, and where it came from (focus goes back there). */
+interface AutoRun { kind: StageRunKind; from: StageRunFrom }
+
+interface RenewalActionsLiveProps extends RenewalActionsProps {
+  autoRun?: AutoRun;
+}
+
+export function RenewalActions(props: RenewalActionsProps) {
+  if (props.stage !== undefined && props.viewer !== undefined) return <LazyRenewalActions {...props} />;
+  return <RenewalActionsLive {...props} />;
+}
+
+/** R-2764: ONE place for what the stage row's button + ⋯ may offer — the lazy and the full row use it,
+    so the menu never changes between the first and the second click. */
+function stageRowFacts(sub: RenewalActionsSub, role: string | null | undefined, graceDays: number,
+  { payHref, onFollowup, messaging }: { payHref?: string | null; onFollowup?: () => void; messaging?: boolean }) {
+  const r = (role ?? undefined) as Parameters<typeof canOpenQuotes>[0];
+  const canQuotes = canOpenQuotes(r);
+  return {
+    ctx: {
+      role: r, canEndSubscription: mayMarkNonRenewing(r), tenantGraceDays: graceDays,
+      offers: { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id }, vendorHold: vendorHoldState(sub),
+    } as PrimaryContext,
+    canQuotes,
+    canPay: !!payHref && canRecordMoney(r) && (payHref.startsWith("/quotes/") ? canQuotes : canOpenInvoices(r)),
+    canInvoices: canOpenInvoices(r),
+  };
+}
+
+/** R-2764: the row's button + ⋯ from its stage, with no per-row hooks until one is pressed. */
+function LazyRenewalActions(props: RenewalActionsProps) {
+  const [armed, setArmed] = React.useState<AutoRun | null>(null);
+  if (armed) return <RenewalActionsLive {...props} autoRun={armed} />;
+  const { sub, stage, layout, strong = false, onFollowup, viewer } = props;
+  const facts = stageRowFacts(sub, viewer?.role, viewer?.tenantGracePeriodDays ?? 0, props);
+  return (
+    <StageActions
+      stage={stage ?? null} name={sub.customer_name ?? "this customer"} layout={layout} strong={strong}
+      busy={false} disabled={!viewer}
+      ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices}
+      /* follow-up needs nothing of the full component — no reason to mount it for that */
+      onRun={(kind, from) => (kind === "follow-up" ? onFollowup?.() : setArmed({ kind, from }))}
+    />
+  );
+}
+
+function RenewalActionsLive({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId, stage, payHref, autoRun }: RenewalActionsLiveProps) {
   const qc = useQueryClient();
   const router = useRouter();
   const confirm = useConfirm();
@@ -148,6 +212,20 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   /* R-2758: grace over → Renew anyway is a ⋯ item (same prompt + RPC as the badge); Undo Won't renew. */
   const renewAnyway = useRenewAnyway({ ...sub, customer_name: name, plan: sub.plan });
   const setNonRenewing = useSetNonRenewing();
+  /* R-2764: the click that mounted this component (LazyRenewalActions) runs once, after the first render. */
+  const runRef = React.useRef<((kind: StageRunKind) => void) | null>(null);
+  const wrapRef = React.useRef<HTMLDivElement | null>(null);
+  const autoRan = React.useRef(false);
+  React.useEffect(() => {
+    /* R-2710: never before the user and the open renewal quotes are read (Review vs Send depends on them). */
+    if (!autoRun || autoRan.current || !runRef.current || factsLoading) return;
+    autoRan.current = true;
+    /* the pressed button / ⋯ was replaced by this component's own — keyboard focus goes back to it, so a
+       dialog it opens returns focus there on close */
+    const lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+    if (lost) wrapRef.current?.querySelector<HTMLElement>(autoRun.from === "primary" ? '[data-testid="stage-primary"]' : '[data-testid="stage-more"]')?.focus();
+    runRef.current(autoRun.kind);
+  }, [autoRun, factsLoading]);
 
   async function onUndoWontRenew() {
     const ok = await confirm({
@@ -441,22 +519,20 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         case "view-subscription": return router.push(subscriptionOpenHref({ id: sub.id, customer_name: sub.customer_name }) as never);
       }
     };
+    runRef.current = onRun;
+    const facts = stageRowFacts(sub, me?.role, graceDays, { payHref, onFollowup, messaging });
     return (
       <>
-        <StageActions
-          stage={stage} name={name} layout={layout} strong={strong}
-          busy={busy !== null || renewAnyway.busy || setNonRenewing.isPending}
-          disabled={busy !== null || factsLoading}
-          ctx={{
-            role: me?.role, canEndSubscription: mayMarkNonRenewing(me?.role), tenantGraceDays: graceDays,
-            offers: { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id }, vendorHold: vendorHoldState(sub),
-          }}
-          sub={sub}
-          canQuotes={canQuotes}
-          canPay={!!payHref && canRecordMoney(me?.role) && (payHref.startsWith("/quotes/") ? canQuotes : canOpenInvoices(me?.role))}
-          canInvoices={canOpenInvoices(me?.role)}
-          onRun={onRun}
-        />
+        {/* R-2764: `contents` — no box of its own; only lets the auto-run find the button to focus */}
+        <div ref={wrapRef} className="contents">
+          <StageActions
+            stage={stage} name={name} layout={layout} strong={strong}
+            busy={busy !== null || renewAnyway.busy || setNonRenewing.isPending}
+            disabled={busy !== null || factsLoading}
+            ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices}
+            onRun={onRun}
+          />
+        </div>
         {dialogs}
       </>
     );
@@ -574,22 +650,25 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, c
   canQuotes: boolean;
   canPay: boolean;
   canInvoices: boolean;
-  onRun: (kind: StageRunKind) => void;
+  onRun: (kind: StageRunKind, from: StageRunFrom) => void;
 }) {
   /* Documents still loading: a placeholder — never a button that could act on a half-known row. */
   if (!stage) return <Skeleton className="h-8 w-28" aria-label="Loading the next step" data-testid="stage-action-loading" />;
   const { primary, menu } = stageButtons(stage, sub, ctx, { canQuotes, canPay, canInvoices });
   const grow = layout === "card" ? "flex-1" : undefined;
+  /* R-2764 (R-2759 spec, 14 Nov): in the table the longest label ("Record payment") + ⋯ ran 4px past the
+     184px Action column at 1280 — the table button is 12px narrower (padding + gaps), same words and icon. */
+  const tight = layout === "table";
   return (
-    <div className={cn("flex min-w-0 items-center gap-1.5", layout === "card" && "w-full")} data-testid="stage-actions">
+    <div className={cn("flex min-w-0 items-center", tight ? "gap-1" : "gap-1.5", layout === "card" && "w-full")} data-testid="stage-actions">
       {primary && (
         <Button
           variant={strong && primary.kind !== "follow-up" ? "primary" : "default"}
           size="sm"
-          className={cn("shrink-0", grow)}
+          className={cn("shrink-0", grow, tight && "gap-1.5 px-2")}
           loading={busy}
           disabled={disabled}
-          onClick={() => onRun(primary.kind)}
+          onClick={() => onRun(primary.kind, "primary")}
           title={PRIMARY_TITLE[primary.kind]}
           data-testid="stage-primary"
         >
@@ -604,6 +683,7 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, c
               type="button"
               aria-label={`More renewal actions for ${name}${sub.plan ? ` — ${sub.plan}` : ""}`}
               title="More actions"
+              data-testid="stage-more"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
             >
               <Icon name="more_h" size={16} />
@@ -613,7 +693,7 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, c
             {menu.map((k) => (
               <DropdownMenuItem key={k} disabled={disabled && k !== "follow-up" && k !== "view-subscription"}
                 className={cn("gap-2.5 py-2 cursor-pointer", k === "not-renewing" && "text-rose-700")}
-                onClick={() => onRun(k)} title={MENU_TITLE[k]}>
+                onClick={() => onRun(k, "menu")} title={MENU_TITLE[k]}>
                 <Icon name={MENU_ICON[k]} size={15} /> {STAGE_MENU_LABEL[k]}
               </DropdownMenuItem>
             ))}
