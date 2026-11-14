@@ -47,7 +47,8 @@ export async function readRevisions(found: readonly DocQuote[], cols: string): P
       .select(cols)
       .or(`superseded_by.in.${inList(run)},revision_of.in.${inList(run)},id.in.${inList(run.map((x) => parentOf.get(x) ?? x))}`)
       .order("id", { ascending: true })
-      .range(from, to), { chunkSize: 60 });   // three id lists in one URL
+      .range(from, to)
+      .returns<DocQuote[]>(), { chunkSize: 60 });   // three id lists in one URL
     const fresh = got.filter((q) => !seen.has(q.id));
     for (const q of fresh) { seen.add(q.id); out.push(q); if (q.revision_of) parentOf.set(q.id, q.revision_of); }
     step = fresh.map((q) => q.id);
