@@ -23,6 +23,7 @@ import { HrPageShell } from "../payroll/screens";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SalaryStatusCell, SalaryBankLinkAction } from "../payroll/salary-status-cell";
+import { SalaryRowActions } from "@/components/features/payroll/salary-row-actions";
 import { salaryPayState, salaryBankLineKey } from "@/lib/payroll/salary-status";
 import { salaryBankLink, type SalaryBankLink } from "@/lib/payroll/salary-bank-link";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -83,6 +84,9 @@ function StatusWithBankLink({ p, link, waitingLines, canWrite }: {
   );
 }
 
+/** R-2771: the bank line a salary's lock links to (null when no line pays it). */
+const openHref = (link: SalaryBankLink) => (link.kind === "open" ? link.href : null);
+
 /** Money columns shared by header, rows, totals and CSV — one source of truth. */
 const COLS: { key: keyof SalaryPayment; label: string }[] = [
   { key: "gross", label: "Gross" },
@@ -123,7 +127,7 @@ function SalaryRegisterInner() {
   return employeeId ? <EmployeeRegister employeeId={employeeId} /> : <MonthRegister />;
 }
 
-function TotalsRow({ label, rows, leadSpan }: { label: string; rows: SalaryPayment[]; leadSpan: number }) {
+function TotalsRow({ label, rows, leadSpan, actions }: { label: string; rows: SalaryPayment[]; leadSpan: number; actions?: boolean }) {
   return (
     <tr className="border-t-2 border-hairline-strong bg-paper-2/40 font-semibold">
       <td className="px-3 py-2.5 text-ink" colSpan={leadSpan}>{label}</td>
@@ -134,6 +138,7 @@ function TotalsRow({ label, rows, leadSpan }: { label: string; rows: SalaryPayme
       ))}
       <td className="px-3 py-2.5 text-right font-mono tabular-nums text-ink">{rupee(rows.reduce((s, r) => s + r.net, 0))}</td>
       <td className="px-3 py-2.5" />
+      {actions && <td className="px-2 py-2.5" />}
     </tr>
   );
 }
@@ -410,6 +415,7 @@ function MonthRegister() {
                 {COLS.map((c) => <th key={c.key} className="text-right px-3 py-3 whitespace-nowrap">{c.label}</th>)}
                 <th className="text-right px-3 py-3 whitespace-nowrap">Net pay</th>
                 <th className="text-left px-3 py-3 whitespace-nowrap">Status</th>
+                {canWrite && <th className="px-2 py-3"><span className="sr-only">Change salary</span></th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-hairline">
@@ -430,10 +436,12 @@ function MonthRegister() {
                     {COLS.map((c) => <td key={c.key} className="px-3 py-2.5 text-right font-mono tabular-nums text-ink-2">{num(p[c.key] as number)}</td>)}
                     <td className="px-3 py-2.5 text-right font-mono tabular-nums font-semibold text-ink">{rupee(p.net)}</td>
                     <td className="px-3 py-2.5"><StatusWithBankLink p={p} link={linkOf(p)} waitingLines={waitingLines} canWrite={canWrite} /></td>
+                    {/* R-2771: change this month right here — same menu + RPCs as Payroll. */}
+                    {canWrite && <td className="px-2 py-2.5 text-right">{e && <SalaryRowActions employee={e} p={p} canWrite bankLineHref={openHref(linkOf(p))} />}</td>}
                   </tr>
                 );
               })}
-              <TotalsRow label={`${rows.length} employee${rows.length > 1 ? "s" : ""} · ${monthLabel(period)}`} rows={rows} leadSpan={1} />
+              <TotalsRow label={`${rows.length} employee${rows.length > 1 ? "s" : ""} · ${monthLabel(period)}`} rows={rows} leadSpan={1} actions={canWrite} />
             </tbody>
           </table>
         </Card>
@@ -574,6 +582,7 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
                 {COLS.map((c) => <th key={c.key} className="text-right px-3 py-3 whitespace-nowrap">{c.label}</th>)}
                 <th className="text-right px-3 py-3 whitespace-nowrap">Net pay</th>
                 <th className="text-left px-3 py-3 whitespace-nowrap">Status</th>
+                {canWrite && <th className="px-2 py-3"><span className="sr-only">Change salary</span></th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-hairline">
@@ -596,10 +605,12 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
                   {COLS.map((c) => <td key={c.key} className="px-3 py-2.5 text-right font-mono tabular-nums text-ink-2">{num(p[c.key] as number)}</td>)}
                   <td className="px-3 py-2.5 text-right font-mono tabular-nums font-semibold text-ink">{rupee(p.net)}</td>
                   <td className="px-3 py-2.5"><StatusWithBankLink p={p} link={link} waitingLines={waitingLines} canWrite={canWrite} /></td>
+                  {/* R-2771: Hitesh — "edit the salary of a specific month directly from here". */}
+                  {canWrite && <td className="px-2 py-2.5 text-right">{emp && <SalaryRowActions employee={emp} p={p} canWrite bankLineHref={href} />}</td>}
                 </tr>
                 );
               })}
-              <TotalsRow label={`${rows.length} month${rows.length > 1 ? "s" : ""}`} rows={rows} leadSpan={2} />
+              <TotalsRow label={`${rows.length} month${rows.length > 1 ? "s" : ""}`} rows={rows} leadSpan={2} actions={canWrite} />
             </tbody>
           </table>
         </Card>

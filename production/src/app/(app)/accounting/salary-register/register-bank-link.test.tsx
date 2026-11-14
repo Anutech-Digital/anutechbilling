@@ -17,6 +17,8 @@ vi.mock("next/link", () => ({
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: "owner" } }) }));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
 vi.mock("../payroll/screens", () => ({ HrPageShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
+/* R-2771: the row salary menu has its own tests (salary-row-actions.test.tsx). */
+vi.mock("@/components/features/payroll/salary-row-actions", () => ({ SalaryRowActions: () => null }));
 
 const pay = (o: Record<string, unknown>) => ({
   employee_id: "emp-sajan", gross: 105000, incentive: 0, lop_amount: 0, tds: 0, pf: 0, esi: 0, other_deduction: 0,

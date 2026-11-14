@@ -8,6 +8,7 @@
  */
 "use client";
 
+import { useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
@@ -682,7 +683,8 @@ export function useUndoSalaryRevision() {
   });
 }
 
-export function usePaySalary() {
+/** `quiet`: the caller says what happened (R-2771 edit = "Salary for <month> changed"). */
+export function usePaySalary(opts: { quiet?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
@@ -732,7 +734,7 @@ export function usePaySalary() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["statutory-dues"] });
       /* R-1831: this books the salary — it reads Paid once its bank line is linked. */
-      toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
+      if (!opts.quiet) toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
     },
     onError: (err) => toastError(err),
   });
@@ -769,7 +771,27 @@ export function useAdjustSalaryLop() {
  *  reversal via the RPC: restores any advance recovery, deletes the booked
  *  Salaries expense, removes the salary_payment — so the row reverts to
  *  "Pay salary". (migration 0120) */
-export function useDeleteSalaryPayment() {
+/** Every list / report a booked or undone salary changes. */
+function refreshSalaryData(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["salary-payments"] });
+  qc.invalidateQueries({ queryKey: ["employee-loans"] });
+  qc.invalidateQueries({ queryKey: ["expenses"] });
+  qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+  qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+  qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+  qc.invalidateQueries({ queryKey: ["statutory-dues"] });
+}
+/** R-2771: the edit form calls this when it closes after its undo ran with `hold`. */
+export function useRefreshSalaryData() {
+  const qc = useQueryClient();
+  return useCallback(() => refreshSalaryData(qc), [qc]);
+}
+
+/** `quiet`: no toast (the caller says what happened). `hold` (R-2771 edit = undo + book again): the
+ *  salary lists are NOT re-read yet — the row and its open form stay until the new run is booked
+ *  (usePaySalary then re-reads everything) or the form closes (useRefreshSalaryData). Only what the
+ *  form's own limits read is refreshed: revision arrears and the advance loans. */
+export function useDeleteSalaryPayment(opts: { quiet?: boolean; hold?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (salaryId: string) => {
@@ -778,14 +800,11 @@ export function useDeleteSalaryPayment() {
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["salary-payments"] });
-      qc.invalidateQueries({ queryKey: ["employee-loans"] });
-      qc.invalidateQueries({ queryKey: ["expenses"] });
-      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
-      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["statutory-dues"] });
-      toast.success("Salary undone — you can pay it again");
+      if (opts.hold) {
+        qc.invalidateQueries({ queryKey: ["salary-payments", "arrears"] });
+        qc.invalidateQueries({ queryKey: ["employee-loans"] });
+      } else refreshSalaryData(qc);
+      if (!opts.quiet) toast.success("Salary undone — you can pay it again");
     },
     // Blocked (bank-reconciled)? Point to Banking to un-reconcile first.
     onError: (err) => guardErrorToast(err, { label: "Open Banking", href: "/accounting/banking" }),
