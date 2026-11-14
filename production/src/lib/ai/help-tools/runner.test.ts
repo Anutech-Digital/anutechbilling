@@ -217,6 +217,26 @@ describe("reader: the query object is a sealed closure (review M1 / L5)", () => 
     expect(u.searchParams.get("select")).toBe("id");
   });
 
+  it("columns must be a real string; select gets the checked list, never the caller's value (rev2 #1)", async () => {
+    const urls: string[] = [];
+    const fakeFetch = async (url: unknown) => {
+      urls.push(String(url));
+      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const pg = new PostgrestClient("http://db.local/rest/v1", { fetch: fakeFetch as typeof fetch });
+    const r = scopedReader(pg as never, A);
+    // An object whose split() lies to the check but whose toString() is the attack.
+    const evil = { split: () => ["id"], toString: () => "*,tenant:tenants(*),customers(*)" };
+    let refused = false;
+    try { await r.read("subscriptions", evil as never); } catch (e) { refused = e instanceof HelpReadRefused; }
+    expect(refused).toBe(true);
+    for (const bad of [null, undefined, 1, ["id"], { toString: () => "id" }]) expect(() => r.read("subscriptions", bad as never), String(bad)).toThrow(HelpReadRefused);
+    // A clean string is sent as the checked, trimmed list.
+    await r.read("subscriptions", " id ,  status ");
+    expect(urls.every((u) => !/tenants|customers|\*/.test(decodeURIComponent(u)))).toBe(true);
+    expect(new URL(urls[urls.length - 1]).searchParams.get("select")).toBe("id,status");
+  });
+
   it("order() keeps only ascending / nullsFirst (no referencedTable / foreignTable)", () => {
     const f = fakeClient({});
     const r = scopedReader(f.client as never, A);
