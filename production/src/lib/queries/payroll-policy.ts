@@ -13,7 +13,9 @@ import { DEFAULT_PAYROLL_POLICY, parsePayrollPolicy, policyToRow, type PayrollPo
 
 export const PAYROLL_POLICY_QUERY_KEY = ["payroll-policy"] as const;
 
-export function usePayrollPolicy() {
+/** `fresh` (R-2773 review F3): a form that WRITES from the policy re-reads it when it opens and on window
+ *  focus, so a Basic % changed in another tab is the one used (isFetchedAfterMount says it is in). */
+export function usePayrollPolicy(opts?: { fresh?: boolean }) {
   return useQuery({
     queryKey: PAYROLL_POLICY_QUERY_KEY,
     queryFn: async (): Promise<PayrollPolicy> => {
@@ -24,6 +26,7 @@ export function usePayrollPolicy() {
       return parsePayrollPolicy(json.policy ? policyToRow({ ...DEFAULT_PAYROLL_POLICY, ...json.policy }) : null);
     },
     staleTime: 10 * 60 * 1000,
+    ...(opts?.fresh ? { refetchOnMount: "always" as const, refetchOnWindowFocus: "always" as const } : {}),
   });
 }
 

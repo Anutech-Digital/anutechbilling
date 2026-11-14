@@ -15,7 +15,7 @@ import { CARD_TESTS_ON, E2E_TENANT_SQL, fillKept, localDb, onlyInCardTests, only
 
 const OLD = "c2773000-0000-4000-8000-000000000001";
 const OLD_NAME = "CT R2773 Old";
-const NEW_NAMES = "'CT R2773 New A','CT R2773 New B'";
+const NEW_NAMES = "'CT R2773 New A','CT R2773 New B','CT R2773 New C'";
 
 function clean(): void {
   localDb("R-2773").psql(`begin;
@@ -80,6 +80,31 @@ test.describe("R-2773 card test", () => {
       await expect.poll(() => empRow("CT R2773 New B"), { timeout: 15_000 }).toBe("30000,12000");
     } finally {
       localDb("R-2773").psql(`update public.attendance_settings set payroll_basic_pct = 50 where tenant_id = ${E2E_TENANT_SQL};`);
+      await page.context().close();
+    }
+  });
+
+  test("Step 4 (review F4): new employee, PF on, Basic box emptied → the CTC tab shows the Basic Save writes (50%), not 100%; gross cleared → Basic cleared", async ({ browser, baseURL }) => {
+    const page = await pageAs(browser, baseURL, "owner");
+    try {
+      const dlg = await addEmployeeWithGross(page, "CT R2773 New C", "30000");
+      await expect(dlg).toContainText("Basic Salary (50%):", { timeout: 30_000 });
+      await dlg.getByRole("button", { name: /Statutory & Access/ }).first().click();
+      const pf = dlg.getByRole("checkbox", { name: /PF applicable/ });
+      if (!(await pf.isChecked())) await pf.check();
+      const basic = dlg.locator("#payroll-basic-month");
+      await expect(basic).toHaveValue("15000");
+      await basic.fill("");
+      await expect(basic).toHaveAttribute("placeholder", "15000");
+      await dlg.getByRole("button", { name: /CTC & Salary Breakdown/ }).click();
+      await expect(dlg).toContainText("Basic Salary (50%):");
+      await expect(dlg).not.toContainText("Basic Salary (100%):");
+      await fillKept(dlg.locator("#payroll-monthly-gross-salary-base"), "40000");
+      await dlg.locator("#payroll-monthly-gross-salary-base").fill("");
+      await dlg.getByRole("button", { name: /Statutory & Access/ }).first().click();
+      await expect(basic).toHaveValue("");
+      await dlg.getByRole("button", { name: "Cancel" }).click();
+    } finally {
       await page.context().close();
     }
   });

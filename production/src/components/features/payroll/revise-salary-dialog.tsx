@@ -56,9 +56,9 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
 
   /* R-2770: the company payroll policy (gratuity on/off, CTC includes the employer's PF / ESI /
      gratuity or not) — without it this CTC differed from the profile's for a "CTC = gross" company. */
-  const policyQ = usePayrollPolicy();
+  const policyQ = usePayrollPolicy({ fresh: true }); // R-2773 review F3: re-read on open / focus
   /* No default-policy guess (code review): the CTC / gross boxes and Save wait for the policy. */
-  const policyReady = policyQ.isSuccess;
+  const policyReady = policyQ.isSuccess && policyQ.isFetchedAfterMount;
   /* R-2773: one Basic rule with Add / Edit employee — no salary yet → the policy Basic %, else the employee's own share. */
   const policyBasicPct = policyQ.data?.basicPct ?? DEFAULT_PAYROLL_POLICY.basicPct;
   const ctcOpts = employeeCtcOptions(policyQ.data, asOf);
