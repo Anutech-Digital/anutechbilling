@@ -89,7 +89,13 @@ export interface RenewalActionsSub extends RenewalActionSub {
   customer_id?: string | null;
 }
 
-export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId, stage, payHref }: {
+/** R-2764: who is looking — the Renewals queue reads it once and hands it to every row. */
+export interface RenewalViewer {
+  role: string | null | undefined;
+  tenantGracePeriodDays: number;
+}
+
+type RenewalActionsProps = {
   sub: RenewalActionsSub;
   /** IST days to the renewal date; negative = past it. */
   daysUntil: number;
@@ -111,6 +117,47 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   stage?: RenewalStage | null;
   /** R-2758: where Record payment goes (stage-input.ts payHref); null = nothing to pay. */
   payHref?: string | null;
+  /**
+   * R-2764 (14 Nov freeze): with a stage AND the viewer from the screen, the row first shows only its
+   * button + ⋯ (no hooks of its own); the full component — router, confirm, the user / open-quote
+   * reads, Renew anyway, Won't renew, Voice note — mounts on the first click and runs that click.
+   */
+  viewer?: RenewalViewer | null;
+};
+
+export function RenewalActions(props: RenewalActionsProps) {
+  if (props.stage !== undefined && props.viewer) return <LazyRenewalActions {...props} viewer={props.viewer} />;
+  return <RenewalActionsLive {...props} />;
+}
+
+/** R-2764: the row's button + ⋯ from its stage, with no per-row hooks until one is pressed. */
+function LazyRenewalActions(props: RenewalActionsProps & { viewer: RenewalViewer }) {
+  const [armed, setArmed] = React.useState<{ kind: StageRunKind } | null>(null);
+  if (armed) return <RenewalActionsLive {...props} autoRun={armed.kind} />;
+  const { sub, stage, layout, strong = false, onFollowup, messaging = false, payHref, viewer } = props;
+  const role = viewer.role ?? undefined;
+  const canQuotes = canOpenQuotes(role);
+  return (
+    <StageActions
+      stage={stage ?? null} name={sub.customer_name ?? "this customer"} layout={layout} strong={strong}
+      busy={false} disabled={false}
+      ctx={{
+        role, canEndSubscription: mayMarkNonRenewing(role), tenantGraceDays: viewer.tenantGracePeriodDays,
+        offers: { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id }, vendorHold: vendorHoldState(sub),
+      }}
+      sub={sub}
+      canQuotes={canQuotes}
+      canPay={!!payHref && canRecordMoney(role) && (payHref.startsWith("/quotes/") ? canQuotes : canOpenInvoices(role))}
+      canInvoices={canOpenInvoices(role)}
+      /* follow-up needs nothing of the full component — no reason to mount it for that */
+      onRun={(kind) => (kind === "follow-up" ? onFollowup?.() : setArmed({ kind }))}
+    />
+  );
+}
+
+function RenewalActionsLive({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId, stage, payHref, autoRun }: RenewalActionsProps & {
+  /** R-2764: the click that mounted this row's full component — run once, on mount. */
+  autoRun?: StageRunKind;
 }) {
   const qc = useQueryClient();
   const router = useRouter();
@@ -148,6 +195,14 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   /* R-2758: grace over → Renew anyway is a ⋯ item (same prompt + RPC as the badge); Undo Won't renew. */
   const renewAnyway = useRenewAnyway({ ...sub, customer_name: name, plan: sub.plan });
   const setNonRenewing = useSetNonRenewing();
+  /* R-2764: the click that mounted this component (LazyRenewalActions) runs once, after the first render. */
+  const runRef = React.useRef<((kind: StageRunKind) => void) | null>(null);
+  const autoRan = React.useRef(false);
+  React.useEffect(() => {
+    if (!autoRun || autoRan.current || !runRef.current) return;
+    autoRan.current = true;
+    runRef.current(autoRun);
+  }, [autoRun]);
 
   async function onUndoWontRenew() {
     const ok = await confirm({
@@ -441,6 +496,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         case "view-subscription": return router.push(subscriptionOpenHref({ id: sub.id, customer_name: sub.customer_name }) as never);
       }
     };
+    runRef.current = onRun;
     return (
       <>
         <StageActions

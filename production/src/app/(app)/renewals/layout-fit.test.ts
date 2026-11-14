@@ -20,8 +20,11 @@ const cells = readFileSync("src/app/(app)/renewals/row-cells.tsx", "utf8");
 describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", () => {
   it("the desktop table shows from a 1260px window; the card list covers everything below", () => {
     expect(QUEUE_TABLE_MIN_VIEWPORT_PX).toBe(1260);
-    expect(page).toContain('<div className="hidden min-[1260px]:block" data-testid="renewals-table">');
-    expect(page).toMatch(/<ul className="min-\[1260px\]:hidden[^"]*md:grid-cols-2/);
+    /* R-2764 (changed expectation): ONE layout is mounted — matchMedia at QUEUE_TABLE_MIN_VIEWPORT_PX picks the
+       table or the cards (both in the DOM with one CSS-hidden doubled every row's buttons — 14 Nov freeze). */
+    expect(page).toContain("const TABLE_QUERY = `(min-width: ${QUEUE_TABLE_MIN_VIEWPORT_PX}px)`;");
+    expect(page).toMatch(/\{table && \(\s*<div data-testid="renewals-table">/);
+    expect(page).toMatch(/\{!table && \(\s*<ul className="[^"]*md:grid-cols-2[^"]*" data-testid="renewals-cards">/);
     expect(page).not.toMatch(/"hidden xl:block"|"xl:hidden/);
   });
 
