@@ -224,7 +224,7 @@ begin
 
   -- An employer row that is itself paid / matched to a bank line: say so, undo nothing.
   for v_e in
-    select e.id, e.category from public.expenses e
+    select e.id from public.expenses e
      where e.tenant_id = v_sp.tenant_id and e.id in (v_pf_id, v_esi_id)
        and (e.reconciled_txn_id is not null or coalesce(e.paid_amount, 0) > 0
             or exists (select 1 from public.bank_vendor_payment_lines l where l.expense_id = e.id)
@@ -232,7 +232,7 @@ begin
                         where t.tenant_id = e.tenant_id and t.matched_to_type = 'expense' and t.matched_to_id = e.id))
   loop
     raise exception 'The employer % cost of this salary is matched to a bank line — un-reconcile that bank line first, then undo.',
-      case when v_e.category like 'PF%' then 'PF' else 'ESI' end
+      case when v_e.id = v_pf_id then 'PF' else 'ESI' end
       using errcode = 'invalid_parameter_value';
   end loop;
 
@@ -250,11 +250,12 @@ begin
   if v_sp.expense_id is not null then
     delete from public.expenses where id = v_sp.expense_id and tenant_id = v_sp.tenant_id;
   end if;
+  -- By id: a linked row is this salary's row even if its category was edited on the Expenses page.
   if v_pf_id is not null then
-    delete from public.expenses where id = v_pf_id and tenant_id = v_sp.tenant_id and category = 'PF — Employer';
+    delete from public.expenses where id = v_pf_id and tenant_id = v_sp.tenant_id;
   end if;
   if v_esi_id is not null then
-    delete from public.expenses where id = v_esi_id and tenant_id = v_sp.tenant_id and category = 'ESI — Employer';
+    delete from public.expenses where id = v_esi_id and tenant_id = v_sp.tenant_id;
   end if;
 end;
 $function$;
