@@ -16,6 +16,7 @@
 import { ctcFromEmployee, employeeCtcOptions, type CtcPolicy } from "./ctc";
 import { ESI_WAGE_CEILING } from "./esi";
 import { periodLabelShort } from "./period-label";
+import { DEFAULT_PAYROLL_POLICY } from "./policy";
 
 export interface SalaryStructure {
   monthly_gross: number;
@@ -134,9 +135,9 @@ export function scaledStructure(current: SalaryStructure, newGross: number): Sal
   };
 }
 
-/** R-2773: the company payroll policy's default Basic % (policy.ts DEFAULT_PAYROLL_POLICY.basicPct) —
+/** R-2773: the company payroll policy's default Basic % —
  *  used when no valid policy % is given. */
-const DEFAULT_BASIC_PCT = 50;
+const DEFAULT_BASIC_PCT = DEFAULT_PAYROLL_POLICY.basicPct;
 
 /** Basic = `pct` (0–1) of the gross in whole rupees, never above gross − DA. null = no gross. */
 export function basicAtPct(pct: number, gross: number, da: number): number | null {

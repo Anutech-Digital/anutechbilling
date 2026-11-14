@@ -16,9 +16,12 @@
 --   0. Login check (tenants_visible must equal the number of companies).
 --   1. COUNT per company: active employees, Basic not set, of those PF on, the company's policy Basic %.
 --   2. ROWS: employees with Basic not set (gross, PF on/off, joined, created) — newest first, 200 max.
---   3. COUNT per company: booked salary months of those employees that carry PF (the PF there was
---      worked on the whole gross), with the PF booked vs the PF had Basic been the policy % —
---      an ESTIMATE (gross × policy %, + DA, capped at the month's ceiling unless PF full wage).
+--   3. COUNT per company: booked salary months that carry PF while the Basic IN FORCE for that month
+--      was not set (current Basic, or the prev_basic of a later salary revision — R-2699), so the PF
+--      there was worked on the whole gross; with the PF booked vs the PF had Basic been the policy % —
+--      an ESTIMATE (earned gross (gross − LOP) × policy %, + today's DA, capped at the month's ceiling
+--      unless PF full wage). LIMIT: a Basic set later through Edit employee (not Revise salary) keeps
+--      no history, so months booked before that edit are not found here.
 --   4. ROWS: those booked months (period, gross, PF wage booked, PF booked, estimated PF on policy Basic).
 --
 -- WHO RUNS IT: the manager or Pardeep on staging/live. Claude does not run it there.
@@ -77,7 +80,7 @@ select t.name                                         as company,
 \echo '=== 3. Booked salary months with PF for those employees, per company (PF there was on the whole gross) ==='
 with m as (
   select sp.tenant_id, sp.employee_id, sp.period, sp.gross, sp.pf, sp.pf_employer, sp.pf_wage,
-         coalesce(sp.salary_in_force, e.monthly_gross)                      as gross_in_force,
+         greatest(0, coalesce(sp.gross, 0) - coalesce(sp.lop_amount, 0))      as gross_in_force,
          coalesce(e.da_monthly, 0)                                          as da,
          coalesce(e.pf_full_wage, false)                                    as full_wage,
          coalesce(s.payroll_basic_pct, 50)                                  as pct,
@@ -85,7 +88,16 @@ with m as (
     from public.salary_payments sp
     join public.employees e on e.id = sp.employee_id and e.tenant_id = sp.tenant_id
     left join public.attendance_settings s on s.tenant_id = sp.tenant_id
-   where e.basic_monthly is null
+    -- the Basic IN FORCE for that month (R-2699 salaryInForce): prev_* of the earliest revision
+    -- after the month, else the employee's current Basic
+    left join lateral (
+      select r.prev_basic_monthly
+        from public.employee_salary_revisions r
+       where r.employee_id = sp.employee_id and r.effective_from > to_date(sp.period || '-01', 'YYYY-MM-DD')
+       order by r.effective_from
+       limit 1
+    ) rv on true
+   where (case when rv is null then e.basic_monthly else rv.prev_basic_monthly end) is null
      and coalesce(sp.pf, 0) > 0
 ), est as (
   select m.*,
@@ -111,7 +123,7 @@ select t.name                                         as company,
 \echo '=== 4. Those booked months (newest first, 200 max) ==='
 with m as (
   select sp.tenant_id, sp.employee_id, sp.period, sp.gross, sp.pf, sp.pf_employer, sp.pf_wage,
-         coalesce(sp.salary_in_force, e.monthly_gross)                      as gross_in_force,
+         greatest(0, coalesce(sp.gross, 0) - coalesce(sp.lop_amount, 0))      as gross_in_force,
          coalesce(e.da_monthly, 0)                                          as da,
          coalesce(e.pf_full_wage, false)                                    as full_wage,
          coalesce(s.payroll_basic_pct, 50)                                  as pct,
@@ -120,7 +132,16 @@ with m as (
     from public.salary_payments sp
     join public.employees e on e.id = sp.employee_id and e.tenant_id = sp.tenant_id
     left join public.attendance_settings s on s.tenant_id = sp.tenant_id
-   where e.basic_monthly is null
+    -- the Basic IN FORCE for that month (R-2699 salaryInForce): prev_* of the earliest revision
+    -- after the month, else the employee's current Basic
+    left join lateral (
+      select r.prev_basic_monthly
+        from public.employee_salary_revisions r
+       where r.employee_id = sp.employee_id and r.effective_from > to_date(sp.period || '-01', 'YYYY-MM-DD')
+       order by r.effective_from
+       limit 1
+    ) rv on true
+   where (case when rv is null then e.basic_monthly else rv.prev_basic_monthly end) is null
      and coalesce(sp.pf, 0) > 0
 )
 select t.name as company, m.employee, m.period, m.gross, m.pf_wage as pf_wage_booked,
