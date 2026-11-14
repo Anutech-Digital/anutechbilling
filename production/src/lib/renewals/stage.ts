@@ -368,8 +368,10 @@ export function renewalStage(input: StageInput): RenewalStage {
     }
     if (sentDoc.status === "draft" && sentDoc.kind === "renewal") {
       /* userAudit14Nov: opening the editor makes a draft — nothing went to the customer, so the row stays "due"
-         (its Send renewal reopens THAT draft, R-2232). */
-      return { ...common, anchorDate: base.anchorDate, anchorKind: base.anchorKind, partDueDate: null, key: "due", label: renewalDays == null ? "No renewal date" : dueWords(renewalDays), tone: daysTone(renewalDays), days: renewalDays, note: null };
+         (its Send renewal reopens THAT draft, R-2232).
+         R-2822 (audit 14 Nov, SCN Kochi): the row still said "Send renewal" with a draft waiting — the line under the chip
+         now says "Draft ready" and the button is Continue (renewalPrimary), same quote; the chip, tab and bulk send stay "due". */
+      return { ...common, anchorDate: base.anchorDate, anchorKind: base.anchorKind, partDueDate: null, key: "due", label: renewalDays == null ? "No renewal date" : dueWords(renewalDays), tone: daysTone(renewalDays), days: renewalDays, note: DRAFT_READY };
     }
     if (sentDoc.status === "draft") {
       return { ...common, key: "draft", label: period ? `Draft part quote · ${period}` : "Draft part quote" };
@@ -403,6 +405,8 @@ export function renewalStage(input: StageInput): RenewalStage {
 export const SEND_RENEWAL = "Send renewal";
 export const BILL_NEXT_PART = "Bill next part";
 export const CONTINUE = "Continue";
+/** R-2822: the line under a whole-term row's chip while its renewal quote is a draft nobody has sent. */
+export const DRAFT_READY = "Draft ready";
 export const FOLLOW_UP = "Follow up";
 export const RECORD_PAYMENT = "Record payment";
 /** ownerRule (13 Nov): a part's Bill next part is the main button only from this many days before its due date. */
@@ -495,7 +499,10 @@ export function renewalPrimary(stage: RenewalStage, sub: StageSub, ctx: PrimaryC
         /* ownerRule: inside the 7-day window before the part starts it is the next step; earlier only in ⋯ (early billing). */
         primary = stage.partDays != null && stage.partDays <= BILL_PART_WINDOW_DAYS ? btn("bill-part", BILL_NEXT_PART, canQuote, stage) : followUp;
       } else if (stage.renewalDays != null) {
-        primary = btn("send-renewal", SEND_RENEWAL, canQuote, stage);
+        /* R-2822: a draft is waiting — "Draft ready — Continue" reopens THAT quote (R-2232: never a second one); a role that
+           cannot open quotes keeps Send renewal (its confirm path sends THAT draft). */
+        const hasDraft = stage.quoteStatus === "draft" && !!stage.quoteId;
+        primary = hasDraft && canQuote ? btn("continue", CONTINUE, true, stage) : btn("send-renewal", SEND_RENEWAL, canQuote, stage);
         if (canQuote) menu.push("send-as-is");
       } else {
         primary = followUp;   // no renewal date: nothing to send for (the page lists it to be fixed, R-2586)

@@ -59,7 +59,7 @@ export async function readRevisions(found: readonly DocQuote[], cols: string): P
 export function useRenewalDrawerData(sub: SubRef | null) {
   const ref = sub ? docRefs([sub])[0] : null;
   return useQuery({
-    queryKey: ["quotes", "renewal-drawer", ref?.id ?? "", ref?.quote_id ?? "", ref?.renewal_quote_id ?? "", ref?.plan ?? "", ref?.domain ?? ""],
+    queryKey: ["quotes", "renewal-drawer", ref?.id ?? "", ref?.quote_id ?? "", ref?.renewal_quote_id ?? "", ref?.plan ?? "", ref?.domain ?? "", ref?.term_months ?? "", ref?.start_date ?? ""],
     enabled: !!ref,
     staleTime: 0,   // every open reads afresh (a payment saved elsewhere invalidates only "payments")
     queryFn: async (): Promise<DrawerData> => {

@@ -141,8 +141,8 @@ describe("R-2748 the cell", () => {
   it("the newest quote sent is not repeated when it is a shown invoice's own quote (one fact one place)", () => {
     expect(cell).toMatch(/!invoices\.some\(\(i\) => i\.sourceQuoteId === docs\.quote\?\.id\)/);
   });
-  it("no new per-row read: the same 9 batched reads as R-2737", () => {
-    expect((data.match(/fetchAllRowsIn</g) ?? []).length).toBe(9);
+  it("no new per-row read: the same 10 batched reads as R-2737 (R-2822: + the drawer-only send log)", () => {
+    expect((data.match(/fetchAllRowsIn</g) ?? []).length).toBe(10);
     expect(data).not.toMatch(/\.single\(\)|\.maybeSingle\(\)/);
   });
 });

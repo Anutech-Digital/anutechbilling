@@ -165,7 +165,8 @@ describe("R-2738 renewalPrimary — ONE button + ⋯", () => {
     const ws = stage(w, { doc: { kind: "renewal", quoteId: "Q-W", status: "draft" } });
     /* userAudit14Nov: a whole-term draft (made by opening the editor) stays "due" — Send renewal reopens THAT quote */
     expect(ws).toMatchObject({ key: "due", label: "Due in 16d", quoteId: "Q-W", quoteStatus: "draft" });
-    expect(act(ws, w).primary).toMatchObject({ kind: "send-renewal", label: SEND_RENEWAL, quoteId: "Q-W", opensEditor: true });
+    /* R-2822: the owner's button says Continue (Draft ready under the chip); a role without the editor still sends that draft */
+    expect(act(ws, w).primary).toMatchObject({ kind: "continue", label: CONTINUE, quoteId: "Q-W", opensEditor: true });
     expect(act(ws, w, billing).primary).toMatchObject({ kind: "send-renewal", quoteId: "Q-W", opensEditor: false });
   });
 

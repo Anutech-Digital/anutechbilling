@@ -21,7 +21,7 @@ import { addDaysIso } from "@/lib/quotes/service-period";
 import type { FlagKey, StageFlag } from "@/lib/renewals/stage";
 import { VENDOR_HOLD_TITLE } from "@/lib/renewals/vendor-hold";
 import {
-  docMoney, invoiceStatusWords, invoiceTotalWords, periodWords, quoteExpiryText, quoteStateLabel,
+  docMoney, invoiceStatusWords, invoiceTotalWords, periodWords, quoteStateLabel, sentDayWords, validTillWords,
   type DocTone, type DrawerQuote, type LastDocs, type LastInvoice,
 } from "./last-docs";
 import { lastPaidSummary, type LastPaid } from "./last-paid";
@@ -75,8 +75,13 @@ export function drawerQuoteRow(q: DrawerQuote, todayIst: string): DrawerDocRow {
   const tone: DocTone = state === "Paid" ? "ok" : state === "Draft" || state === "Expired" || state === "Rejected" ? "muted" : "warn";
   /* R-2767: the row shows a quote's validity only at 3 days or less — the drawer always says it while the
      quote is with the customer (sent / viewed) */
-  const waiting = (q.status === "sent" || q.status === "viewed") && state !== "Expired" && !!q.expires_date;
-  const status = waiting ? `${state} · ${quoteExpiryText(q.expires_date, todayIst).toLowerCase()}` : state;
+  const waiting = (q.status === "sent" || q.status === "viewed") && state !== "Expired";
+  /* R-2822 (audit 14 Nov): always "Sent <date> · valid till <date>" or "Marked sent by hand" — the date the app emailed it
+     (quote_send_log), the last day it can be accepted. The quote's own days-left is on its page; rows stay quiet (R-2767). */
+  const sentWords = q.sentAt ? `Sent ${sentDayWords(q.sentAt)}` : q.sentAt === null ? "Marked sent by hand" : "Sent";
+  const head = state === "Viewed" ? `Viewed · ${sentWords.charAt(0).toLowerCase()}${sentWords.slice(1)}` : sentWords;
+  const till = validTillWords(q.expires_date);
+  const status = waiting ? (till ? `${head} · ${till}` : head) : state;
   return { ...base, status, tone };
 }
 

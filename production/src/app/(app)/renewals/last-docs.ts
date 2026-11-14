@@ -42,6 +42,7 @@
  * drawer-r2740.test.ts.
  */
 import { rupee } from "@/lib/utils";
+import { toIstDate } from "@/lib/dates/ist";
 import { shownQuoteStatus, validityDaysLeft } from "@/lib/quotes/quote-expiry";
 import { lineServicePeriod, quoteLinePeriodContext, addDaysIso, periodDate, type LinePeriodLine } from "@/lib/quotes/service-period";
 import { invoiceIsOverdue, invoiceOverdueDays } from "@/lib/invoices/overdue";
@@ -123,6 +124,8 @@ export interface LastDocsInput {
     id: string; quote_id: string | null; renewal_quote_id: string | null; start_date: string | null;
     /** R-2737: how a quote line is matched to this subscription (the sale files plan = line name, domain = line domain). */
     plan?: string | null; domain?: string | null;
+    /** R-2822: with start_date, tells where a renewal quote's next term starts (billing's followingTermStart) — the quote page's own rule. */
+    term_months?: number | null;
   }>;
   quotes: readonly DocQuote[];
   billings: readonly DocBilling[];
@@ -196,6 +199,11 @@ export interface DrawerQuote extends LastQuote {
   amount: number | null;
   currency: string | null;
   fxRate: number | null;
+  /**
+   * R-2822: when the app emailed it (quote_send_log, newest "sent" row), as a timestamp. null = the log was read
+   * and no email went (a quote marked sent by hand); undefined = the log was not read.
+   */
+  sentAt?: string | null;
 }
 
 export interface LastDocs {
@@ -652,7 +660,7 @@ export function partPeriodWords(start: string | null | undefined, endExclusive: 
 const norm = (v: unknown) => (typeof v === "string" ? v.trim().toLowerCase() : "");
 
 type MatchLine = LinePeriodLine & { plan_change?: { subscription_id?: string } | null };
-type SubMatch = { id: string; plan?: string | null; domain?: string | null };
+type SubMatch = { id: string; plan?: string | null; domain?: string | null; start_date?: string | null; term_months?: number | null };
 
 /**
  * Which of a quote's lines belong to THIS subscription (Pardeep, 13 Nov: one invoice can carry
@@ -700,7 +708,10 @@ export function linesForSubscription<L extends MatchLine>(lines: readonly L[], s
  * renewal quote with no renewal_term_date, …) or no line matches — never a guess.
  */
 export function quoteLinesPeriod(q: DocQuoteDetail, sub?: SubMatch | null): string | null {
-  const ctx = quoteLinePeriodContext(q);
+  /* R-2822: a renewal / extension quote's next term starts ON renewal_date for an app-made subscription (R-2727,
+     billing's followingTermStart). Without the subscription's start + term the context fell back to "the day
+     after renewal_term_date" — every period on Renewals read one day later than the quote's own page. */
+  const ctx = quoteLinePeriodContext(q, sub?.start_date ? { domain: sub.domain ?? null, start_date: sub.start_date, term_months: sub.term_months ?? null } : null);
   const all = (Array.isArray(q.line_items) ? (q.line_items as MatchLine[]) : []).filter((l) => !!l && typeof l === "object");
   const withP = all.map((line) => ({ line, p: lineServicePeriod(line, ctx) }));
   /* lines that can be a subscription: a certain period, or a renewing commitment (a one-off fee is never one) */
@@ -769,4 +780,34 @@ export function detailQuoteIds(docs: Map<string, LastDocs>): string[] {
 /** R-2737: the invoices whose credit / debit notes the status needs. */
 export function shownInvoiceIds(docs: Map<string, LastDocs>): string[] {
   return [...new Set([...docs.values()].flatMap((d) => [...(d.invoices ?? []), ...(d.allInvoices ?? [])].map((i) => i.id)).filter((x): x is string => !!x))].sort();
+}
+
+/** R-2822: a quote_send_log row, as far as the drawer needs it. */
+export interface SendLogRow { quote_id: string; status: string; sent_at: string }
+
+/** R-2822: each drawer quote's send time from the log (newest "sent" row; none → null, "marked sent by hand"). */
+export function attachSendTimes(docs: Map<string, LastDocs>, rows: readonly SendLogRow[]): Map<string, LastDocs> {
+  const last = new Map<string, string>();
+  for (const r of rows) if (r.status === "sent" && r.sent_at && r.sent_at > (last.get(r.quote_id) ?? "")) last.set(r.quote_id, r.sent_at);
+  const out = new Map<string, LastDocs>();
+  for (const [sid, d] of docs) out.set(sid, d.allQuotes ? { ...d, allQuotes: d.allQuotes.map((q) => ({ ...q, sentAt: last.get(q.id) ?? null })) } : d);
+  return out;
+}
+
+/** R-2822: the quotes whose send log the drawer needs — the ones with the customer (sent / viewed). */
+export function sendLogQuoteIds(docs: Map<string, LastDocs>): string[] {
+  const ids = new Set<string>();
+  for (const d of docs.values()) for (const q of d.allQuotes ?? []) if (q.status === "sent" || q.status === "viewed") ids.add(q.id);
+  return [...ids].sort();
+}
+
+/** R-2822: "4 Nov 2026" — a timestamp's IST day, in the paper's own words. */
+export function sentDayWords(ts: string): string {
+  return dayMonYear(toIstDate(ts));
+}
+
+/** R-2822: "valid till 19 Nov 2026" — validity runs through expires_date (R-1679). null = none set. */
+export function validTillWords(expiresDate: string | null | undefined): string | null {
+  const d = isoOrNull(expiresDate);
+  return d ? `valid till ${dayMonYear(d)}` : null;
 }
