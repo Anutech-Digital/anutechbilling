@@ -205,7 +205,7 @@ export function SupportCheckout(p: Props) {
         <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_340px] items-start">
           <div className="min-w-0 space-y-6">
             <section aria-labelledby="sup-plan-h" className="bg-white border border-hairline rounded-2xl p-5">
-              <h2 id="sup-plan-h" className="text-base font-semibold text-ink mt-0 mb-3">1. Plan</h2>
+              <h2 id="sup-plan-h" className="text-base font-semibold text-ink mt-0 mb-3"><span className="sup-step">1<span className="w-step-dot">.</span></span> Plan</h2>
               <div role="radiogroup" aria-label="Plan" className="grid gap-3 sm:grid-cols-2">
                 {p.plans.map((x) => (
                   <button key={x.id} type="button" role="radio" aria-checked={plan === x.id} onClick={() => setPlan(x.id)}
@@ -232,7 +232,7 @@ export function SupportCheckout(p: Props) {
 
             {!paidNow && (
             <section aria-labelledby="sup-det-h" className="bg-white border border-hairline rounded-2xl p-5">
-              <h2 id="sup-det-h" className="text-base font-semibold text-ink mt-0 mb-3">2. Your details (for the GST invoice)</h2>
+              <h2 id="sup-det-h" className="text-base font-semibold text-ink mt-0 mb-3"><span className="sup-step">2<span className="w-step-dot">.</span></span> Your details (for the GST invoice)</h2>
               <div className="grid gap-x-4 sm:grid-cols-2">
                 {field("name", "Your name", { autoComplete: "name" })}
                 {field("company", <>Company <span className="font-normal text-ink-3">(optional)</span></>, { autoComplete: "organization" })}
@@ -264,7 +264,7 @@ export function SupportCheckout(p: Props) {
           </div>
 
           <aside aria-labelledby="sup-sum-h" className="bg-white border border-hairline rounded-2xl p-5 md:sticky md:top-6">
-            <h2 id="sup-sum-h" className="text-base font-semibold text-ink mt-0 mb-3">{paidNow ? "Next step" : "3. Pay"}</h2>
+            <h2 id="sup-sum-h" className="text-base font-semibold text-ink mt-0 mb-3">{paidNow ? "Next step" : <><span className="sup-step">3<span className="w-step-dot">.</span></span> Pay</>}</h2>
             {!paidNow && (<>
             <dl className="m-0 text-[15px] space-y-2">
               <div className="flex justify-between gap-3"><dt className="text-ink-2">{price.label}</dt><dd className="m-0 text-ink">{rupee(price.exGst)}</dd></div>

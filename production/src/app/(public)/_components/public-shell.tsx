@@ -10,15 +10,18 @@ import Link from "next/link";
 import { PLATFORM_OPERATOR } from "@/lib/platform";
 
 export function PublicShell({
-  title, subtitle, children,
+  title, subtitle, children, bars = true,
 }: {
   title: string;
   subtitle?: string;
   children: React.ReactNode;
+  /** false: no top bar / footer of its own — the page sits inside the company website's header and
+   *  footer instead (Warm website theme, WarmSiteChrome.tsx). */
+  bars?: boolean;
 }) {
   return (
     <div className="min-h-screen bg-paper">
-      <PublicTopBar />
+      {bars && <PublicTopBar />}
       {/* R-1456: 16px phone gutter (CLAUDE.md §20); long emails/words break instead of widening the page. */}
       <main className="max-w-3xl mx-auto px-4 sm:px-5 py-12 md:py-16">
         <h1 className="font-serif text-4xl md:text-5xl leading-tight mb-2">{title}</h1>
@@ -27,7 +30,7 @@ export function PublicShell({
           {children}
         </div>
       </main>
-      <PublicFooter />
+      {bars && <PublicFooter />}
     </div>
   );
 }

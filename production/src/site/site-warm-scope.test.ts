@@ -180,3 +180,20 @@ describe("WarmScope (pages outside the website layouts)", () => {
     }
   });
 });
+
+describe("the company header/footer around extra pages appear on Warm only", () => {
+  const scope = readFileSync(path.join(root, "src/site/components/chrome/WarmScope.tsx"), "utf8");
+  const chrome = readFileSync(path.join(root, "src/site/components/chrome/WarmSiteChrome.tsx"), "utf8");
+  const shell = readFileSync(path.join(root, "src/app/(public)/_components/public-shell.tsx"), "utf8");
+  const unsub = readFileSync(path.join(root, "src/app/(public)/unsubscribe/page.tsx"), "utf8");
+  it("WarmScope adds them only when the theme is warm", () => {
+    expect(scope).toContain('theme === "warm" && siteChrome ? <WarmSiteChrome>');
+  });
+  it("the nested-segment helper checks the theme too", () => {
+    expect(chrome).toContain('theme === "warm" ? <WarmSiteChrome>{children}</WarmSiteChrome> : <>{children}</>');
+  });
+  it("unsubscribe drops its own bars only on Warm (no double header), and PublicShell keeps them by default", () => {
+    expect(unsub).toContain('bars={theme !== "warm"}');
+    expect(shell).toMatch(/bars = true/);
+  });
+});

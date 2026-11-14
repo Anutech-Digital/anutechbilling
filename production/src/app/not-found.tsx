@@ -17,7 +17,7 @@ export default async function NotFound() {
   // Website theme (docs/WEBSITE-THEME.md) only on Anutech's own domains, never on the app's hosts.
   if (brand.site !== "company") return <NotFoundView brand={brand} />;
   return (
-    <WarmScope kind="site">
+    <WarmScope kind="site" siteChrome>
       <NotFoundView brand={brand} />
     </WarmScope>
   );

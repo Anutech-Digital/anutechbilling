@@ -15,6 +15,7 @@ import { siteWarmBody, siteWarmHeading } from "@/lib/fonts";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { getWebsiteTheme } from "@/lib/website-theme.server";
 import { THEME_BOOT_SCRIPT } from "@/site/components/chrome/ThemeSwitch";
+import { WarmSiteChrome } from "@/site/components/chrome/WarmSiteChrome";
 import "@/site/warm-only.css";
 import "@/site/site-warm.css";
 // One file per page group, each scoped under .w-scope[data-site-theme="warm"] (site-warm-scope.test.ts).
@@ -28,9 +29,11 @@ interface WarmScopeProps {
   children: React.ReactNode;
   /** Which page family, for the warm stylesheet to target (company site vs ResellerOS product site). */
   kind: "site" | "product";
+  /** On Warm, put the company website's header and footer around the page (WarmSiteChrome.tsx). */
+  siteChrome?: boolean;
 }
 
-export async function WarmScope({ children, kind }: WarmScopeProps) {
+export async function WarmScope({ children, kind, siteChrome = false }: WarmScopeProps) {
   const theme = await getWebsiteTheme(websiteTenantId());
   return (
     <div
@@ -39,7 +42,7 @@ export async function WarmScope({ children, kind }: WarmScopeProps) {
       style={{ display: "contents" }}
     >
       {theme === "warm" && <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />}
-      {children}
+      {theme === "warm" && siteChrome ? <WarmSiteChrome>{children}</WarmSiteChrome> : children}
     </div>
   );
 }

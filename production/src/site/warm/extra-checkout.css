@@ -253,3 +253,14 @@
 :root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="#5F6368"], :root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="rgb(95, 99, 104)"] { color: var(--w-muted) !important; }
 }
 
+
+/* Buy Support: the step number in each heading ("1. Plan", "2. Your details…", "3. Pay") as the
+   design's marigold badge (span.sup-step in support-checkout.tsx). The dot after the number is the
+   badge's own punctuation (.w-step-dot) — the words stay as they are. */
+.w-scope[data-site-theme="warm"] > main.min-h-screen.bg-paper h2 .sup-step {
+  display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; margin-right: 6px;
+  border-radius: 9px; background: var(--w-marigold); color: var(--w-on-marigold);
+  font-size: 15px; font-weight: 800; line-height: 1; vertical-align: middle;
+}
+.w-scope[data-site-theme="warm"] > main.min-h-screen.bg-paper h2 .sup-step .w-step-dot { display: none; }
+.w-scope[data-site-theme="warm"] > main.min-h-screen.bg-paper h2:has(> .sup-step) { display: flex; align-items: center; gap: 4px; }

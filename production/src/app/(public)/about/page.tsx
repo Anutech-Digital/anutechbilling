@@ -60,14 +60,14 @@ export default function AboutPage() {
         <section>
           <h2 className="font-serif text-2xl mb-3">What ResellerOS is</h2>
           <ul className="space-y-2 text-base text-ink-2">
-            <li>✔ A complete CRM for cloud reseller leads + deals</li>
-            <li>✔ A quote builder that knows Indian commitment + billing nuances</li>
-            <li>✔ A GST-compliant invoicing engine (HSN 998313 built-in)</li>
-            <li>✔ A renewal automation engine that won&rsquo;t let a customer churn silently</li>
-            <li>✔ A bank reconciliation module that imports statements + auto-matches</li>
-            <li>✔ Quote links your customers open, accept and pay from — no login needed</li>
-            <li>✔ A WhatsApp + email engine to nudge prospects without leaving the app</li>
-            <li>✔ A reporting layer that finally tells you who&rsquo;s actually profitable</li>
+            <li><span className="ros-mark ros-mark-yes">✔</span> A complete CRM for cloud reseller leads + deals</li>
+            <li><span className="ros-mark ros-mark-yes">✔</span> A quote builder that knows Indian commitment + billing nuances</li>
+            <li><span className="ros-mark ros-mark-yes">✔</span> A GST-compliant invoicing engine (HSN 998313 built-in)</li>
+            <li><span className="ros-mark ros-mark-yes">✔</span> A renewal automation engine that won&rsquo;t let a customer churn silently</li>
+            <li><span className="ros-mark ros-mark-yes">✔</span> A bank reconciliation module that imports statements + auto-matches</li>
+            <li><span className="ros-mark ros-mark-yes">✔</span> Quote links your customers open, accept and pay from — no login needed</li>
+            <li><span className="ros-mark ros-mark-yes">✔</span> A WhatsApp + email engine to nudge prospects without leaving the app</li>
+            <li><span className="ros-mark ros-mark-yes">✔</span> A reporting layer that finally tells you who&rsquo;s actually profitable</li>
           </ul>
         </section>
 
@@ -75,10 +75,10 @@ export default function AboutPage() {
         <section>
           <h2 className="font-serif text-2xl mb-3">What ResellerOS isn&rsquo;t</h2>
           <ul className="space-y-2 text-base text-ink-2">
-            <li>✘ A generic CRM like HubSpot — we&rsquo;re Indian-reseller specific</li>
-            <li>✘ A full accounting system like Tally — but we hand off cleanly</li>
-            <li>✘ A no-code platform — opinionated workflows by design</li>
-            <li>✘ Built for global SaaS — INR, GST, IFSC, GSTIN at the core</li>
+            <li><span className="ros-mark ros-mark-no">✘</span> A generic CRM like HubSpot — we&rsquo;re Indian-reseller specific</li>
+            <li><span className="ros-mark ros-mark-no">✘</span> A full accounting system like Tally — but we hand off cleanly</li>
+            <li><span className="ros-mark ros-mark-no">✘</span> A no-code platform — opinionated workflows by design</li>
+            <li><span className="ros-mark ros-mark-no">✘</span> Built for global SaaS — INR, GST, IFSC, GSTIN at the core</li>
           </ul>
         </section>
 

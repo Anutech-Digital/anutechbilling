@@ -7,6 +7,8 @@
 import type { Metadata } from "next";
 import { PublicShell } from "../_components/public-shell";
 import { UnsubscribeClient } from "./unsubscribe-client";
+import { websiteTenantId } from "@/lib/website-tenant";
+import { getWebsiteTheme } from "@/lib/website-theme.server";
 
 export const metadata: Metadata = {
   title: "Unsubscribe",
@@ -16,10 +18,11 @@ export const metadata: Metadata = {
 export default async function UnsubscribePage(
   props: { searchParams: Promise<Record<string, string | string[] | undefined>> }
 ) {
-  const searchParams = await props.searchParams;
+  const [searchParams, theme] = await Promise.all([props.searchParams, getWebsiteTheme(websiteTenantId())]);
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
   return (
-    <PublicShell title="Unsubscribe" subtitle="Marketing mail band karna">
+    // Warm website theme: the company header and footer surround the page (unsubscribe/layout.tsx), so no second bar.
+    <PublicShell title="Unsubscribe" subtitle="Stop marketing emails" bars={theme !== "warm"}>
       <UnsubscribeClient t={one(searchParams.t)} e={one(searchParams.e)} s={one(searchParams.s)} c={one(searchParams.c)} />
     </PublicShell>
   );

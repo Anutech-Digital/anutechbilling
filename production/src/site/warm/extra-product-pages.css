@@ -455,12 +455,15 @@
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:is(:nth-child(3), :nth-child(4)) li + li { margin-top: 12px; }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:nth-child(3) li + li { margin-top: 0; }
-/* The ✔ / ✘ glyph that starts each line: teal (marigold on the forest card), like the design's icons. */
-.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:is(:nth-child(3), :nth-child(4)) li::first-letter {
-  color: var(--w-teal); font-weight: 800; font-size: 1.15em;
+/* The ✔ / ✘ that starts each line (span.ros-mark in about/page.tsx) as the design's icon chip:
+   teal on mint for "is", marigold on the forest card for "isn't". */
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:is(:nth-child(3), :nth-child(4)) li { display: flex; align-items: flex-start; gap: 12px; }
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:is(:nth-child(3), :nth-child(4)) li > .ros-mark {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-top: -1px;
+  border-radius: 50%; background: var(--w-mint); color: var(--w-teal); font-size: 13px; font-weight: 800; line-height: 1;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:nth-child(4) li { color: #E9F0EC; }
-.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:nth-child(4) li::first-letter { color: var(--w-marigold); }
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:nth-child(4) li > .ros-mark { background: rgba(244, 183, 64, 0.16); color: var(--w-marigold); }
 /* 5 + 6 · Dogfooding (marigold) and Founded by (soft card), side by side. */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) .space-y-8 > section:nth-child(5) {
   grid-column: span 3; background: var(--w-marigold-soft); border: 1px solid #F1DFB3; border-radius: 24px; padding: clamp(22px, 2.6vw, 32px);
