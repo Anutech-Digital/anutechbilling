@@ -147,7 +147,7 @@
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero::before {
   content: ""; position: absolute; z-index: -3; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw);
-  background: #12312A url(/site/warm/hero-1.jpg) center 40% / cover no-repeat;
+  background: #12312A url(/site/warm/5f257eec397cdf71c1d6123a1699738a.jpg) center 40% / cover no-repeat;
   animation: hc-warm-slides 28s infinite;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero::after {
@@ -155,11 +155,11 @@
   background: linear-gradient(90deg, rgba(18,49,42,0.95) 0%, rgba(18,49,42,0.86) 42%, rgba(18,49,42,0.5) 100%);
 }
 @keyframes hc-warm-slides {
-  0%, 22%   { background-image: url(/site/warm/hero-1.jpg); }
-  25%, 47%  { background-image: url(/site/warm/hero-2.jpg); }
-  50%, 72%  { background-image: url(/site/warm/hero-3.jpg); }
-  75%, 97%  { background-image: url(/site/warm/hero-4.jpg); }
-  100%      { background-image: url(/site/warm/hero-1.jpg); }
+  0%, 22%   { background-image: url(/site/warm/5f257eec397cdf71c1d6123a1699738a.jpg); }
+  25%, 47%  { background-image: url(/site/warm/4fcdc64c76937a172bd7f292714e9dd7.jpg); }
+  50%, 72%  { background-image: url(/site/warm/75c877b172658e3f0e2141d829fda05a.jpg); }
+  75%, 97%  { background-image: url(/site/warm/c88525bf772afe60547d448a1a0d13b7.jpg); }
+  100%      { background-image: url(/site/warm/5f257eec397cdf71c1d6123a1699738a.jpg); }
 }
 @media (prefers-reduced-motion: reduce) {
   .anutech-site[data-site-theme="warm"] .hc .hc-hero::before { animation: none; }
@@ -217,7 +217,7 @@
 .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > :not(ul) { grid-column: 1; }
 .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap::after {
   content: ""; grid-column: 2; grid-row: 1 / span 3; width: 100%; aspect-ratio: 16 / 10;
-  background: url(/site/warm/automate.jpg) 65% center / cover no-repeat; border-radius: 24px; box-shadow: 0 24px 60px rgba(18,49,42,0.16);
+  background: url(/site/warm/6964da8db4221a1b70da13bf31e10eff.jpg) 65% center / cover no-repeat; border-radius: 24px; box-shadow: 0 24px 60px rgba(18,49,42,0.16);
 }
 .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 { grid-column: 1 / -1; margin-top: 35px; gap: 8px 40px; }
 .anutech-site[data-site-theme="warm"] .hc #software .hc-tile {
@@ -238,7 +238,7 @@
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof::after {
   content: ""; grid-column: 1 / -1; grid-row: 1; height: clamp(154px, 21vw, 280px);
-  background: url(/site/warm/hero-4.jpg) center 35% / cover no-repeat; border-radius: 22px;
+  background: url(/site/warm/c88525bf772afe60547d448a1a0d13b7.jpg) center 35% / cover no-repeat; border-radius: 22px;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof > * { grid-row: 2; }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-eyebrow { color: #0A4F44; }
@@ -314,7 +314,7 @@
 .anutech-site[data-site-theme="warm"] .hc .hc-final { background: transparent; padding: clamp(30px, 3.84vw, 54px) 0; }
 .anutech-site[data-site-theme="warm"] .hc .hc-final-in {
   max-width: 1240px; flex-direction: column; justify-content: center; text-align: center; gap: 20px;
-  background: #0E6B5C url(/site/warm/cta-bg.jpg) center / cover no-repeat; border-radius: 32px;
+  background: #0E6B5C url(/site/warm/1e5b8e4185287369818512dc1069972d.jpg) center / cover no-repeat; border-radius: 32px;
   padding: clamp(28px, 4vw, 56px) clamp(20px, 3vw, 40px); box-shadow: 0 24px 60px rgba(14,107,92,0.22);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-final-in .hc-h2 { color: #FFFFFF; font-size: clamp(2rem, 4vw, 2.78rem); }
@@ -347,4 +347,34 @@
   .anutech-site[data-site-theme="warm"] .hc :is(.hc-ticks, .hc-actions) { justify-content: center; }
   .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > :is(.hc-eyebrow, .hc-h2, .hc-sub) { text-align: center; }
   .anutech-site[data-site-theme="warm"] .hc .hc-final-in .hc-btn { width: 100%; }
+}
+
+/* ── Shared warm tokens for the per-page files in src/site/warm/ ────────────────────────────
+   Page files colour through these (var(--w-…)) so the dark variant can redefine them in one
+   place. Same values on the ResellerOS product site's wrapper. */
+.anutech-site[data-site-theme="warm"] {
+  --w-bg: #F5F7F4;
+  --w-surface: #FFFFFF;
+  --w-surface-2: #FAFBF9;
+  --w-ink: #17241F;
+  --w-ink-2: #2C3B35;
+  --w-muted: #4B5A53;
+  --w-muted-2: #5E6B65;
+  --w-line: #E2E7E2;
+  --w-line-strong: #CFD8D2;
+  --w-teal: #0E6B5C;
+  --w-teal-dark: #0A4F44;
+  --w-on-teal: #FFFFFF;
+  --w-mint: #DCEFE8;
+  --w-mint-soft: #F2F9F6;
+  --w-forest: #12312A;
+  --w-on-forest: #D5E3DD;
+  --w-marigold: #F4B740;
+  --w-marigold-hover: #E9A92C;
+  --w-on-marigold: #17241F;
+  --w-marigold-soft: #FDF1D6;
+  --w-marigold-ink: #7A4B00;
+  --w-shadow: 0 24px 60px rgba(18, 49, 42, 0.12);
+  --w-radius-card: 20px;
+  --w-radius-btn: 14px;
 }

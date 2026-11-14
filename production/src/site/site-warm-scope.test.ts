@@ -8,14 +8,21 @@
  * stored theme. A theme that is stored but never applied is a switch that does nothing.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(__dirname, "..", "..");
-const css = readFileSync(path.join(root, "src/site/site-warm.css"), "utf8");
+/** site-warm.css plus every per-page file under src/site/warm/ — all held to the same rules. */
+const warmDir = path.join(root, "src/site/warm");
+const warmFiles = ["src/site/site-warm.css", ...readdirSync(warmDir).filter((f) => f.endsWith(".css")).map((f) => `src/site/warm/${f}`)];
+const css = warmFiles.map((f) => readFileSync(path.join(root, f), "utf8")).join("\n");
 const layout = readFileSync(path.join(root, "src/app/(marketing)/layout.tsx"), "utf8");
 
-const SCOPE = '.anutech-site[data-site-theme="warm"]';
+/** The company site's wrapper, or the ResellerOS product site's ((product)/layout.tsx); a dark
+ *  variant may put the root's data-theme in front. Nothing else can match a warm rule. */
+const SCOPES = ['.anutech-site[data-site-theme="warm"]', '.anutech-product[data-site-theme="warm"]'];
+const inScope = (sel: string) =>
+  SCOPES.some((sc) => sel.startsWith(sc) || sel.startsWith(`:root[data-theme="dark"] ${sc}`));
 
 /** Every selector list in the file, comments removed, @media/@supports wrappers unwrapped. */
 function selectors(source: string): string[] {
@@ -42,7 +49,7 @@ describe("site-warm.css is opt-in only", () => {
   });
 
   it("every selector starts with the warm scope", () => {
-    const unscoped = list.filter((s) => !s.startsWith(SCOPE));
+    const unscoped = list.filter((s) => !inScope(s));
     expect(unscoped).toEqual([]);
   });
 });
@@ -109,5 +116,19 @@ describe("site-warm.css never hides page content", () => {
       .flatMap((r) => r.sel.split(/,(?![^(]*\))/).map((s) => s.trim()))
       .filter((s) => !/::(before|after)\s*$/.test(s));
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("every warm stylesheet is loaded where its pages render", () => {
+  const product = readFileSync(path.join(root, "src/app/(product)/layout.tsx"), "utf8");
+  it("the company site's layout imports each page-group file except product.css", () => {
+    for (const f of warmFiles.filter((f) => f.startsWith("src/site/warm/") && !f.endsWith("product.css"))) {
+      expect(layout).toContain(`import "@/${f.replace(/^src\//, "")}";`);
+    }
+  });
+  it("the product site reads the same switch and loads product.css", () => {
+    expect(product).toMatch(/getWebsiteTheme\(websiteTenantId\(\)\)/);
+    expect(product).toMatch(/data-site-theme=\{theme\}/);
+    expect(product).toContain('import "@/site/warm/product.css";');
   });
 });

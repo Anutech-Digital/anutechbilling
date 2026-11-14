@@ -1,0 +1,6 @@
+/**
+ * Warm theme — chrome pages/sections (docs/WEBSITE-THEME.md). Layout and colour only: every
+ * heading, sentence, price and link stays the component's own. Every selector starts with
+ * .anutech-site[data-site-theme="warm"] (or .anutech-product[...] for the product site), so the
+ * Classic site never matches a rule here — src/site/site-warm-scope.test.ts enforces it.
+ */
