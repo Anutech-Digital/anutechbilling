@@ -11,11 +11,10 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { daysUntilRenewal, onRenewalsPage } from "@/lib/renewals/buckets";
-import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 import { renewalStage, type RenewalStage } from "@/lib/renewals/stage";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { canOpenQuotes } from "@/lib/quotes/access";
-import { renewalRisk } from "./risk";
+import { renewalRisk, riskChased } from "./risk";
 import { priorTermDueText } from "./prior-due";
 import { withRenewalQuote } from "./open-renewal-quotes";
 import { classifyRenewals, type RenewalGroups } from "./classify";
@@ -36,7 +35,6 @@ export interface QueueItem {
   amount: RenewalAmount;
   contact: RowContact | undefined;
   atRisk: boolean;
-  riskReason: string;
   /** R-2404 */
   followup: RenewalFollowup;
   decision: RenewalDecision;
@@ -105,7 +103,8 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
       linkedQuote: linkedQuote ?? null,
       renewalPaid: paid(r),
       flags: {
-        atRisk: atRiskIds.has(r.sub.id) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
+        /* R-2756: a Won't renew / stopped row is not a renewal to chase — no at-risk flag on it. */
+        atRisk: atRiskIds.has(r.sub.id) && riskChased(r.sub) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
         vendorHold: vendorHoldState(r.sub, today),
         priorTermUnpaid: priorTermDueText(r.sub),
         promiseBroken: followup.promiseBroken ? { promisedOn: followup.promisedOn } : null,
@@ -135,11 +134,6 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
       docs,
       contact: r.sub.customer_id ? f.contacts?.get(r.sub.customer_id) : undefined,
       atRisk: atRiskIds.has(r.sub.id),
-      riskReason: [
-        ...(isNonRenewing(r.sub) ? ["Customer said they won't renew"] : []),
-        ...(r.daysUntil < 0 ? [`Renewal ${Math.abs(r.daysUntil)}d overdue, not paid`] : []),
-        ...risk.reasons.filter((x) => x !== "Seat usage not checked"),
-      ].join(" · ") || "High renewal risk",
     };
   };
   const items = {} as Record<QueueTab, QueueItem[]>;

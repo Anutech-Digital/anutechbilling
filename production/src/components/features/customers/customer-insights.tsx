@@ -36,6 +36,7 @@ import type { PrimaryContact } from "@/components/features/customers/customer-li
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 import { seatsPhrase, manageSeatsHref } from "@/components/features/subscriptions/seat-words";
 import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
+import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 
 // ════════════════════════════════════════════════════════════════════════
 // Pure logic
@@ -125,11 +126,17 @@ export function deriveCustomerInsights(
   const lifetimePaid = projectPaid + Math.max(0, receivedPayments);
   const overdueCount = invoices.filter((i) => i.status === "overdue").length;
 
-  const nearestRenewal = activeSubs
+  /* R-2756: a subscription marked Won't renew (auto_renew off, R-2225) is not a renewal to send —
+     the next renewal and its "Send renewal quote" come from the renewing ones only; the nearest
+     Won't renew one gets its own next best action ("Won't renew · ends <date>"). */
+  const nearestDate = (list: Subscription[]) => list
     .map((s) => s.renewal_date)
     .filter((d): d is string => !!d)
     .sort()[0];
+  const nearestRenewal = nearestDate(activeSubs.filter((s) => !isNonRenewing(s)));
   const renewalDays = nearestRenewal ? daysBetween(new Date(), nearestRenewal) : null;
+  const endingOn = nearestDate(activeSubs.filter((s) => isNonRenewing(s)));
+  const ending = endingOn ? { on: endingOn, days: daysBetween(new Date(), endingOn) } : null;
 
   const firstName = (c.contact_name || c.name).split(/\s+/)[0];
   const phone = c.contact_phone?.replace(/\s+/g, "");
@@ -142,7 +149,7 @@ export function deriveCustomerInsights(
   const actionableQuote = [...draftQuotes].sort(byNewest)[0] ?? [...openQuotes].sort(byNewest)[0];
 
   const nba = computeNBA({
-    customer: c, firstName, phone, outstanding, overdueCount, renewalDays,
+    customer: c, firstName, phone, outstanding, overdueCount, renewalDays, ending,
     subCount: subs.length, projectReceivable, activeProjectCount: activeProjects.length, projectCount: projects.length,
     draftCount: draftQuotes.length, openCount: openQuotes.length, actionableQuoteId: actionableQuote?.id,
   });
@@ -153,10 +160,12 @@ export function deriveCustomerInsights(
 function computeNBA(args: {
   customer: Customer; firstName: string; phone?: string;
   outstanding: number; overdueCount: number; renewalDays: number | null; subCount: number;
+  /** R-2756: the nearest Won't renew subscription still running — its last day and the days to it. */
+  ending?: { on: string; days: number } | null;
   projectReceivable: number; activeProjectCount: number; projectCount: number;
   draftCount: number; openCount: number; actionableQuoteId?: string;
 }): Nba {
-  const { customer, firstName, phone, outstanding, overdueCount, renewalDays, subCount, projectReceivable, activeProjectCount, projectCount, draftCount, openCount, actionableQuoteId } = args;
+  const { customer, firstName, phone, outstanding, overdueCount, renewalDays, ending, subCount, projectReceivable, activeProjectCount, projectCount, draftCount, openCount, actionableQuoteId } = args;
   const canMessage = !!phone || !!customer.contact_email;
   const channel: "whatsapp" | "email" = phone ? "whatsapp" : "email";
 
@@ -182,7 +191,7 @@ function computeNBA(args: {
     };
   }
 
-  // 2. Renewal coming up.
+  // 2. Renewal coming up (renewing subscriptions only — R-2756).
   if (renewalDays != null && renewalDays <= 30) {
     return {
       tone: "warning",
@@ -190,6 +199,17 @@ function computeNBA(args: {
       title: renewalDays < 0 ? `Renewal ${-renewalDays} day(s) overdue` : `Renewal due in ${renewalDays} day(s)`,
       body: "Review the renewal quote and send it before service lapses.",
       cta: { label: "Send renewal quote", kind: "quote" },
+    };
+  }
+
+  // 2b. R-2756: nothing to renew this month, but a Won't renew subscription ends within 30 days — say so,
+  //     never "Send renewal quote". Only while it still runs (a passed date has ended, not "ends").
+  if (ending && ending.days >= 0 && ending.days <= 30) {
+    return {
+      tone: "info",
+      icon: "clock",
+      title: `Won't renew · ends ${formatDate(ending.on)}`,
+      body: "The customer said they won't renew — no renewal quote or reminder goes out. Parts still due are billed. If they change their mind, use Undo Won't renew on the subscription.",
     };
   }
 
@@ -580,9 +600,12 @@ export function SubscriptionList({ subs }: { subs: Subscription[] }) {
                 ) : s.renewal_date ? (
                   <span>Renews {formatDate(s.renewal_date)}</span>
                 ) : null}
-                {renewalDays != null && renewalDays <= 30 && (
+                {/* R-2756: a Won't renew subscription ends — it does not renew. */}
+                {renewalDays != null && renewalDays >= 0 && renewalDays <= 30 && isNonRenewing(s) ? (
+                  <span className="text-ink-2 font-medium">Won&apos;t renew · ends in {renewalDays}d</span>
+                ) : renewalDays != null && renewalDays <= 30 && !isNonRenewing(s) ? (
                   <span className="text-amber-ink font-medium">renews in {renewalDays}d</span>
-                )}
+                ) : null}
               </div>
             </div>
             <div className="text-right flex-shrink-0">
