@@ -52,7 +52,7 @@ import { downloadPayslipPDF } from "@/lib/pdf";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { toastError } from "@/lib/errors/toast-error";
 import { periodLabel } from "@/lib/payroll/period-label";
-import { salaryInForce, revisionMonth, revisionsByEmployee, arrearsPayableIn } from "@/lib/payroll/salary-revision";
+import { salaryInForce, revisionMonth, revisionsByEmployee, arrearsPayableIn, structureForGross } from "@/lib/payroll/salary-revision";
 import { SalaryStatusCell } from "./salary-status-cell";
 import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
@@ -793,6 +793,38 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
     if (ctcCleared) setCtcTyped(false);
     setBasicMonthly(String(b)); setBasicByHand(false);
   }
+  /* R-2773 (Hitesh 14 Nov, feedback 043e6753): a gross typed with no CTC brings its Basic along —
+     ONE rule with Revise salary (salary-revision.ts structureForGross): a NEW employee gets the
+     company policy Basic % (the box used to stay empty → saved as "not set" → payroll took the
+     whole gross as Basic, 100%); an existing employee keeps their own Basic share (not set stays
+     not set). A Basic typed by hand in this dialog, or a Basic % picked, wins. */
+  const [basicTouched, setBasicTouched] = React.useState(false);
+  function policyBasicFor(grossText: string, basicPctNow: number): string | null {
+    const g = Math.max(0, Math.round(Number(grossText) || 0));
+    if (g <= 0) return null;
+    const da = Math.max(0, Math.round(Number(daMonthly) || 0));
+    const saved = employee && employee.monthly_gross > 0
+      ? { monthly_gross: employee.monthly_gross, basic_monthly: employee.basic_monthly, da_monthly: employee.da_monthly ?? 0 }
+      : { monthly_gross: 0, basic_monthly: null, da_monthly: da };
+    const b = structureForGross(saved, g, basicPctNow).basic_monthly;
+    return b === null ? "" : String(Math.min(b, Math.max(0, g - da)));
+  }
+  function basicForTypedGross(grossText: string) {
+    if (basicPctOfGross !== null) { setBasicFromPct(basicPctOfGross, grossText); return; }
+    if (!noCtc || basicLocked || basicTouched) return;
+    const b = policyBasicFor(grossText, policy.basicPct);
+    if (b === null) return;
+    setBasicMonthly(b); setBasicByHand(false);
+  }
+  /* The policy can arrive after a new employee's gross was typed — the Basic follows it then. */
+  const policyBasicPct = policyQ.data?.basicPct;
+  React.useEffect(() => {
+    if (employee || policyBasicPct === undefined || basicTouched || basicPctOfGross !== null || !noCtc) return;
+    const b = policyBasicFor(gross, policyBasicPct);
+    if (b !== null) setBasicMonthly(b);
+    // Only when the policy % arrives / changes — typing goes through basicForTypedGross.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policyBasicPct]);
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves — only when the company is ESI-registered (R-2700 policy).
   // Existing employees keep their saved value.
@@ -939,7 +971,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
               </div>
 
               <Field htmlFor="payroll-monthly-gross-salary-base" label="Monthly Gross Salary (₹, Base for Pay Slip)">
-                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => { if (ctcCleared) setCtcTyped(false); else if (ctcTyped) setGrossByHand(true); setGross(e.target.value); if (basicPctOfGross !== null) setBasicFromPct(basicPctOfGross, e.target.value); }} placeholder="e.g. 46997" />
+                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => { if (ctcCleared) setCtcTyped(false); else if (ctcTyped) setGrossByHand(true); setGross(e.target.value); basicForTypedGross(e.target.value); }} placeholder="e.g. 46997" />
                 {/* R-2700: one line — how this gross comes from the CTC (or that it is the saved / hand-typed one). */}
                 <p data-testid="ctc-formula" className="mt-1 text-xs text-ink-2">{ctcFormulaText(ctcBreakdown, salaryByRevision ? undefined : Number(gross) || 0)}{salaryByRevision && ctcTyped ? " This employee's gross is set by salary revisions — use Revise salary to change it." : ""}</p>
                 {/* R-2699: an increment from a month goes through Revise salary (history + old salary for earlier months). */}
@@ -1010,7 +1042,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                               if (typed && customBasic.trim() === "") setBasicBeforeCustom(basicMonthly);
                               setBasicMonthly(typed ? e.target.value : (basicBeforeCustom ?? ctcBase.basic));
                               if (!typed) setBasicBeforeCustom(null);
-                              setBasicByHand(typed);
+                              setBasicByHand(typed); setBasicTouched(typed); // R-2773: a typed Basic is kept when the gross changes
                             }
                           }}
                           placeholder={`Auto (${rupee(ctcBreakdown?.basicMonthly ?? 0)})`}
@@ -1312,7 +1344,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label htmlFor="payroll-basic-month" className="block text-xs font-medium text-ink-2 mb-1">Basic (₹/month)</label>
-                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setBasicPctOfGross(null); setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
+                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setBasicPctOfGross(null); setBasicTouched(true); setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={gross ? String(Math.round((Number(gross) || 0) * policy.basicPct / 100)) : "e.g. 15000"} />
                       </div>
                       <div>
                         <label htmlFor="payroll-da-month" className="block text-xs font-medium text-ink-2 mb-1">DA (₹/month)</label>
