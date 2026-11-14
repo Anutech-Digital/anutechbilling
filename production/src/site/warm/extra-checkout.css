@@ -1,1 +1,255 @@
-/** Warm theme — extra pages (checkout), see extra-pages.css. Scoped under .w-scope[data-site-theme="warm"]. */
+/** Warm theme — extra pages (checkout): /buy/workspace (laptop page and the phone flow), its
+ *  /thanks page, /buy/support and its /thanks page. Artboards BuyWorkspace, OrderThanks, BuySupport.
+ *
+ *  Every rule is scoped under .w-scope[data-site-theme="warm"] (site-warm-scope.test.ts) AND to these
+ *  pages' own root element — this file loads on every WarmScope page (ad landings, product pages…),
+ *  so a bare `.w-scope > *` would restyle pages other files own. The roots:
+ *    div.min-h-screen:has(#talk-to-us)            — /buy/workspace, laptop page (both states)
+ *    .m-buy                                       — /buy/workspace, phone flow
+ *    div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid
+ *                                                 — /buy/workspace/thanks (order, not found, confirming)
+ *    main.min-h-screen.bg-paper                   — /buy/support and /buy/support/thanks
+ *
+ *  These pages paint with the APP's Tailwind tokens (bg-paper, text-ink, bg-amber… = hsl(var(--…))).
+ *  Re-pointing those triplets on the page root turns the whole page warm in one rule; the rest
+ *  fixes what the design draws differently (marigold buttons, forest hero and bands, Jakarta
+ *  headings). Google's own colours (the "Google" wordmark letters) and WhatsApp's green stay.
+ */
+
+/* ── Tokens: the app's palette → the warm palette (light) ─────────────────────────────────── */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) {
+  --paper: 100 16% 96%;          /* #F5F7F4  = --w-bg */
+  --paper-2: 108 15% 94%;        /* #EDF1EC */
+  --ink: 157 22% 12%;            /* #17241F  = --w-ink */
+  --ink-2: 156 15% 20%;          /* #2C3B35 */
+  --ink-3: 152 9% 32%;           /* #4B5A53  = --w-muted */
+  --ink-4: 152 6% 39%;           /* #5E6B65 */
+  --hairline: 120 9% 90%;        /* #E2E7E2  = --w-line */
+  --hairline-strong: 140 10% 83%;/* #CFD8D2 */
+  --input-border: 150 6% 55%;    /* #86948D — 3:1 on the page for field edges */
+  --amber: 170 77% 24%;          /* #0E6B5C  = --w-teal (accent lines, links, selected) */
+  --amber-soft: 158 37% 90%;     /* #DCEFE8  = --w-mint */
+  --amber-ink: 170 78% 17%;      /* #0A4F44  = --w-teal-dark */
+  --on-primary: 0 0% 100%;
+  --emerald: 170 77% 24%;        /* ticks and "valid" lines in the design's teal */
+  --emerald-soft: 158 37% 90%;
+  --emerald-ink: 170 78% 17%;
+  --background: 100 16% 96%;
+  --foreground: 157 22% 12%;
+  --font-serif: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-sans: var(--font-site-body), Inter, system-ui, sans-serif;
+  --ck-surface: var(--w-surface);
+  background: var(--w-bg);
+  color: var(--w-ink);
+  font-family: var(--font-sans);
+}
+
+/* Headings: the design's bold Plus Jakarta, tight tracking (the app draws them in a light serif). */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .font-serif { font-weight: 800 !important; letter-spacing: -0.025em; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .font-serif .font-sans { font-weight: 400; letter-spacing: 0; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is(h1, h2, h3) { font-family: var(--font-serif); }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) main h1 { letter-spacing: -0.03em; }
+
+/* extra-forms.css styles the /unsubscribe page through `.min-h-screen.bg-paper:has(> header) > main`
+   (a 760px column) — that also matches this laptop page and the order /thanks page, which have a
+   top-level <header> too. Undo the column here; these pages lay out their own sections. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > main { max-width: none; padding: 0; margin: 0; }
+
+/* ── Buttons ──────────────────────────────────────────────────────────────────────────────── */
+/* Primary fill: marigold with dark text (design), wherever the page uses the amber fill. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-amber { background: var(--w-marigold) !important; color: var(--w-on-marigold) !important; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-amber:hover:not(:disabled) { background: var(--w-marigold-hover) !important; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) button.bg-amber, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) a.bg-amber { border-radius: 12px; font-weight: 700; }
+/* the active step's number badge is also bg-amber — keep it a circle */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) span.bg-amber.rounded-full { border-radius: 9999px; }
+/* Secondary dark fill: the design's ink button — teal-dark on hover */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is(a, button).bg-ink:hover { background: var(--w-teal-dark) !important; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .focus-visible\:ring-amber:focus-visible { --tw-ring-color: var(--w-teal); }
+
+/* ── /buy/workspace (laptop page) ─────────────────────────────────────────────────────────── */
+/* Header: a white bar like the design's. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > header.sticky { background: color-mix(in srgb, var(--w-surface) 96%, transparent); border-bottom-color: var(--w-line); }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > header.sticky nav a:hover, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > header.sticky nav button:hover { background: var(--w-mint-soft); color: var(--w-teal); }
+
+/* Hero: the photo under a forest-green veil (design), not the app's near-black. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="hero-dim"] {
+  background: linear-gradient(90deg, rgba(18, 49, 42, 0.9) 0%, rgba(18, 49, 42, 0.84) 58%, rgba(18, 49, 42, 0.5) 100%) !important;
+}
+@media (max-width: 1023px) {
+  .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="hero-dim"] { background: rgba(18, 49, 42, 0.86) !important; }
+}
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="hero"], .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="mobile-hero"] { border-bottom: 0; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is([data-testid="hero-text"], [data-testid="mobile-hero"]) h1 { color: #FFFFFF; font-weight: 800; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is([data-testid="hero-text"], [data-testid="mobile-hero"]) .text-orange-300 { color: var(--w-marigold); }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is([data-testid="hero-text"], [data-testid="mobile-hero"]) .text-emerald-300 { color: #7FD8BF; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is([data-testid="hero-text"], [data-testid="mobile-hero"]) .bg-emerald-300 { background: #5ED0B3; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is([data-testid="hero-text"], [data-testid="mobile-hero"]) .bg-ink\/40 { background: rgba(18, 49, 42, 0.55); border-color: rgba(255, 255, 255, 0.28); }
+/* hero buttons: "See plans" marigold (above), the trial button an outlined white pill */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="hero-text"] button.border { border-radius: 12px; font-weight: 700; }
+/* the "Your price" card: rounder, softer forest shadow */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="hero"] .flex-\[1_1_360px\] { border-radius: var(--w-radius-card); border-color: transparent; box-shadow: 0 30px 60px -24px rgba(12, 36, 30, 0.55); }
+
+/* Plan cards: white cards, the chosen one ringed in teal with a teal "MOST CHOSEN" pill. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="plan-grid"] > * { border-radius: 18px; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="plan-grid"] .bg-ink.rounded-full { background: var(--w-teal) !important; color: var(--w-on-teal) !important; letter-spacing: 0.06em; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="plan-grid"] .bg-paper { background: var(--w-surface-2) !important; border: 1px solid var(--w-line); }
+
+/* Plan "Buy" buttons carry an amber border too — marigold, not the teal it now resolves to */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-amber.border, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-amber.border-amber { border-color: var(--w-marigold) !important; }
+/* Small caps labels (after-you-pay steps, promise numbers): the design's bold sans caps in teal */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) li.border-t-2 > .font-mono, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-white > .font-mono.text-amber-ink:first-child {
+  font-family: var(--font-sans); font-weight: 700; font-size: 12px; letter-spacing: 0.08em;
+}
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) li.border-t-2 { border-top-width: 3px; }
+/* Section eyebrows / accent rules that used the amber: the design's teal (via the token), bold caps. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #faq .bg-white, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #why-us .bg-white, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #who-you-deal-with .bg-white { border-radius: 16px; }
+
+/* "Prefer to talk it through?" — the design's forest band with a marigold Call button. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink { background: var(--w-forest) !important; color: var(--w-on-forest) !important; border-radius: 28px; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink h2 { color: #FFFFFF; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink .text-paper\/85 { color: var(--w-on-forest); }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink .text-paper\/70 { color: rgba(213, 227, 221, 0.78); }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us a.bg-paper { background: var(--w-marigold) !important; color: var(--w-on-marigold) !important; border-radius: 12px; font-weight: 700; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us a.bg-paper:hover { background: var(--w-marigold-hover) !important; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us :is(a, button).border { color: #FFFFFF !important; border-color: rgba(255, 255, 255, 0.45) !important; border-radius: 12px; font-weight: 700; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us :is(a, button).border:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* Checkout: rounder step cards and summary like the design's. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #checkout section.bg-white, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #checkout aside, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #checkout .rounded-\[14px\] { border-radius: 18px; }
+
+/* Test-mode notice: the design's marigold note rather than the teal of "selected". */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [role="status"].bg-amber-soft.border-b, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > p.bg-amber-soft, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > div > p.bg-amber-soft:first-child {
+  background: var(--w-marigold-soft) !important; color: var(--w-marigold-ink) !important; border-color: rgba(122, 75, 0, 0.18) !important;
+}
+
+/* ── /buy/workspace (phone flow) ──────────────────────────────────────────────────────────── */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper).m-buy [data-testid="mobile-hero"] { color: #FFFFFF; }
+
+/* ── /buy/support ─────────────────────────────────────────────────────────────────────────── */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #sup-plan-h, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #sup-det-h { font-size: 20px; font-weight: 800; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) main > div > h1, .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > div > h1 { font-weight: 800; letter-spacing: -0.03em; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) section[aria-labelledby="sup-plan-h"], .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) section[aria-labelledby="sup-det-h"] { border-radius: 22px; padding: 24px; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [role="radiogroup"][aria-label="Plan"] > button { border-radius: 16px; }
+/* the Pay card: the design's forest panel. Its own tokens flip so every line inside reads light. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) aside[aria-labelledby="sup-sum-h"] {
+  --ink: 0 0% 100%;
+  --ink-2: 153 22% 87%;          /* #D5E3DD on forest */
+  --ink-3: 153 14% 75%;
+  --hairline: 160 25% 28%;
+  --amber-ink: 46 87% 72%;       /* links: light marigold on forest */
+  --rose: 0 90% 80%;
+  background: var(--w-forest) !important; border-color: var(--w-forest) !important; border-radius: 24px; padding: 24px;
+  color: var(--w-on-forest);
+}
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) aside[aria-labelledby="sup-sum-h"] #sup-sum-h { font-size: 20px; font-weight: 800; color: #FFFFFF; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) aside[aria-labelledby="sup-sum-h"] dl > div:last-child {
+  background: rgba(255, 255, 255, 0.07); border: 0; border-radius: 14px; padding: 14px; margin-top: 12px; align-items: center;
+}
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) aside[aria-labelledby="sup-sum-h"] dl > div:last-child dd { color: var(--w-marigold); font-family: var(--font-serif); font-size: 26px; font-weight: 800; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) aside[aria-labelledby="sup-sum-h"] a:not(.bg-amber) { color: #F4D27A; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) aside[aria-labelledby="sup-sum-h"] input[type="checkbox"] { accent-color: var(--w-marigold); }
+
+/* ── /buy/workspace/thanks and /buy/support/thanks ────────────────────────────────────────── */
+/* Order hero: the design's teal check disc, its mint glow behind. */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="#10B981 0%, #059669"], .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="rgb(16, 185, 129) 0%"] { background: var(--w-teal) !important; box-shadow: 0 0 0 14px var(--w-mint), 0 16px 34px rgba(14, 107, 92, 0.25) !important; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) section.relative.overflow-hidden[style*="radial-gradient"] {
+  background: radial-gradient(ellipse 34% 75% at 50% -10%, var(--w-mint) 0 70%, transparent 71%), var(--w-bg) !important;
+}
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="background: rgb(16, 185, 129)"], .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="#10B981"]:not([style*="gradient"]) { background: var(--w-teal) !important; }
+/* the not-found / confirming card: white, rounder, a mint disc for the icon */
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper).grid > .max-w-md { background: var(--w-surface) !important; border-radius: var(--w-radius-card); box-shadow: var(--w-shadow); border-color: transparent; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper).grid > .max-w-md .w-16.rounded-full { background: var(--w-mint) !important; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper).grid > .max-w-md .w-16.rounded-full .text-ink-3 { color: var(--w-teal); }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .max-w-xl > section.bg-white { border-radius: var(--w-radius-card); box-shadow: var(--w-shadow); border-color: transparent; padding: 28px; }
+.w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .max-w-xl > section.bg-white h1 { font-weight: 800; letter-spacing: -0.02em; }
+
+/* ── Dark ─────────────────────────────────────────────────────────────────────────────────── */
+
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) {
+  --paper: 158 12% 13%;          /* #1E2623 = dark --w-bg */
+  --paper-2: 153 11% 16%;        /* #252E2A */
+  --ink: 146 19% 93%;            /* #E9F0EC */
+  --ink-2: 153 14% 85%;
+  --ink-3: 152 12% 72%;
+  --ink-4: 153 9% 61%;
+  --hairline: 157 12% 26%;
+  --hairline-strong: 157 11% 33%;
+  --input-border: 156 8% 47%;
+  --amber: 165 55% 59%;          /* #5ED0B3 light teal */
+  --amber-soft: 163 25% 25%;     /* #2F4F46 */
+  --amber-ink: 162 60% 73%;      /* #8FE3CA */
+  --on-primary: 157 22% 12%;
+  --emerald: 165 55% 59%;
+  --emerald-soft: 163 25% 25%;
+  --emerald-ink: 162 60% 73%;
+  --background: 158 12% 13%;
+  --foreground: 146 19% 93%;
+  color-scheme: dark;
+}
+/* The components' white cards and fields → the dark card colour. */
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-white { background: var(--w-surface) !important; }
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-white\/95 { background: color-mix(in srgb, var(--w-surface) 95%, transparent) !important; }
+/* the header's logo tile stays white: a tenant's logo is drawn for a light ground */
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > header.sticky img.bg-white, :root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) footer img.bg-white { background: #FFFFFF !important; }
+/* dark ink buttons (Call, Check, coupon Apply): keep them a dark-on-light pair that reads */
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is(a, button).bg-ink { background: var(--w-mint) !important; color: var(--w-ink) !important; }
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="plan-grid"] .bg-ink.rounded-full { background: var(--w-teal) !important; color: var(--w-on-teal) !important; }
+/* hero badge and the support band keep their dark look */
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is([data-testid="hero-text"], [data-testid="mobile-hero"]) .bg-ink\/40 { background: rgba(18, 49, 42, 0.55) !important; }
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink { background: var(--w-forest) !important; border: 1px solid var(--w-line); }
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink .text-paper\/85, :root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink .text-paper\/70 { color: var(--w-on-forest); }
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us :is(a, button).border { color: #FFFFFF !important; }
+/* inverted text-paper on teal/ink fills stays readable */
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-emerald.text-white { color: var(--w-on-teal) !important; }
+/* the support Pay panel: a forest card with a light edge on the dark page */
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) aside[aria-labelledby="sup-sum-h"] { background: var(--w-forest) !important; border-color: var(--w-line) !important; }
+/* thanks: the order view's simulated-order banner and the plain card */
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="#FEF3C7"] { background: var(--w-marigold-soft) !important; color: var(--w-marigold-ink) !important; }
+/* Google's grey "Workspace" (#5F6368) all but disappears on the dark card — lift it to the muted text colour */
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="#5F6368"], :root[data-theme="dark"] .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="rgb(95, 99, 104)"] { color: var(--w-muted) !important; }
+@media (prefers-color-scheme: dark) {
+
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) {
+  --paper: 158 12% 13%;          /* #1E2623 = dark --w-bg */
+  --paper-2: 153 11% 16%;        /* #252E2A */
+  --ink: 146 19% 93%;            /* #E9F0EC */
+  --ink-2: 153 14% 85%;
+  --ink-3: 152 12% 72%;
+  --ink-4: 153 9% 61%;
+  --hairline: 157 12% 26%;
+  --hairline-strong: 157 11% 33%;
+  --input-border: 156 8% 47%;
+  --amber: 165 55% 59%;          /* #5ED0B3 light teal */
+  --amber-soft: 163 25% 25%;     /* #2F4F46 */
+  --amber-ink: 162 60% 73%;      /* #8FE3CA */
+  --on-primary: 157 22% 12%;
+  --emerald: 165 55% 59%;
+  --emerald-soft: 163 25% 25%;
+  --emerald-ink: 162 60% 73%;
+  --background: 158 12% 13%;
+  --foreground: 146 19% 93%;
+  color-scheme: dark;
+}
+/* The components' white cards and fields → the dark card colour. */
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-white { background: var(--w-surface) !important; }
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-white\/95 { background: color-mix(in srgb, var(--w-surface) 95%, transparent) !important; }
+/* the header's logo tile stays white: a tenant's logo is drawn for a light ground */
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) > header.sticky img.bg-white, :root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) footer img.bg-white { background: #FFFFFF !important; }
+/* dark ink buttons (Call, Check, coupon Apply): keep them a dark-on-light pair that reads */
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is(a, button).bg-ink { background: var(--w-mint) !important; color: var(--w-ink) !important; }
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [data-testid="plan-grid"] .bg-ink.rounded-full { background: var(--w-teal) !important; color: var(--w-on-teal) !important; }
+/* hero badge and the support band keep their dark look */
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) :is([data-testid="hero-text"], [data-testid="mobile-hero"]) .bg-ink\/40 { background: rgba(18, 49, 42, 0.55) !important; }
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink { background: var(--w-forest) !important; border: 1px solid var(--w-line); }
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink .text-paper\/85, :root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us > div.bg-ink .text-paper\/70 { color: var(--w-on-forest); }
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) #talk-to-us :is(a, button).border { color: #FFFFFF !important; }
+/* inverted text-paper on teal/ink fills stays readable */
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) .bg-emerald.text-white { color: var(--w-on-teal) !important; }
+/* the support Pay panel: a forest card with a light edge on the dark page */
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) aside[aria-labelledby="sup-sum-h"] { background: var(--w-forest) !important; border-color: var(--w-line) !important; }
+/* thanks: the order view's simulated-order banner and the plain card */
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="#FEF3C7"] { background: var(--w-marigold-soft) !important; color: var(--w-marigold-ink) !important; }
+/* Google's grey "Workspace" (#5F6368) all but disappears on the dark card — lift it to the muted text colour */
+:root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="#5F6368"], :root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] > :is(div.min-h-screen:has(#talk-to-us), .m-buy, div.min-h-screen.bg-paper:has(a[href="/buy/workspace"]), div.min-h-screen.bg-paper.grid, main.min-h-screen.bg-paper) [style*="rgb(95, 99, 104)"] { color: var(--w-muted) !important; }
+}
+
