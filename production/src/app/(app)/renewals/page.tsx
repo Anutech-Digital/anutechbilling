@@ -79,7 +79,7 @@ import {
 } from "./queue";
 import { buildQueueItems, firstRows, QUEUE_PAGE_ROWS, type QueueItem } from "./queue-items";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
-import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
+import { monthOf, renewalTiles, tileMatches, renewedRowMatches, reconcileWindows, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
 import { RenewalReminderDialog, type ReminderDialogState } from "./reminder-dialog";
 import { RenewalTileRow, TileViewBar } from "./tiles-card";
 import { ForecastPanel } from "./forecast-panel";
@@ -594,12 +594,6 @@ export default function RenewalsPage() {
   /* R-2562: "unread" = failed with nothing to show — a failed background refetch keeps the last good
      figure, as on Companies (collectLineState) and the dashboard (loadView). */
   const projectsUnread = projRecvQ.isError && projRecvQ.data === undefined;
-  const duesLine = React.useMemo(() => {
-    if (!subs || projRecvQ.isPending) return null;
-    // The page's own rows (onRenewalsPage) — what their "Unpaid balance" badges add up to.
-    const renewalDues = subs.filter(onRenewalsPage).reduce((t, s) => t + subscriptionDue(s), 0);
-    return subscriptionDuesLine(toChaseSummary(subs, projRecvQ.data ?? {}), renewalDues, projectsUnread);
-  }, [subs, projRecvQ.data, projRecvQ.isPending, projectsUnread]);
   const qc = useQueryClient();
   const router = useRouter();
   /* R-118 / R-2403: ?bucket= holds the tab; the old values (urgent / upcoming / future / risk —
@@ -664,6 +658,15 @@ export default function RenewalsPage() {
   }) : null), [subs, openRenewalMap, quoteInfo, quoteStatusMap, lastDocsQ.data, docsLoadingAll, fuData, contacts, me?.role, graceDays, todayDate, todayIst, holds]);
   /* The tab from ?bucket= (old values map through resolveBucket) and every tab's narrowed rows —
      kept until the search / filters / sort / data change, so a tab click only swaps the list shown. */
+  /* R-2741 (audit 14 Nov: "₹4,82,128 unpaid" matched nothing): the header's figure is the rows' OWN owed amounts
+     (R-2818's rule — invoices still due + an instalment not invoiced yet) added up, not subscriptions.outstanding_amount.
+     Nothing shows while the documents are still being read, so the figure never flips after load. */
+  const duesLine = React.useMemo(() => {
+    if (!subs || projRecvQ.isPending || !built || docsLoadingAll) return null;
+    const renewalDues = subs.filter(onRenewalsPage).reduce((t, s) => t + subscriptionDue(s), 0);
+    const rowsOwed = built.allItems.reduce((t, i) => t + (i.owed?.total ?? 0), 0);
+    return subscriptionDuesLine(toChaseSummary(subs, projRecvQ.data ?? {}), renewalDues, projectsUnread, rowsOwed);
+  }, [subs, built, docsLoadingAll, projRecvQ.data, projRecvQ.isPending, projectsUnread]);
   const counts = React.useMemo(
     () => (built ? Object.fromEntries(QUEUE_TABS.map((t) => [t, built.tabs[t].length])) as Record<QueueTab, number> : null),
     [built],
@@ -793,13 +796,18 @@ export default function RenewalsPage() {
   /* R-2751: this month's Forecast bar = the Renewed tile's "of ₹X due in <month>" (paid + still due, before GST). */
   const forecast = forecastWithThisMonth(forecastByDate, tileFigures.renewedMonth, month);
   const paidSubs = new Set(paidRenewalsInMonth(monthQuotes ?? [], month).map((q) => q.renewal_subscription_id ?? ""));
+  /* R-2741: each tile's tab rows = tile rows + the closed rows it leaves out (tiles.ts reconcileWindows). */
+  const windows = reconcileWindows([...tileRowOf.values()], month);
 
   const bucketTab = resolved.tab;
   const shown = narrowed.tabs;
   /* R-2405: a pressed tile lists its rows from every tab (search / filters / sort still apply). */
   /* R-2586: Later rows are not tile rows (no tileRowOf entry) — a pressed tile never lists them. */
+  /* R-2741: the Renewed tile lists every renewed row — also one whose date moved on into Later (no tile row for it). */
+  const renewedRowOf = (i: QueueItem): TileRow => ({ id: i.sub.id, tab: "later", statusKey: i.status.key, amount: 0, renewalDate: i.sub.renewal_date });
   const tileShown = narrowed.narrow(tile ? allItems.filter((i) => {
     const tr = tileRowOf.get(i.sub.id);
+    if (tile === "renewedMonth") return renewedRowMatches(renewedRowOf(i), month, paidSubs);
     return !!tr && tileMatches(tile, tr, month, paidSubs);
   }) : []);
 
@@ -1061,7 +1069,7 @@ export default function RenewalsPage() {
       </div>
 
       {/* R-2405: the tiles — count + renewal ₹ in the table's own money; a press lists those rows. */}
-      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} />
+      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} windows={windows} narrowed={filtered || search.trim() !== ""} />
 
       {/* R-2266: ONE strip, closed by default (remembered per user). R-2405: the tiles above carry
           the money and counts (one fact, one place) — the strip keeps the forecast and the
@@ -1105,7 +1113,13 @@ export default function RenewalsPage() {
       <Card flush>
         <div className="px-3 pt-3 sm:px-4">
           {tile ? (
-            <TileViewBar tile={tile} count={tileShown.length} onClear={() => pickTile(tile)} />
+            <TileViewBar
+              tile={tile}
+              count={tileShown.length}
+              note={tile === "renewedMonth" && !(filtered || search.trim()) && tileFigures.renewedMonth.count > tileShown.length
+                ? `· ${tileFigures.renewedMonth.count - tileShown.length} more renewed (paid, no longer on the list)` : undefined}
+              onClear={() => pickTile(tile)}
+            />
           ) : (
             <TabBar
               value={bucketTab}
