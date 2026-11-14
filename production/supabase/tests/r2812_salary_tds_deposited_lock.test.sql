@@ -20,6 +20,10 @@
 --   I   The edit-only setting naming ANOTHER salary does not open a direct Undo.
 --   J   salary_tds_lock: the owner sees 'deposited'; a sales login and another company's owner get
 --       an empty answer.
+--   K   the table's own rights (RLS lets payroll roles delete / update salary_payments) meet the same
+--       lock: direct delete, TDS change on a deposited month, LOP change in a filed quarter refused;
+--       notes / bank account still change.
+--   L   TDS-0 salary in a deposited month: Edit / Undo work; an Edit that ADDS TDS is refused.
 --
 -- Run (needs 20261114083830_r2772 + this migration on the DB):
 --   node scripts/test-sql.mjs --local supabase/tests/r2812_salary_tds_deposited_lock.test.sql
@@ -96,7 +100,7 @@ begin
   exception when others then get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
   end;
   if v_msg is null then raise exception 'FAIL A: Undo of a salary whose TDS month is deposited went through'; end if;
-  if v_msg not like 'The ₹2000 TDS on R2812 Meena''s Oct 2026 salary is already deposited (TDS challan CH-OCT of ₹2000 paid on 06 Nov 2026 for Oct 2026).%'
+  if v_msg not like 'TDS for Oct 2026 is already deposited (TDS challan CH-OCT of ₹2000 paid on 06 Nov 2026 for Oct 2026) and R2812 Meena''s salary carries ₹2000 of it. Undoing it%later month''s TDS%'
      or v_msg not like '%use Edit and keep the TDS at ₹2000%' then
     raise exception 'FAIL A1: message: %', v_msg;
   end if;
@@ -128,7 +132,7 @@ begin
                                        'c2812000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null, 0);
   exception when others then get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
   end;
-  if v_msg is null or v_msg not like '%already deposited (TDS challan CH-OCT%Edit can change this salary but not its TDS — keep it at ₹2000%' then
+  if v_msg is null or v_msg not like 'TDS for Oct 2026 is already deposited (TDS challan CH-OCT%Edit can change this salary but not its TDS — keep it at ₹2000%' then
     raise exception 'FAIL B3: TDS change on a deposited month: %', coalesce(v_msg, 'went through');
   end if;
   select * into v_s from public.salary_payments where id = v_new;
@@ -155,7 +159,7 @@ begin
     perform public.delete_salary_payment(v_id);
   exception when others then get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
   end;
-  if v_msg is null or v_msg not like 'The 24Q for Q2 FY 2026-27 (Jul – Sep 2026) is marked filed (30 Oct 2026) and has R2812 Asha''s Aug 2026 salary in it (TDS ₹2000).%file a correction 24Q%mark that 24Q not filed%' then
+  if v_msg is null or v_msg not like 'The TDS return (24Q / 26Q) for Q2 FY 2026-27 (Jul – Sep 2026) is marked filed (30 Oct 2026) and has R2812 Asha''s Aug 2026 salary in it (TDS ₹2000). Undoing it%file a correction return%mark that return not filed%' then
     raise exception 'FAIL E1: Undo in a filed quarter: %', coalesce(v_msg, 'went through');
   end if;
   if v_hint is distinct from '/compliance' then raise exception 'FAIL E2: hint %', v_hint; end if;
@@ -208,7 +212,7 @@ begin
     perform public.delete_salary_payment(v_id);
   exception when others then get stacked diagnostics v_msg = message_text;
   end;
-  if v_msg is null or v_msg not like 'The 24Q for Q1 FY 2026-27 (Apr – Jun 2026) is marked filed%R2812 Ravi''s May 2026 salary%' then
+  if v_msg is null or v_msg not like 'The TDS return (24Q / 26Q) for Q1 FY 2026-27 (Apr – Jun 2026) is marked filed%R2812 Ravi''s May 2026 salary%' then
     raise exception 'FAIL F1: Undo with the Month close tick: %', coalesce(v_msg, 'went through');
   end if;
   delete from public.month_close_checks where period = '2026-06' and key = 'tds_return_filed';
@@ -225,7 +229,7 @@ begin
     perform public.delete_salary_payment((select id from r2812_ids where k = 'mar'));
   exception when others then get stacked diagnostics v_msg = message_text;
   end;
-  if v_msg is null or v_msg not like '%Mar 2026 salary is already deposited (TDS challan CH-MAR of ₹2000 paid on 07 Apr 2026 for Mar 2026)%' then
+  if v_msg is null or v_msg not like 'TDS for Mar 2026 is already deposited (TDS challan CH-MAR of ₹2000 paid on 07 Apr 2026 for Mar 2026)%' then
     raise exception 'FAIL G1: no-period challan paid next month: %', coalesce(v_msg, 'went through');
   end if;
   v_msg := null;
@@ -233,7 +237,7 @@ begin
     perform public.delete_salary_payment((select id from r2812_ids where k = 'feb'));
   exception when others then get stacked diagnostics v_msg = message_text;
   end;
-  if v_msg is null or v_msg not like '%Feb 2026 salary is already deposited (TDS challan CH-FEB%' then
+  if v_msg is null or v_msg not like 'TDS for Feb 2026 is already deposited (TDS challan CH-FEB%' then
     raise exception 'FAIL H: mixed challan for the month: %', coalesce(v_msg, 'went through');
   end if;
   raise notice 'PASS G/H: no-period TDS challan paid next month and a mixed challan both lock the month';
@@ -261,6 +265,58 @@ begin
   perform set_config('app.r2812_salary_edit', '', true);
   if v_msg is null or v_msg not like '%already deposited%' then raise exception 'FAIL I: %', coalesce(v_msg, 'went through'); end if;
   raise notice 'PASS I: the edit-only skip is tied to its own salary id';
+end $$;
+
+-- ── K. The table's own delete / update rights meet the same lock (code review) ──────
+do $$
+declare v_oct uuid := (select id from r2812_ids where k = 'oct'); v_aug uuid; v_msg text; v_n int;
+begin
+  select id into v_aug from public.salary_payments where employee_id = 'c2812000-0000-4000-8000-0000000000e2' and period = '2026-08';
+  begin
+    delete from public.salary_payments where id = v_oct;
+  exception when others then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg not like 'TDS for Oct 2026 is already deposited%' then raise exception 'FAIL K1: direct delete: %', coalesce(v_msg, 'went through'); end if;
+  v_msg := null;
+  begin
+    update public.salary_payments set tds = 0 where id = v_oct;
+  exception when others then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg not like '%not its TDS — keep it at ₹2000%' then raise exception 'FAIL K2: direct TDS update: %', coalesce(v_msg, 'went through'); end if;
+  update public.salary_payments set notes = 'checked' where id = v_oct;
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then raise exception 'FAIL K3: a notes change on a deposited month was blocked'; end if;
+  v_msg := null;
+  begin
+    update public.salary_payments set lop_amount = 500 where id = v_aug;
+  exception when others then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg not like '%is marked filed%stay as filed%' then raise exception 'FAIL K4: LOP change in a filed quarter: %', coalesce(v_msg, 'went through'); end if;
+  update public.salary_payments set bank_account_id = 'c2812000-0000-4000-8000-0000000000b1' where id = v_aug;
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then raise exception 'FAIL K5: a bank account change in a filed quarter was blocked'; end if;
+  raise notice 'PASS K: direct delete / TDS / LOP change refused like Undo / Edit; notes and bank account still change';
+end $$;
+
+-- ── L. A TDS-0 salary is free — unless an edit would give it TDS ────────────────────
+do $$
+declare v_id uuid; v_new uuid; v_msg text;
+begin
+  v_id := public.pay_salary('c2812000-0000-4000-8000-0000000000e4', '2026-10', '2026-10-31', 30000, 0, 0, 0, null, 0, 0, 0, 0,
+                            'c2812000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null);
+  v_new := public.edit_salary_payment(v_id, 'c2812000-0000-4000-8000-0000000000e4', '2026-10', '2026-10-31', 32000, 0, 0, 0, null, 0, 0, 0, 0,
+                                      'c2812000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null, 0);
+  begin
+    perform public.edit_salary_payment(v_new, 'c2812000-0000-4000-8000-0000000000e4', '2026-10', '2026-10-31', 32000, 0, 0, 0, null, 500, 0, 0, 0,
+                                       'c2812000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null, 0);
+  exception when others then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg not like 'TDS for Oct 2026 is already deposited%keep it at ₹0%' then
+    raise exception 'FAIL L1: TDS added to a TDS-0 salary in a deposited month: %', coalesce(v_msg, 'went through');
+  end if;
+  if (select tds from public.salary_payments where id = v_new) <> 0 then raise exception 'FAIL L2: refused edit changed the TDS'; end if;
+  perform public.delete_salary_payment(v_new);
+  raise notice 'PASS L: TDS-0 salary edits / undoes freely, but an edit cannot add TDS to a deposited month';
 end $$;
 
 -- ── J. salary_tds_lock: who sees what ───────────────────────────────────────────────

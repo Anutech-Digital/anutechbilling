@@ -32,7 +32,7 @@ import { periodLabel } from "@/lib/payroll/period-label";
 import { salaryRowActionState } from "@/lib/payroll/salary-edit";
 import { revisionsByEmployee } from "@/lib/payroll/salary-revision";
 import {
-  useDeleteSalaryPayment, useSalaryRevisions, type Employee, type SalaryPayment,
+  useDeleteSalaryPayment, useSalaryRevisions, useSalaryTdsLock, type Employee, type SalaryPayment,
 } from "@/lib/queries/payroll";
 
 export function SalaryRowActions({ employee, p, canWrite, bankLineHref, leading, onReconcile, ariaLabel }: {
@@ -52,9 +52,16 @@ export function SalaryRowActions({ employee, p, canWrite, bankLineHref, leading,
   /* The salary as it was when Edit was pressed — the form keeps it even if the row re-reads. */
   const [editing, setEditing] = React.useState<SalaryPayment | null>(null);
   const [lopOpen, setLopOpen] = React.useState(false);
+  /* R-2812: whether the government already has this salary's TDS — read when the menu opens. */
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const tdsLockQ = useSalaryTdsLock(p?.id, menuOpen && canWrite && Boolean(p && p.tds > 0 && p.paid_amount <= 0));
   const undo = useDeleteSalaryPayment();
   const confirm = useConfirm();
-  const state = p ? salaryRowActionState(p, canWrite, { exitDate: employee.exit_date }) : null;
+  const state = p ? salaryRowActionState(p, canWrite, {
+    exitDate: employee.exit_date, tdsLock: tdsLockQ.data ?? null,
+    // a failed read leaves Edit / Undo on: the database refuses them anyway, with the reason
+    tdsLockLoading: menuOpen && Boolean(tdsLockQ.isFetching) && !tdsLockQ.isError,
+  }) : null;
   const revQ = useSalaryRevisions(Boolean(editing) && canWrite);
   const revisions = React.useMemo(() => revisionsByEmployee(revQ.data ?? []).get(employee.id) ?? [], [revQ.data, employee.id]);
   const name = toTitleCase(employee.name);
@@ -85,7 +92,7 @@ export function SalaryRowActions({ employee, p, canWrite, bankLineHref, leading,
     // Stops the register row's own click / Enter (open employee / bank line) — dialogs portal
     // out of the DOM but React events still bubble through this element.
     <div className="inline-flex" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-      <DropdownMenu modal={false}>
+      <DropdownMenu modal={false} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <button type="button" aria-label={ariaLabel ?? (p ? `Salary actions for ${name}, ${month}` : `More actions for ${name}`)}
             className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">
@@ -123,11 +130,16 @@ export function SalaryRowActions({ employee, p, canWrite, bankLineHref, leading,
                 </DropdownMenuItem>
               )}
               {state.lockReason && (
-                <DropdownMenuItem disabled className="gap-2.5 py-2 text-ink-3">
-                  <Icon name="lock" size={15} /> {state.lockReason}
+                <DropdownMenuItem disabled className="gap-2.5 py-2 text-ink-3 max-w-[20rem] whitespace-normal">
+                  <Icon name="lock" size={15} className="shrink-0" /> {state.lockReason}
                 </DropdownMenuItem>
               )}
-              {state.lockReason && bankLineHref && (
+              {state.lockReason && state.lockHref && (
+                <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
+                  <Link href={state.lockHref as Route}><Icon name="link" size={15} /> {state.lockLinkLabel}</Link>
+                </DropdownMenuItem>
+              )}
+              {state.lockReason && !state.lockHref && bankLineHref && (
                 <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
                   <Link href={bankLineHref as Route}><Icon name="link" size={15} /> Open bank line →</Link>
                 </DropdownMenuItem>

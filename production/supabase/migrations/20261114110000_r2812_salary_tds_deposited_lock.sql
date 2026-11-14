@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.salary_tds_lock(uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_salary_payment(uuid)') and prosrc like '%app.r2812_salary_edit%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.edit_salary_payment(uuid,uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer,integer)') and prosrc like '%salary_tds_lock%')
+-- deploy-peek: to_regprocedure('public.salary_tds_lock(uuid)') is not null and to_regprocedure('public.salary_tds_lock_message(text,text,text,text,integer,text)') is not null and exists(select 1 from pg_trigger where tgname = 'trg_salary_payments_tds_lock' and not tgisinternal) and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_salary_payment(uuid)') and prosrc like '%app.r2812_salary_edit%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.edit_salary_payment(uuid,uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer,integer)') and prosrc like '%salary_tds_lock_message%')
 -- deploy-key: r2812salarytdsdepositedlock
 -- 20261114110000_r2812_salary_tds_deposited_lock.sql
 --
@@ -10,7 +10,7 @@
 -- one-step Edit the Salary Register is about to call) is one more door to it. After that the
 -- challan, the filed 24Q and Form 16 no longer match the books.
 --
--- THE RULE (only salaries with TDS > 0; TDS 0 works as before).
+-- THE RULE (salaries with TDS > 0; a TDS-0 salary works as before unless an edit gives it TDS).
 --   "Deposited" = a TDS challan for the salary month: statutory_dues_payments kind 'tds' / 'mixed'
 --     with period = the salary month (the challan the 24Q working picks, tds-24q.ts), or kind 'tds'
 --     with no period paid in the following month (the R-1920 vendor lock's rule).
@@ -30,6 +30,10 @@
 --   1. salary_tds_lock(p_salary_id) — the shared check (security definer, read-only). An app
 --      session sees only its own company's salaries and only with a payroll role (owner / manager /
 --      accountant, as salary_payments RLS); anything else gets an empty answer.
+--   1b. salary_tds_lock_message — the refusal text, one place for every door.
+--   1c. trg_salary_payments_tds_lock — the table's own delete / update rights (RLS lets payroll
+--      roles write salary_payments straight) and other RPCs that change the row (adjust_salary_lop
+--      changes the LOP amount) meet the same lock for app sessions (code review of this card).
 --   2. delete_salary_payment = R-2772 body (20261114083830) + the lock (+ one declare).
 --   3. edit_salary_payment = R-2772 body + the TDS / 24Q checks around its Undo + Pay. Still
 --      SECURITY INVOKER.
@@ -57,11 +61,12 @@ declare
   v_filed  date;
   d        record;
 begin
-  /* R-2812. o_kind = 'filed' (24Q of the quarter marked filed) or 'deposited' (TDS challan for the
-     month), else null. Filed wins: it is the stricter one. */
+  /* R-2812. o_kind = 'filed' (the quarter's TDS return marked filed) or 'deposited' (a TDS challan
+     for the month), else null — for the salary's MONTH, whatever its own TDS (callers decide: a
+     TDS-0 salary is free unless an edit would give it TDS). Filed wins: it is the stricter one. */
   if p_salary_id is null then return; end if;
   select * into s from public.salary_payments where id = p_salary_id;
-  if not found or coalesce(s.tds, 0) <= 0 then return; end if;
+  if not found then return; end if;
   -- App sessions: own company + payroll role only (the trusted test is delete_salary_payment's).
   if not (coalesce(public.current_request_role(), '') = 'service_role'
           or (public.current_request_role() is null
@@ -94,7 +99,8 @@ begin
   end if;
   if v_filed is not null then
     o_kind := 'filed';
-    o_what := format('The 24Q for Q%s FY %s-%s (%s – %s) is marked filed (%s)', v_q, v_fy, lpad(((v_fy + 1) % 100)::text, 2, '0'),
+    -- The calendar / Month close have ONE "TDS return (24Q / 26Q)" mark per quarter.
+    o_what := format('The TDS return (24Q / 26Q) for Q%s FY %s-%s (%s – %s) is marked filed (%s)', v_q, v_fy, lpad(((v_fy + 1) % 100)::text, 2, '0'),
                      to_char(v_qstart, 'Mon'), to_char(v_qstart + interval '2 months', 'Mon YYYY'), to_char(v_filed, 'DD Mon YYYY'));
     o_href := '/compliance';
     return;
@@ -120,6 +126,94 @@ $function$;
 
 revoke all on function public.salary_tds_lock(uuid) from public, anon;
 grant execute on function public.salary_tds_lock(uuid) to authenticated, service_role;
+
+-- ── 1b. The refusal text — ONE place for Undo, Edit and a direct change of the row ─────────────
+-- A challan cannot hold "salary only" TDS apart from vendor TDS (statutory_dues_payments has no
+-- section), so the deposited text says the MONTH's TDS is deposited — the same challan the 24Q
+-- working picks for the month. The way out for wrong TDS is a later month's TDS (the money is
+-- with the government); un-reconciling is only for a challan that was itself booked wrong.
+create or replace function public.salary_tds_lock_message(p_kind text, p_what text, p_name text, p_month text, p_tds integer, p_action text)
+ returns text
+ language sql
+ immutable
+ security invoker
+ set search_path to 'public'
+as $function$
+  select case p_kind
+    when 'filed' then
+      format('%s and has %s''s %s salary in it (TDS ₹%s). ', p_what, p_name, p_month, p_tds)
+      || case when p_action = 'undo'
+           then 'Undoing it would make the books differ from the filed return. If this salary really was wrong: file a correction return (your CA / RPU), mark that return not filed (Compliance page, or untick it in Month close), then undo. To change only the bank account, notes or PF / ESI / other deductions, use Edit.'
+           else 'Only what the return does not carry can change (bank account, notes, PF / ESI / other deductions) — the pay date, gross, LOP, incentive and TDS stay as filed. If they really were wrong: file a correction return (your CA / RPU), mark that return not filed (Compliance page, or untick it in Month close), then change it.'
+         end
+    when 'deposited' then
+      format('TDS for %s is already deposited (%s) and %s''s salary carries ₹%s of it. ', p_month, p_what, p_name, p_tds)
+      || case when p_action = 'undo'
+           then format('Undoing it would leave that challan without this TDS. To change other figures, use Edit and keep the TDS at ₹%s.', p_tds)
+           else format('Edit can change this salary but not its TDS — keep it at ₹%s.', p_tds)
+         end
+      || ' If the TDS was wrong, set the difference in a later month''s TDS (the challan money is already with the government); only if the challan itself was booked wrong, un-reconcile its bank line first (Banking).'
+  end
+$function$;
+
+revoke all on function public.salary_tds_lock_message(text, text, text, text, integer, text) from public, anon;
+grant execute on function public.salary_tds_lock_message(text, text, text, text, integer, text) to authenticated, service_role;
+
+-- ── 1c. A direct change of the row (the table's own delete / update rights, adjust_salary_lop …)
+-- meets the same lock for app sessions. Trusted sessions (service_role / migrations) keep the
+-- plain table; delete_salary_payment still checks every caller itself.
+create or replace function public.tg_salary_payments_tds_lock()
+ returns trigger
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+declare
+  v_lock record;
+  v_old_tds integer := coalesce(OLD.tds, 0);
+  v_new_tds integer;
+begin
+  if coalesce(public.current_request_role(), '') not in ('anon', 'authenticated') then
+    return case when TG_OP = 'DELETE' then OLD else NEW end;
+  end if;
+  -- edit_salary_payment's own Undo half (it checks the new booking itself)
+  if coalesce(current_setting('app.r2812_salary_edit', true), '') = OLD.id::text then
+    return case when TG_OP = 'DELETE' then OLD else NEW end;
+  end if;
+  if TG_OP = 'DELETE' then
+    if v_old_tds > 0 then
+      select * into v_lock from public.salary_tds_lock(OLD.id);
+      if v_lock.o_kind is not null then
+        raise exception '%', public.salary_tds_lock_message(v_lock.o_kind, v_lock.o_what, v_lock.o_name, v_lock.o_month, v_old_tds, 'undo')
+          using errcode = 'check_violation', hint = v_lock.o_href;
+      end if;
+    end if;
+    return OLD;
+  end if;
+  v_new_tds := coalesce(NEW.tds, 0);
+  if v_old_tds > 0 or v_new_tds > 0 then
+    if NEW.tds is distinct from OLD.tds or NEW.period is distinct from OLD.period
+       or NEW.employee_id is distinct from OLD.employee_id or NEW.tenant_id is distinct from OLD.tenant_id
+       or (NEW.pay_date, NEW.gross, NEW.lop_amount, NEW.incentive) is distinct from (OLD.pay_date, OLD.gross, OLD.lop_amount, OLD.incentive) then
+      select * into v_lock from public.salary_tds_lock(OLD.id);
+      if v_lock.o_kind = 'filed'
+         or (v_lock.o_kind = 'deposited' and (NEW.tds is distinct from OLD.tds or NEW.period is distinct from OLD.period
+                                              or NEW.employee_id is distinct from OLD.employee_id or NEW.tenant_id is distinct from OLD.tenant_id)) then
+        raise exception '%', public.salary_tds_lock_message(v_lock.o_kind, v_lock.o_what, v_lock.o_name, v_lock.o_month, v_old_tds, 'change')
+          using errcode = 'check_violation', hint = v_lock.o_href;
+      end if;
+    end if;
+  end if;
+  return NEW;
+end;
+$function$;
+
+revoke all on function public.tg_salary_payments_tds_lock() from public, anon, authenticated;
+
+drop trigger if exists trg_salary_payments_tds_lock on public.salary_payments;
+create trigger trg_salary_payments_tds_lock
+  before delete or update on public.salary_payments
+  for each row execute function public.tg_salary_payments_tds_lock();
 
 -- ── 2. delete_salary_payment: R-2772 body + the TDS lock ────────────────────────────────────────
 create or replace function public.delete_salary_payment(p_salary_id uuid)
@@ -170,13 +264,8 @@ begin
      setting is written only there, after it read this row. */
   if v_sp.tds > 0 and coalesce(current_setting('app.r2812_salary_edit', true), '') is distinct from p_salary_id::text then
     select * into v_lock from public.salary_tds_lock(p_salary_id);
-    if v_lock.o_kind = 'filed' then
-      raise exception '% and has %''s % salary in it (TDS ₹%). Undoing it would make the books differ from the filed return. If this salary really was wrong: file a correction 24Q (your CA / RPU), mark that 24Q not filed (Compliance page, or untick it in Month close), then undo. To change only the bank account, notes or PF / ESI / other deductions, use Edit.',
-        v_lock.o_what, v_lock.o_name, v_lock.o_month, v_sp.tds
-        using errcode = 'check_violation', hint = v_lock.o_href;
-    elsif v_lock.o_kind = 'deposited' then
-      raise exception 'The ₹% TDS on %''s % salary is already deposited (%). Undoing it would leave that challan with no salary TDS behind it. To change other figures, use Edit and keep the TDS at ₹%. If the TDS itself was wrong, un-reconcile the challan''s bank line first (Banking), then undo.',
-        v_sp.tds, v_lock.o_name, v_lock.o_month, v_lock.o_what, v_sp.tds
+    if v_lock.o_kind is not null then
+      raise exception '%', public.salary_tds_lock_message(v_lock.o_kind, v_lock.o_what, v_lock.o_name, v_lock.o_month, v_sp.tds, 'undo')
         using errcode = 'check_violation', hint = v_lock.o_href;
     end if;
   end if;
@@ -311,17 +400,14 @@ begin
 
   /* R-2812: TDS the government already has. Deposited → the TDS must stay the same; 24Q filed →
      the 24Q figures (pay date, gross, LOP amount, incentive, TDS) must stay the same. Only then,
-     and only for this salary, does the Undo half skip its own TDS lock. */
-  if v_old.tds > 0 then
+     and only for this salary, does the Undo half skip its own TDS lock. A TDS-0 salary is free
+     unless the edit would give it TDS. */
+  if v_old.tds > 0 or greatest(coalesce(p_tds, 0), 0) > 0 then
     select l.o_kind, l.o_what, l.o_href, l.o_name, l.o_month into v_kind, v_what, v_href, v_name, v_month
       from public.salary_tds_lock(p_salary_id) l;
   end if;
-  if v_kind = 'filed' then
-    v_msg := format('%s and has %s''s %s salary in it (TDS ₹%s). Edit can change only what the 24Q does not carry (bank account, notes, PF / ESI / other deductions) — the pay date, gross, LOP, incentive and TDS stay as filed. If they really were wrong: file a correction 24Q (your CA / RPU), mark that 24Q not filed (Compliance page, or untick it in Month close), then edit.',
-                    v_what, v_name, v_month, v_old.tds);
-  elsif v_kind = 'deposited' then
-    v_msg := format('The ₹%s TDS on %s''s %s salary is already deposited (%s). Edit can change this salary but not its TDS — keep it at ₹%s. If the TDS itself was wrong, un-reconcile the challan''s bank line first (Banking), then edit.',
-                    v_old.tds, v_name, v_month, v_what, v_old.tds);
+  if v_kind is not null then
+    v_msg := public.salary_tds_lock_message(v_kind, v_what, v_name, v_month, v_old.tds, 'edit');
   end if;
   if v_kind is not null then
     if greatest(coalesce(p_tds, 0), 0) <> v_old.tds then

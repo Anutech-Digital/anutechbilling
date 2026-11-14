@@ -16977,6 +16977,16 @@ export type Database = {
         Args: { p_pay_date: string; p_period: string }
         Returns: string
       }
+      salary_tds_lock: {
+        Args: { p_salary_id: string }
+        Returns: {
+          o_href: string
+          o_kind: string
+          o_month: string
+          o_name: string
+          o_what: string
+        }[]
+      }
       _salary_in_force_gross: {
         Args: { p_employee_id: string; p_period: string }
         Returns: number
