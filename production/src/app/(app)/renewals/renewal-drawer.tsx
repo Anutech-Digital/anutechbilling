@@ -35,7 +35,7 @@ import {
   remindersWords, termLengthWords, type DrawerDocRow,
 } from "./drawer";
 import { priorDueInvoiceGap, type DocTone, type LastDocs } from "./last-docs";
-import { priorTermDue } from "./prior-due";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { nextTermWords, subscriptionDomain } from "./row-cells";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
@@ -91,6 +91,8 @@ export interface DrawerItem {
   payHref: string | null;
   /** The row's own documents (already read) — the flags' wording uses the same facts as the row's chip. */
   docs: LastDocs | undefined;
+  /** R-2818: what the previous term still owes (the row's own figure, lib/renewals/owed.ts); null = none / not read. */
+  prior?: SubscriptionOwed | null;
 }
 
 const TONE: Record<DocTone, string> = {
@@ -154,12 +156,12 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   const docs = q.data?.docs;
   const docRows = React.useMemo(() => drawerDocRows(docs, todayIst), [docs, todayIst]);
   const page = drawerPage(docRows, showAll);
-  const payments = drawerPaymentRows(q.data?.paid);
+  const payments = drawerPaymentRows(q.data?.paid, docs);   // R-2818: money on an invoice with no receipt is listed too
   const nameOf = (id: string) => names?.get(id)?.label ?? null;
   const fuRows = sub ? drawerFollowupRows(followupRows.filter((r) => r.subscription_id === sub.id), nameOf) : [];
   const flags = item?.stage && sub
     ? drawerFlagRows(item.stage.flags, {
-        priorDueGap: priorDueInvoiceGap(item.docs, priorTermDue(sub), todayIst),
+        priorDueGap: priorDueInvoiceGap(item.docs, item.prior ?? null, todayIst),
         nonRenewing: isNonRenewing(sub) ? { reason: sub.non_renew_reason, saidOn: sub.non_renew_said_on } : null,
         renewedAnyway: vendorHoldState(sub as Parameters<typeof vendorHoldState>[0]) === "overridden",
       })
@@ -257,7 +259,7 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                     {payments.map((p) => (
                       <li key={p.id} className="flex items-baseline justify-between gap-2 py-1.5 text-sm" data-testid="renewal-drawer-payment">
                         <span className="min-w-0 text-ink-2">
-                          <span className="tabular-nums">{p.date}</span> · {p.method}
+                          {p.date ? <><span className="tabular-nums">{p.date}</span> · </> : null}{p.method}
                           {p.doc && (
                             <> · for {p.docKind === "invoice"
                               ? (canInvoices ? <Link href={invoiceHref(p.doc) as never} className="font-mono underline underline-offset-2 hover:text-ink">{p.doc}</Link> : <span className="font-mono">{p.doc}</span>)

@@ -9,6 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { invoiceStatusWords, lastDocsBySubscription, priorDueInvoiceGap, type LastDocs, type LastInvoice, type LastQuote } from "./last-docs";
 
 const TODAY = "2026-11-13";
@@ -19,32 +20,39 @@ const li = (over: Partial<LastInvoice>): LastInvoice => ({
 });
 const lq: LastQuote = { id: "Q-1", date: "2026-10-01", status: "sent", payment_status: "none", expires_date: null, invoice_id: null, part: null, period: null };
 const docs = (over: Partial<LastDocs>): LastDocs => ({ quote: null, invoice: null, invoices: [], sent: null, ...over });
+/* R-2818: the gap reads the one owed rule's previous-term part (prior-due.ts priorTermOwedOf), never a bare amount */
+const owe = (total: number, over: Partial<SubscriptionOwed> = {}): SubscriptionOwed => ({ total, invoices: [], notInvoiced: null, ...over });
 
 describe("R-2747 (b) previous term unpaid — the invoice line, or why there is none", () => {
   it("nothing owed on the previous term → no extra words", () => {
-    expect(priorDueInvoiceGap(undefined, 0, TODAY)).toBeNull();
-    expect(priorDueInvoiceGap(docs({}), 0, TODAY)).toBeNull();
+    expect(priorDueInvoiceGap(undefined, owe(0), TODAY)).toBeNull();
+    expect(priorDueInvoiceGap(docs({}), null, TODAY)).toBeNull();
   });
   it("an unpaid / overdue / part-paid invoice is shown → its own line says it, no extra words", () => {
-    expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-20" }) }), 25488, TODAY)).toBeNull();
-    expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-03" }) }), 25488, TODAY)).toBeNull();
-    expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-20", paidAmount: 5000 }) }), 25488, TODAY)).toBeNull();
+    expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-20" }) }), owe(25488, { invoices: [{ id: "INV-1", due: 25488, sourceQuoteId: null }] }), TODAY)).toBeNull();
+    expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-03" }) }), owe(25488, { invoices: [{ id: "INV-1", due: 25488, sourceQuoteId: null }] }), TODAY)).toBeNull();
+    expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-20", paidAmount: 5000 }) }), owe(25488, { invoices: [{ id: "INV-1", due: 25488, sourceQuoteId: null }] }), TODAY)).toBeNull();
   });
-  it("no quote, no invoice (SCN Kochi / SCN Delhi: balance only on the subscription) → says so; a renewal quote changes nothing", () => {
-    const text = "Balance on the subscription — no unpaid invoice linked to it";
-    expect(priorDueInvoiceGap(undefined, 25488, TODAY)).toBe(text);
-    expect(priorDueInvoiceGap(docs({}), 19258, TODAY)).toBe(text);
+  /* R-2818 (changed expectation): a balance on no quote / invoice is not owed (the customer page's rule —
+     SCN Kochi says All clear there), so the owed rule gives no previous-term part and no words; money
+     owed on the subscription's own quote not invoiced yet names that quote. */
+  it("no quote, no invoice (SCN Kochi / SCN Delhi) → nothing owed, no words; a quote not invoiced yet is named", () => {
+    expect(priorDueInvoiceGap(undefined, owe(0), TODAY)).toBeNull();
+    expect(priorDueInvoiceGap(docs({}), owe(0), TODAY)).toBeNull();
+    const text = "Q-0036 not invoiced yet";
+    const notInv = owe(28232, { notInvoiced: { quoteId: "Q-0036", due: 28232 } });
+    expect(priorDueInvoiceGap(docs({}), notInv, TODAY)).toBe(text);
     /* a renewal quote covers only the new term — never implied to bill the old balance */
-    expect(priorDueInvoiceGap(docs({ quote: lq }), 25488, TODAY)).toBe(text);
+    expect(priorDueInvoiceGap(docs({ quote: lq }), notInv, TODAY)).toBe(text);
   });
-  it("the last invoice is paid / cancelled and nothing older is owed → no unpaid invoice linked (never pretend one)", () => {
-    const text = "Balance on the subscription — no unpaid invoice linked to it";
-    expect(priorDueInvoiceGap(docs({ invoice: li({ status: "paid", paidAmount: 11800 }) }), 25488, TODAY)).toBe(text);
-    expect(priorDueInvoiceGap(docs({ invoice: li({ status: "void" }) }), 25488, TODAY)).toBe(text);
+  it("the last invoice is paid / cancelled and the old quote is not invoiced → names that quote (never pretend an invoice)", () => {
+    const notInv = owe(28232, { notInvoiced: { quoteId: "Q-0036", due: 28232 } });
+    expect(priorDueInvoiceGap(docs({ invoice: li({ status: "paid", paidAmount: 11800 }) }), notInv, TODAY)).toBe("Q-0036 not invoiced yet");
+    expect(priorDueInvoiceGap(docs({ invoice: li({ status: "void" }) }), notInv, TODAY)).toBe("Q-0036 not invoiced yet");
   });
   it("review: a newer PAID invoice is shown but an older linked one still owes → names that older invoice", () => {
     const d = docs({ invoice: li({ id: "INV-2", status: "paid", paidAmount: 11800 }), owedInvoiceId: "INV-1" });
-    expect(priorDueInvoiceGap(d, 25488, TODAY)).toBe("Older invoice INV-1 still has money due");
+    expect(priorDueInvoiceGap(d, owe(25488, { invoices: [{ id: "INV-1", due: 25488, sourceQuoteId: "Q-1" }] }), TODAY)).toBe("Older invoice INV-1 still has money due");
   });
   it("lastDocsBySubscription records the newest owed linked invoice even when a newer paid one is shown", () => {
     const SUB = "c2747000-0000-4000-8000-0000000000a1";
@@ -65,7 +73,9 @@ describe("R-2747 (b) previous term unpaid — the invoice line, or why there is 
     expect(d.owedInvoiceId).toBe("INV-1");
     /* R-2748: the row now shows both (newest first), so the owed one is on screen — no extra words */
     expect(d.invoices.map((i) => i.id)).toEqual(["INV-2", "INV-1"]);
-    expect(priorDueInvoiceGap(d, 25488, TODAY)).toBeNull();
+    expect(priorDueInvoiceGap(d, owe(25488, { invoices: [{ id: "INV-1", due: 25488, sourceQuoteId: "Q-1" }] }), TODAY)).toBeNull();
+    /* R-2818: the owed rule reads every owed linked invoice */
+    expect(d.owedInvoices?.map((i) => i.id)).toEqual(["INV-1"]);
   });
 });
 
@@ -89,7 +99,7 @@ describe("R-2747 (a) the lines wrap inside the column — never cut", () => {
     expect(paras.length).toBe(5);
     for (const p of paras) expect(p).toMatch(/break-words/);
   });
-  it("the page passes the previous-term amount to the docs lines (one rule: priorTermDue)", () => {
-    expect(page).toMatch(/<LastDocsLines [^>]*priorDue=\{priorTermDue\(item\.sub\)\}/);
+  it("the page passes the previous-term amount to the docs lines (R-2818: the one owed rule, built once per row)", () => {
+    expect(page).toMatch(/<LastDocsLines [^>]*prior=\{item\.prior\}/);
   });
 });

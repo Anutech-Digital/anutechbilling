@@ -24,6 +24,7 @@ import { Icon } from "@/components/ui/icon";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { termEndInclusive } from "@/lib/billing/schedule";
 import type { RenewalStage } from "@/lib/renewals/stage";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { renewalTermStart } from "./stage-input";
 import {
   daysBetweenIst, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel,
@@ -201,22 +202,22 @@ export function DueCell({ date, days, note }: { date: string | null; days: numbe
   );
 }
 
-export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst, priorDue = 0 }: {
+export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst, prior = null }: {
   docs: LastDocs | undefined;
   loading: boolean;
   failed: boolean;
   canInvoices: boolean;
   canQuotes: boolean;
   todayIst: string;
-  /** R-2747: the row's "Previous term ₹x still unpaid" amount (prior-due.ts); 0 = none. */
-  priorDue?: number;
+  /** R-2747 / R-2818: what the previous term still owes (queue item `prior`, the one owed rule); null = none / not read. */
+  prior?: SubscriptionOwed | null;
 }) {
   if (loading) return <p className="text-2xs text-ink-3">…</p>;
   if (failed) return <p className="text-2xs text-ink-3" title="Last invoice couldn't load — reload the page">Couldn&apos;t load</p>;
   const { invoice, earlier } = lastInvoiceOf(docs);
   /* R-2747 / R-2752 (R-2760: kept in the table): money owed on the subscription with no unpaid invoice
      linked — say why, also next to a Paid / Cancelled invoice (line 2) */
-  const gap = priorDueInvoiceGap(docs, priorDue, todayIst);
+  const gap = priorDueInvoiceGap(docs, prior, todayIst);
   const gapSpan = gap ? <span title={gap} data-testid="renewal-prior-due-no-invoice"> · {gap}</span> : null;
   if (!invoice && gap && !docs?.quote) {
     return (

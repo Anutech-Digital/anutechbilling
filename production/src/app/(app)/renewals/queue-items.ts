@@ -15,7 +15,8 @@ import { renewalStage, type RenewalStage, type RenewalHeld } from "@/lib/renewal
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { renewalRisk, riskChased } from "./risk";
-import { priorTermDueText } from "./prior-due";
+import { priorTermOwedOf, priorTermOwedText } from "./prior-due";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { withRenewalQuote } from "./open-renewal-quotes";
 import { classifyRenewals, type RenewalGroups } from "./classify";
 import {
@@ -48,6 +49,8 @@ export interface QueueItem {
   stage: RenewalStage | null;
   /** R-2758: where Record payment goes (the open quote's dialog, else the invoice's). */
   payHref: string | null;
+  /** R-2818: what the previous term still owes by the one owed rule (lib/renewals/owed.ts); null = documents not read. */
+  prior: SubscriptionOwed | null;
 }
 
 export interface QueueBuildInput {
@@ -108,7 +111,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
         /* R-2756: a Won't renew / stopped row is not a renewal to chase — no at-risk flag on it. */
         atRisk: atRiskIds.has(r.sub.id) && riskChased(r.sub) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
         vendorHold: vendorHoldState(r.sub, today),
-        priorTermUnpaid: priorTermDueText(r.sub),
+        priorTermUnpaid: priorTermOwedText(r.sub, docs),   // R-2818: the one owed rule, never outstanding_amount alone
         promiseBroken: followup.promiseBroken ? { promisedOn: followup.promisedOn } : null,
         followUpDue: followup.followUpDue ? { nextFollowUpOn: followup.nextFollowUpOn } : null,
         renewalHeld: f.holds?.get(r.sub.id) ?? null,
@@ -118,6 +121,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
     return {
       stage,
       payHref: stage ? stagePayHref(stage, docs, canQuotes) : null,
+      prior: priorTermOwedOf(r.sub, docs),
       sub: r.sub,
       daysUntil: r.daysUntil,
       status,

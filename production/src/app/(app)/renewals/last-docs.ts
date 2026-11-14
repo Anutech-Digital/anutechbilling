@@ -49,6 +49,7 @@ import { invoicePaymentState, fullyCredited } from "@/lib/invoices/payment-state
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { foreignEquivalent, formatForeign, isForeignCurrency } from "@/lib/currency";
 import type { NoteTotals } from "@/lib/invoices/note-totals";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 
 export interface DocQuote {
   id: string;
@@ -209,6 +210,10 @@ export interface LastDocs {
   allQuotes?: DrawerQuote[];
   /** R-2740 (`{ all: true }` only): every issued linked invoice (void ones too), newest first. */
   allInvoices?: LastInvoice[];
+  /** R-2818: every linked invoice with money still due (not void), newest first — the owed rule's invoices (lib/renewals/owed.ts). */
+  owedInvoices?: LastInvoice[];
+  /** R-2818: the quotes any linked invoice was raised from (void / draft ones too, as on the customer page). */
+  invoicedQuoteIds?: string[];
 }
 
 /** Never sent to the customer, or taken back. */
@@ -299,6 +304,10 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
   const bestOwed = new Map<string, DocInvoice>();
   const seenInv = new Set<string>();
   const allOfSub = new Map<string, DocInvoice[]>();   // R-2748: every issued linked invoice, per subscription
+  const owedOfSub = new Map<string, DocInvoice[]>();   // R-2818: every one with money still due
+  const invoicedQuotesOfSub = new Map<string, Set<string>>();   // R-2818: its quotes that have an invoice (any status)
+  for (const qq of input.quotes) if (qq.invoice_id) for (const sid of quoteSubs.get(qq.id) ?? []) add(invoicedQuotesOfSub, sid, qq.id);
+  for (const i of input.invoices) if (i.quote_id) for (const sid of invoiceSubs.get(i.id) ?? []) add(invoicedQuotesOfSub, sid, i.quote_id);
   const atOf = (i: DocInvoice) => ({ at: `${i.invoice_date ?? ""}|${i.created_at ?? ""}`, id: i.id });
   for (const i of input.invoices) {
     if (seenInv.has(i.id) || DRAFT_INVOICE.has(i.status)) continue;
@@ -314,6 +323,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
       if (!cur || newer(atOf(i), atOf(cur))) bestInvoice.set(sid, i);
       const curOwed = bestOwed.get(sid);
       if (owed && (!curOwed || newer(atOf(i), atOf(curOwed)))) bestOwed.set(sid, i);
+      if (owed) { const ol = owedOfSub.get(sid); if (ol) ol.push(i); else owedOfSub.set(sid, [i]); }
     }
   }
   for (const [sid, i] of bestInvoice) {
@@ -321,6 +331,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     if (VOID_INVOICE.has(i.status) && owed) bestInvoice.set(sid, owed);
   }
   for (const [sid, i] of bestOwed) out.get(sid)!.owedInvoiceId = i.id;
+  for (const [sid, qs] of invoicedQuotesOfSub) out.get(sid)!.invoicedQuoteIds = [...qs].sort();
   /* invoice → the quotes raised it, per subscription (a combined invoice can carry several subscriptions' quotes) */
   const quotesOfInvoice = new Map<string, string[]>();
   for (const qq of input.quotes) if (qq.invoice_id) quotesOfInvoice.set(qq.invoice_id, [...(quotesOfInvoice.get(qq.invoice_id) ?? []), qq.id]);
@@ -370,6 +381,11 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     const d = out.get(sid)!;
     d.invoices = two.map((x) => toLast(x, sid));
     d.invoice = d.invoices.find((x) => x.id === i.id)!;
+  }
+
+  /* R-2818: the owed rule's invoices, newest first — every linked one with money due, shown or not */
+  for (const [sid, xs] of owedOfSub) {
+    out.get(sid)!.owedInvoices = [...xs].sort((a, b) => (newer(atOf(a), atOf(b)) ? -1 : newer(atOf(b), atOf(a)) ? 1 : 0)).map((x) => toLast(x, sid));
   }
 
   /* R-2740: the drawer's full lists — the same links as above, nothing left out (a draft, a revised-away
@@ -556,15 +572,16 @@ export function invoiceStatusWords(i: LastInvoice, todayIst: string): { text: st
 }
 
 /**
- * R-2747 — a row says "Previous term ₹x still unpaid" (prior-due.ts) but shows no unpaid invoice:
- * say plainly why, never invent one. null = nothing owed, or the shown invoice already says it.
- * Only invoices LINKED to the subscription (its quotes / billed parts) are known here, so the words
- * say "linked" — an invoice raised by hand for the customer, or imported, may still exist.
- * (Seen on SCN Kochi Hosting / SCN Delhi Traders: the balance is only on
- * subscriptions.outstanding_amount — no quote, no invoice linked to the subscription.)
+ * R-2747 — a row says "Previous term ₹x still unpaid" but its shown invoice does not: say plainly
+ * which document owes it, never invent one. null = nothing owed, or the shown invoice already says it.
+ * R-2818: `prior` is the owed rule's previous-term part (prior-due.ts priorTermOwedOf, built on
+ * lib/renewals/owed.ts) — an older linked invoice with money due, or the subscription's own quote not
+ * invoiced yet (T-V4: accepted on credit, part paid). The old "Balance on the subscription — no unpaid
+ * invoice linked to it" is gone: a balance no document asks for is not owed (the customer page's
+ * rule — SCN Kochi says All clear there).
  */
-export function priorDueInvoiceGap(docs: LastDocs | undefined, priorDue: number, todayIst: string): string | null {
-  if (!(priorDue > 0)) return null;
+export function priorDueInvoiceGap(docs: LastDocs | undefined, prior: SubscriptionOwed | null | undefined, todayIst: string): string | null {
+  if (!prior || !(prior.total > 0)) return null;
   const invoice = docs?.invoice ?? null;
   const shown = docs?.invoices ?? [];
   if (invoice) {
@@ -572,13 +589,11 @@ export function priorDueInvoiceGap(docs: LastDocs | undefined, priorDue: number,
     if (tone === "warn" || tone === "danger") return null;
   }
   /* an older linked invoice still has money due: on screen (R-2748) its own line says so; else name it */
-  const owed = docs?.owedInvoiceId ?? null;
+  const owed = prior.invoices[0]?.id ?? null;
   if (owed && shown.some((i) => i.id === owed)) return null;
   if (owed) return `Older invoice ${owed} still has money due`;
-  /* R-2752: the balance is subscriptions.outstanding_amount and no unpaid invoice LINKED to the
-     subscription carries it (a hand-raised / imported invoice for the customer may) — true whether the
-     row shows a Paid / Cancelled invoice or none */
-  return "Balance on the subscription — no unpaid invoice linked to it";
+  if (prior.notInvoiced) return `${prior.notInvoiced.quoteId} not invoiced yet`;
+  return null;
 }
 
 /**
@@ -726,6 +741,7 @@ export function attachDocDetails(
       ...oneCopy((d.invoices ?? []).map((i) => withDetails(i, sid)), d.invoice),
       ...(d.allQuotes ? { allQuotes: d.allQuotes.map((q) => ({ ...q, period: periodOf(q.part, q.id, sid) })) } : {}),
       ...(d.allInvoices ? { allInvoices: d.allInvoices.map((i) => withDetails(i, sid)) } : {}),
+      ...(d.owedInvoices ? { owedInvoices: d.owedInvoices.map((i) => withDetails(i, sid)) } : {}),   // R-2818: notes for the owed rule
     });
   }
   return out;
@@ -744,5 +760,5 @@ export function detailQuoteIds(docs: Map<string, LastDocs>): string[] {
 
 /** R-2737: the invoices whose credit / debit notes the status needs. */
 export function shownInvoiceIds(docs: Map<string, LastDocs>): string[] {
-  return [...new Set([...docs.values()].flatMap((d) => [...(d.invoices ?? []), ...(d.allInvoices ?? [])].map((i) => i.id)).filter((x): x is string => !!x))].sort();
+  return [...new Set([...docs.values()].flatMap((d) => [...(d.invoices ?? []), ...(d.allInvoices ?? []), ...(d.owedInvoices ?? [])].map((i) => i.id)).filter((x): x is string => !!x))].sort();
 }
