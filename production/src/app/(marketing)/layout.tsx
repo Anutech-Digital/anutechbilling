@@ -17,6 +17,7 @@ import type { Metadata } from "next";
 import { archivoSans as archivo, plexMono, siteWarmBody, siteWarmHeading } from "@/lib/fonts";
 import "@/site/site.css";
 import "@/site/site-warm.css";
+import "@/site/warm-only.css";
 /* Warm theme, one file per page group (only match under data-site-theme="warm"). */
 import "@/site/warm/chrome.css";
 import "@/site/warm/email.css";

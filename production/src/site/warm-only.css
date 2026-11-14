@@ -1,0 +1,8 @@
+/**
+ * Elements that exist only for the Warm theme's design (docs/WEBSITE-THEME.md) — badges, small
+ * labels, icons, the legal pages' "On this page" list, slideshow progress dots — carry the class
+ * `w-only`. On any site that is NOT on Warm they are not shown, so the Classic site looks exactly
+ * as it did before they were added. Under Warm no rule here applies; the warm files style them.
+ * Loaded by the (marketing) and (product) layouts. Guarded by src/site/site-warm-scope.test.ts.
+ */
+:is(.anutech-site, .anutech-product):not([data-site-theme="warm"]) .w-only { display: none !important; }

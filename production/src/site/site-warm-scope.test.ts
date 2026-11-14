@@ -154,3 +154,15 @@ describe("every warm stylesheet is loaded where its pages render", () => {
     expect(product).toContain('import "@/site/warm/product.css";');
   });
 });
+
+describe("Warm-only elements (class w-only) never show on Classic", () => {
+  const gate = readFileSync(path.join(root, "src/site/warm-only.css"), "utf8");
+  const product = readFileSync(path.join(root, "src/app/(product)/layout.tsx"), "utf8");
+  it("the gate hides .w-only on any site wrapper that is not on Warm", () => {
+    expect(gate).toContain(':is(.anutech-site, .anutech-product):not([data-site-theme="warm"]) .w-only { display: none !important; }');
+  });
+  it("both layouts load the gate", () => {
+    expect(layout).toContain('import "@/site/warm-only.css";');
+    expect(product).toContain('import "@/site/warm-only.css";');
+  });
+});
