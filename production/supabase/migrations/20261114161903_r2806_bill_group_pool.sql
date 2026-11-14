@@ -23,7 +23,8 @@
 --   "same sale quote" (R-2092) and "same bill group OF THE SAME CUSTOMER" from the sub, inside its company —
 --   every member gets the same pool; one customer's money never pays another customer's part (rev-r2806 F1).
 --   No group → exactly the old "this sub + its quote's".
--- * trg_subscriptions_bill_group_guarded — a browser login can never set / change bill_group_id (rev-r2806 F3).
+-- * trg_subscriptions_bill_group_guarded — a browser login can never set / change bill_group_id (rev-r2806 F3),
+--   nor move a grouped subscription to another customer (rev2). A sub with no customer never pools by group.
 -- * instalment_credit_parts, tg_subscription_billings_use_cn_credit and raise_subscription_billing's R-2642
 --   receipt day read that pool: receipts of every member's sale quote + every member part's request, minus
 --   every member part's invoice ONCE (by invoice id). So a together invoice is paid once and absorbed once.
@@ -72,7 +73,7 @@ as $$
         on s2.tenant_id = (select s0.tenant_id from public.subscriptions s0 where s0.id = p_subscription_id)
        and ((p.quote_id is not null and s2.quote_id = p.quote_id)
             or (p.bill_group_id is not null and s2.bill_group_id = p.bill_group_id
-                and s2.customer_id is not distinct from p.customer_id))
+                and s2.customer_id = p.customer_id))
   )
   select pool.id from pool;
 $$;
@@ -98,13 +99,19 @@ begin
     raise exception 'Which subscriptions are billed together is set only by Bill together on Renewals — it cannot be changed by hand.'
       using errcode = '42501';
   end if;
+  /* rev2 (R-2806): a grouped subscription moved to another customer would carry the group (and its shared
+     money) across customers — refused for a browser login; un-group it on Renewals first. */
+  if tg_op = 'UPDATE' and old.bill_group_id is not null and new.customer_id is distinct from old.customer_id then
+    raise exception 'This subscription is billed together with others, so it cannot move to another customer by hand — take it out of Bill together on Renewals first.'
+      using errcode = '42501';
+  end if;
   return new;
 end;
 $$;
 revoke all on function public.tg_subscriptions_bill_group_guarded() from public, anon, authenticated;
 drop trigger if exists trg_subscriptions_bill_group_guarded on public.subscriptions;
 create trigger trg_subscriptions_bill_group_guarded
-  before insert or update of bill_group_id on public.subscriptions
+  before insert or update of bill_group_id, customer_id on public.subscriptions
   for each row execute function public.tg_subscriptions_bill_group_guarded();
 
 -- ── 3. instalment_credit_parts — body of 20261030035007 (R-2095) + R-2806 pool ─────────────────────
