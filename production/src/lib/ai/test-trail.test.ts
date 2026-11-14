@@ -178,7 +178,14 @@ describe("classifyToast — fill-this vs real failure", () => {
 describe("problemWhereWhen", () => {
   it("says which page and what IST time the error came from", () => {
     const at = Date.UTC(2026, 10, 14, 9, 0); // 14 Nov 2026 09:00 UTC = 02:30 pm IST
-    expect(problemWhereWhen(ev("api_fail", "POST /api/x → 500", at, "/quotes/new"))).toBe("Error on /quotes/new at 02:30 pm");
+    expect(problemWhereWhen(ev("api_fail", "POST /api/x → 500", at, "/quotes/new"), at + 60_000)).toBe("Error on /quotes/new at 02:30 pm");
+  });
+  it("adds the date when the error is from an earlier IST day (tab left open overnight)", () => {
+    const at = Date.UTC(2026, 10, 13, 12, 30); // 13 Nov 2026 06:00 pm IST
+    const nextMorning = Date.UTC(2026, 10, 14, 4, 0); // 14 Nov 09:30 am IST
+    expect(problemWhereWhen(ev("error", "boom", at, "/quotes"), nextMorning)).toBe("Error on /quotes at 13 Nov 2026, 06:00 pm");
+    // 11:50 pm and 00:10 am IST are different days even though only 20 min apart
+    expect(problemWhereWhen(ev("error", "boom", Date.UTC(2026, 10, 13, 18, 20), "/q"), Date.UTC(2026, 10, 13, 18, 40))).toBe("Error on /q at 13 Nov 2026, 11:50 pm");
   });
   it("leaves the time out when it is unknown", () => {
     expect(problemWhereWhen(ev("error", "boom", Number.NaN, "/deals"))).toBe("Error on /deals");
