@@ -217,13 +217,32 @@ begin
        when the duplicate has no PAN or both PANs are the same. */
     if not v_money and NEW.employee_id is distinct from OLD.employee_id then
       select * into v_lock from public.salary_tds_lock(OLD.id);
+      if v_lock.o_kind is not null then
+        -- re-review (rev2-r2812): only an employee of the SAME company; never read or show another's.
+        select e.name, nullif(upper(trim(e.pan)), '') into v_dst_name, v_dst_pan
+          from public.employees e where e.id = NEW.employee_id and e.tenant_id = OLD.tenant_id;
+        if not found then
+          raise exception 'Pick an employee of this company — this salary (%, TDS ₹%) can only move to one of your own employees.', v_lock.o_month, v_old_tds
+            using errcode = 'check_violation', hint = '/accounting/employees';
+        end if;
+      end if;
       if v_lock.o_kind = 'filed' then
-        select e.name, nullif(upper(trim(e.pan)), '') into v_src_name, v_src_pan from public.employees e where e.id = OLD.employee_id;
-        select e.name, nullif(upper(trim(e.pan)), '') into v_dst_name, v_dst_pan from public.employees e where e.id = NEW.employee_id;
-        if v_src_pan is not null and v_src_pan is distinct from v_dst_pan then
+        select e.name, nullif(upper(trim(e.pan)), '') into v_src_name, v_src_pan
+          from public.employees e where e.id = OLD.employee_id and e.tenant_id = OLD.tenant_id;
+        /* rev2 decision (14 Nov): a filed return carries the PAN — the move is allowed only when BOTH
+           employees have a PAN and it is the same one. */
+        if v_src_pan is not null and v_dst_pan is null then
+          raise exception '% and has %''s % salary in it (TDS ₹%), filed with PAN %. Add the PAN to the kept employee first: put % as %''s PAN (Employees), then merge.',
+            v_lock.o_what, coalesce(v_src_name, 'this employee'), v_lock.o_month, v_old_tds, v_src_pan, v_src_pan, coalesce(v_dst_name, 'the kept employee')
+            using errcode = 'check_violation', hint = '/accounting/employees';
+        elsif v_src_pan is null then
+          raise exception 'Add the same PAN to both employees first (% and has %''s % salary in it, TDS ₹%) — a salary in a filed return moves only between two employees with the same PAN.',
+            v_lock.o_what, coalesce(v_src_name, 'this employee'), v_lock.o_month, v_old_tds
+            using errcode = 'check_violation', hint = '/accounting/employees';
+        elsif v_src_pan is distinct from v_dst_pan then
           raise exception '% and has %''s % salary in it (TDS ₹%). That return is filed with %''s PAN (%); merging would move the salary to % (PAN %) — unmark the return on the Compliance page first, or file a revised return, then merge.',
             v_lock.o_what, coalesce(v_src_name, 'this employee'), v_lock.o_month, v_old_tds, coalesce(v_src_name, 'this employee'), v_src_pan,
-            coalesce(v_dst_name, 'the other employee'), coalesce(v_dst_pan, 'none')
+            coalesce(v_dst_name, 'the other employee'), v_dst_pan
             using errcode = 'check_violation', hint = v_lock.o_href;
         end if;
       end if;
