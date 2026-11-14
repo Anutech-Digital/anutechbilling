@@ -13,6 +13,7 @@
  */
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,26 +43,38 @@ import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
 
 /**
  * The open drawer's subscription id, kept in ?sub= so the link can be shared and Back closes it:
- * opening pushes a history entry, closing goes back over it (or drops ?sub= when the page was
- * opened from a shared link); Back / Forward re-read it.
+ * opening pushes a history entry through the app router (a hand-made pushState is not one Next
+ * knows — its Back re-rendered the page and lost the focus), closing goes back over it (or drops
+ * ?sub= when the page was opened from a shared link); Back / Forward re-read it.
  */
+/** What opened the drawer (the product button) — focus goes back to it on close. */
+let drawerOpener: HTMLElement | null = null;
+
 export function useRenewalDrawerSub(): [string | null, (id: string) => void, () => void] {
+  const router = useRouter();
   const [id, setId] = React.useState<string | null>(null);
+  const pushed = React.useRef(false);
   React.useEffect(() => {
-    const read = () => setId(drawerSubFromSearch(window.location.search));
+    const read = () => {
+      const next = drawerSubFromSearch(window.location.search);
+      if (!next) pushed.current = false;
+      setId(next);
+    };
     read();
     window.addEventListener("popstate", read);
     return () => window.removeEventListener("popstate", read);
   }, []);
   const open = React.useCallback((next: string) => {
+    drawerOpener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     setId(next);
-    window.history.pushState({ ...(window.history.state ?? {}), r2740Drawer: next }, "", withDrawerSub(window.location.href, next));
-  }, []);
+    pushed.current = true;
+    router.push(withDrawerSub(window.location.href, next) as never, { scroll: false });
+  }, [router]);
   const close = React.useCallback(() => {
     setId(null);
-    if (window.history.state?.r2740Drawer) window.history.back();
-    else window.history.replaceState(window.history.state, "", withDrawerSub(window.location.href, null));
-  }, []);
+    if (pushed.current) { pushed.current = false; router.back(); }
+    else router.replace(withDrawerSub(window.location.href, null) as never, { scroll: false });
+  }, [router]);
   return [id, open, close];
 }
 
@@ -131,6 +144,12 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   const [showAll, setShowAll] = React.useState(false);
   React.useEffect(() => setShowAll(false), [sub?.id]);
   const todayIst = istToday();
+  /* Esc / Close returns focus to what opened it (the product button), even after the row re-rendered. */
+  const restoreFocus = (e: Event) => {
+    const el = drawerOpener;
+    drawerOpener = null;
+    if (el?.isConnected) { e.preventDefault(); el.focus(); }
+  };
 
   const docs = q.data?.docs;
   const docRows = React.useMemo(() => drawerDocRows(docs, todayIst), [docs, todayIst]);
@@ -150,7 +169,7 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
 
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:w-[30rem] sm:max-w-[95vw]" data-testid="renewal-drawer">
+      <SheetContent side="right" className="w-full overflow-y-auto sm:w-[30rem] sm:max-w-[95vw]" data-testid="renewal-drawer" onCloseAutoFocus={restoreFocus}>
         {!item || !sub ? (
           <SheetHeader>
             <SheetTitle>Renewal not on this page</SheetTitle>

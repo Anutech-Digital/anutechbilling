@@ -138,14 +138,14 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, o
   const title2 = [term ? `Renews for ${term}` : null, frequency].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0" data-cell="product">
-      {onOpen ? (
-        <button type="button" onClick={onOpen} title={`${line1} — open details`} data-testid="renewal-open-drawer"
-          className="block max-w-full truncate rounded-sm text-left text-ink underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
-          {line1}
-        </button>
-      ) : (
-        <p className="truncate text-ink" title={line1}>{line1}</p>
-      )}
+      <p className="truncate text-ink" title={line1}>
+        {onOpen ? (
+          <button type="button" onClick={onOpen} data-testid="renewal-open-drawer" aria-label={`${line1} — open details`}
+            className="inline-block max-w-full truncate rounded-sm text-left align-top underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            {line1}
+          </button>
+        ) : line1}
+      </p>
       {termShort && <p className="mt-0.5 truncate text-2xs text-ink-3 tabular-nums" title={title2}>{termShort}</p>}
     </div>
   );

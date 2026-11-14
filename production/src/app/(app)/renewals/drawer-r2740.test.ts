@@ -53,6 +53,24 @@ describe("R-2740 all documents of a subscription", () => {
     expect(d.invoice?.id).toBe("INV-1");
   });
 
+  it("a revised-away quote whose link moved to its revision (R-2368) is still listed, down the chain R1 → R2 → R3", () => {
+    const d = lastDocsBySubscription(input({
+      quotes: [
+        q({ id: "Q-R3", renewal_subscription_id: SUB, status: "sent", payment_status: "none", created_at: "2026-09-09T05:00:00Z" }),
+        q({ id: "Q-R2", status: "sent", payment_status: "none", superseded_by: "Q-R3", created_at: "2026-09-05T05:00:00Z" }),
+        q({ id: "Q-R1", status: "sent", payment_status: "none", superseded_by: "Q-R2", created_at: "2026-09-01T05:00:00Z" }),
+        q({ id: "Q-OTHER", status: "sent", payment_status: "none", superseded_by: "Q-NOT-OURS" }),
+      ],
+    }), { all: true }).get(SUB)!;
+    expect(d.allQuotes!.map((x) => x.id)).toEqual(["Q-R3", "Q-R2", "Q-R1"]);
+    expect(d.quote?.id).toBe("Q-R3");
+  });
+
+  it("the drawer read follows revisions only with { all } (the page's read stays as it was)", () => {
+    const data = readFileSync(new URL("./last-docs-data.ts", import.meta.url), "utf8");
+    expect(data).toMatch(/if \(opts\.all\) \{[\s\S]*?\.in\("superseded_by", run\)/);
+  });
+
   it("without { all } the lists are not built (the page's batched read stays as it was)", () => {
     const d = lastDocsBySubscription(input({ quotes: [q({ id: "Q-A" })] })).get(SUB)!;
     expect(d.allQuotes).toBeUndefined();

@@ -36,6 +36,8 @@ const inList = (ids: readonly string[]) => `(${ids.map((x) => `"${x.replace(/["\
 
 const QUOTE_COLS = "id, status, payment_status, created_at, created_date, expires_date, invoice_id, renewal_subscription_id, add_seats_subscription_id, subscription_billing_id, superseded_by, amount, currency, exchange_rate";
 const INVOICE_COLS = "id, quote_id, invoice_date, status, amount, paid_amount, currency, created_at, due_date, net_payable, adjusted_advances, written_off_at, fx_rate";
+/** R-2740: how far back the drawer follows a quote's revisions (R1 → R2 → … ). */
+const REVISION_STEPS = 10;
 const DETAIL_COLS = "id, line_items, is_renewal, is_extension, is_add_seats, is_one_off, extension_months, renewal_term_date, created_date";
 
 /** The read's own copy of each subscription (deduped, sorted — a stable query key). */
@@ -86,6 +88,24 @@ export async function readRenewalDocs(rows: readonly SubRef[], opts: { all?: boo
       .range(from, to)),
   ]);
   const round1 = [...viaSub, ...own];
+  /* R-2740 drawer: revised-away quotes. A revision takes the subscription link off the old quote
+     (R-2368 trigger) — the old one is found by quotes.superseded_by, one step of the chain per read
+     (R1 → R2 → R3), at most REVISION_STEPS reads, only for the drawer's one subscription. */
+  if (opts.all) {
+    let step = [...new Set(round1.map((q) => q.id))];
+    const seen = new Set(step);
+    for (let i = 0; i < REVISION_STEPS && step.length; i++) {
+      const older = await fetchAllRowsIn<DocQuote, string>(step, (run, from, to) => loose
+        .from("quotes")
+        .select(QUOTE_COLS)
+        .in("superseded_by", run)
+        .order("id", { ascending: true })
+        .range(from, to));
+      const fresh = older.filter((q) => !seen.has(q.id));
+      for (const q of fresh) { seen.add(q.id); round1.push(q); }
+      step = fresh.map((q) => q.id);
+    }
+  }
   const quoteIds = [...new Set(round1.map((q) => q.id))];
   const invoiceIds = [...new Set([
     ...billings.map((b) => b.invoice_id),
