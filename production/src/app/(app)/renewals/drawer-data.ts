@@ -11,8 +11,8 @@ import { useQuery } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
-import { docRefs, readRenewalDocs } from "./last-docs-data";
-import { readRenewalLastPaid } from "./last-paid-data";
+import { docRefs, docsFromRows, readRenewalDocRows } from "./last-docs-data";
+import { lastPaidFromDocRows } from "./last-paid-data";
 import type { DocQuote, LastDocs, LastDocsInput } from "./last-docs";
 import type { LastPaid } from "./last-paid";
 
@@ -63,9 +63,11 @@ export function useRenewalDrawerData(sub: SubRef | null) {
     enabled: !!ref,
     staleTime: 0,   // every open reads afresh (a payment saved elsewhere invalidates only "payments")
     queryFn: async (): Promise<DrawerData> => {
+      /* R-2765: rounds 1–2 read ONCE for both (the revisions only join Last docs' quotes) */
+      const rows = await readRenewalDocRows([ref!], { moreQuotes: readRevisions });
       const [docs, paid] = await Promise.all([
-        readRenewalDocs([ref!], { all: true, moreQuotes: readRevisions }),
-        readRenewalLastPaid([ref!], { historySize: Infinity }),
+        docsFromRows([ref!], rows, { all: true }),
+        lastPaidFromDocRows([ref!], rows, { historySize: Infinity }),
       ]);
       return { docs: docs.get(ref!.id), paid: paid.get(ref!.id) };
     },

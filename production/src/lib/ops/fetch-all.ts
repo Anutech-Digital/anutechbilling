@@ -17,7 +17,7 @@
  * THE QUERY MUST HAVE A TOTAL ORDER. Offset pages over an order with ties (created_at alone)
  * can repeat or skip a row across a page boundary. End the order on a unique column — `id`.
  */
-import { chunk, uniq } from "@/lib/ops/p-limit";
+import { chunk, mapLimit, uniq } from "@/lib/ops/p-limit";
 
 /** PostgREST's max_rows (supabase/config.toml). A page shorter than this is the last page. */
 export const PAGE_SIZE = 1000;
@@ -71,20 +71,22 @@ export function errorMessage(e: unknown): string {
 /**
  * Every row for an id list: the ids are de-duplicated, split into `chunkSize` runs, and each
  * run is paged with fetchAllRows (one chunk can still match more than a page — 200 invoices
- * with six dunning steps each is 1,200 log rows). Chunks run one after another; an empty id
- * list makes no request at all (PostgREST reads `in.()` as "matches nothing", but there is
- * no reason to ask).
+ * with six dunning steps each is 1,200 log rows). Chunks run one after another unless the caller
+ * passes `concurrency` (R-2765: the Renewals page reads 4 chunks at a time — a staging book of 300+
+ * subscriptions was 2+ chunks per read, each read waiting on the last); rows come back in chunk
+ * order either way, and the first failed chunk's error is thrown. An empty id list makes no
+ * request at all (PostgREST reads `in.()` as "matches nothing", but there is no reason to ask).
  */
 export async function fetchAllRowsIn<T, I extends string | number>(
   ids: readonly (I | null | undefined)[],
   page: (ids: I[], from: number, to: number) => PageQuery<T>,
-  opts: { chunkSize?: number; pageSize?: number } = {},
+  opts: { chunkSize?: number; pageSize?: number; concurrency?: number } = {},
 ): Promise<T[]> {
   const clean = uniq(ids.filter((x): x is I => x !== null && x !== undefined));
+  const runs = chunk(clean, opts.chunkSize ?? IN_CHUNK);
+  const limit = Math.max(1, Math.floor(opts.concurrency ?? 1));
+  const perRun = await mapLimit(runs, limit, (run) => fetchAllRows((from, to) => page(run, from, to), { pageSize: opts.pageSize }));
   const out: T[] = [];
-  for (const run of chunk(clean, opts.chunkSize ?? IN_CHUNK)) {
-    const rows = await fetchAllRows((from, to) => page(run, from, to), { pageSize: opts.pageSize });
-    for (const r of rows) out.push(r);
-  }
+  for (const rows of perRun) for (const r of rows) out.push(r);
   return out;
 }
