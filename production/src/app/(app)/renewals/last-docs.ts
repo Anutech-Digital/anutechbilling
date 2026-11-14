@@ -242,6 +242,18 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
       if (sid && subIds.has(sid)) add(quoteSubs, q.id, sid);
     }
   }
+  /* R-2740 (`all`): a revised-away quote lost its subscription link to its revision (R-2368) — it
+     belongs to the subscriptions of the quote that replaced it, down the chain. */
+  if (opts.all) {
+    for (let changed = true, guard = 0; changed && guard < input.quotes.length + 1; guard++) {
+      changed = false;
+      for (const q of input.quotes) {
+        for (const sid of (q.superseded_by ? quoteSubs.get(q.superseded_by) : undefined) ?? []) {
+          if (!quoteSubs.get(q.id)?.has(sid)) { add(quoteSubs, q.id, sid); changed = true; }
+        }
+      }
+    }
+  }
   /* invoice id → subscriptions: raised from a linked quote (either side of the link) or for a billed part */
   const invoiceSubs = new Map<string, Set<string>>();
   const quoteById = new Map(input.quotes.map((q) => [q.id, q]));
