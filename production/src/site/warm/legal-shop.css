@@ -98,7 +98,7 @@
   content: ""; width: 44px; height: 44px; border-radius: 12px; margin-bottom: 4px;
   background: var(--w-mint) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z M8.5 12l2.5 2.5 4.5-5'/%3E%3C/svg%3E") center / 22px no-repeat;
 }
-.anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > :is(#licences, #certificates)::before {
+.anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id]:is(#licences, #certificates)::before {
   background-color: var(--w-marigold-soft);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%239A6200' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3h7l5 5v13H7z M14 3v5h5 M10 13h6 M10 17h6'/%3E%3C/svg%3E");
 }
@@ -443,3 +443,112 @@
   .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap > .grid-4:has(> .card-highlight) { row-gap: 26px !important; }
   .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]):has(> .wrap > .grid-4 > .card-highlight)::before { width: 300px; height: 300px; right: -150px; top: -150px; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   DARK — cart, checkout, done, trial, legal pages
+   The same rules twice: once for a visitor who chose dark (data-theme="dark"), once for a
+   device in dark mode when the visitor has not chosen light. Light is untouched.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+/* Shop pages (cart, checkout, done, trial): white boxes the components paint inline → the dark card. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#fff"], [style*="background: rgb(255, 255, 255)"]) { background: var(--w-surface) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#FBFCFE"], [style*="background: rgb(251, 252, 254)"], [style*="background:#F2F6FB"], [style*="background: rgb(242, 246, 251)"], [style*="surface-muted"]) { background: var(--w-surface-2) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#EEF7F0"], [style*="background: rgb(238, 247, 240)"]) { background: var(--w-mint) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="color:#0F7B4F"], [style*="color: rgb(15, 123, 79)"]) { color: var(--w-teal) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#0C1116"], [style*="background: rgb(12, 17, 22)"]) { border: 1px solid var(--w-line-strong) !important; }
+/* Notices keep their meaning (amber = check this, red = failed, blue = test mode) as dark tints with light text. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#FFFBEB"], [style*="background: rgb(255, 251, 235)"]) {
+  background: var(--w-marigold-soft) !important; border-color: rgba(244, 183, 64, 0.45) !important; color: var(--w-marigold-ink) !important;
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#FFF7ED"], [style*="background: rgb(255, 247, 237)"]) {
+  background: #3B2A1C !important; border-color: #7C3F14 !important; color: #FDBA8C !important;
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#FEF2F2"], [style*="background: rgb(254, 242, 242)"]) {
+  background: #3B2224 !important; border-color: #8B2A2A !important; color: #FCA5A5 !important;
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#EFF6FF"], [style*="background: rgb(239, 246, 255)"]) {
+  background: #1E2A3A !important; border-color: #2F4A6E !important; color: #BFDBFE !important;
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([role="alert"], [role="status"], [role="note"]) a { color: inherit !important; text-decoration: underline; }
+/* /done: the status mark's halo, on the dark ground. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > .wrap:has(> header > h1.h1-narrow) [aria-hidden][style*="border-radius:999px"] { box-shadow: 0 0 0 8px rgba(244, 183, 64, 0.12) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#FFFBEB"], [style*="background: rgb(255, 251, 235)"]) *:not(.btn, .btn *) { color: var(--w-marigold-ink) !important; }
+/* Errors: a brighter red that reads on the dark card — the field's red border and the message under it. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="color:#B91C1C"], [style*="color: rgb(185, 28, 28)"]) { color: #FCA5A5 !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is(input, select, textarea)[aria-invalid="true"] { border-color: #F87171 !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is(input, select, textarea)[aria-invalid="true"]:focus-visible { outline-color: #F87171; }
+/* Pay before the terms are ticked: the component greys it (#C8D4E4 with white text) — readable here. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="#C8D4E4"], [style*="rgb(200, 212, 228)"]) { background: var(--w-line-strong) !important; color: var(--w-ink) !important; }
+/* "powered by Razorpay": the navy wordmark on the dark summary card. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="color:#0A1F44"], [style*="color: rgb(10, 31, 68)"]) { color: var(--w-ink) !important; }
+/* Cart "Remove" hover. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > .wrap[data-grid]:has(#cart-coupon) > div:first-child > div > button:last-child:hover { background: rgba(248, 113, 113, 0.16) !important; }
+/* The checkout's pop-up and progress card (portalled into the site wrapper). */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] { background: var(--w-surface) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background:#FDECEA"],
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background: rgb(253, 236, 234)"] { background: rgba(248, 113, 113, 0.18) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background:#FEF5E1"],
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background: rgb(254, 245, 225)"] { background: var(--w-marigold-soft) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background:#E6F4EE"],
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background: rgb(230, 244, 238)"] { background: var(--w-mint) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"]:has(#main [data-grid] > div > h1.h1-narrow + p.meta, #main [data-grid="trial"]) [data-busy-panel] > [role="status"] { background: var(--w-surface) !important; color: var(--w-ink-2) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"]:has(#main [data-grid] > div > h1.h1-narrow + p.meta, #main [data-grid="trial"]) [data-busy-panel][role="status"] { background: var(--w-surface-2) !important; border-color: var(--w-line) !important; color: var(--w-ink-2) !important; }
+/* The decorative icon tiles: the same drawings with the light teal stroke. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > h1.h1-narrow + div:has(> .btn-primary)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 24 24' fill='none' stroke='%235ED0B3' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3Cpath d='M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6.2'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id]:not(#how-to-claim, #timelines)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%235ED0B3' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z M8.5 12l2.5 2.5 4.5-5'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  /* Shop pages (cart, checkout, done, trial): white boxes the components paint inline → the dark card. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#fff"], [style*="background: rgb(255, 255, 255)"]) { background: var(--w-surface) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#FBFCFE"], [style*="background: rgb(251, 252, 254)"], [style*="background:#F2F6FB"], [style*="background: rgb(242, 246, 251)"], [style*="surface-muted"]) { background: var(--w-surface-2) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#EEF7F0"], [style*="background: rgb(238, 247, 240)"]) { background: var(--w-mint) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="color:#0F7B4F"], [style*="color: rgb(15, 123, 79)"]) { color: var(--w-teal) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#0C1116"], [style*="background: rgb(12, 17, 22)"]) { border: 1px solid var(--w-line-strong) !important; }
+  /* Notices keep their meaning (amber = check this, red = failed, blue = test mode) as dark tints with light text. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#FFFBEB"], [style*="background: rgb(255, 251, 235)"]) {
+    background: var(--w-marigold-soft) !important; border-color: rgba(244, 183, 64, 0.45) !important; color: var(--w-marigold-ink) !important;
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#FFF7ED"], [style*="background: rgb(255, 247, 237)"]) {
+    background: #3B2A1C !important; border-color: #7C3F14 !important; color: #FDBA8C !important;
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#FEF2F2"], [style*="background: rgb(254, 242, 242)"]) {
+    background: #3B2224 !important; border-color: #8B2A2A !important; color: #FCA5A5 !important;
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#EFF6FF"], [style*="background: rgb(239, 246, 255)"]) {
+    background: #1E2A3A !important; border-color: #2F4A6E !important; color: #BFDBFE !important;
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([role="alert"], [role="status"], [role="note"]) a { color: inherit !important; text-decoration: underline; }
+  /* /done: the status mark's halo, on the dark ground. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > .wrap:has(> header > h1.h1-narrow) [aria-hidden][style*="border-radius:999px"] { box-shadow: 0 0 0 8px rgba(244, 183, 64, 0.12) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="background:#FFFBEB"], [style*="background: rgb(255, 251, 235)"]) *:not(.btn, .btn *) { color: var(--w-marigold-ink) !important; }
+  /* Errors: a brighter red that reads on the dark card — the field's red border and the message under it. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="color:#B91C1C"], [style*="color: rgb(185, 28, 28)"]) { color: #FCA5A5 !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is(input, select, textarea)[aria-invalid="true"] { border-color: #F87171 !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is(input, select, textarea)[aria-invalid="true"]:focus-visible { outline-color: #F87171; }
+  /* Pay before the terms are ticked: the component greys it (#C8D4E4 with white text) — readable here. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="#C8D4E4"], [style*="rgb(200, 212, 228)"]) { background: var(--w-line-strong) !important; color: var(--w-ink) !important; }
+  /* "powered by Razorpay": the navy wordmark on the dark summary card. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section :is([style*="color:#0A1F44"], [style*="color: rgb(10, 31, 68)"]) { color: var(--w-ink) !important; }
+  /* Cart "Remove" hover. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > .wrap[data-grid]:has(#cart-coupon) > div:first-child > div > button:last-child:hover { background: rgba(248, 113, 113, 0.16) !important; }
+  /* The checkout's pop-up and progress card (portalled into the site wrapper). */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] { background: var(--w-surface) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background:#FDECEA"],
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background: rgb(253, 236, 234)"] { background: rgba(248, 113, 113, 0.18) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background:#FEF5E1"],
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background: rgb(254, 245, 225)"] { background: var(--w-marigold-soft) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background:#E6F4EE"],
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] [role="alertdialog"][aria-labelledby="checkout-notice-title"] [style*="background: rgb(230, 244, 238)"] { background: var(--w-mint) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"]:has(#main [data-grid] > div > h1.h1-narrow + p.meta, #main [data-grid="trial"]) [data-busy-panel] > [role="status"] { background: var(--w-surface) !important; color: var(--w-ink-2) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"]:has(#main [data-grid] > div > h1.h1-narrow + p.meta, #main [data-grid="trial"]) [data-busy-panel][role="status"] { background: var(--w-surface-2) !important; border-color: var(--w-line) !important; color: var(--w-ink-2) !important; }
+  /* The decorative icon tiles: the same drawings with the light teal stroke. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > h1.h1-narrow + div:has(> .btn-primary)::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 24 24' fill='none' stroke='%235ED0B3' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3Cpath d='M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6.2'/%3E%3C/svg%3E");
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id]:not(#how-to-claim, #timelines)::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%235ED0B3' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z M8.5 12l2.5 2.5 4.5-5'/%3E%3C/svg%3E");
+  }
+}
+

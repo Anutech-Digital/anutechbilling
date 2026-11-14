@@ -41,6 +41,8 @@
 .anutech-site[data-site-theme="warm"] .hlp *:focus-visible { outline-color: var(--w-teal) !important; }
 
 /* ── Classic inline colours → Warm tokens (generated: one rule per colour and property) ──── */
+/* The component's white (C.card "#fff") is the warm card colour — same in light, the dark card in dark. */
+.anutech-site[data-site-theme="warm"] .hlp :where([style*="background:#fff"], [style*="background: rgb(255, 255, 255)"], [style*="background-color: rgb(255, 255, 255)"]) { background: var(--w-surface) !important; }
 .anutech-site[data-site-theme="warm"] .hlp [style*="color:#C2410C"],
 .anutech-site[data-site-theme="warm"] .hlp [style*="color: rgb(194, 65, 12)"] { color: var(--w-teal) !important; }
 .anutech-site[data-site-theme="warm"] .hlp [style*="background:#C2410C"],
@@ -149,14 +151,14 @@
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1)::before {
   content: ""; position: absolute; inset: 0; z-index: -2;
-  background: #12312A url(/site/warm/fc837755801d54ac08f6a3cb8aeaf9cd.jpg) center 50% / cover no-repeat;
+  background: var(--w-forest) url(/site/warm/fc837755801d54ac08f6a3cb8aeaf9cd.jpg) center 50% / cover no-repeat;
   animation: hlp-warm-slides 28s infinite;
 }
 /* The tint fades to solid forest at the foot, so the quick-jump band below continues it. */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1)::after {
   content: ""; position: absolute; inset: 0; z-index: -1;
   background:
-    linear-gradient(180deg, rgba(18,49,42,0) 70%, #12312A 100%),
+    linear-gradient(180deg, rgba(18,49,42,0) 70%, var(--w-forest) 100%),
     linear-gradient(90deg, rgba(18,49,42,0.95) 0%, rgba(18,49,42,0.86) 42%, rgba(18,49,42,0.5) 100%);
 }
 @keyframes hlp-warm-slides {
@@ -454,7 +456,7 @@
   /* Photo strip at the top of the hero, fading into solid forest — the design's phone hero. */
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1)::before { bottom: auto; height: 340px; }
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1)::after {
-    background: linear-gradient(180deg, rgba(18,49,42,0.25) 0px, rgba(18,49,42,0.55) 150px, #12312A 340px, #12312A 100%);
+    background: linear-gradient(180deg, rgba(18,49,42,0.25) 0px, rgba(18,49,42,0.55) 150px, var(--w-forest) 340px, var(--w-forest) 100%);
   }
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) > div > div:nth-child(2) { max-width: none; justify-self: stretch; }
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) > div > div:first-child > div:first-child { white-space: normal; }
@@ -493,3 +495,46 @@
 .anutech-site[data-site-theme="warm"] [style*="--htf-sans"] a:hover { background: var(--w-teal-dark) !important; border-color: var(--w-teal-dark) !important; }
 .anutech-site[data-site-theme="warm"] [style*="--htf-sans"] a[style*="transparent"] { background: var(--w-surface) !important; color: var(--w-teal) !important; }
 .anutech-site[data-site-theme="warm"] [style*="--htf-sans"] a[style*="transparent"]:hover { background: var(--w-mint-soft) !important; color: var(--w-teal-dark) !important; }
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   DARK — /hosting, /hosting/trial
+   The same rules twice: once for a visitor who chose dark (data-theme="dark"), once for a
+   device in dark mode when the visitor has not chosen light. Light is untouched.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+/* Light hairlines this file paints (#EEF2EE) → the dark line. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) > div > div:nth-child(2) > div:nth-child(3) > div { border-bottom-color: var(--w-line) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hlp :where([style*="solid #F3ECE5"], [style*="dashed #F3ECE5"], [style*="solid rgb(243, 236, 229)"], [style*="dashed rgb(243, 236, 229)"]) { border-color: var(--w-line) !important; }
+/* Step 2 band: the mint ground and its photo, under a dark tint so the text stays light-on-dark. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hlp > section#cost { background: var(--w-mint-soft) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) {
+  background: linear-gradient(180deg, var(--w-mint-soft) 0%, rgba(38, 53, 47, 0.86) 45%, rgba(30, 38, 35, 0.78) 100%), var(--w-mint-soft) url(/site/warm/55e6aca72159485ec7743e9f3f5e0dc4.jpg) center bottom / cover no-repeat !important;
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) > div > p { background: rgba(42, 52, 48, 0.92); }
+/* Step 4 band: the same photo treatment. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hlp > section#worries {
+  background: linear-gradient(rgba(30, 38, 35, 0.86), rgba(30, 38, 35, 0.86)), var(--w-bg) url(/site/warm/19f0c3867754363952ab68e9d77382de.jpg) center / cover no-repeat !important;
+}
+/* Teal fills keep dark text (the light teal of dark mode). */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hlp :is([style*="background:#C2410C"], [style*="background: rgb(194, 65, 12)"], [style*="background-color: rgb(194, 65, 12)"]):not(.hlp-orange) { color: var(--w-on-teal) !important; }
+/* /hosting/trial: the status card's tinted top tile already uses tokens; its dark button keeps contrast. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] [style*="--htf-sans"] a[style*="transparent"] { border-color: var(--w-teal) !important; }
+@media (prefers-color-scheme: dark) {
+  /* Light hairlines this file paints (#EEF2EE) → the dark line. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) > div > div:nth-child(2) > div:nth-child(3) > div { border-bottom-color: var(--w-line) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hlp :where([style*="solid #F3ECE5"], [style*="dashed #F3ECE5"], [style*="solid rgb(243, 236, 229)"], [style*="dashed rgb(243, 236, 229)"]) { border-color: var(--w-line) !important; }
+  /* Step 2 band: the mint ground and its photo, under a dark tint so the text stays light-on-dark. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hlp > section#cost { background: var(--w-mint-soft) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) {
+    background: linear-gradient(180deg, var(--w-mint-soft) 0%, rgba(38, 53, 47, 0.86) 45%, rgba(30, 38, 35, 0.78) 100%), var(--w-mint-soft) url(/site/warm/55e6aca72159485ec7743e9f3f5e0dc4.jpg) center bottom / cover no-repeat !important;
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) > div > p { background: rgba(42, 52, 48, 0.92); }
+  /* Step 4 band: the same photo treatment. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hlp > section#worries {
+    background: linear-gradient(rgba(30, 38, 35, 0.86), rgba(30, 38, 35, 0.86)), var(--w-bg) url(/site/warm/19f0c3867754363952ab68e9d77382de.jpg) center / cover no-repeat !important;
+  }
+  /* Teal fills keep dark text (the light teal of dark mode). */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hlp :is([style*="background:#C2410C"], [style*="background: rgb(194, 65, 12)"], [style*="background-color: rgb(194, 65, 12)"]):not(.hlp-orange) { color: var(--w-on-teal) !important; }
+  /* /hosting/trial: the status card's tinted top tile already uses tokens; its dark button keeps contrast. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] [style*="--htf-sans"] a[style*="transparent"] { border-color: var(--w-teal) !important; }
+}
+
