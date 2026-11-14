@@ -72,9 +72,9 @@ import { GraceOverCard } from "./grace-over-card";
 import { NoRenewalDateCard } from "./no-date-card";
 import { classifyRenewals, chasedRenewal } from "./classify";
 import {
-  QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STATUS_FILTER_LABEL, NO_FILTERS, TILE_TABS,
+  QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STAGE_FILTER_LABEL, STAGE_FILTER_ORDER, NO_FILTERS, TILE_TABS,
   queueTabs, noRenewalDate, resolveBucket, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
-  sortQueue, filterQueue, filterOptions, bulkQuoteTargets, bulkQuoteConfirm,
+  sortQueue, filterQueue, filterOptions, bulkStageTargets, bulkQuoteConfirm,
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount, type RowStatusKey,
 } from "./queue";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
@@ -106,7 +106,7 @@ import {
 import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
-import { renewalStage, type RenewalStage, type StageFlag, type FlagKey } from "@/lib/renewals/stage";
+import { renewalStage, type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage } from "./row-cells";
@@ -726,7 +726,7 @@ export default function RenewalsPage() {
   /* R-239: the search narrows the tabs (and their counts) only; R-2403: so do the filters. */
   const asQueueRow = (i: QueueItem) => ({
     id: i.sub.id, daysUntil: i.daysUntil, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
-    statusKey: i.status.key, atRisk: i.atRisk, customer: i.sub.customer_name, commitment: i.commitment, item: i,
+    statusKey: i.status.key, stageKey: i.stage?.key ?? null, atRisk: i.atRisk, customer: i.sub.customer_name, commitment: i.commitment, item: i,
   });
   /* R-2404: Mine · Follow-up due · Promise broken narrow the tabs the same way. */
   const narrow = (list: QueueItem[]): QueueItem[] =>
@@ -742,8 +742,9 @@ export default function RenewalsPage() {
 
   const productOptions = filterOptions(allItems.map((i) => i.sub.plan));
   const vendorOptions  = filterOptions(allItems.map((i) => i.sub.vendor));
-  const statusCount    = (k: RowStatusKey) => allItems.filter((i) => i.status.key === k).length;
-  const statusOptions  = (Object.keys(STATUS_FILTER_LABEL) as RowStatusKey[]).filter((k) => statusCount(k) > 0 || filters.status === k);
+  /* R-2760: the status filter is the row's ONE stage — the chip's words, with counts. */
+  const statusCount    = (k: StageKey) => allItems.filter((i) => i.stage?.key === k).length;
+  const statusOptions  = STAGE_FILTER_ORDER.filter((k) => statusCount(k) > 0 || filters.status === k);
   const fuOn = fuFilters.mine || fuFilters.followUpDue || fuFilters.promiseBroken;
   const filtered = !!(filters.product || filters.status || filters.vendor || filters.commitment !== "all" || atRiskOn || fuOn);
   /* R-2404: chip counts — whole queue, so a person sees "Mine (12)" before pressing it. */
@@ -841,7 +842,8 @@ export default function RenewalsPage() {
      only rows whose button is Send renewal quote; the rest are named in the confirm. */
   async function handleSelectedQuote() {
     if (bulkSending) return;
-    const { send, skipped } = bulkQuoteTargets(selectedRows, (id) => quoteStatusMap.get(id ?? "") ?? null, graceDays);
+    /* R-2760: the rows whose stage says "send the renewal" and that have an email (bulkStageTargets). */
+    const { send, skipped } = bulkStageTargets(selectedRows, emailOf);
     if (send.length === 0) {
       toast.info("Nothing to send for the selected renewals", {
         description: skipped.slice(0, 3).map((s) => `${s.row.sub.customer_name} — ${s.reason}`).join("; "),
@@ -851,7 +853,7 @@ export default function RenewalsPage() {
     await sendQuotes(send, skipped);
   }
 
-  async function sendQuotes(send: QueueItem[], skipped: ReturnType<typeof bulkQuoteTargets<QueueItem>>["skipped"]) {
+  async function sendQuotes(send: QueueItem[], skipped: ReturnType<typeof bulkStageTargets<QueueItem>>["skipped"]) {
     const ok = await confirm({ ...bulkQuoteConfirm(send, skipped), confirmLabel: `Send ${send.length}`, icon: "mail" });
     if (!ok) return;
     await runSend(send, RENEWAL_QUOTE_VERBS, (failed) => void sendQuotes(failed, []));
@@ -1058,10 +1060,10 @@ export default function RenewalsPage() {
               <option value="">All products</option>
               {productOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
-            <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as RowStatusKey | "" }))} aria-label="Filter by status" className={SELECT_CLS}>
+            <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as StageKey | "" }))} aria-label="Filter by status" className={SELECT_CLS}>
               <option value="">All statuses</option>
               {/* R-2728: each status with its count across the queue (e.g. "Renewal quote sent (3)"). */}
-              {statusOptions.map((k) => <option key={k} value={k}>{STATUS_FILTER_LABEL[k]} ({statusCount(k)})</option>)}
+              {statusOptions.map((k) => <option key={k} value={k}>{STAGE_FILTER_LABEL[k]} ({statusCount(k)})</option>)}
             </select>
             <select value={filters.vendor} onChange={(e) => setFilters((f) => ({ ...f, vendor: e.target.value }))} aria-label="Filter by vendor" className={SELECT_CLS}>
               <option value="">All vendors</option>
