@@ -328,6 +328,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
   const applyProduct = (p: CatalogProduct) => {
     setIsCustomPlan(false);
+    setYearsPicked(1);   // R-2734: a new plan starts at 1 year — never a hidden earlier N
     setItemId(p.id);
     setPlan(p.name);
     setPriceText(String(billingTerms(billingChoice, p).suggestedSellPerSeat)); setPriceHint(null); setPriceProposal(null); priceSwitchMemo.current = null;
@@ -344,6 +345,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
    */
   const changeBillingChoice = (next: BillingChoice) => {
     setBillingChoice(next);
+    setYearsPicked(1);   // R-2734: years only on Annual · Yearly — a switch starts again at 1
     /* The TERM changes with the choice, so the expiry date has to move with it.
        Flex has no commitment — its term is one month, and leaving a year there was
        reported on 9 Sep 2026 as "date still pointing to yearly".
@@ -407,6 +409,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
   const handleVendorChange = (v: Item["vendor"]) => {
     setVendor(v);
+    setYearsPicked(1);   // R-2734
     setIsCustomPlan(false);
     const first = productsForVendor(products, v)[0];
     if (first) applyProduct(first);
@@ -423,6 +426,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     if (val === "CUSTOM_PLAN") {
       setIsCustomPlan(true);
       setItemId(null);      // nothing in the catalog to point at
+      setYearsPicked(1);    // R-2734
       setPlan("");
       return;
     }
@@ -1071,6 +1075,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           /* R-2178: billed outside until the LAST covered day (inclusive, billedElsewhere) — the
              renewal date itself starts the next term, which bills here. */
           billed_externally_until: addDaysISO(renewalOn, -1),
+          /* R-2734: no quote for R-2369 to read the exact yearly price from — say it here, so the
+             renewal after the N years bills ₹800, not mrr 67 × 12 = ₹804. */
+          ...(regYears > 1 ? { term_amount: Math.round(perPeriodAmount * 100) / 100 } : {}),
         });
         if (openErr) throw openErr;
         toast.success(`Opening subscription added for ${cleanCustomerName}`, {
@@ -1103,7 +1110,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
          carries the Renewal / Expiry date on screen, which the paid path used to replace with
          start + 1 year (trigger subscription_term_follows_line, R-1445 migration). */
       const lineItems: QuoteLineItem[] = [
-        onboardingQuoteLine({ id: `line-${Date.now()}`, plan, seats, pricePerSeat, terms, years: regYears, startDate, renewalDate }),
+        onboardingQuoteLine({ id: `line-${Date.now()}`, itemId, plan, seats, pricePerSeat, terms, years: regYears, startDate, renewalDate }),
       ];
 
       /* `amount`, NOT `total` — `quotes` has no `total` column (it has amount,

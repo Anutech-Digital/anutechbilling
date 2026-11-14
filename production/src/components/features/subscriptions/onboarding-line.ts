@@ -44,12 +44,14 @@ export function onboardingRenewal(startDate: string, years: number, typed: strin
  */
 export function yearlyUnitProducts(products: CatalogProduct[], items: readonly Item[]): CatalogProduct[] {
   const byId = new Map(items.map((it) => [it.id, it]));
-  return products.map((p) => {
+  let changed = false;
+  const out = products.map((p) => {
     const raw = byId.get(p.id);
     if (!raw || billingUnitOf(raw) !== "unit_year") return p;
     const { rate, cost } = catalogYearlyPrice(raw);
     if (!(rate > 0)) return p;
     const costKnown = p.annualCostPerSeat !== null;
+    changed = true;
     return {
       ...p,
       annualSellPerSeat: rate,
@@ -58,10 +60,18 @@ export function yearlyUnitProducts(products: CatalogProduct[], items: readonly I
       annualMonthlyCostPerSeat: costKnown ? Math.round(cost / 12) : null,
     };
   });
+  /* The same order subscriptionProducts gives (vendor, then cheapest first) — on the corrected
+     prices, so the plan a vendor pre-selects is still its cheapest. */
+  return changed
+    ? out.sort((a, b) => a.vendor === b.vendor ? a.annualSellPerSeat - b.annualSellPerSeat : a.vendor.localeCompare(b.vendor))
+    : out;
 }
 
 export function onboardingQuoteLine(input: {
   id: string;
+  /** R-2734: the catalogue row (subscriptions.item_id) — record_payment reads the vendor from it;
+   *  without it a Payment Received domain was filed as vendor "other". Null on a custom plan. */
+  itemId?: string | null;
   plan: string;
   seats: number;
   pricePerSeat: number;
@@ -81,6 +91,7 @@ export function onboardingQuoteLine(input: {
     ? domainLineYears({ years: input.years }) : 1;
   return {
     id,
+    ...(input.itemId ? { item_id: input.itemId } : {}),
     /* R-2095 (staging, 30 Oct): the name is the catalogue plan — record_payment names the
        subscription after the line, and "(2 seats)" in the plan broke matching (R-812 family).
        Seats are the line's qty and the subscription's seats column. */
@@ -96,7 +107,7 @@ export function onboardingQuoteLine(input: {
        catalog row, and it is the last of the three places that guess used to live. */
     cost: terms.costPerSeat !== null
       ? terms.costPerSeat * terms.periods * years
-      : Math.round(pricePerSeat * terms.periods * 0.83) * years,
+      : Math.round(pricePerSeat * terms.periods * years * 0.83),
     commitment: terms.commitment,
     ...(years > 1 ? { years } : {}),
     ...(isDay(start) ? { start_date: start } : {}),

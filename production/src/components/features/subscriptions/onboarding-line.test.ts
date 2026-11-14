@@ -135,3 +135,23 @@ describe("R-2734 per-year catalogue items in the Onboard dialog", () => {
     expect(yearlyUnitProducts(before, [gws])).toEqual(before);
   });
 });
+
+describe("R-2734 review fixes", () => {
+  const terms = billingTerms("annual_yearly");
+  it("the line carries the catalogue item (record_payment reads the vendor from it); a custom plan has none", () => {
+    expect(onboardingQuoteLine({ id: "l", itemId: "dom-in", plan: "Domain .in", seats: 1, pricePerSeat: 800, terms, startDate: "2025-04-01" }).item_id).toBe("dom-in");
+    expect(onboardingQuoteLine({ id: "l", itemId: null, plan: "X", seats: 1, pricePerSeat: 800, terms, startDate: "2025-04-01" }).item_id).toBeUndefined();
+  });
+  it("custom plan cost guess is rounded once on the whole term (799 × 3 × 0.83 = 1,990)", () => {
+    const line = onboardingQuoteLine({ id: "l", plan: "Domain .in", seats: 1, pricePerSeat: 799, terms: { ...terms, costPerSeat: null }, startDate: "2025-04-01", years: 3 });
+    expect(line.cost).toBe(1990);
+  });
+  it("after the per-year fix the cheapest plan of a vendor still comes first", () => {
+    const yearly = { id: "s-y", name: "Support yearly", vendor: "support", item_type: "subscription", is_active: true,
+      msrp: 6000, wholesale: 0, prices: { billing_unit: "unit_year" } } as unknown as Item;
+    const monthly = { id: "s-m", name: "Support monthly", vendor: "support", item_type: "subscription", is_active: true,
+      msrp: 1000, wholesale: 0, prices: {} } as unknown as Item;
+    const list = yearlyUnitProducts(subscriptionProducts([yearly, monthly]), [yearly, monthly]);
+    expect(list.map((p) => p.id)).toEqual(["s-y", "s-m"]);   // ₹6,000/yr before ₹12,000/yr
+  });
+});

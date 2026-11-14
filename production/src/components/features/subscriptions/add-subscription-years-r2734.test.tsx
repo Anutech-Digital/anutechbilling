@@ -113,7 +113,7 @@ describe("R-2734 Onboard dialog — domain 'Register for N years'", () => {
     expect(quote.subtotal).toBe(2400);
     expect(quote.amount).toBe(2832);   // 2400 + 18% GST, once
     const line = (quote.line_items as Array<Record<string, unknown>>)[0];
-    expect(line).toMatchObject({ qty: 1, rate: 2400, cost: 1800, years: 3, start_date: "2025-04-01" });
+    expect(line).toMatchObject({ item_id: "dom-in", qty: 1, rate: 2400, cost: 1800, years: 3, start_date: "2025-04-01" });
     expect(line.renewal_date).toBeUndefined();
     const sub = writes.find((w) => w.table === "subscriptions")!.row;
     expect(sub).toMatchObject({
@@ -134,6 +134,8 @@ describe("R-2734 Onboard dialog — domain 'Register for N years'", () => {
       start_date: "2025-04-01", renewal_date: "2028-04-01", term_months: 12, mrr: 67,
       billed_externally_until: "2028-03-31", outstanding_amount: 0,
     });
+    /* No quote for R-2369 to read: the exact yearly price is written here (renewal bills ₹800, not 67 × 12). */
+    expect(sub.term_amount).toBe(800);
   });
 
   it("Payment Received: the handoff line carries years 3 and the whole term; expected = 3-year total incl. GST", async () => {

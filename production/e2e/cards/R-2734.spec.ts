@@ -31,10 +31,23 @@ on conflict (id) do nothing;
   if (r.status !== 0) throw new Error(`planting R-2734 data failed: ${(r.stderr || r.stdout || "").trim()}`);
 }
 
+/** Remove the planted item again (every step Cancels, so nothing references it) — later card tests
+ *  see the same E2E Test Co catalogue. */
+function unplant(): void {
+  const sql = `delete from public.items i using public.tenants t
+ where i.id = '${ITEM_ID}' and i.tenant_id = t.id and t.email = '${E2E_TENANT_EMAIL}'
+   and not exists (select 1 from public.subscriptions s where s.item_id = i.id);`;
+  spawnSync("docker", ["exec", "-i", "supabase_db_resellerosv3", "psql", "-X", "-q", "-U", "postgres", "-d", "postgres"],
+    { input: sql, encoding: "utf8" });
+}
+
 test.describe("R-2734 — Add Subscription: domain 'Register for N years'", () => {
   onlyInCardTests();
   test.beforeAll(() => {
     if (CARD_TESTS_ON) plant();
+  });
+  test.afterAll(() => {
+    if (CARD_TESTS_ON) unplant();
   });
 
   test("Steps 1–2: domain plan at ₹800 a year, 3 years from 1 Apr 2025 → ₹2,400 once, renews 1 Apr 2028; Cancel saves nothing", async ({ browser, baseURL }) => {
