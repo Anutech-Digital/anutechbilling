@@ -396,3 +396,62 @@
   .anutech-site[data-site-theme="warm"] .w-to-top { transition: none; }
 }
 @media print { .anutech-site[data-site-theme="warm"] .w-to-top { visibility: hidden; } }
+
+/* ── Dark variant of the warm tokens ───────────────────────────────────────────────────────
+   Applies when the visitor chooses dark with the header switch (data-theme="dark" on <html>),
+   or when their device is dark and they have not chosen light. Page files colour through
+   var(--w-…), so most of the site follows from this block alone. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"],
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] {
+  --w-bg: #1E2623;
+  --w-surface: #2A3430;
+  --w-surface-2: #252E2A;
+  --w-ink: #E9F0EC;
+  --w-ink-2: #D2DDD8;
+  --w-muted: #AFC0B8;
+  --w-muted-2: #93A59D;
+  --w-line: #3A4A44;
+  --w-line-strong: #4C5E57;
+  --w-teal: #5ED0B3;
+  --w-teal-dark: #8FE3CA;
+  --w-on-teal: #10201B;
+  --w-mint: #2F4F46;
+  --w-mint-soft: #26352F;
+  --w-forest: #16302A;
+  --w-on-forest: #D5E3DD;
+  --w-marigold: #F4B740;
+  --w-marigold-hover: #F7C561;
+  --w-on-marigold: #17241F;
+  --w-marigold-soft: #3D3320;
+  --w-marigold-ink: #F4D27A;
+  --w-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"],
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] {
+    --w-bg: #1E2623;
+    --w-surface: #2A3430;
+    --w-surface-2: #252E2A;
+    --w-ink: #E9F0EC;
+    --w-ink-2: #D2DDD8;
+    --w-muted: #AFC0B8;
+    --w-muted-2: #93A59D;
+    --w-line: #3A4A44;
+    --w-line-strong: #4C5E57;
+    --w-teal: #5ED0B3;
+    --w-teal-dark: #8FE3CA;
+    --w-on-teal: #10201B;
+    --w-mint: #2F4F46;
+    --w-mint-soft: #26352F;
+    --w-forest: #16302A;
+    --w-on-forest: #D5E3DD;
+    --w-marigold: #F4B740;
+    --w-marigold-hover: #F7C561;
+    --w-on-marigold: #17241F;
+    --w-marigold-soft: #3D3320;
+    --w-marigold-ink: #F4D27A;
+    --w-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+}

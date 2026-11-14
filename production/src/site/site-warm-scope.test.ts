@@ -22,7 +22,11 @@ const layout = readFileSync(path.join(root, "src/app/(marketing)/layout.tsx"), "
  *  variant may put the root's data-theme in front. Nothing else can match a warm rule. */
 const SCOPES = ['.anutech-site[data-site-theme="warm"]', '.anutech-product[data-site-theme="warm"]'];
 const inScope = (sel: string) =>
-  SCOPES.some((sc) => sel.startsWith(sc) || sel.startsWith(`:root[data-theme="dark"] ${sc}`));
+  SCOPES.some((sc) =>
+    sel.startsWith(sc) ||
+    sel.startsWith(`:root[data-theme="dark"] ${sc}`) ||
+    // device-dark default: only when the visitor has not picked light (inside a prefers-color-scheme block)
+    sel.startsWith(`:root:not([data-theme="light"]) ${sc}`));
 
 /** Split a selector list on top-level commas only — a comma inside :is()/:has()/:not(), however
  *  deeply nested, belongs to that selector (a one-level regex split cut ":has(a:nth-child(3), b)"). */
