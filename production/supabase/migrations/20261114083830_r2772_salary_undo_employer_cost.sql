@@ -36,7 +36,7 @@
 --      calls the two gated RPCs (role + company checks live there) and reads the row through RLS.
 --
 -- No data is changed: the new columns start empty; old rows are matched when they are undone.
--- Staging: the deploy script rewrites auth.role() -> public.current_request_role() (R-161).
+-- Role checks call public.current_request_role() directly (R-2487: no new raw auth-prefixed trusted list).
 -- Test: supabase/tests/r2772_salary_undo_employer_cost.test.sql (rolled back).
 
 begin;
@@ -83,8 +83,8 @@ begin
   /* R-717: role gate. Trusted = service_role or a direct DB session with no request role
      (same rule as R-454 / R-714). Everyone else must hold one of the roles below — a
      null-caller (no public.users row) holds none, so it is refused here too. */
-  v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+  v_trusted := coalesce(public.current_request_role(), '') = 'service_role'
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   if not v_trusted and not public.current_user_has_role('owner', 'manager', 'accountant') then
     raise exception 'Only an owner, manager or accountant can pay a salary' using errcode = '42501';
@@ -172,8 +172,8 @@ begin
   /* R-885: role gate (Pardeep's role table, 11 Oct 2026 — payroll group (R-717 rule): owner, manager, accountant).
      Trusted = service_role or a direct DB session with no request role (R-454 / R-714 /
      R-717 / R-718); everyone else needs the role. */
-  if not (coalesce(auth.role(), '') = 'service_role'
-          or (auth.role() is null
+  if not (coalesce(public.current_request_role(), '') = 'service_role'
+          or (public.current_request_role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant') then
     raise exception 'Only an owner, manager or accountant can undo a salary payment' using errcode = '42501';
@@ -181,7 +181,7 @@ begin
   -- R-2772: hold the row while it is undone (a bank match or a second Undo waits for this one).
   select * into v_sp from public.salary_payments where id = p_salary_id for update;
   if not found then raise exception 'Salary payment not found'; end if;
-  if (v_tenant is null and coalesce(auth.role(), '') in ('anon', 'authenticated')) or (v_tenant is not null and v_sp.tenant_id is distinct from v_tenant) then
+  if (v_tenant is null and coalesce(public.current_request_role(), '') in ('anon', 'authenticated')) or (v_tenant is not null and v_sp.tenant_id is distinct from v_tenant) then
     raise exception 'Salary payment not in caller''s tenant' using errcode = 'insufficient_privilege';
   end if;
 
@@ -281,7 +281,7 @@ begin
     from public.salary_payments s where s.id = p_salary_id;
   if not found then
     -- Not there, or not readable by this login (RLS: owner / manager / accountant of the company).
-    if coalesce(auth.role(), '') in ('anon', 'authenticated')
+    if coalesce(public.current_request_role(), '') in ('anon', 'authenticated')
        and not public.current_user_has_role('owner', 'manager', 'accountant') then
       raise exception 'Only an owner, manager or accountant can edit a salary' using errcode = '42501';
     end if;
