@@ -25,6 +25,7 @@ import { canOpenQuotes } from "@/lib/quotes/access";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
+import { RenewalContact } from "@/components/features/renewals/renewal-contact";
 import type { Subscription } from "@/lib/supabase/database.types";
 import type { RenewalStage } from "@/lib/renewals/stage";
 import type { UserName } from "@/lib/hooks/useUserNames";
@@ -42,6 +43,7 @@ import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { nextTermWords, subscriptionDomain } from "./row-cells";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
+import type { RowContact } from "./queue-data";
 
 /** What opened the drawer (the product button) — focus goes back to it on close. */
 let drawerOpener: HTMLElement | null = null;
@@ -96,6 +98,8 @@ export interface DrawerItem {
   docs: LastDocs | undefined;
   /** R-2818: what the previous term still owes (the row's own figure, lib/renewals/owed.ts); null = none / not read. */
   prior?: SubscriptionOwed | null;
+  /** R-2824: the customer's main contact (undefined while the page still reads the contacts). */
+  contact?: RowContact;
 }
 
 const TONE: Record<DocTone, string> = {
@@ -231,6 +235,7 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
               <SheetDescription>
                 {[sub.plan, sub.seats != null ? `${sub.seats} seats` : null, sub.vendor ? sub.vendor[0].toUpperCase() + sub.vendor.slice(1) : null, subscriptionDomain(sub)].filter(Boolean).join(" · ")}
               </SheetDescription>
+              <RenewalContact contact={item.contact} customerId={sub.customer_id} loading={!item.contact} />
               <div className="mt-2 flex flex-wrap items-start justify-between gap-3" data-testid="renewal-drawer-head">
                 <div className="min-w-0">
                   {item.stage

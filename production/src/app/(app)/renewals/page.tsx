@@ -1227,7 +1227,7 @@ export default function RenewalsPage() {
         /* the same filled / outline button as the row it came from */
         return (
           <RenewalDrawer
-            item={drawerItem}
+            item={drawerItem && { ...drawerItem, contact: drawerItem.sub.customer_id ? contacts?.get(drawerItem.sub.customer_id) : undefined }}
             open={!!drawerSub}
             onClose={closeDrawer}
             names={names}
@@ -1250,6 +1250,7 @@ export default function RenewalsPage() {
           stillOwes={followupFor.status.key !== "renewed"}
           amountDue={subscriptionOwedOf(followupFor.sub, followupFor.docs)?.total ?? 0}   /* R-2818: what its documents still owe — never the renewal's price */
           renewal={{ subscriptionId: followupFor.sub.id }}
+          contact={contacts?.get(followupFor.sub.customer_id)}
         />
       )}
       <AssignOwnerDialog
