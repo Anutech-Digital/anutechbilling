@@ -87,7 +87,7 @@ import { recordPhoneOf } from "@/lib/customers/record-phone";
 import { buildCustomerStatement, statementBalanceText, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
-import { subscriptionReceivable } from "@/lib/payments/receivables";
+import { uninvoicedSubscriptionDue } from "@/lib/renewals/owed";
 import { advanceTxnView, isPaymentTxn } from "@/components/features/customers/advance-txn";
 import { CustomerTransactionsTab, paymentReference, type TxnFilter } from "@/components/features/customers/customer-transactions-tab";
 
@@ -294,9 +294,10 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     /* R-2029: a customer advance (R-1863) reads "Advance (RV-…)" on the statement. */
     isAdvanceQuote: (id) => isCustomerAdvanceQuote((quotes ?? []).find((q) => q.id === id)),
     /* R-2183: a subscription instalment owed before its invoice exists (the R-1708 rule —
-       subscriptionReceivable), so the closing is the same balance the Overview shows. */
+       subscriptionReceivable), so the closing is the same balance the Overview shows.
+       R-2818: through the ONE owed rule Renewals reads too (lib/renewals/owed.ts) — same number both places. */
     uninvoicedDues: allSubs.flatMap((s) => {
-      const due = subscriptionReceivable(s, invoicedQuoteIds);
+      const due = uninvoicedSubscriptionDue(s, invoicedQuoteIds);
       return due > 0 && s.quote_id ? [{ quoteId: s.quote_id, date: (s.start_date ?? s.created_at ?? "").slice(0, 10), due }] : [];
     }),
   });

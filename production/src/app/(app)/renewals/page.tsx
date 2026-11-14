@@ -65,7 +65,7 @@ import {
   type RenewalRowLike,
 } from "./reminders";
 import { renewalRisk, topRiskPick, topRiskReasons } from "./risk";
-import { priorTermDue } from "./prior-due";
+import { subscriptionOwedOf } from "./prior-due";
 import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
 import { renewalRowAction, type RowAction } from "./row-action";
 import { GraceOverCard } from "./grace-over-card";
@@ -408,7 +408,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
     return (
       <>
         {keepActionLine && <RowActionLine action={action} canQuotes={canQuotes} className={className} />}
-        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} priorDue={priorTermDue(item.sub)} className={className} />
+        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} prior={item.prior} className={className} />
       </>
     );
   };
@@ -553,7 +553,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
                   <td className="min-w-0 px-1.5 py-1.5">
-                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} priorDue={priorTermDue(sub)} />
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
@@ -1247,7 +1247,7 @@ export default function RenewalsPage() {
           ownerId={followupFor.customerOwnerId}
           items={[{ kind: "subscription", id: followupFor.sub.id, label: `${followupFor.sub.plan ?? "subscription"} · renews ${followupFor.sub.renewal_date ? formatDate(followupFor.sub.renewal_date) : "—"}`, quoteId: followupFor.sub.renewal_quote_id }]}
           stillOwes={followupFor.status.key !== "renewed"}
-          amountDue={followupFor.amount.value}
+          amountDue={subscriptionOwedOf(followupFor.sub, followupFor.docs)?.total ?? 0}   /* R-2818: what its documents still owe — never the renewal's price */
           renewal={{ subscriptionId: followupFor.sub.id }}
         />
       )}
