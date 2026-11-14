@@ -110,6 +110,7 @@ import { renewalStage, type RenewalStage, type StageFlag, type FlagKey, type Sta
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort } from "./row-cells";
+import { RenewalDrawer, useRenewalDrawerSub, isRowOpenClick } from "./renewal-drawer";
 
 // ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
 
@@ -330,9 +331,11 @@ interface RenewalQueueProps {
   lastPaid: { data: Map<string, LastPaid> | undefined; loading: boolean; failed: boolean };
   /** R-2728: the last-docs read's state (the rows carry their own `docs`). */
   docsState: { loading: boolean; failed: boolean };
+  /** R-2740: open the row drawer (the product name, or a press on the row outside its controls). */
+  onOpen: (subId: string) => void;
 }
 
-function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid, docsState }: RenewalQueueProps) {
+function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid, docsState, onOpen }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -398,9 +401,12 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                 />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-ink truncate">{sub.customer_name}</p>
-                  <p className="text-2xs text-ink-3 truncate mt-0.5">
+                  {/* R-2740: the product opens the row drawer (the renewal's documents, payments, follow-ups) */}
+                  <button type="button" onClick={() => onOpen(sub.id)} data-testid="renewal-open-drawer"
+                    className="mt-0.5 block max-w-full truncate rounded-sm text-left text-2xs text-ink-3 underline-offset-2 hover:text-ink hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                    aria-label={`Open details — ${sub.customer_name} · ${sub.plan}`}>
                     {sub.plan} · {sub.seats} seats
-                  </p>
+                  </button>
                   <ContactLine contact={contact} />
                   {lastPaidFor(item, "mt-0.5")}
                 </div>
@@ -462,7 +468,8 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
             {rows.map((item) => {
               const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
               return (
-                <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
+                <tr key={sub.id} className="cursor-pointer border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row"
+                  onClick={(e) => { if (isRowOpenClick(e.target)) onOpen(sub.id); }}>
                   <td className="px-2 py-2.5">
                     <input
                       type="checkbox"
@@ -474,7 +481,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                   </td>
                   <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
                   <td className="min-w-0 px-2 py-2.5">
-                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} />
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} onOpen={() => onOpen(sub.id)} />
                   </td>
                   <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-2 py-2.5 text-right">
@@ -562,6 +569,8 @@ export default function RenewalsPage() {
   const docsState = { loading: lastDocsQ.isLoading, failed: lastDocsQ.isError && !lastDocsQ.data };
   const [fuFilters, setFuFilters] = React.useState<FollowupFilters>(NO_FOLLOWUP_FILTERS);
   const [followupFor, setFollowupFor] = React.useState<QueueItem | null>(null);
+  /* R-2740: the row drawer — ?sub=<id> (shareable, Back closes it). */
+  const [drawerSub, openDrawer, closeDrawer] = useRenewalDrawerSub();
   const [assignOpen, setAssignOpen] = React.useState(false);
   const [assigning, setAssigning] = React.useState(false);
   const canReassign = mayReassignFollowup(me?.role);
@@ -1155,9 +1164,26 @@ export default function RenewalsPage() {
             names={names}
             lastPaid={lastPaid}
             docsState={docsState}
+            onOpen={openDrawer}
           />
         </div>
       </Card>
+
+      {/* R-2740: the row drawer — every quote + invoice, payments, follow-ups, flags explained (read-only). */}
+      {(() => {
+        const drawerItem = drawerSub ? allItems.find((i) => i.sub.id === drawerSub) ?? null : null;
+        return (
+          <RenewalDrawer
+            item={drawerItem}
+            open={!!drawerSub}
+            onClose={closeDrawer}
+            names={names}
+            followupRows={fuData?.rows ?? []}
+            onFollowup={drawerItem?.sub.customer_id ? () => setFollowupFor(drawerItem) : undefined}
+            strong={!!drawerItem && drawerItem.daysUntil <= 7}
+          />
+        );
+      })()}
 
       {/* R-2404: Payment Follow-up's own dialog, about this renewal (its history = the renewal's activity log). */}
       {followupFor?.sub.customer_id && (
