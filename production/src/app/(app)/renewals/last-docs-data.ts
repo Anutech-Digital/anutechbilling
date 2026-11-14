@@ -19,10 +19,10 @@
  * R-2740: readRenewalDocs is the same read as a plain function — the row drawer runs it for ONE
  * subscription with { all: true } (every quote + invoice) inside its own single query.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import { fetchAllRowsIn, RENEWALS_READ_CONCURRENCY } from "@/lib/ops/fetch-all";
 import { noteTotalsByInvoice, type NoteAmountRow } from "@/lib/invoices/note-totals";
 import {
   attachDocDetails, detailQuoteIds, lastDocsBySubscription, shownInvoiceIds,
@@ -47,14 +47,52 @@ export function docRefs(subs: readonly SubRef[]): SubRef[] {
 }
 
 export function useRenewalLastDocs(subs: readonly SubRef[]) {
+  const qc = useQueryClient();
   const rows = docRefs(subs);
   const key = rows.map((s) => `${s.id}:${s.quote_id ?? ""}:${s.renewal_quote_id ?? ""}:${s.plan ?? ""}:${s.domain ?? ""}`);
   return useQuery({
     queryKey: ["quotes", "renewal-last-docs", key],
     enabled: rows.length > 0,
     staleTime: 60_000,
-    queryFn: () => readRenewalDocs(rows),
+    /* R-2765: rounds 1–2 come from the ONE shared read (Last paid uses the same rows) */
+    queryFn: async () => docsFromRows(rows, await fetchRenewalDocRows(qc, rows)),
   });
+}
+
+/**
+ * R-2765 (R-2742 PERF-2): rounds 1–2 below — the quotes, billing parts and invoices of the listed
+ * renewals — are read ONCE and shared: Last docs and Last paid (last-paid-data.ts) both take them from
+ * this cache entry (fetchQuery joins a read already in flight) instead of each reading the same
+ * quotes / billings / invoices. Keyed under ["quotes"] like the docs, so sending / revising a quote,
+ * Bill next part or a payment (they invalidate "quotes") reads them again.
+ */
+/** What rounds 1–2 read from each subscription. */
+export interface DocRowRef { id: string; quote_id: string | null; renewal_quote_id: string | null }
+export function docRowsKey(rows: readonly DocRowRef[]): readonly unknown[] {
+  return ["quotes", "renewal-doc-rows", rows.map((s) => `${s.id}:${s.quote_id ?? ""}:${s.renewal_quote_id ?? ""}`).sort()];
+}
+export function fetchRenewalDocRows(qc: QueryClient, rows: readonly DocRowRef[]): Promise<RenewalDocRows> {
+  return qc.fetchQuery({
+    queryKey: docRowsKey(rows),
+    staleTime: 30_000,
+    queryFn: () => readRenewalDocRows(rows, { concurrency: RENEWALS_READ_CONCURRENCY }),
+  });
+}
+
+/** Rounds 1–2 of the read (see the header), as read — Last docs and Last paid each shape them their way. */
+export interface RenewalDocRows {
+  /** quotes linked by renewal / add-seats subscription id + the subscriptions' own and renewal quotes (+ drawer revisions) */
+  round1: DocQuote[];
+  /** R-2765 (Last paid): round 1 split — linked by renewal / add-seats subscription id, and the subscriptions' own + renewal quotes by id */
+  viaSub: DocQuote[];
+  own: DocQuote[];
+  billings: DocBilling[];
+  /** the billed parts' proformas (quotes.subscription_billing_id) */
+  parts: DocQuote[];
+  /** invoices raised from the round-1 quotes (every status) */
+  byQuote: DocInvoice[];
+  /** invoices by id (billing / quote invoice_id) */
+  byId: DocInvoice[];
 }
 
 /** The batched read (see the header). `all` (R-2740 drawer): every linked quote + invoice, not only the row's. */
@@ -66,7 +104,16 @@ export async function readRenewalDocs(
     moreQuotes?: (found: readonly DocQuote[], cols: string) => Promise<DocQuote[]>;
   } = {},
 ): Promise<Map<string, LastDocs>> {
+  return docsFromRows(rows, await readRenewalDocRows(rows, opts), opts);
+}
+
+/** R-2765: rounds 1–2 (see the header). `concurrency`: id chunks in flight per read (the page: 4). */
+export async function readRenewalDocRows(
+  rows: readonly DocRowRef[],
+  opts: { moreQuotes?: (found: readonly DocQuote[], cols: string) => Promise<DocQuote[]>; concurrency?: number } = {},
+): Promise<RenewalDocRows> {
   const supabase = createClient();
+  const c = { concurrency: opts.concurrency };
   /* quotes.subscription_billing_id / subscription_billings.due_on (R-2044) are not in the generated types yet — the same untyped read as next-part-request.ts. */
   const loose = supabase as unknown as SupabaseClient;
   const subIds = rows.map((s) => s.id);
@@ -78,19 +125,19 @@ export async function readRenewalDocs(
       .select(QUOTE_COLS)
       .or(`renewal_subscription_id.in.${inList(run)},add_seats_subscription_id.in.${inList(run)}`)
       .order("id", { ascending: true })
-      .range(from, to), { chunkSize: 100 }),   // the id list is in the URL twice
+      .range(from, to), { chunkSize: 100, ...c }),   // the id list is in the URL twice
     fetchAllRowsIn<DocQuote, string>(ownQuoteIds, (run, from, to) => loose
       .from("quotes")
       .select(QUOTE_COLS)
       .in("id", run)
       .order("id", { ascending: true })
-      .range(from, to)),
+      .range(from, to), c),
     fetchAllRowsIn<DocBilling, string>(subIds, (run, from, to) => loose
       .from("subscription_billings")
       .select("id, subscription_id, invoice_id, term_start, period_index, due_on, period_start, period_end")
       .in("subscription_id", run)
       .order("id", { ascending: true })
-      .range(from, to)),
+      .range(from, to), c),
   ]);
   const round1 = [...viaSub, ...own];
   /* R-2740 drawer: the other revisions of these quotes (drawer-data.ts readRevisions) join round 1. */
@@ -107,20 +154,28 @@ export async function readRenewalDocs(
       .select(QUOTE_COLS)
       .in("subscription_billing_id", run)
       .order("id", { ascending: true })
-      .range(from, to)),
+      .range(from, to), c),
     fetchAllRowsIn<DocInvoice, string>(quoteIds, (run, from, to) => supabase
       .from("invoices")
       .select(INVOICE_COLS)
       .in("quote_id", run)
       .order("id", { ascending: true })
-      .range(from, to)),
+      .range(from, to), c),
     fetchAllRowsIn<DocInvoice, string>(invoiceIds, (run, from, to) => supabase
       .from("invoices")
       .select(INVOICE_COLS)
       .in("id", run)
       .order("id", { ascending: true })
-      .range(from, to)),
+      .range(from, to), c),
   ]);
+  return { round1, viaSub, own, billings, parts, byQuote, byId };
+}
+
+/** R-2765: the rows' documents from rounds 1–2, then round 3 (only for what the rows show). */
+export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, opts: { all?: boolean } = {}): Promise<Map<string, LastDocs>> {
+  const supabase = createClient();
+  const loose = supabase as unknown as SupabaseClient;
+  const { round1, billings, parts, byQuote, byId } = r;
   const quotes = [...new Map([...round1, ...parts].map((q) => [q.id, q])).values()];
   const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId] }, { all: opts.all });
 
