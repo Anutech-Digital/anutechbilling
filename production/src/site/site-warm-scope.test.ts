@@ -19,7 +19,10 @@ const SCOPE = '.anutech-site[data-site-theme="warm"]';
 
 /** Every selector list in the file, comments removed, @media/@supports wrappers unwrapped. */
 function selectors(source: string): string[] {
-  const noComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  // @keyframes steps ("0%, 22% { … }") are not selectors — they style nothing on their own.
+  const noComments = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
   const out: string[] = [];
   const re = /([^{}]+)\{/g;
   let m: RegExpExecArray | null;
@@ -82,5 +85,29 @@ describe("--hv-* page colours: classic fallback always, warm value always", () =
   it("every variable a page uses is set by the warm theme", () => {
     const missing = [...new Set(uses.map((m) => m[1]))].filter((v) => !warmDefined.has(v));
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * Theme only — never content (Pawan, 13 Nov 2026: "Only content cannot be changed. Layout and
+ * colour combo are free to change"). A warm rule may hide a DECORATION (::before / ::after) but
+ * never a real element: hiding the six steps' "You" / "We" tags was caught by eye on 14 Nov;
+ * this makes the next one fail here instead.
+ */
+describe("site-warm.css never hides page content", () => {
+  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
+  const rules = [...noComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1].trim(), body: m[2] }));
+  const HIDES = /(display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(px)?\s*[;}]|opacity\s*:\s*0\s*[;}])/;
+
+  it("finds rules to check", () => {
+    expect(rules.length).toBeGreaterThan(50);
+  });
+
+  it("only ::before / ::after are ever hidden", () => {
+    const offenders = rules
+      .filter((r) => HIDES.test(r.body + ";"))
+      .flatMap((r) => r.sel.split(/,(?![^(]*\))/).map((s) => s.trim()))
+      .filter((s) => !/::(before|after)\s*$/.test(s));
+    expect(offenders).toEqual([]);
   });
 });
