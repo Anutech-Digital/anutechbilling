@@ -11,8 +11,10 @@
  *     even when the owner's login could read it (no filter "oracle" on a secret either);
  *   - a not() operator is not a plain comparison operator;
  *   - the tenant id is empty.
- * The query it returns is a proxy exposing only filter / order / range / limit and awaiting —
- * no insert, update, delete, upsert, rpc, a second select or anything else, at runtime too.
+ * The query it returns is a frozen, prototype-less object of closures exposing only filter /
+ * order / range / limit and awaiting — no insert, update, delete, upsert, rpc, a second select,
+ * and no way (descriptor, ownKeys, prototype) to reach the real builder's url / fetch / headers.
+ * order() keeps only ascending / nullsFirst; limit() and range() ask for at most 1,000 rows.
  *
  * Tools never see the client itself. runner.ts builds the reader from a HelpSession (cookie
  * client only); the legacy R-421 path (help-data-tools.ts) builds it from the route's cookie
@@ -69,8 +71,11 @@ export interface HelpDb {
   read<Row = Record<string, unknown>>(table: HelpReadTable, columns: string, options?: { count?: "exact"; head?: boolean }): HelpQuery<Row>;
 }
 
-/** Methods the proxy lets through (each returns the proxy again), plus awaiting. */
-const CHAIN = new Set(["eq", "neq", "in", "is", "lt", "lte", "gt", "gte", "ilike", "not", "order", "range", "limit"]);
+/** Filter methods passed through as (column, ...values) — the column is checked first. */
+const FILTERS = ["eq", "neq", "in", "is", "lt", "lte", "gt", "gte", "ilike"] as const;
+
+/** Most rows one limit() / range() may ask for (one fetchAllRows page). */
+export const HELP_READ_PAGE_MAX = 1000;
 
 /** One column, refused if it is not a plain, non-secret column of this table. */
 export function assertReadableColumn(table: string, c: unknown): void {
@@ -93,24 +98,54 @@ export function assertReadableTable(table: string): asserts table is HelpReadTab
   if (!(HELP_READ_TABLES as readonly string[]).includes(table)) throw new HelpReadRefused(`${table} is not a help-readable table`);
 }
 
-function restrict<Row>(table: string, builder: object): HelpQuery<Row> {
-  return new Proxy(builder, {
-    get(target, prop) {
-      if (prop === "then") {
-        const then = (target as PromiseLike<unknown>).then;
-        return then.bind(target);
-      }
-      if (typeof prop === "string" && CHAIN.has(prop)) {
-        return (...args: unknown[]) => {
-          if (prop !== "range" && prop !== "limit") assertReadableColumn(table, args[0]);
-          if (prop === "not" && !NOT_OPERATORS.has(String(args[1]))) throw new HelpReadRefused(`${table}: not() operator '${String(args[1])}'`);
-          return restrict<Row>(table, (target as Record<string, (...a: unknown[]) => object>)[prop](...args));
-        };
-      }
-      return undefined;
-    },
-    set() { return false; },
-  }) as unknown as HelpQuery<Row>;
+function rowIndex(table: string, what: string, n: unknown): number {
+  if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 0) throw new HelpReadRefused(`${table}: ${what} '${String(n)}' is not a whole number ≥ 0`);
+  return n;
+}
+
+/** The postgrest builder calls the closures make — never handed to a tool. */
+type Builder = Record<string, (...a: unknown[]) => Builder> & PromiseLike<unknown>;
+
+/**
+ * Wrap the real builder in a plain, frozen, prototype-less object of arrow functions. The builder
+ * lives only in this closure: no Proxy, so no descriptor / ownKeys / prototype trick can reach its
+ * url, fetch, headers or method (review M1). Each call checks its arguments and wraps the next
+ * builder the same way.
+ */
+function restrict<Row>(table: string, builder: Builder): HelpQuery<Row> {
+  const next = (b: Builder) => restrict<Row>(table, b);
+  const q: Record<string, unknown> = Object.create(null);
+  for (const m of FILTERS) {
+    q[m] = (column: unknown, value: unknown) => {
+      assertReadableColumn(table, column);
+      return next(builder[m](column, value));
+    };
+  }
+  q.not = (column: unknown, operator: unknown, value: unknown) => {
+    assertReadableColumn(table, column);
+    if (typeof operator !== "string" || !NOT_OPERATORS.has(operator)) throw new HelpReadRefused(`${table}: not() operator '${String(operator)}'`);
+    return next(builder.not(column, operator, value));
+  };
+  /* Only ascending / nullsFirst — no referencedTable / foreignTable (review L5). */
+  q.order = (column: unknown, options?: unknown) => {
+    assertReadableColumn(table, column);
+    if (options !== undefined && (typeof options !== "object" || options === null)) throw new HelpReadRefused(`${table}: order() options`);
+    const o = (options ?? {}) as { ascending?: unknown; nullsFirst?: unknown };
+    const clean: { ascending?: boolean; nullsFirst?: boolean } = {};
+    if (typeof o.ascending === "boolean") clean.ascending = o.ascending;
+    if (typeof o.nullsFirst === "boolean") clean.nullsFirst = o.nullsFirst;
+    return next(builder.order(column, clean));
+  };
+  /* At most HELP_READ_PAGE_MAX rows per request (review L5). */
+  q.limit = (n: unknown) => next(builder.limit(Math.min(rowIndex(table, "limit", n), HELP_READ_PAGE_MAX)));
+  q.range = (from: unknown, to: unknown) => {
+    const f = rowIndex(table, "range from", from);
+    const t = rowIndex(table, "range to", to);
+    if (t < f) throw new HelpReadRefused(`${table}: range ${f}-${t}`);
+    return next(builder.range(f, Math.min(t, f + HELP_READ_PAGE_MAX - 1)));
+  };
+  q.then = (onOk?: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) => builder.then(onOk, onErr);
+  return Object.freeze(q) as unknown as HelpQuery<Row>;
 }
 
 /**
@@ -129,7 +164,7 @@ export function scopedReader(client: SupabaseClient<Database>, tenantId: string,
         .select(columns, selectOpts).eq("tenant_id", tenantId);
       /* Aborted when the runner's timeout fires, so a slow read does not keep paging. */
       if (opts.signal && typeof q.abortSignal === "function") q = q.abortSignal(opts.signal);
-      return restrict<Row>(table, q);
+      return restrict<Row>(table, q as unknown as Builder);
     },
   });
 }

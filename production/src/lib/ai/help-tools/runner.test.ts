@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
+import { PostgrestClient } from "@supabase/postgrest-js";
 
 type Row = Record<string, unknown>;
 type Filter = [string, string, unknown];
@@ -19,7 +20,7 @@ const NOW = new Date("2026-10-07T04:30:00Z");
 const jwt = (role: string) => `x.${Buffer.from(JSON.stringify({ role })).toString("base64url")}.y`;
 
 function fakeClient(tables: Record<string, Row[]>, key = jwt("anon")) {
-  const log: { table: string; columns: string; filters: Filter[] }[] = [];
+  const log: { table: string; columns: string; filters: Filter[]; orders: unknown[][]; limit?: number; range?: [number, number] }[] = [];
   const client = {
     supabaseKey: key,
     rpc: vi.fn(),
@@ -28,7 +29,7 @@ function fakeClient(tables: Record<string, Row[]>, key = jwt("anon")) {
       let head = false;
       let lim: number | null = null;
       let range: [number, number] | null = null;
-      const entry = { table, columns: "", filters };
+      const entry: (typeof log)[number] = { table, columns: "", filters, orders: [] };
       log.push(entry);
       const run = () => {
         let rows = (tables[table] ?? []).filter((r) => filters.every(([op, c, v]) => {
@@ -51,9 +52,9 @@ function fakeClient(tables: Record<string, Row[]>, key = jwt("anon")) {
         is(c: string, v: unknown) { filters.push(["is", c, v]); return q; },
         lt(c: string, v: unknown) { filters.push(["lt", c, v]); return q; },
         not(c: string, op: string, v: string) { if (op === "in") filters.push(["notin", c, v.replace(/[()]/g, "").split(",")]); return q; },
-        order() { return q; },
-        range(f: number, t: number) { range = [f, t]; return q; },
-        limit(n: number) { lim = n; return q; },
+        order(...a: unknown[]) { entry.orders.push(a); return q; },
+        range(f: number, t: number) { range = [f, t]; entry.range = [f, t]; return q; },
+        limit(n: number) { lim = n; entry.limit = n; return q; },
         update: vi.fn(() => q), delete: vi.fn(() => q), insert: vi.fn(() => q),
         abortSignal(sig: AbortSignal) { aborts.push(sig); return q; },
         then<T>(resolve: (v: ReturnType<typeof run>) => T, reject?: (e: unknown) => T) { return Promise.resolve(run()).then(resolve, reject); },
@@ -72,7 +73,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 const { openHelpSession, sessionClient, keyRole, HelpSessionRefused } = await import("./session");
-const { runHelpTools, HELP_CALLS_MAX } = await import("./runner");
+const { runHelpTools, runOneTool, HELP_CALLS_MAX } = await import("./runner");
 const { scopedReader, HelpReadRefused, HELP_READ_TABLES, HELP_NEVER_TABLES } = await import("./reader");
 const { defineHelpTool } = await import("./types");
 const { buildRegistry, HELP_TOOL_REGISTRY, helpToolsFor, helpAiV2Enabled } = await import("./registry");
@@ -174,6 +175,92 @@ describe("reader: tenant, tables, secret columns, read-only", () => {
     for (const m of ["update", "delete", "insert", "upsert", "select", "rpc", "csv"]) expect(q[m], m).toBeUndefined();
     expect(typeof q.eq).toBe("function");
     expect(typeof (q.eq as (c: string, v: unknown) => Record<string, unknown>)("x", 1).update).toBe("undefined");
+  });
+});
+
+describe("reader: the query object is a sealed closure (review M1 / L5)", () => {
+  const CHAIN_KEYS = ["eq", "neq", "in", "is", "lt", "lte", "gt", "gte", "ilike", "not", "order", "range", "limit", "then"];
+
+  it("descriptor / ownKeys / prototype access cannot reach the real builder; the tenant filter and path survive tampering", async () => {
+    const urls: string[] = [];
+    const fakeFetch = async (url: unknown) => {
+      urls.push(String(url));
+      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const pg = new PostgrestClient("http://db.local/rest/v1", { fetch: fakeFetch as typeof fetch });
+    const r = scopedReader(pg as never, A);
+    const q = r.read("subscriptions", "id").eq("status", "active") as unknown as Record<string | symbol, unknown>;
+    for (const k of ["url", "fetch", "method", "headers", "schema", "signal", "body", "shouldThrowOnError"]) {
+      expect(Object.getOwnPropertyDescriptor(q, k), k).toBeUndefined();
+      expect(q[k], k).toBeUndefined();
+      expect(k in q, k).toBe(false);
+    }
+    expect([...Reflect.ownKeys(q)].map(String).sort()).toEqual([...CHAIN_KEYS].sort());
+    expect(Object.getPrototypeOf(q)).toBeNull();
+    expect(Object.isFrozen(q)).toBe(true);
+    expect(Reflect.defineProperty(q, "url", { value: 1 })).toBe(false);
+    expect(Reflect.setPrototypeOf(q, {})).toBe(false);
+    for (const k of CHAIN_KEYS) {
+      const fn = q[k] as object;
+      expect(Object.getOwnPropertyNames(fn).sort(), k).toEqual(["length", "name"]);
+    }
+    // The attack the review proved on the Proxy: take the builder's url and drop the tenant filter / change the path.
+    const d = Object.getOwnPropertyDescriptor(q, "url") as { value?: URL } | undefined;
+    d?.value?.searchParams.delete("tenant_id");
+    if (d?.value) d.value.pathname = "/rest/v1/tenant_secrets";
+    const res = await (q as unknown as PromiseLike<{ data: unknown }>);
+    expect(res.data).toEqual([]);
+    expect(urls).toHaveLength(1);
+    const u = new URL(urls[0]);
+    expect(u.pathname).toBe("/rest/v1/subscriptions");
+    expect(u.searchParams.getAll("tenant_id")).toEqual([`eq.${A}`]);
+    expect(u.searchParams.get("select")).toBe("id");
+  });
+
+  it("order() keeps only ascending / nullsFirst (no referencedTable / foreignTable)", () => {
+    const f = fakeClient({});
+    const r = scopedReader(f.client as never, A);
+    r.read("leads", "id").order("stage", { ascending: false, nullsFirst: true, referencedTable: "customers", foreignTable: "tenant_secrets" } as never).order("id");
+    expect(f.log[0].orders[0]).toEqual(["stage", { ascending: false, nullsFirst: true }]);
+    expect(f.log[0].orders[1]).toEqual(["id", {}]);
+    expect(() => r.read("leads", "id").order("stage", "x" as never)).toThrow(HelpReadRefused);
+  });
+
+  it("limit() and range() width are clamped to 1000; bad numbers are refused", () => {
+    const f = fakeClient({});
+    const r = scopedReader(f.client as never, A);
+    r.read("leads", "id").limit(5000);
+    r.read("leads", "id").range(2000, 99_999);
+    r.read("leads", "id").range(0, 999).limit(10);
+    expect(f.log[0].limit).toBe(1000);
+    expect(f.log[1].range).toEqual([2000, 2999]);
+    expect(f.log[2].range).toEqual([0, 999]);
+    expect(f.log[2].limit).toBe(10);
+    for (const bad of [() => r.read("leads", "id").limit(-1), () => r.read("leads", "id").limit(1.5), () => r.read("leads", "id").limit(Number.NaN),
+      () => r.read("leads", "id").range(-1, 5), () => r.read("leads", "id").range(5, 2), () => r.read("leads", "id").range(0, Infinity)]) {
+      expect(bad).toThrow(HelpReadRefused);
+    }
+  });
+});
+
+describe("runOneTool: own client only (review L4)", () => {
+  it("a service-role client (key or fixed bearer) is refused before the tool runs; nothing read", async () => {
+    const run = vi.fn(async () => ({ text: "x", sources: [] }));
+    const t = defineHelpTool({ name: "t_l4", describe: "t", input: z.object({}).strict(), roles: ["owner"], tier: "read", page: "/invoices", label: "Open invoices", run } as never);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const byKey = fakeClient({ leads: [] }, jwt("service_role"));
+    const byBearer = fakeClient({ leads: [] });
+    (byBearer.client as unknown as Record<string, unknown>).rest = { headers: { Authorization: `Bearer ${jwt("service_role")}` } };
+    for (const f of [byKey, byBearer]) {
+      const r = await runOneTool(t, {}, { client: f.client as never, tenantId: A, role: "owner", now: NOW, timeoutMs: 1000 });
+      expect(r.ok).toBe(false);
+      expect(r.refusal).toBe("failed");
+      expect(f.log).toHaveLength(0);
+    }
+    err.mockRestore();
+    expect(run).not.toHaveBeenCalled();
+    const ok = await runOneTool(t, {}, { client: fakeClient({}).client as never, tenantId: A, role: "owner", now: NOW, timeoutMs: 1000 });
+    expect(ok.ok).toBe(true);
   });
 });
 

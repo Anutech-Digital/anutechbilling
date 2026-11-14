@@ -26,7 +26,7 @@ import type { UserRole } from "@/lib/auth/roles";
 import { HELP_TOOL_OUTPUT, HELP_ROWS_DEFAULT, HELP_ROWS_MAX, type HelpSourceRef, type HelpToolDef } from "./types";
 import { HELP_TOOL_REGISTRY, helpToolAllowedFor, type HelpToolRegistry } from "./registry";
 import { scopedReader } from "./reader";
-import { sessionClient, type HelpSession } from "./session";
+import { assertNotServiceRole, sessionClient, type HelpSession } from "./session";
 
 export const HELP_CALLS_MAX = 20;
 /** 10 s: a few thousand rows page through fetchAllRows (1,000 a page) well inside it. */
@@ -68,6 +68,14 @@ export async function runOneTool(
   ctx: { client: SupabaseClient<Database>; tenantId: string; role: UserRole; now: Date; timeoutMs: number },
 ): Promise<HelpToolCallResult> {
   const name = tool.name;
+  /* Second lock for the legacy caller, which hands in the route's client (review L4): a
+     service-role key or fixed bearer reads nothing. A refused result, so that path never throws. */
+  try {
+    assertNotServiceRole(ctx.client);
+  } catch (err) {
+    console.error(`[ai/help] tool ${name} refused:`, (err as Error)?.message);
+    return refusedResult(name, "failed", "could not be read just now — try again in a minute");
+  }
   if (tool.tier !== "read") return refusedResult(name, "tier_not_enabled", `${tool.tier} tools are not switched on yet`);
   const parsed = tool.input.safeParse(input ?? {});
   if (!parsed.success) return refusedResult(name, "bad_input", "the request did not match this tool's inputs");
