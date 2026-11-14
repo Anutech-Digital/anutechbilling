@@ -28,7 +28,11 @@ describe("R-2751 the row's renewal amount has one basis (term amount before GST)
   const none = renewalAmount({ ...kochi, renewal_quote_id: null }, null);
 
   it("no quote: ₹21,600/yr + GST", () => {
-    expect(none).toMatchObject({ value: 21_600, text: "₹21,600/yr", gst: "+ GST", quoteNote: null });
+    expect(none).toMatchObject({ value: 21_600, text: "₹21,600/yr", gst: "+ GST", quoteNote: null, quoteShort: null });
+  });
+
+  it("a linked quote with no status (imported) is live, not a draft — it gets the note", () => {
+    expect(renewalAmount(kochi, { ...quote("sent"), status: null }).quoteNote).toBe("Quote ₹25,488 incl. GST");
   });
 
   it("a DRAFT renewal quote (Review renewal quote opened, nothing sent) changes nothing", () => {
@@ -123,7 +127,10 @@ describe("R-2751 numbers add up: Forecast this month = the tile; tabs = header",
     const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
     expect(page).toContain("forecastWithThisMonth(");
     expect(page).not.toMatch(/activeSubs\} active subscription/);
-    expect(page).toMatch(/\{queueCount\} subscription/);
+    expect(page).toMatch(/\{queueCount\} subscription.* in the queue/);
+    expect(page).toContain("const queueCount    = allItems.length;");
+    /* code-review: with a search / filter on, the header also gives the narrowed tabs' sum */
+    expect(page).toContain("const shownCount    = QUEUE_TABS.reduce((s, t) => s + shown[t].length, 0);");
     expect(page).not.toContain("Renewal quote, incl. GST");
   });
 });

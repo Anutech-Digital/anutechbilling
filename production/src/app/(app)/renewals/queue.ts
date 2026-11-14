@@ -284,6 +284,8 @@ export interface RenewalAmount {
   gst: string;
   /** R-2751: "Quote ₹92,040 incl. GST" once the renewal quote is sent / viewed / accepted; null otherwise (a draft adds nothing). */
   quoteNote: string | null;
+  /** The same quote in the table's narrow second line: "quote ₹92K" (incl. GST; the full note is the cell's title). */
+  quoteShort: string | null;
 }
 
 /** R-2751: a renewal quote still being prepared ("Review renewal quote" makes one) — changes nothing on Renewals. */
@@ -301,7 +303,8 @@ const DRAFT_QUOTE = "draft";
 export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | null }, quote: RenewalQuoteInfo | null | undefined): RenewalAmount {
   /* R-2422: how it is paid ("Annual · paid quarterly · ₹19,500 each") is frequency.ts — one wording. */
   const v = termAmountOf({ mrr: sub.mrr, term_months: sub.term_months ?? 12, term_amount: sub.term_amount ?? null });
-  const status = quote?.status ?? DRAFT_QUOTE;
+  /* code-review: only a real draft is hidden — a quote with no status (imported) is treated as live. */
+  const status = quote?.status ?? "";
   const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(status) && status !== DRAFT_QUOTE && (quote.amount ?? 0) > 0
     ? quote : null;
   return {
@@ -309,6 +312,7 @@ export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | nul
     text: `${rupee(v)}${termSuffix(sub.term_months)}`,
     gst: "+ GST",
     quoteNote: q ? `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST` : null,
+    quoteShort: q ? `quote ${rupee(Math.round(q.amount ?? 0), { compact: true })}` : null,
   };
 }
 

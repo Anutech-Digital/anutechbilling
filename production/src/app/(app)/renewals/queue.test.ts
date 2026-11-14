@@ -180,7 +180,7 @@ describe("R-2403 ONE status per row", () => {
 describe("R-2403 the renewal amount for the term (not MRR /mo)", () => {
   it("yearly: the term amount '/yr' + GST (MAHARSHI 26 seats ₹6,500/mo → ₹78,000/yr)", () => {
     const a = renewalAmount({ mrr: 6500, term_months: 12, term_amount: 78_000, billing_cycle: "yearly", renewal_quote_id: null }, null);
-    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", quoteNote: null });
+    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", quoteNote: null, quoteShort: null });
   });
 
   it("no term_amount → mrr × term months", () => {
@@ -191,7 +191,7 @@ describe("R-2403 the renewal amount for the term (not MRR /mo)", () => {
     const a = renewalAmount(
       { mrr: 6500, term_months: 12, term_amount: 78_000, billing_cycle: "yearly", renewal_quote_id: "Q-A1" },
       { id: "Q-A1", amount: 92_040, status: "sent", payment_status: "none" });
-    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", quoteNote: "Quote ₹92,040 incl. GST" });
+    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", quoteNote: "Quote ₹92,040 incl. GST", quoteShort: expect.stringMatching(/^quote ₹92/) });
   });
 
   it("a closed / other quote is ignored", () => {

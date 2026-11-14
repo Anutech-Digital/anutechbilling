@@ -479,7 +479,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                   <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-2 py-2.5 text-right">
                     <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
-                    <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteNote ? `${amount.gst} · quote sent` : amount.gst}</p>
+                    <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteShort ? `${amount.gst} · ${amount.quoteShort}` : amount.gst}</p>
                   </td>
                   <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
                   <td className="min-w-0 px-2 py-2.5">
@@ -772,8 +772,10 @@ export default function RenewalsPage() {
   const dueCount = fuCount({ followUpDue: true });
   const brokenCount = fuCount({ promiseBroken: true });
 
-  /* R-2751: the header counts the rows on the tabs (each row is on exactly one tab), so it equals the tabs added up. */
+  /* R-2751: the header counts the rows on the tabs (each row is on exactly one tab), so it equals the tabs added up;
+     with a search / filter on, it also says how many of them match (= the narrowed tab counts added up). */
   const queueCount    = allItems.length;
+  const shownCount    = QUEUE_TABS.reduce((s, t) => s + shown[t].length, 0);
   const topHighRisk   = highRiskSubs[0]?.sub.customer_name ?? "a key customer";
   // Real, computed reasons for the top high-risk sub — never fabricate signals
   // (NPS/logins) we don't collect on a money screen.
@@ -954,7 +956,8 @@ export default function RenewalsPage() {
           </p>
           <h1 className="font-serif text-3xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
-            {queueCount} subscription{queueCount !== 1 ? "s" : ""} to renew
+            {queueCount} subscription{queueCount !== 1 ? "s" : ""} in the queue
+            {shownCount !== queueCount && <> · {shownCount} match the search / filters</>}
             {duesLine && (
               <>
                 {" · "}

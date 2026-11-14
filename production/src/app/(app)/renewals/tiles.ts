@@ -23,6 +23,7 @@
  * renewed — R-1574) that are fully paid. Pure — tested in tiles-r2405.test.ts.
  */
 import { taxableAfterDiscount } from "@/lib/quotes/amounts";
+import { SAAS_GST_RATE } from "@/lib/gst/hsn";
 import type { RenewalForecast } from "@/lib/renewals/forecast";
 import type { QueueTab, RowStatusKey } from "./queue";
 
@@ -69,7 +70,7 @@ export interface RenewalQuotePayment {
   tax_rate?: number | null;
 }
 
-const DEFAULT_GST_RATE = 18;
+
 
 /**
  * R-2751: a paid renewal quote counts in "Renewed this month" at its amount BEFORE GST — the same
@@ -80,7 +81,7 @@ const DEFAULT_GST_RATE = 18;
 export function quoteAmountBeforeGst(q: Pick<RenewalQuotePayment, "amount" | "subtotal" | "discount_pct" | "tax_rate">): number {
   const sub = Math.round(q.subtotal ?? 0);
   if (sub > 0) return taxableAfterDiscount(sub, q.discount_pct ?? 0);
-  const rate = Math.max(0, q.tax_rate ?? DEFAULT_GST_RATE);
+  const rate = Math.max(0, q.tax_rate ?? SAAS_GST_RATE);
   return Math.round(((q.amount ?? 0) * 100) / (100 + rate));
 }
 
