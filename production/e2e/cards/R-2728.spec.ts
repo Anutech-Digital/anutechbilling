@@ -91,6 +91,7 @@ test.describe("R-2728 card test", () => {
        quote's validity in the Due column; the last invoice in its own column */
     const chip = r.getByTestId("stage-chip");
     await expect(chip).toContainText("Quote sent", { timeout: 60_000 });
+    await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });   // the role is read (the chip link depends on it)
     await expect(r.getByTestId("stage-line2")).toContainText("Overdue 5d");
     await expect(r.getByTestId("stage-chip-quote")).toHaveAttribute("href", "/quotes/Q-CT2728-REN");
     await expect(r.getByTestId("due-quote-expiry")).toHaveText("exp. in 10d");
@@ -107,6 +108,7 @@ test.describe("R-2728 card test", () => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await rowOf(page, "later", "CT R2728 Parts Plan");
     await expect(r.getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
+    await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
     await expect(r.getByText("Renewed", { exact: true })).toHaveCount(0);
     await expect(r.getByTestId("due-quote-expiry")).toHaveText("no expiry");
     /* due on the part's own date (5 days ago), not the renewal date a year out */
@@ -153,6 +155,7 @@ test.describe("R-2728 card test", () => {
     const r = await rowOf(page, "overdue", "CT R2728 Workspace");
     const more = r.getByRole("button", { name: /More renewal actions for/ });
     await expect(more).toBeVisible({ timeout: 60_000 });
+    await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
     const item = page.getByRole("menuitem", { name: "Record payment" });
     /* a click on a busy dev server can land before the menu is wired — open it until the item shows */
     await expect(async () => {
