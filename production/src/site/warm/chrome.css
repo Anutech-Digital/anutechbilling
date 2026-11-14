@@ -566,3 +566,44 @@
   font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
   font-weight: 800 !important;
 }
+
+/* ── Dark (the Warm dark variant): only what the tokens cannot reach — the cart glyph is a data
+   URI, the CTA card keeps its deep teal under white text, menus get a darker shadow. ── */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > header a[href="/cart"]::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E9F0EC' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3Cpath d='M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6.2'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] > a:not(:last-child) { border-bottom-color: var(--w-line) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap { box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] { box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > section:has(+ footer) > .wrap { background-color: #0E6B5C; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > section:has(+ footer) p { color: #DCEFE8 !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > section:has(+ footer) .btn-primary:not(:only-child):hover { color: #0A4F44; }
+/* The logo PNG draws its wordmark in near-black: it sits on a light chip in dark. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > :is(header, footer) img[src*="anutech-logo"] {
+  box-sizing: content-box; padding: 4px 8px; border-radius: 10px; background: #F5F7F4;
+}
+/* Phone: the chip keeps the logo's light-mode footprint so the menu button is not pushed out. */
+@media (max-width: 979px) {
+  :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] > header img[src*="anutech-logo"] { height: 32px !important; padding: 4px 6px; }
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .consent-banner p:is([style*="475467"], [style*="71, 84, 103"]) { color: var(--w-muted) !important; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > header a[href="/cart"]::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E9F0EC' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3Cpath d='M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6.2'/%3E%3C/svg%3E");
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] > a:not(:last-child) { border-bottom-color: var(--w-line) !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap { box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] { box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > section:has(+ footer) > .wrap { background-color: #0E6B5C; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > section:has(+ footer) p { color: #DCEFE8 !important; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > section:has(+ footer) .btn-primary:not(:only-child):hover { color: #0A4F44; }
+  /* The logo PNG draws its wordmark in near-black: it sits on a light chip in dark. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > :is(header, footer) img[src*="anutech-logo"] {
+    box-sizing: content-box; padding: 4px 8px; border-radius: 10px; background: #F5F7F4;
+  }
+  /* Phone: the chip keeps the logo's light-mode footprint so the menu button is not pushed out. */
+  @media (max-width: 979px) {
+    :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] > header img[src*="anutech-logo"] { height: 32px !important; padding: 4px 6px; }
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .consent-banner p:is([style*="475467"], [style*="71, 84, 103"]) { color: var(--w-muted) !important; }
+}

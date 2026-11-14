@@ -103,7 +103,9 @@
 }
 .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:not(:has(input)) { color: #FFFFFF !important; font-weight: 600; }
 .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:last-child { color: var(--w-on-forest) !important; font-weight: 400; }
-.anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:has(input) { border-radius: 12px !important; border: 0 !important; }
+.anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:has(input) { border-radius: 12px !important; border: 0 !important; background: var(--w-surface) !important; }
+.anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:has(input) input { background: var(--w-surface) !important; color: var(--w-ink) !important; }
+.anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:has(input) button { background: var(--w-surface) !important; color: var(--w-muted-2) !important; }
 .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:nth-child(2) > img {
   box-sizing: content-box; background: #FFFFFF; padding: 7px 14px; border-radius: 999px;
 }
@@ -225,7 +227,7 @@
 .anutech-site[data-site-theme="warm"] section#anutech-mail h2 { font-size: clamp(1.7rem, 3vw, 2.25rem) !important; }
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:first-child > p { font-size: 17px !important; color: var(--w-ink-2) !important; }
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:first-child > div { color: var(--w-teal-dark) !important; }
-.anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:last-child { border: 0 !important; border-radius: 22px !important; padding: 26px 24px !important; box-shadow: none !important; }
+.anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:last-child { background: var(--w-surface) !important; border: 0 !important; border-radius: 22px !important; padding: 26px 24px !important; box-shadow: none !important; }
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:last-child span[style*="tabular-nums"] { font-size: 36px !important; }
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:last-child li { font-size: 16px !important; color: var(--w-ink) !important; }
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:last-child li > span { color: var(--w-ink) !important; }
@@ -375,7 +377,7 @@
 
 /* ── Title block: centred like the design; stays sticky (the component's behaviour) ───────── */
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-top {
-  background: rgba(245, 247, 244, 0.86); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--w-bg) 86%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   box-shadow: 0 10px 14px -14px rgba(18, 49, 42, 0.35); text-align: center;
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   /* full-bleed band so the sticky bar has no box edge over the marigold circle */
@@ -491,4 +493,50 @@
   .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-term button { min-height: 44px; }
   .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-compare, .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq { padding-top: 28px; }
   .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-compare { margin-top: 36px; padding-bottom: 28px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   DARK — only what the tokens above cannot carry (a light photo band, borders and text that
+   are literal light-mode colours, logos with dark lettering). Written once per prefix: the
+   header switch (data-theme="dark") and the device setting (prefers-color-scheme) when the
+   visitor has not chosen light.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* /email — migration band: the photo under a dark ground tint instead of the light one. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) {
+  background-color: var(--w-bg) !important;
+  background-image: linear-gradient(90deg, rgba(30,38,35,0.96) 0%, rgba(30,38,35,0.9) 45%, rgba(30,38,35,0.74) 100%), url(/site/warm/b57235dc64991b679efcfbac3de9d077.jpg) !important;
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) > div > div:first-child > div:last-child > div { box-shadow: 0 18px 44px rgba(0,0,0,0.35); }
+/* /email — suite logos carry dark lettering: a small light chip behind them. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) > img {
+  box-sizing: content-box; background: #FFFFFF; padding: 4px 8px; border-radius: 8px;
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:has(input) { box-shadow: inset 0 0 0 1px var(--w-line-strong); }
+/* /google-workspace/pricing — hairlines, the 30+ offer note. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-top { box-shadow: 0 10px 14px -14px rgba(0,0,0,0.6); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-table td, :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-table tbody tr:not(.wp-group) th { border-top-color: var(--w-line); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-no { color: var(--w-muted-2); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer { border-color: var(--w-line-strong); color: var(--w-marigold-ink); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer.on { border-color: var(--w-line-strong); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq details[open] { box-shadow: 0 10px 24px rgba(0,0,0,0.3); }
+@media (prefers-color-scheme: dark) {
+/* /email — migration band: the photo under a dark ground tint instead of the light one. */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) {
+  background-color: var(--w-bg) !important;
+  background-image: linear-gradient(90deg, rgba(30,38,35,0.96) 0%, rgba(30,38,35,0.9) 45%, rgba(30,38,35,0.74) 100%), url(/site/warm/b57235dc64991b679efcfbac3de9d077.jpg) !important;
+}
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) > div > div:first-child > div:last-child > div { box-shadow: 0 18px 44px rgba(0,0,0,0.35); }
+/* /email — suite logos carry dark lettering: a small light chip behind them. */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) > img {
+  box-sizing: content-box; background: #FFFFFF; padding: 4px 8px; border-radius: 8px;
+}
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:has(input) { box-shadow: inset 0 0 0 1px var(--w-line-strong); }
+/* /google-workspace/pricing — hairlines, the 30+ offer note. */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-top { box-shadow: 0 10px 14px -14px rgba(0,0,0,0.6); }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-table td, :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-table tbody tr:not(.wp-group) th { border-top-color: var(--w-line); }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-no { color: var(--w-muted-2); }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer { border-color: var(--w-line-strong); color: var(--w-marigold-ink); }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer.on { border-color: var(--w-line-strong); }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq details[open] { box-shadow: 0 10px 24px rgba(0,0,0,0.3); }
 }

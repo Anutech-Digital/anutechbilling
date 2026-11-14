@@ -405,6 +405,10 @@
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] :is(.pk-win, .pk-float) { background: var(--w-surface); }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] :is(.pk-green, .pk-float-ico) { background: var(--w-mint); }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { border-bottom-color: #3F6157; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .pk-rows li { background: var(--w-surface); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .pk-url { background: var(--w-surface-2); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] :is(.pk-green, .pk-float-ico) { color: #7FDDB0; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .pk-dot { background: #5CCB98; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] {
     --text: #E9F0EC;
@@ -457,6 +461,10 @@
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] :is(.pk-win, .pk-float) { background: var(--w-surface); }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] :is(.pk-green, .pk-float-ico) { background: var(--w-mint); }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { border-bottom-color: #3F6157; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .pk-rows li { background: var(--w-surface); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .pk-url { background: var(--w-surface-2); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] :is(.pk-green, .pk-float-ico) { color: #7FDDB0; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .pk-dot { background: #5CCB98; }
 }
 
 /* ── Shared warm tokens for the per-page files in src/site/warm/ ────────────────────────────

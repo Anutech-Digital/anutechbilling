@@ -294,3 +294,90 @@
   .anutech-product[data-site-theme="warm"] #who li::after { left: calc(50% - 28px); }
   .anutech-product[data-site-theme="warm"] #pricing > div > p:last-child { text-align: center; }
 }
+
+/* ── Dark (the Warm dark variant). The product layout does not load site-warm.css, so the dark
+   --w-* values are repeated here (same as site-warm.css "Dark variant of the warm tokens"), with
+   the app's HSL tokens re-pointed too; then the white glass cards and the light-blue pricing
+   panel turn dark so their token-coloured text stays readable. ── */
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] {
+  --w-bg: #1E2623; --w-surface: #2A3430; --w-surface-2: #252E2A;
+  --w-ink: #E9F0EC; --w-ink-2: #D2DDD8; --w-muted: #AFC0B8; --w-muted-2: #93A59D;
+  --w-line: #3A4A44; --w-line-strong: #4C5E57;
+  --w-teal: #5ED0B3; --w-teal-dark: #8FE3CA; --w-on-teal: #10201B;
+  --w-mint: #2F4F46; --w-mint-soft: #26352F;
+  --w-forest: #16302A; --w-on-forest: #D5E3DD;
+  --w-marigold: #F4B740; --w-marigold-hover: #F7C561; --w-on-marigold: #17241F;
+  --w-marigold-soft: #3D3320; --w-marigold-ink: #F4D27A;
+  --w-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  --paper: 158 12% 13%;          /* #1E2623 */
+  --paper-2: 156 11% 18%;        /* #2A3430 */
+  --ink: 146 19% 93%;            /* #E9F0EC */
+  --ink-2: 152 12% 72%;          /* #AFC0B8 */
+  --ink-3: 153 9% 61%;           /* #93A59D */
+  --hairline: 157 12% 26%;       /* #3A4A44 */
+  --hairline-strong: 157 11% 33%;/* #4C5E57 */
+  --amber: 165 55% 59%;          /* #5ED0B3 */
+  --amber-soft: 163 25% 25%;     /* #2F4F46 */
+  --amber-ink: 162 60% 73%;      /* #8FE3CA */
+  color-scheme: dark;
+}
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] > header { background: rgba(42, 52, 48, 0.96); }
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #who li { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3); }
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #features li:not(:last-child) { background: rgba(42, 52, 48, 0.94); border-color: rgba(255, 255, 255, 0.12); }
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #steps li > div { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3); }
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #pricing > div {
+  background: linear-gradient(90deg, rgba(10, 26, 46, 0.94) 0%, rgba(10, 26, 46, 0.88) 38%, rgba(10, 26, 46, 0.6) 60%, rgba(10, 26, 46, 0.5) 100%),
+    url(/site/warm/eda12d2f6a4ca7f5b5423077c01332d7.jpg) right center / cover no-repeat #10243C;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #pricing h2 { color: #E6EEF8; }
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #pricing h2::before { background: #7FB2F0; }
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #pricing h2 + div { background: rgba(42, 52, 48, 0.97); border-color: rgba(255, 255, 255, 0.12); box-shadow: 0 28px 64px rgba(0, 0, 0, 0.4); }
+@media (max-width: 900px) {
+  :root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #pricing > div {
+    background: linear-gradient(rgba(10, 26, 46, 0.86), rgba(10, 26, 46, 0.86)),
+      url(/site/warm/eda12d2f6a4ca7f5b5423077c01332d7.jpg) 70% center / cover no-repeat #10243C;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] {
+    --w-bg: #1E2623; --w-surface: #2A3430; --w-surface-2: #252E2A;
+    --w-ink: #E9F0EC; --w-ink-2: #D2DDD8; --w-muted: #AFC0B8; --w-muted-2: #93A59D;
+    --w-line: #3A4A44; --w-line-strong: #4C5E57;
+    --w-teal: #5ED0B3; --w-teal-dark: #8FE3CA; --w-on-teal: #10201B;
+    --w-mint: #2F4F46; --w-mint-soft: #26352F;
+    --w-forest: #16302A; --w-on-forest: #D5E3DD;
+    --w-marigold: #F4B740; --w-marigold-hover: #F7C561; --w-on-marigold: #17241F;
+    --w-marigold-soft: #3D3320; --w-marigold-ink: #F4D27A;
+    --w-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    --paper: 158 12% 13%;          /* #1E2623 */
+    --paper-2: 156 11% 18%;        /* #2A3430 */
+    --ink: 146 19% 93%;            /* #E9F0EC */
+    --ink-2: 152 12% 72%;          /* #AFC0B8 */
+    --ink-3: 153 9% 61%;           /* #93A59D */
+    --hairline: 157 12% 26%;       /* #3A4A44 */
+    --hairline-strong: 157 11% 33%;/* #4C5E57 */
+    --amber: 165 55% 59%;          /* #5ED0B3 */
+    --amber-soft: 163 25% 25%;     /* #2F4F46 */
+    --amber-ink: 162 60% 73%;      /* #8FE3CA */
+    color-scheme: dark;
+  }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] > header { background: rgba(42, 52, 48, 0.96); }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #who li { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3); }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #features li:not(:last-child) { background: rgba(42, 52, 48, 0.94); border-color: rgba(255, 255, 255, 0.12); }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #steps li > div { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3); }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #pricing > div {
+    background: linear-gradient(90deg, rgba(10, 26, 46, 0.94) 0%, rgba(10, 26, 46, 0.88) 38%, rgba(10, 26, 46, 0.6) 60%, rgba(10, 26, 46, 0.5) 100%),
+      url(/site/warm/eda12d2f6a4ca7f5b5423077c01332d7.jpg) right center / cover no-repeat #10243C;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+  }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #pricing h2 { color: #E6EEF8; }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #pricing h2::before { background: #7FB2F0; }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #pricing h2 + div { background: rgba(42, 52, 48, 0.97); border-color: rgba(255, 255, 255, 0.12); box-shadow: 0 28px 64px rgba(0, 0, 0, 0.4); }
+  @media (max-width: 900px) {
+    :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #pricing > div {
+      background: linear-gradient(rgba(10, 26, 46, 0.86), rgba(10, 26, 46, 0.86)),
+        url(/site/warm/eda12d2f6a4ca7f5b5423077c01332d7.jpg) 70% center / cover no-repeat #10243C;
+    }
+  }
+}

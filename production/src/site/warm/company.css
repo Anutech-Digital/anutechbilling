@@ -713,7 +713,7 @@
 /* State pill: the dot sits inside the pill (same grid cell, drawn on top). */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .mono {
   grid-column: 3; grid-row: 1 / span 2; justify-self: end; display: inline-flex; align-items: center; min-height: 34px; padding: 6px 14px 6px 31px;
-  border-radius: 999px; background: color-mix(in srgb, currentColor 13%, #FFFFFF); font-family: var(--font-site-body), "Inter", system-ui, sans-serif;
+  border-radius: 999px; background: color-mix(in srgb, currentColor 13%, var(--w-surface)); font-family: var(--font-site-body), "Inter", system-ui, sans-serif;
   font-size: 14px !important; font-weight: 700 !important; white-space: nowrap; filter: saturate(1.05);
 }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span[aria-hidden] {
@@ -731,4 +731,50 @@
   .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span:nth-child(4) { grid-row: 1; }
   .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span[aria-hidden] { grid-column: 1 / -1; grid-row: 3; justify-self: start; margin: 0 0 0 14px; }
   .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .mono { grid-column: 1 / -1; grid-row: 3; justify-self: start; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   DARK — only what the tokens above cannot carry: hairlines drawn in a literal light colour,
+   the "them" strips on /reseller, icon chips whose dark strokes need a light chip, and the
+   status banner the component paints light. Written once per prefix: the header switch
+   (data-theme="dark") and the device setting when the visitor has not chosen light.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* Table and list hairlines (/why-us, /rates, /status). */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates :is(th, td) { border-bottom-color: var(--w-line); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody tr { border-bottom-color: var(--w-line) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) { border-top-color: var(--w-line) !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap:has(> table.rates) { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3); }
+/* /status — the overall banner: a tint of its own state colour on the dark card. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"] { background: color-mix(in srgb, currentColor 14%, var(--w-surface)) !important; border-color: color-mix(in srgb, currentColor 45%, transparent) !important; }
+/* /reseller — "them" strips: a muted brick tint instead of the light blush. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > .mono-label { background: color-mix(in srgb, #B4472F 18%, var(--w-surface)); color: #E9B9AD !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > .mono-label::before {
+  background:
+    linear-gradient(45deg, transparent 43%, #F09A84 43%, #F09A84 57%, transparent 57%) center / 10px 10px no-repeat,
+    linear-gradient(-45deg, transparent 43%, #F09A84 43%, #F09A84 57%, transparent 57%) center / 10px 10px no-repeat,
+    color-mix(in srgb, #B4472F 30%, var(--w-surface));
+}
+/* /contact — icon chips keep a light ground so their dark strokes stay visible. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card:nth-child(n+3)::before,
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card-highlight > div:first-child::before { background-color: #DCEFE8; }
+@media (prefers-color-scheme: dark) {
+/* Table and list hairlines (/why-us, /rates, /status). */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates :is(th, td) { border-bottom-color: var(--w-line); }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody tr { border-bottom-color: var(--w-line) !important; }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) { border-top-color: var(--w-line) !important; }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap:has(> table.rates) { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3); }
+/* /status — the overall banner: a tint of its own state colour on the dark card. */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"] { background: color-mix(in srgb, currentColor 14%, var(--w-surface)) !important; border-color: color-mix(in srgb, currentColor 45%, transparent) !important; }
+/* /reseller — "them" strips: a muted brick tint instead of the light blush. */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > .mono-label { background: color-mix(in srgb, #B4472F 18%, var(--w-surface)); color: #E9B9AD !important; }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > .mono-label::before {
+  background:
+    linear-gradient(45deg, transparent 43%, #F09A84 43%, #F09A84 57%, transparent 57%) center / 10px 10px no-repeat,
+    linear-gradient(-45deg, transparent 43%, #F09A84 43%, #F09A84 57%, transparent 57%) center / 10px 10px no-repeat,
+    color-mix(in srgb, #B4472F 30%, var(--w-surface));
+}
+/* /contact — icon chips keep a light ground so their dark strokes stay visible. */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card:nth-child(n+3)::before,
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card-highlight > div:first-child::before { background-color: #DCEFE8; }
 }
