@@ -33,23 +33,71 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :is(td, span, div)[style*="tabular-nums"] { font-variant-numeric: tabular-nums; }
 
 /* ── Palette map: the classic C colours → warm tokens (low specificity; layout rules win) ── */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#17120F"],[style*=";color:#17120F"],[style^="color: rgb(23, 18, 15)"],[style*="; color: rgb(23, 18, 15)"]) { color: var(--w-ink) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#4A403A"],[style*=";color:#4A403A"],[style^="color: rgb(74, 64, 58)"],[style*="; color: rgb(74, 64, 58)"]) { color: var(--w-ink-2) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#7A6C62"],[style*=";color:#7A6C62"],[style^="color: rgb(122, 108, 98)"],[style*="; color: rgb(122, 108, 98)"]) { color: var(--w-muted) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#9A8B80"],[style*=";color:#9A8B80"],[style^="color: rgb(154, 139, 128)"],[style*="; color: rgb(154, 139, 128)"]) { color: var(--w-muted-2) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#C2410C"],[style*=";color:#C2410C"],[style^="color: rgb(194, 65, 12)"],[style*="; color: rgb(194, 65, 12)"], [style^="color:#15803D"],[style*=";color:#15803D"],[style^="color: rgb(21, 128, 61)"],[style*="; color: rgb(21, 128, 61)"]) { color: var(--w-teal) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#7C2D12"],[style*=";color:#7C2D12"],[style^="color: rgb(124, 45, 18)"],[style*="; color: rgb(124, 45, 18)"]) { color: var(--w-teal-dark) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#17120F"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*=";color:#17120F"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color: rgb(23, 18, 15)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="; color: rgb(23, 18, 15)"]) { color: var(--w-ink) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#4A403A"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*=";color:#4A403A"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color: rgb(74, 64, 58)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="; color: rgb(74, 64, 58)"]) { color: var(--w-ink-2) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#7A6C62"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*=";color:#7A6C62"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color: rgb(122, 108, 98)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="; color: rgb(122, 108, 98)"]) { color: var(--w-muted) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#9A8B80"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*=";color:#9A8B80"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color: rgb(154, 139, 128)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="; color: rgb(154, 139, 128)"]) { color: var(--w-muted-2) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#C2410C"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*=";color:#C2410C"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color: rgb(194, 65, 12)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="; color: rgb(194, 65, 12)"], [style^="color:#15803D"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*=";color:#15803D"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color: rgb(21, 128, 61)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="; color: rgb(21, 128, 61)"]) { color: var(--w-teal) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color:#7C2D12"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*=";color:#7C2D12"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color: rgb(124, 45, 18)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="; color: rgb(124, 45, 18)"]) { color: var(--w-teal-dark) !important; }
 
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#FDFBF8"],[style*="background: rgb(253, 251, 248)"], [style*="background:#FBF8F5"],[style*="background: rgb(251, 248, 245)"]) { background: var(--w-surface-2) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#F3ECE5"],[style*="background: rgb(243, 236, 229)"]) { background: #EEF2EE !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#E8DFD7"],[style*="background: rgb(232, 223, 215)"]) { background: var(--w-line-strong) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#C2410C"],[style*="background: rgb(194, 65, 12)"], [style*="background:#17120F"],[style*="background: rgb(23, 18, 15)"]) { background: var(--w-teal) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#FFF1E7"],[style*="background: rgb(255, 241, 231)"], [style*="background:#FFF9F4"],[style*="background: rgb(255, 249, 244)"], [style*="background:#F0FDF4"],[style*="background: rgb(240, 253, 244)"]) { background: var(--w-mint-soft) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#FDFBF8"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(253, 251, 248)"], [style*="background:#FBF8F5"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(251, 248, 245)"]) { background: var(--w-surface-2) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#F3ECE5"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(243, 236, 229)"]) { background: #EEF2EE !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#E8DFD7"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(232, 223, 215)"]) { background: var(--w-line-strong) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#C2410C"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(194, 65, 12)"], [style*="background:#17120F"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(23, 18, 15)"]) { background: var(--w-teal) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#FFF1E7"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(255, 241, 231)"], [style*="background:#FFF9F4"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(255, 249, 244)"], [style*="background:#F0FDF4"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(240, 253, 244)"]) { background: var(--w-mint-soft) !important; }
 
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #E8DFD7"],[style*="dashed #E8DFD7"],[style*="solid rgb(232, 223, 215)"],[style*="dashed rgb(232, 223, 215)"], [style*="solid #F3ECE5"],[style*="dashed #F3ECE5"],[style*="solid rgb(243, 236, 229)"],[style*="dashed rgb(243, 236, 229)"]) { border-color: var(--w-line) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #C2410C"],[style*="dashed #C2410C"],[style*="solid rgb(194, 65, 12)"],[style*="dashed rgb(194, 65, 12)"]) { border-color: var(--w-teal) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #17120F"],[style*="dashed #17120F"],[style*="solid rgb(23, 18, 15)"],[style*="dashed rgb(23, 18, 15)"]) { border-color: var(--w-ink) !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #FBD3B8"],[style*="dashed #FBD3B8"],[style*="solid rgb(251, 211, 184)"],[style*="dashed rgb(251, 211, 184)"], [style*="solid #BBF7D0"],[style*="dashed #BBF7D0"],[style*="solid rgb(187, 247, 208)"],[style*="dashed rgb(187, 247, 208)"]) { border-color: #B9DCCF !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #E8DFD7"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed #E8DFD7"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid rgb(232, 223, 215)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed rgb(232, 223, 215)"], [style*="solid #F3ECE5"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed #F3ECE5"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid rgb(243, 236, 229)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed rgb(243, 236, 229)"]) { border-color: var(--w-line) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #C2410C"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed #C2410C"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid rgb(194, 65, 12)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed rgb(194, 65, 12)"]) { border-color: var(--w-teal) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #17120F"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed #17120F"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid rgb(23, 18, 15)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed rgb(23, 18, 15)"]) { border-color: var(--w-ink) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #FBD3B8"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed #FBD3B8"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid rgb(251, 211, 184)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed rgb(251, 211, 184)"], [style*="solid #BBF7D0"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed #BBF7D0"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid rgb(187, 247, 208)"]),
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="dashed rgb(187, 247, 208)"]) { border-color: #B9DCCF !important; }
 
 /* Section labels (the mono eyebrows), as the design's teal caps. */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :is(div, label)[style*="0.14em"] {

@@ -24,6 +24,21 @@ const SCOPES = ['.anutech-site[data-site-theme="warm"]', '.anutech-product[data-
 const inScope = (sel: string) =>
   SCOPES.some((sc) => sel.startsWith(sc) || sel.startsWith(`:root[data-theme="dark"] ${sc}`));
 
+/** Split a selector list on top-level commas only — a comma inside :is()/:has()/:not(), however
+ *  deeply nested, belongs to that selector (a one-level regex split cut ":has(a:nth-child(3), b)"). */
+function splitSelectorList(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of list) {
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
 /** Every selector list in the file, comments removed, @media/@supports wrappers unwrapped. */
 function selectors(source: string): string[] {
   // @keyframes steps ("0%, 22% { … }") are not selectors — they style nothing on their own.
@@ -36,7 +51,7 @@ function selectors(source: string): string[] {
   while ((m = re.exec(noComments))) {
     const sel = m[1].trim();
     if (!sel || sel.startsWith("@")) continue;
-    for (const part of sel.split(/,(?![^(]*\))/)) out.push(part.trim());
+    for (const part of splitSelectorList(sel)) out.push(part);
   }
   return out;
 }
@@ -113,7 +128,7 @@ describe("site-warm.css never hides page content", () => {
   it("only ::before / ::after are ever hidden", () => {
     const offenders = rules
       .filter((r) => HIDES.test(r.body + ";"))
-      .flatMap((r) => r.sel.split(/,(?![^(]*\))/).map((s) => s.trim()))
+      .flatMap((r) => splitSelectorList(r.sel))
       .filter((s) => !/::(before|after)\s*$/.test(s))
       // The theme's OWN controls (class prefix .w-, e.g. .w-to-top's "hidden until you scroll")
       // are not page content; anything else hidden is.
