@@ -24,8 +24,7 @@ import type { HelpAction, HelpAnswer } from "@/lib/ai/app-help";
 import { isUserRole } from "@/lib/auth/roles";
 import { canOpenRoute } from "@/lib/nav";
 import { DATA_TOOLS } from "@/lib/ai/help-tools/data-tools";
-import { scopedReader } from "@/lib/ai/help-tools/reader";
-import { runHelpTools } from "@/lib/ai/help-tools/runner";
+import { runHelpTools, runOneTool, HELP_NOT_ALLOWED } from "@/lib/ai/help-tools/runner";
 import type { HelpSession } from "@/lib/ai/help-tools/session";
 import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
 
@@ -45,7 +44,10 @@ export type HelpDataToolName = (typeof HELP_DATA_TOOL_NAMES)[number];
 /** At most this many tools per question — one question rarely needs more. */
 export const HELP_TOOLS_MAX = 3;
 
-export const NOT_ALLOWED = "not allowed for your role";
+export const NOT_ALLOWED = HELP_NOT_ALLOWED;
+
+/** The legacy path never had a per-tool timeout; this one only stops a read that hangs. */
+const LEGACY_TIMEOUT_MS = 60_000;
 
 export interface HelpToolResult {
   tool: HelpDataToolName;
@@ -62,9 +64,14 @@ export interface HelpToolResult {
 /**
  * R-2774: the six tools now live in lib/ai/help-tools (registry contract: tenant-scoped reader,
  * no secret columns, typed output). This path keeps its R-421 role rule (any role that may open
- * the page) and its text, unchanged.
+ * the page) and its text, unchanged. The name list above is FROZEN to the R-421 six (test): a new
+ * tool goes only on the registry path, so its `roles` always apply.
  */
-const TOOLS = Object.fromEntries(DATA_TOOLS.map((t) => [t.name, t])) as Record<HelpDataToolName, (typeof DATA_TOOLS)[number]>;
+const TOOLS = Object.fromEntries(HELP_DATA_TOOL_NAMES.map((n) => {
+  const def = DATA_TOOLS.find((t) => t.name === n);
+  if (!def) throw new Error(`help-data-tools: ${n} is not in lib/ai/help-tools/data-tools.ts`);
+  return [n, def];
+})) as Record<HelpDataToolName, (typeof DATA_TOOLS)[number]>;
 
 /**
  * May this role read this tool? The same answer as "may this role open the page the number is
@@ -101,15 +108,11 @@ export async function runHelpDataTools(
   return Promise.all(names.slice(0, HELP_TOOLS_MAX).map(async (tool): Promise<HelpToolResult> => {
     const def = TOOLS[tool];
     if (!helpToolAllowed(ctx.role, tool)) return { tool, ok: false, text: `${tool}: ${NOT_ALLOWED}.`, href: null, label: null };
-    try {
-      const db = scopedReader(client, ctx.tenantId);
-      const role = ctx.role as Parameters<typeof def.run>[1]["role"];
-      const out = await def.run({}, { db, tenantId: ctx.tenantId, role, now });
-      return { tool, ok: true, text: out.text, href: def.page, label: def.label };
-    } catch (err) {
-      console.error(`[ai/help] tool ${tool} failed:`, (err as Error)?.message);
-      return { tool, ok: false, text: `${tool}: could not be read just now — try again in a minute.`, href: null, label: null };
-    }
+    if (!isUserRole(ctx.role)) return { tool, ok: false, text: `${tool}: ${NOT_ALLOWED}.`, href: null, label: null };
+    /* R-2774: same checked runner as the registry path (tenant-scoped reader, strict input,
+       output shape) — only the role rule above is R-421's. */
+    const r = await runOneTool(def as unknown as Parameters<typeof runOneTool>[0], {}, { client, tenantId: ctx.tenantId, role: ctx.role, now, timeoutMs: LEGACY_TIMEOUT_MS });
+    return { tool, ok: r.ok, text: r.text, href: r.href, label: r.label };
   }));
 }
 
@@ -128,7 +131,7 @@ export async function runHelpDataToolsV2(
   return res.map((r, i) => ({
     tool: list[i],
     ok: r.ok,
-    text: r.refusal === "not_allowed" ? `${list[i]}: ${NOT_ALLOWED}.` : r.text,
+    text: r.text,
     href: r.href,
     label: r.label,
     sources: r.sources,
