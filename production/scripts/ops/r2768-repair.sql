@@ -8,6 +8,13 @@
 -- !! data repairs only on the local Docker DB). The deploy-db step must have applied migration
 -- !! 20261114043932_r2768_repair_line_periods_quote_notes.sql first — it only installs the tools.
 --
+-- !! If it stops with an error, type  rollback;  before anything else (the transaction is still open
+-- !! in an interactive psql session; nothing is kept until a commit).
+--
+-- BEFORE APPLY ON STAGING (owner check): open and save the PDF of 3 invoices that section 4 of the dry
+-- run lists — one renewal, one add-seats, one new sale. After apply, download the same 3 PDFs again: the
+-- "Subscription period" lines and everything else must be identical.
+--
 -- SAFE BY DEFAULT: without -v apply=1 it runs BOTH repairs inside one transaction, prints the counts,
 -- a sample and the checks, then ROLLS BACK (a dry run). With -v apply=1 it COMMITS — only when every
 -- check passed (a failed check raises and nothing is kept).
