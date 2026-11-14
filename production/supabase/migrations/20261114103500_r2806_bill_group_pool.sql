@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscriptions' and column_name = 'bill_group_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_pool_subscriptions(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.instalment_credit_parts(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_part_group(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_subscription_billings_use_cn_credit()') and prosrc like '%R-2806%')
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscriptions' and column_name = 'bill_group_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_pool_subscriptions(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.instalment_credit_parts(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_part_group(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_subscription_billings_use_cn_credit()') and prosrc like '%R-2806%') and exists(select 1 from pg_trigger where tgname = 'trg_subscriptions_bill_group_guarded' and tgrelid = to_regclass('public.subscriptions'))
 -- deploy-key: r2806billgrouppool
 -- 20261114103500_r2806_bill_group_pool.sql
 --
@@ -20,8 +20,10 @@
 --   RPC (R-2810), which puts it on every member AND every member's sale-quote siblings, so one group id is
 --   the whole pool. Null (every row today) = nothing below changes.
 -- * public.billing_pool_subscriptions(sub) — the subscriptions whose part money is ONE pool: the closure of
---   "same sale quote" (R-2092) and "same bill group" from the sub, inside its company — every member gets the
---   same pool. No group → exactly the old "this sub + its quote's".
+--   "same sale quote" (R-2092) and "same bill group OF THE SAME CUSTOMER" from the sub, inside its company —
+--   every member gets the same pool; one customer's money never pays another customer's part (rev-r2806 F1).
+--   No group → exactly the old "this sub + its quote's".
+-- * trg_subscriptions_bill_group_guarded — a browser login can never set / change bill_group_id (rev-r2806 F3).
 -- * instalment_credit_parts, tg_subscription_billings_use_cn_credit and raise_subscription_billing's R-2642
 --   receipt day read that pool: receipts of every member's sale quote + every member part's request, minus
 --   every member part's invoice ONCE (by invoice id). So a together invoice is paid once and absorbed once.
@@ -59,20 +61,51 @@ as $$
   /* R-2806: the subscriptions whose part money is ONE pool — the closure of "same sale quote" (R-2092) and
      "same bill group" (Bill together) from this one, inside its company. Every member of a pool gets the same
      pool (a sub added later to a grouped sub's quote is in it too). No group → this + its quote's, as before. */
-  with recursive pool(id, quote_id, bill_group_id) as (
-    select s.id, s.quote_id, s.bill_group_id from public.subscriptions s where s.id = p_subscription_id
+  /* rev-r2806 F1: a bill group joins only subscriptions of the SAME customer — one customer's money never
+     pays another customer's part, whatever bill_group_id says. (The sale-quote arm is unchanged: R-2092.) */
+  with recursive pool(id, quote_id, bill_group_id, customer_id) as (
+    select s.id, s.quote_id, s.bill_group_id, s.customer_id from public.subscriptions s where s.id = p_subscription_id
     union
-    select s2.id, s2.quote_id, s2.bill_group_id
+    select s2.id, s2.quote_id, s2.bill_group_id, s2.customer_id
       from pool p
       join public.subscriptions s2
         on s2.tenant_id = (select s0.tenant_id from public.subscriptions s0 where s0.id = p_subscription_id)
        and ((p.quote_id is not null and s2.quote_id = p.quote_id)
-            or (p.bill_group_id is not null and s2.bill_group_id = p.bill_group_id))
+            or (p.bill_group_id is not null and s2.bill_group_id = p.bill_group_id
+                and s2.customer_id is not distinct from p.customer_id))
   )
   select pool.id from pool;
 $$;
 revoke all on function public.billing_pool_subscriptions(uuid) from public, anon, authenticated;
 grant execute on function public.billing_pool_subscriptions(uuid) to service_role;
+
+-- ── 2b. Only server code sets bill_group_id (rev-r2806 F3) ──────────────────────────────────────
+create or replace function public.tg_subscriptions_bill_group_guarded()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  /* R-2806 (rev-r2806 F3): bill_group_id decides whose money pays whose part, so a browser login may not set
+     or change it — only server code (a SECURITY DEFINER RPC such as R-2810's Bill together, the service role,
+     a direct DB session). Same rule as trg_quotes_proforma_columns_guarded (R-2519c): the login decides,
+     never a settable flag or a role claim (public.is_direct_request_login, R-2485). */
+  if not public.is_direct_request_login() then
+    return new;
+  end if;
+  if (tg_op = 'INSERT' and new.bill_group_id is not null)
+     or (tg_op = 'UPDATE' and new.bill_group_id is distinct from old.bill_group_id) then
+    raise exception 'Which subscriptions are billed together is set only by Bill together on Renewals — it cannot be changed by hand.'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.tg_subscriptions_bill_group_guarded() from public, anon, authenticated;
+drop trigger if exists trg_subscriptions_bill_group_guarded on public.subscriptions;
+create trigger trg_subscriptions_bill_group_guarded
+  before insert or update of bill_group_id on public.subscriptions
+  for each row execute function public.tg_subscriptions_bill_group_guarded();
 
 -- ── 3. instalment_credit_parts — body of 20261030035007 (R-2095) + R-2806 pool ─────────────────────
 create or replace function public.instalment_credit_parts(p_subscription_id uuid)
