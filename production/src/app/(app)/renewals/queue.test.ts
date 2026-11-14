@@ -132,7 +132,7 @@ describe("R-2403 ONE status per row", () => {
     expect(a.kind).toBe("generate");
     expect(a.text).not.toBe("Renewed — nothing to send");
     const set = renewalActionSet(ravi, null, { daysUntil: -2, tenantGraceDays: 1, canEndSubscription: true });
-    expect(set.primary?.label).toBe("Bill renewal · part 1 of next year");
+    expect(set.primary?.label).toBe("Send renewal · part 1 of next year");
   });
 
   it("billed monthly, two parts behind (REDOQ, 33 days): '2 bills not raised', never 'Expired'", () => {
@@ -252,7 +252,7 @@ describe("R-2403 bulk: tick rows → Send renewal quote", () => {
     const t = bulkQuoteTargets(sel, status, 0);
     expect(t.send.map((r) => r.sub.id)).toEqual(["acme", "beta"]);
     expect(t.skipped.map((s) => [s.row.sub.id, s.reason])).toEqual([
-      ["parts", "billed in parts — use Bill renewal · part 1 of next year"],
+      ["parts", "billed in parts — use Send renewal · part 1 of next year"],
       ["leaver", "won't renew"],
       ["done", "Renewed — nothing to send"],
     ]);
@@ -263,7 +263,7 @@ describe("R-2403 bulk: tick rows → Send renewal quote", () => {
     const c = bulkQuoteConfirm(t.send, t.skipped);
     expect(c.title).toBe("Send the renewal quote to 2 customers?");
     expect(c.body).toContain("ACME, BETA.");
-    expect(c.body).toContain("Not sent (3): PARTS — billed in parts — use Bill renewal · part 1 of next year");
+    expect(c.body).toContain("Not sent (3): PARTS — billed in parts — use Send renewal · part 1 of next year");
   });
 });
 
@@ -276,7 +276,7 @@ describe("R-2403 the page wires the one queue", () => {
   });
   it("every row's status and amount come from queue.ts — no '/mo' MRR column, no second status chip", () => {
     expect(page).toContain("= renewalRowStatus(r.sub, r.daysUntil,");   // R-2404: computed once, also feeds the decision status
-    expect(page).toContain("amount: renewalAmount(r.sub, quoteOf(r.sub)),");
+    expect(page).toContain("amount: renewalAmount(r.sub, quoteOf(r.sub), r.sub.quote_id ? f.quoteInfo?.get(r.sub.quote_id) : null),");   // R-2767: + the sale quote (currency)
     expect(page).not.toContain(">/mo<");
     expect(page).not.toMatch(/renewalStateLabel|expiredGraceText|Expired \{Math\.abs/);
     /* R-2758 (R-2738): the ONE chip is the stage (lib/renewals/stage.ts) — no decision chip beside it. */

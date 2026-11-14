@@ -3,7 +3,7 @@
  *
  * The rule (also on the card): every renewal ₹ on /renewals — the row's figure, Sort: amount, the
  * tiles, the Forecast and the bulk/CSV total — is the renewal's TERM AMOUNT BEFORE GST ("+ GST").
- * A renewal quote never changes that number: a draft (just opening "Review renewal quote") shows
+ * A renewal quote never changes that number: a draft (just opening "Send renewal") shows
  * nothing at all, a sent/accepted quote only adds a small second line with its total incl. GST.
  * A paid renewal quote counts in "Renewed this month" at its amount before GST (subtotal less
  * discount). The Forecast bar for this month = the tile's "of ₹X due in <month>" (paid + still
@@ -35,7 +35,7 @@ describe("R-2751 the row's renewal amount has one basis (term amount before GST)
     expect(renewalAmount(kochi, { ...quote("sent"), status: null }).quoteNote).toBe("Quote ₹25,488 incl. GST");
   });
 
-  it("a DRAFT renewal quote (Review renewal quote opened, nothing sent) changes nothing", () => {
+  it("a DRAFT renewal quote (Send renewal opened, nothing sent) changes nothing", () => {
     expect(renewalAmount(kochi, quote("draft"))).toEqual(none);
   });
 

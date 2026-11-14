@@ -9,7 +9,7 @@
  * Data (local docker DB only, fixed ids, removed before and after):
  *   · CT R2727 Domains Pvt Ltd (Delhi) with a yearly "Domain Registration .com" subscription
  *     (1 × ₹1,200 a year) renewing in 18 days. Its renewal quote is made by the same route the
- *     Renewals "Review renewal quote" button calls (a DRAFT). The local company has no catalogue row
+ *     Renewals "Send renewal" button calls (a DRAFT). The local company has no catalogue row
  *     for the plan, so the line's cost is unknown → the OWNER must approve it (R-388) — the shape
  *     of the staging domain renewal (cost 0).
  */
@@ -55,7 +55,7 @@ const approvalOf = (id: string) => db().one(`select status || ',' || coalesce(ap
 const renewalStart = () => db().one(`select case when start_date + interval '12 months' = renewal_date then renewal_date else renewal_date + 1 end::text from public.subscriptions where id = '${SUB}'`);
 const isAppMadeRow = () => db().one(`select (start_date + interval '12 months' = renewal_date)::text from public.subscriptions where id = '${SUB}'`);
 
-/** The draft renewal quote — the same POST the Renewals "Review renewal quote" button makes. */
+/** The draft renewal quote — the same POST the Renewals "Send renewal" button makes. */
 async function reviewQuote(page: Page): Promise<string> {
   const existing = linked();
   if (existing) return existing;
@@ -84,7 +84,7 @@ test.describe("R-2727 card test", () => {
 
   /* R-2746: the renewal start now shows ONCE, in the "Renewal · <from> – <to>" label over the lines;
      the line's read-only Starts (same date) is no longer repeated. */
-  test("Step 1: Review renewal quote → editor: the renewal start billing uses (ON the renewal date for an app-made subscription) shows over the lines, not an empty dd-mm-yyyy box", async ({ browser, baseURL }) => {
+  test("Step 1: Send renewal → editor: the renewal start billing uses (ON the renewal date for an app-made subscription) shows over the lines, not an empty dd-mm-yyyy box", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = await reviewQuote(page);
     await openEditor(page, id);

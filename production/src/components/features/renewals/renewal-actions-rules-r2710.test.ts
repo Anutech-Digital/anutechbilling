@@ -22,12 +22,12 @@ const RENEWALS_USER = { tenantGraceDays: 15, canEndSubscription: true, canReview
 const ROW = { followup: true, messaging: true };
 
 describe("R-2710 the row button opens the renewal quote first", () => {
-  it("Pratik's row (8–30 days, annual, no quote yet): Review renewal quote; ⋯ Send as is (no changes)", () => {
+  it("Pratik's row (8–30 days, annual, no quote yet): Send renewal; ⋯ Send as is (no changes)", () => {
     const set = renewalActionSet(sub(), null, { ...RENEWALS_USER, daysUntil: 18 });
     expect(set.primary).toEqual({ kind: "review", label: REVIEW_RENEWAL_QUOTE });
     expect(set.secondary).toEqual({ kind: "send-now", label: SEND_AS_IS });
     const step = renewalNextStep(set, ROW);
-    expect(step.button).toEqual({ kind: "review", label: "Review renewal quote" });
+    expect(step.button).toEqual({ kind: "review", label: "Send renewal" });
     expect(step.menu).toEqual(["secondary", "followup", "nudge", "voice", "not-renewing"]);
     expect(SEND_AS_IS).toBe("Send as is (no changes)");
   });
@@ -39,7 +39,7 @@ describe("R-2710 the row button opens the renewal quote first", () => {
     expect(set.row.text).toMatch(/Renewal quote Q-1 not sent yet/);
   });
 
-  it("sent / viewed and unpaid: Change renewal quote (Revise); ⋯ Resend renewal quote", () => {
+  it("sent / viewed and unpaid: Change renewal (Revise); ⋯ Resend renewal quote", () => {
     for (const status of ["sent", "viewed"]) {
       const set = renewalActionSet(sub({ renewal_quote_id: "Q-1" }), status, { ...RENEWALS_USER, daysUntil: 10 });
       expect(set.primary).toEqual({ kind: "change", label: CHANGE_RENEWAL_QUOTE });

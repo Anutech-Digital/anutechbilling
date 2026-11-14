@@ -8,7 +8,8 @@ const db = vi.hoisted(() => ({
   pages: [] as unknown[],
 }));
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/deals", useRouter: () => ({ push: vi.fn() }) }));
+const nav = vi.hoisted(() => ({ path: "/deals" }));
+vi.mock("next/navigation", () => ({ usePathname: () => nav.path, useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
     from: () => {
@@ -130,5 +131,41 @@ describe("AI Help panel — follow-up chips (R-353)", () => {
     await act(async () => { release(json({ reply: "Doosra jawab", ai: true })); });
     expect(await screen.findByText("Doosra jawab")).toBeTruthy();
     expect(screen.queryByTestId("ai-help-followups")).toBeNull();
+  });
+});
+
+/* R-2713 (Pratik): "Error caught" named no page — an error from an earlier page looked like this
+   page's. The banner and the Help button's tooltip now say where and when; Dismiss clears both. */
+describe("AI Help — caught error names the page and the time (R-2713)", () => {
+  it("banner + button tooltip say 'Error on <page> at <time>'; Dismiss clears it", async () => {
+    await openPanel();
+    await act(async () => { window.dispatchEvent(new ErrorEvent("error", { message: "boom from test" })); });
+    expect(screen.getByText(/^Error on \/deals at \d{2}:\d{2} [ap]m$/)).toBeTruthy();
+    expect(screen.getByText("boom from test")).toBeTruthy();
+    const btn = screen.getByRole("button", { name: /^Help — an error was caught/ });
+    expect(btn.getAttribute("title")).toMatch(/^Error on \/deals at \d{2}:\d{2} [ap]m: boom from test$/);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Dismiss" })); });
+    expect(screen.queryByText(/^Error on \/deals/)).toBeNull();
+    expect(screen.getByRole("button", { name: /^Help — ask AI/ })).toBeTruthy();
+  });
+});
+
+describe("AI Help — a slow request that fails after moving on (R-2713 review)", () => {
+  const w = window as Window & { __aiHelpFetch?: typeof fetch };
+  let saved: typeof fetch | undefined;
+  beforeEach(() => { saved = w.__aiHelpFetch; });
+  afterEach(() => { w.__aiHelpFetch = saved; nav.path = "/deals"; });
+
+  it("is filed under the page that sent it, not the page open when it failed", async () => {
+    let finish: (r: Response) => void = () => {};
+    w.__aiHelpFetch = vi.fn(() => new Promise<Response>((r) => { finish = r; })) as unknown as typeof fetch;
+    const view = render(<><AiHelpButton /><AiHelp /></>);
+    let req: Promise<Response> | undefined;
+    await act(async () => { req = window.fetch("/api/slow-r2713"); });
+    nav.path = "/customers";
+    view.rerender(<><AiHelpButton /><AiHelp /></>);
+    await act(async () => { finish(new Response("", { status: 500 })); await req; });
+    const btn = screen.getByRole("button", { name: /^Help — an error was caught/ });
+    expect(btn.getAttribute("title")).toMatch(/^Error on \/deals at \d{2}:\d{2} [ap]m: GET \/api\/slow-r2713 → 500$/);
   });
 });

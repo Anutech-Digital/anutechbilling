@@ -1,6 +1,6 @@
 /**
  * Card test — R-2728 "Renewals list: show the last quote and invoice sent (clickable); after
- * 'Review renewal quote' / 'Bill next part' the row stays, shown under 'Renewal quote sent' with
+ * 'Send renewal' / 'Bill next part' the row stays, shown under 'Renewal quote sent' with
  * 'expires in N days'" (Pardeep for Pratik, 13 Nov).
  *
  * One test per howToCheck step, on the LOCAL app (E2E Test Co) through the Local test login.
@@ -94,14 +94,15 @@ test.describe("R-2728 card test", () => {
     await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });   // the role is read (the chip link depends on it)
     await expect(r.getByTestId("stage-line2")).toContainText("Overdue 5d");
     await expect(r.getByTestId("stage-chip-quote")).toHaveAttribute("href", "/quotes/Q-CT2728-REN");
-    await expect(r.getByTestId("due-quote-expiry")).toHaveText("exp. in 10d");
-    await expect(r.getByTestId("due-quote-expiry")).toHaveAttribute("title", "Expires in 10 days");
+    /* R-2767 (changed expectation): 10 days of validity left is not row news — the Due cell shows it only at
+       3 days or less / expired; the drawer says it while the quote is with the customer */
+    await expect(r.getByTestId("due-quote-expiry")).toHaveCount(0);
     const inv = await onlyOne(r.getByTestId("renewal-last-invoice-cell"), "last invoice cell");
     await expect(await onlyOne(inv.getByRole("link", { name: "INV-CT2728-1" }), "invoice link")).toHaveAttribute("href", "/invoices/INV-CT2728-1");
     await expect(inv).toContainText("Paid");
     /* the sent quote's row: one button (Follow up) — never a second Send / Review; Change renewal is in ⋯ */
     await expect(r.getByTestId("stage-primary")).toHaveText(/Follow up/);
-    await expect(r.getByRole("button", { name: /Review renewal quote|Send renewal/ })).toHaveCount(0);
+    await expect(r.getByRole("button", { name: /Send renewal|Send renewal/ })).toHaveCount(0);
   });
 
   test("Step 2: the 'Bill next part' row shows its part proforma clickable and stays as 'Renewal quote sent' (not 'Renewed'), 'No expiry set'", async ({ browser, baseURL }) => {

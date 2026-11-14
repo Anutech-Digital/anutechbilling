@@ -4,7 +4,7 @@
  *
  * One test per howToCheck step, on the LOCAL app (E2E Test Co) through the Local test login.
  * Run: `node scripts/ops/card-tests.mjs R-2751`. Nothing is sent or saved by the app: the draft renewal
- * quote is planted in the local DB exactly as "Review renewal quote" leaves it (status draft, linked).
+ * quote is planted in the local DB exactly as "Send renewal" leaves it (status draft, linked).
  *
  * Data (local docker DB, E2E Test Co, fixed ids, removed before and after):
  *   · "CT R2751 Kochi Hosting" — ₹21,600 a year (mrr 1,800), renews in 20 days (8–30 tab, Due in 30 days tile);
@@ -46,7 +46,7 @@ function seed(): void {
     commit;`);
 }
 
-/** What "Review renewal quote" leaves behind: a DRAFT renewal quote, linked to the subscription. */
+/** What "Send renewal" leaves behind: a DRAFT renewal quote, linked to the subscription. */
 function linkDraftQuote(): void {
   db().psql(`begin;
     insert into public.quotes (id, tenant_id, customer_id, customer_name, status, payment_status, is_renewal, renewal_subscription_id,
@@ -91,7 +91,7 @@ test.describe("R-2751 card test", () => {
     await page.close();
   });
 
-  test("Step 2: a DRAFT renewal quote (Review renewal quote, nothing sent) changes neither the row nor the tile", async ({ browser, baseURL }) => {
+  test("Step 2: a DRAFT renewal quote (Send renewal, nothing sent) changes neither the row nor the tile", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1568, height: 900 });
     await openRenewals(page);

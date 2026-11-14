@@ -136,7 +136,8 @@ test.describe("R-2759 card test", () => {
     await openAt(page, 1280, 800);
     const row = page.locator("tr", { hasText: "CT R2759 Quarterly Plan" }).filter({ visible: true });
     /* the full name, then the owner / follow-up facts the row no longer shows */
-    await expect(row.getByRole("link", { name: NAME })).toHaveAttribute("title", new RegExp(`^${NAME} — No owner yet`));
+    /* R-2767: "No owner yet" is never on the row any more (drawer only) — the tooltip is the full name */
+    await expect(row.getByRole("link", { name: NAME })).toHaveAttribute("title", new RegExp(`^${NAME}(?!.*No owner)`));
     const status = row.getByTestId("renewal-last-invoice-status");
     await expect(status).toHaveText("Overdue 43d · ₹23,010");
     const cut = await status.evaluate((el) => el.scrollWidth > el.clientWidth + 1);

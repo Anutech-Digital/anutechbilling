@@ -83,7 +83,7 @@ export function useRenewalQuoteInfo(quoteIds: readonly (string | null)[]) {
         ids,
         (run, from, to) => supabase
           .from("quotes")
-          .select("id, amount, status, payment_status")
+          .select("id, amount, status, payment_status, currency, exchange_rate")   // R-2767: currency for foreign customers
           .in("id", run)
           .order("id", { ascending: true })
           .range(from, to),

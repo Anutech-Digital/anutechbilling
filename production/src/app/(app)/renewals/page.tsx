@@ -72,7 +72,7 @@ import { GraceOverCard } from "./grace-over-card";
 import { NoRenewalDateCard } from "./no-date-card";
 import { chasedRenewal } from "./classify";
 import {
-  QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STAGE_FILTER_LABEL, STAGE_FILTER_ORDER, NO_FILTERS, TILE_TABS,
+  QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, matchesElsewhere, LEGACY_BUCKETS, STAGE_FILTER_LABEL, STAGE_FILTER_ORDER, NO_FILTERS, TILE_TABS,
   noRenewalDate, resolveBucket, renewalAmount, QUEUE_TABLE_MIN_VIEWPORT_PX,
   sortQueue, filterQueue, filterOptions, bulkStageTargets, bulkQuoteConfirm,
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RenewalAmount,
@@ -108,7 +108,7 @@ import {
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
-import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort } from "./row-cells";
+import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 
 // ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
@@ -221,8 +221,9 @@ function showsExpiry(item: { stage: RenewalStage | null; docs?: LastDocs }): boo
 /** R-2759: the table row's owner / next follow-up / promise, as the customer name's tooltip (the drawer, R-2740, will show them). */
 function followupWords(followup: RenewalFollowup, names: Map<string, UserName> | undefined): string {
   const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
+  /* R-2767: the row never says there is no owner (drawer only) — the owner is named when there is one */
   return [
-    owner ? `Owner: ${owner}` : "No owner yet",
+    owner ? `Owner: ${owner}` : null,
     followup.nextFollowUpOn ? `Next follow-up ${formatDate(followup.nextFollowUpOn)}` : null,
     followup.promisedOn && followup.promiseStatus !== "kept"
       ? `${followup.promiseBroken ? "Promise broken" : "Promised"} ${formatDate(followup.promisedOn)}${followup.promisedAmount ? ` · ${rupee(followup.promisedAmount)}` : ""}`
@@ -236,9 +237,12 @@ function FollowupLine({ followup, names }: { followup: RenewalFollowup; names: M
      due and a broken promise are the chip's flag icons. */
   return (
     <div className="mt-1.5 space-y-0.5 text-2xs">
-      <p className={cn("truncate", owner ? "text-ink-2" : "text-ink-3")} title={owner ? `Owner: ${owner}` : "No owner yet"}>
-        <Icon name="user" size={10} className="mr-0.5 inline shrink-0" />{owner ?? "No owner"}
-      </p>
+      {/* R-2767: "No owner" never on the row (drawer only) */}
+      {owner && (
+        <p className="truncate text-ink-2" title={`Owner: ${owner}`}>
+          <Icon name="user" size={10} className="mr-0.5 inline shrink-0" />{owner}
+        </p>
+      )}
       {followup.nextFollowUpOn && !followup.followUpDue && (
         <p className="tabular-nums text-ink-3">
           Next: {formatDate(followup.nextFollowUpOn)}
@@ -316,6 +320,9 @@ interface RenewalQueueProps {
   selected: ReadonlySet<string>;
   onSelect: (ids: string[], on: boolean) => void;
   emptyText: string;
+  /** R-2755: the other tabs that match the search / filters — offered on an empty tab ("1 match in 8–30 — show"). */
+  elsewhere: ReturnType<typeof matchesElsewhere>;
+  onOpenTab: (tab: QueueTab) => void;
   /** R-2404: open the renewal's Follow-up dialog. */
   onFollowup: (item: QueueItem) => void;
   names: Map<string, UserName> | undefined;
@@ -327,7 +334,7 @@ interface RenewalQueueProps {
   onOpen: (subId: string) => void;
 }
 
-function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid, docsState, onOpen }: RenewalQueueProps) {
+function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -343,7 +350,21 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
   /* R-2764: 50 rows, then "Show N more" (the parent remounts this per tab / tile, so it starts at 50 again). */
   const [limit, setLimit] = React.useState(QUEUE_PAGE_ROWS);
   if (rows.length === 0) {
-    return <div className="py-10 text-center text-sm text-ink-3">{emptyText}</div>;
+    return (
+      <div className="py-10 text-center text-sm text-ink-3">
+        <p>{emptyText}</p>
+        {elsewhere.length > 0 && (
+          <p className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1" data-testid="renewals-matches-elsewhere">
+            {elsewhere.map((m) => (
+              <button key={m.tab} type="button" onClick={() => onOpenTab(m.tab)}
+                className="rounded-sm font-medium text-ink underline underline-offset-2 hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                {m.words} — show
+              </button>
+            ))}
+          </p>
+        )}
+      </div>
+    );
   }
 
   const page = firstRows(rows, limit);
@@ -416,6 +437,10 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                     aria-label={`Open details — ${sub.customer_name} · ${sub.plan}`}>
                     {sub.plan} · {sub.seats} seats
                   </button>
+                  {/* R-2755: the subscription's domain (nothing when it has none) */}
+                  {subscriptionDomain(sub) && (
+                    <p className="mt-0.5 truncate text-2xs text-ink-2" title={subscriptionDomain(sub) ?? undefined} data-testid="renewal-card-domain">{subscriptionDomain(sub)}</p>
+                  )}
                   <ContactLine contact={contact} />
                   {lastPaidFor(item, "mt-0.5")}
                 </div>
@@ -491,7 +516,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                   </td>
                   <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
                   <td className="min-w-0 px-2 py-2.5">
-                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} onOpen={() => onOpen(sub.id)} />
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} />
                   </td>
                   <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-2 py-2.5 text-right">
@@ -575,7 +600,7 @@ export default function RenewalsPage() {
     .map((s) => withRenewalQuote(s, openRenewalMap)), [subs, openRenewalMap]);
   /* R-2753: isLoading — the Remind button waits for the contacts, so a customer with no email is never counted in "Email N". */
   const { data: contacts, isLoading: contactsLoading } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
-  const { data: quoteInfo, isLoading: quoteInfoLoading } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
+  const { data: quoteInfo, isLoading: quoteInfoLoading } = useRenewalQuoteInfo(listed.flatMap((s) => [s.renewal_quote_id, s.quote_id]));   // R-2767: + the sale quote (its currency)
   /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
   const { data: fuData } = useRenewalFollowups(listed.map((s) => s.id), listed.map((s) => s.customer_id ?? ""));
   const { data: names } = useUserNames();
@@ -1128,6 +1153,8 @@ export default function RenewalsPage() {
             selected={selected}
             onSelect={onSelect}
             emptyText={tabEmpty}
+            elsewhere={tile || !(filtered || search.trim()) ? [] : matchesElsewhere(bucketTab, Object.fromEntries(QUEUE_TABS.map((t) => [t, shown[t].length])) as Record<QueueTab, number>)}
+            onOpenTab={openTab}
             onFollowup={setFollowupFor}
             names={names}
             lastPaid={lastPaid}

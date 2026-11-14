@@ -31,7 +31,8 @@ import {
 import { daysElapsedInPeriod, prorateSalary } from "@/lib/payroll/proration";
 import { exitPayDays, onPayrollFor, employmentStatus } from "@/lib/payroll/exit";
 import { StartExitDialog } from "@/components/features/payroll/start-exit-dialog";
-import { AdjustSalaryLopDialog } from "@/components/features/payroll/adjust-salary-lop-dialog";
+import { SalaryRowActions } from "@/components/features/payroll/salary-row-actions";
+import { salaryEditPrefill, arrearsWhileEditing, loanOutstandingWhileEditing, rebookSalary, revisedSinceBookedInfo } from "@/lib/payroll/salary-edit";
 import { MergeEmployeeDialog } from "@/components/features/payroll/merge-employee-dialog";
 import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysForYear } from "@/lib/payroll/holidays-india";
 import { isEsiEligible, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
@@ -59,7 +60,7 @@ import {
   useEmployees, useUpsertEmployee, useSetEmployeePin, useCancelEmployeeExit,
   useLeaveEntries, useCreateLeaveEntry, useDeleteLeaveEntry,
   useHolidays, useCreateHoliday, useDeleteHoliday,
-  useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
+  useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useRefreshSalaryData, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
   useSalaryRevisions, useSalaryArrears, usePayslipsSince, type SalaryRevision,
   useStatutoryDues, usePayStatutoryDues,
   useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl, useSetAttendanceAnywhere, useCorrectAttendance,
@@ -1387,10 +1388,6 @@ export function PayrollTab() {
   const [attendanceEmp, setAttendanceEmp] = React.useState<Employee | null>(null);
   /* Click a Net → how it was reached (salary, LOP, incentive, deductions, paid so far). */
   const [breakdownFor, setBreakdownFor] = React.useState<{ name: string; p: SalaryPayment } | null>(null);
-  /* R-2428: part-paid salary → set LOP so the net is what was really paid. */
-  const [lopFor, setLopFor] = React.useState<{ name: string; p: SalaryPayment } | null>(null);
-  const undoSalary = useDeleteSalaryPayment();
-  const confirm = useConfirm();
 
   // "Reconcile in Banking" — jump to the bank account with the matching bank
   // debit (= net salary) opened for reconcile. If there's a single bank (non-
@@ -1401,29 +1398,10 @@ export function PayrollTab() {
     else router.push("/accounting/banking" as never);
   };
 
-  // Edit an UN-reconciled run: reverse it (tested delete_salary_payment RPC —
-  // itself blocked server-side once reconciled) then reopen the pay form to
-  // re-enter it. Only offered while paid_amount === 0 (not yet bank-matched).
-  const editSalary = async (e: Employee, p: SalaryPayment) => {
-    if (await confirm({
-      title: `Edit ${e.name}'s salary for this month?`,
-      body: "This reverses the current run (and its booked expense) and reopens the pay form so you can correct it. Only possible before it's reconciled to a bank line.",
-      confirmLabel: "Edit",
-    })) {
-      try { await undoSalary.mutateAsync(p.id); setPayFor(e); }
-      catch { /* the mutation surfaces its own error toast */ }
-    }
-  };
-  const undoSalaryFor = async (e: Employee, p: SalaryPayment) => {
-    if (await confirm({
-      title: `Undo ${e.name}'s salary for this month?`,
-      body: "This removes the salary + its booked expense so you can pay it again. (Blocked once it's reconciled to a bank line — un-reconcile that first.)",
-      confirmLabel: "Undo",
-      danger: true,
-    })) {
-      undoSalary.mutate(p.id);
-    }
-  };
+  /* R-2771: Edit salary / Edit salary — set LOP / Undo salary live in ONE shared menu
+     (components/features/payroll/salary-row-actions.tsx) — the Salary Register uses the same one.
+     Edit no longer undoes the run before the form opens: the form opens prefilled with the
+     booked figures and Save reverses + re-books (delete_salary_payment, then pay_salary). */
 
   const attQ = useAttendance(period);
   const holQ = useHolidays();
@@ -1615,7 +1593,7 @@ export function PayrollTab() {
                               <PayrollRowMenu
                                 e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                                 paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
-                                onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)} onAdjustLop={() => setLopFor({ name: e.name, p })}
+                                onYear={() => setCalendarFor(e)}
                                 onReconcile={() => reconcileSalary(p)}
                               />
                             </>
@@ -1630,7 +1608,7 @@ export function PayrollTab() {
                               )}
                               <PayrollRowMenu
                                 e={e} canWrite={canWrite} me={meQ.data ?? null} paidVia={null}
-                                onYear={() => setCalendarFor(e)} onEdit={() => {}} onUndo={() => {}}
+                                onYear={() => setCalendarFor(e)}
                               />
                             </>
                           )}
@@ -1683,7 +1661,7 @@ export function PayrollTab() {
                           <PayrollRowMenu
                             e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                             paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
-                            onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)} onAdjustLop={() => setLopFor({ name: e.name, p })}
+                            onYear={() => setCalendarFor(e)}
                             onReconcile={() => reconcileSalary(p)}
                           />
                         </>
@@ -1698,7 +1676,7 @@ export function PayrollTab() {
                           )}
                           <PayrollRowMenu
                             e={e} canWrite={canWrite} me={meQ.data ?? null} paidVia={null}
-                            onYear={() => setCalendarFor(e)} onEdit={() => {}} onUndo={() => {}}
+                            onYear={() => setCalendarFor(e)}
                           />
                         </div>
                       )}
@@ -1716,7 +1694,6 @@ export function PayrollTab() {
           revisions={revsByEmp.get(payFor.id) ?? []}
         />
       )}
-      {lopFor && canWrite && <AdjustSalaryLopDialog name={toTitleCase(lopFor.name)} salary={lopFor.p} onClose={() => setLopFor(null)} />}
       <SalaryBreakdownDialog name={breakdownFor?.name ?? ""} record={breakdownFor?.p ?? null} onClose={() => setBreakdownFor(null)} />
       {editFor && canWrite && <EmployeeDialog employee={editFor} onClose={() => setEditFor(null)} />}
       {attendanceEmp && <AttendanceRegisterDialog employee={attendanceEmp} initialPeriod={period} onClose={() => setAttendanceEmp(null)} />}
@@ -1883,77 +1860,52 @@ async function generatePayslip(employee: Employee, payment: SalaryPayment, me: C
   }
 }
 
-/** One "…" menu per payroll row — full-year payroll, payslip, edit/undo (or a
- *  reconciled lock). `p` undefined → row not yet run. */
-function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, onReconcile, onAdjustLop }: {
+/** One "…" menu per payroll row — full-year payroll, payslip, then the salary actions shared with
+ *  the Salary Register (R-2771 SalaryRowActions: edit / set LOP / undo, or the bank-line lock).
+ *  `p` undefined → row not yet run. */
+function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onReconcile }: {
   e: Employee; p?: SalaryPayment; canWrite: boolean; me: CurrentUserInfo | null; paidVia: string | null;
-  onYear: () => void; onEdit: () => void; onUndo: () => void; onReconcile?: () => void;
-  /** R-2428: part-paid → set loss of pay so the net is the amount actually paid. */
-  onAdjustLop?: () => void;
+  onYear: () => void; onReconcile?: () => void;
 }) {
   return (
-    <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild>
-        <button type="button" aria-label={`More actions for ${toTitleCase(e.name)}`}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">
-          <Icon name="more_h" size={18} />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[13rem]">
-        <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onYear}>
-          <Icon name="calendar" size={15} /> Full-year payroll
-        </DropdownMenuItem>
-        {p && (
-          <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => { void generatePayslip(e, p, me, paidVia); }}>
-            <Icon name="download" size={15} /> Download payslip
+    <SalaryRowActions
+      employee={e} p={p} canWrite={canWrite} onReconcile={onReconcile}
+      ariaLabel={`More actions for ${toTitleCase(e.name)}`}
+      leading={(
+        <>
+          <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onYear}>
+            <Icon name="calendar" size={15} /> Full-year payroll
           </DropdownMenuItem>
-        )}
-        {canWrite && p && p.paid_amount === 0 && (
-          <>
-            <DropdownMenuSeparator />
-            {/* Salary is booked but the bank debit isn't matched yet — jump to
-                Banking with the matching unmatched line opened for reconcile. */}
-            {onReconcile && (
-              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onReconcile}>
-                <Icon name="refresh" size={15} /> Reconcile in Banking →
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}>
-              <Icon name="edit" size={15} /> Edit salary
+          {p && (
+            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => { void generatePayslip(e, p, me, paidVia); }}>
+              <Icon name="download" size={15} /> Download payslip
             </DropdownMenuItem>
-            <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={onUndo}>
-              <Icon name="trash" size={15} /> Undo salary
-            </DropdownMenuItem>
-          </>
-        )}
-        {p && p.paid_amount > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            {/* R-2428: part-paid (e.g. a full & final smaller than the month) — the net can be
-                brought down to what was paid, as loss of pay, without un-reconciling. */}
-            {canWrite && onAdjustLop && p.paid_status !== "paid" && (
-              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onAdjustLop}>
-                <Icon name="edit" size={15} /> Edit salary — set LOP
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem disabled className="gap-2.5 py-2 text-ink-3">
-              <Icon name="lock" size={15} /> {p.paid_status === "paid" ? "Reconciled — un-reconcile to edit" : "Other changes — un-reconcile first"}
-            </DropdownMenuItem>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          )}
+        </>
+      )}
+    />
   );
 }
 
-function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: Employee; period: string; onClose: () => void; revisions: readonly SalaryRevision[] }) {
+/** Pay salary for a month — or, with `editing` (R-2771), change a booked month: the form opens with
+ *  THAT month's booked figures and nothing changes until Save, which reverses the old run and books
+ *  these figures (delete_salary_payment, then pay_salary / pay_salary_with_arrears — the same RPCs). */
+export function PaySalaryDialog({ employee, period, onClose, revisions, editing }: {
+  employee: Employee; period: string; onClose: () => void; revisions: readonly SalaryRevision[];
+  editing?: SalaryPayment;
+}) {
+  const pre = editing ? salaryEditPrefill(editing) : null;
+  /* An earlier Save removed the old run but booking failed → the next Save only books. */
+  const [oldRemoved, setOldRemoved] = React.useState(false);
+  const stillBooked = editing && !oldRemoved ? editing : null;
   /* R-2699: the salary in force for THIS month (a later revision does not apply yet; an earlier
      one does). PF proration, LOP day-rate and "Pay full month" all use it (R-2698 FU1). */
   const inForce = salaryInForce(employee, revisions, period);
   const monthGross = inForce.monthly_gross;
   const revisedThisMonth = inForce.revision && revisionMonth(inForce.revision) === period ? inForce.revision : null;
   const arrearsQ = useSalaryArrears(employee.id);
-  const arrearsInfo = arrearsQ.data ?? null;
+  /* R-2771: while the old run is booked its arrears count as paid — the edit may book them again. */
+  const arrearsInfo = arrearsWhileEditing(arrearsQ.data ?? null, stillBooked?.arrears ?? 0);
   /* Arrears ride only on a month after the months they are for — never a backlog month before the raise. */
   const arrearsHere = arrearsPayableIn(arrearsInfo, period);
   const accountsQ = useBankAccounts();
@@ -1962,13 +1914,20 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
   const leaveQ = useLeaveEntries();
   const holQ = useHolidays();
   const shiftQ = useShiftRules();
-  const pay = usePaySalary();
+  const pay = usePaySalary({ quiet: Boolean(editing) });
+  const undoOld = useDeleteSalaryPayment({ quiet: true, hold: true });
+  /* The held undo did not re-read the salary lists; if the form closes without the new run booked
+     (Cancel after a failed Save) re-read them so the month shows as it now is — not booked. */
+  const refreshSalaryData = useRefreshSalaryData();
+  const pendingRefresh = React.useRef(false);
+  React.useEffect(() => () => { if (pendingRefresh.current) refreshSalaryData(); }, [refreshSalaryData]);
   const accounts = (accountsQ.data ?? []).filter((a) => a.is_active);
 
-  // Active advances for this employee (matched by name).
-  const advances = (loansQ.data ?? []).filter(
-    (l) => l.status === "active" && l.outstanding > 0 && l.employee_name.trim().toLowerCase() === employee.name.trim().toLowerCase(),
-  );
+  // Active advances for this employee (matched by name). R-2771: the loan the edited run recovered
+  // from gets that recovery back (delete_salary_payment restores it), even if it closed the loan.
+  const advances = (loansQ.data ?? [])
+    .map((l) => ({ ...l, outstanding: loanOutstandingWhileEditing(l, stillBooked) }))
+    .filter((l) => (l.status === "active" || l.id === stillBooked?.advance_loan_id) && l.outstanding > 0 && l.employee_name.trim().toLowerCase() === employee.name.trim().toLowerCase());
 
   // Don't auto-pay days that haven't happened yet: for a not-yet-complete month
   // the salary defaults to only the days elapsed so far (owner can pay full).
@@ -1979,32 +1938,36 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
     ? { elapsed: Math.min(monthSoFar.elapsed, exitPay.days), daysInMonth: monthSoFar.daysInMonth, complete: false }
     : monthSoFar;
   const proratedDefault = prorateSalary(monthGross, payPeriod.elapsed, payPeriod.daysInMonth);
-  const [gross, setGross]   = React.useState(String(payPeriod.complete ? monthGross : proratedDefault));
-  const [bonus, setBonus]   = React.useState("0");
+  const [gross, setGross]   = React.useState(String(pre ? pre.gross : payPeriod.complete ? monthGross : proratedDefault));
+  const [bonus, setBonus]   = React.useState(String(pre?.bonus ?? 0));
   /* R-2699: arrears from a revision dated into already-paid months — prefilled, never above what is due. */
-  const [arrears, setArrears] = React.useState("0");
-  const [arrearsEdited, setArrearsEdited] = React.useState(false);
+  const [arrears, setArrears] = React.useState(String(pre?.arrears ?? 0));
+  const [arrearsEdited, setArrearsEdited] = React.useState(Boolean(pre));
   React.useEffect(() => {
     if (!arrearsEdited && arrearsInfo) setArrears(String(arrearsHere ? arrearsInfo.outstanding : 0));
   }, [arrearsInfo, arrearsEdited, arrearsHere]);
-  const [lopDays, setLopDays] = React.useState("0");
-  const [lopAmt, setLopAmt]   = React.useState("0");
-  const [advId, setAdvId]     = React.useState("");
-  const [advAmt, setAdvAmt]   = React.useState("0");
-  const [tds, setTds]         = React.useState("0");
-  const [tdsEdited, setTdsEdited] = React.useState(false);
-  const [pf, setPf]           = React.useState("0");
-  const [pfEdited, setPfEdited] = React.useState(false);
-  const [esi, setEsi]         = React.useState("0");
-  const [esiEdited, setEsiEdited] = React.useState(false);
-  const [other, setOther]     = React.useState("0");
-  const [accountId, setAccountId] = React.useState("");
-  const [date, setDate]       = React.useState(todayISO());
+  const [lopDays, setLopDays] = React.useState(String(pre?.lopDays ?? 0));
+  const [lopAmt, setLopAmt]   = React.useState(String(pre?.lopAmount ?? 0));
+  const [advId, setAdvId]     = React.useState(pre?.advanceLoanId ?? "");
+  const [advAmt, setAdvAmt]   = React.useState(String(pre?.advanceRecovered ?? 0));
+  /* R-2771 edit: PF / ESI / TDS (and the employer shares + PF wage) stay as booked — a Gross change
+     moves only the net — until "Recalculate PF / ESI / TDS" hands them back to the auto figures. */
+  const [keptStatutory, setKeptStatutory] = React.useState(Boolean(pre));
+  const [tds, setTds]         = React.useState(String(pre?.tds ?? 0));
+  const [tdsEdited, setTdsEdited] = React.useState(Boolean(pre));
+  const [pf, setPf]           = React.useState(String(pre?.pf ?? 0));
+  const [pfEdited, setPfEdited] = React.useState(Boolean(pre));
+  const [esi, setEsi]         = React.useState(String(pre?.esi ?? 0));
+  const [esiEdited, setEsiEdited] = React.useState(Boolean(pre));
+  const [other, setOther]     = React.useState(String(pre?.other ?? 0));
+  const [accountId, setAccountId] = React.useState(pre?.bankAccountId ?? "");
+  const [date, setDate]       = React.useState(pre?.payDate ?? todayISO());
 
   // Default to the main bank account (current/savings), not Petty Cash — salary
   // normally goes out of the company bank.
   React.useEffect(() => {
-    if (!accountId && accounts.length > 0) {
+    /* R-2771: an edit keeps its booked account unless that account is no longer active. */
+    if (accounts.length > 0 && (!accountId || !accounts.some((a) => a.id === accountId))) {
       const bank = accounts.find((a) => a.account_type !== "cash" && a.account_type !== "credit_card");
       setAccountId((bank ?? accounts[0]).id);
     }
@@ -2024,7 +1987,12 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
   const esiWage = Math.max(0, grossN - lopN);
   /* Contribution-period rule: covered in Apr–Sep / Oct–Mar once → covered till its end,
      even above ₹21,000 (lib/payroll/esi.ts). Read from this employee's own payslips. */
-  const { data: esiHistory } = useEmployeeSalaryHistory(employee.id);
+  const { data: historyAll } = useEmployeeSalaryHistory(employee.id);
+  /* R-2771: an edit leaves its own month out — its TDS / ESI must not count as "earlier" ones. */
+  const esiHistory = React.useMemo(
+    () => (historyAll && editing ? historyAll.filter((h) => h.id !== editing.id) : historyAll),
+    [historyAll, editing],
+  );
   /* R-2733: PF / ESI / TDS auto figures come from ONE function (lib/payroll/net-pay.ts) — the
      Employees table's "In-hand / month" and the CTC tab's "Monthly Net Pay" read the same one.
      s.192 TDS: the year's projected tax, less TDS already deducted this FY, over the months left. */
@@ -2044,7 +2012,9 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
   React.useEffect(() => {
     if (!esiEdited) setEsi(String(esiCalc.employee));
   }, [esiCalc.employee, esiEdited]);
-  const esiEmployerN = esiCalc.employer;
+  /* Kept as booked only while the employee's ESI is still the booked figure — a hand-changed ESI
+     takes the worked-out employer share, as in Pay mode (employee and employer never out of step). */
+  const esiEmployerN = keptStatutory && pre && esiN === pre.esi ? pre.esiEmployer : esiCalc.employer;
 
   // ── PF (auto) — employee 12% (deducted from net) + employer 12% (extra company
   //    cost, NOT deducted). Computed on the wage capped at the ceiling for THIS
@@ -2056,11 +2026,22 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
   React.useEffect(() => {
     if (!pfEdited) setPf(String(pfCalc.employee));
   }, [pfCalc.employee, pfEdited]);
-  const pfEmployerN = pfCalc.employer;
+  const pfKept = Boolean(keptStatutory && pre && pfN === pre.pf);
+  const pfEmployerN = pfKept && pre ? pre.pfEmployer : pfCalc.employer;
+
+  /* R-2771 (Y2): the run was booked at an older salary and a revision now covers this month. A
+     re-booked row is stamped with the revised salary, so its arrears stop — say so, offer the raise. */
+  const revisedSinceBooked = revisedSinceBookedInfo(editing ?? null, monthGross, arrearsQ.data ?? null);
+
+  /* R-2771: kept-as-booked PF / ESI / TDS no longer match what these figures work out to → say so. */
+  const statutoryDiffers = keptStatutory && esiHistory !== undefined
+    && (pfCalc.employee !== pfN || esiCalc.employee !== esiN || tdsEstimate.thisMonth !== tdsN);
 
   const selectedAdv = advances.find((a) => a.id === advId);
   const advTooMuch = advN > 0 && selectedAdv ? advN > selectedAdv.outstanding : false;
-  const valid = grossN > 0 && net >= 0 && Boolean(accountId) && !advTooMuch && !arrearsTooMuch && (advN === 0 || Boolean(advId));
+  /* R-2771: a run booked with no salary part (incentive only, gross 0) may be edited as such. */
+  const grossOk = grossN > 0 || Boolean(editing && editing.gross === 0 && earned > 0);
+  const valid = grossOk && net >= 0 && Boolean(accountId) && !advTooMuch && !arrearsTooMuch && (advN === 0 || Boolean(advId));
 
   // Auto-fill LOP amount from days. A day is valued at monthly ÷ actual days in
   // the month, so full attendance reconciles to exactly the full salary and
@@ -2121,35 +2102,67 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
   const [pyGuard, pmGuard] = period.split("-").map(Number);
   const lastDayOfPeriod = new Date(pyGuard, pmGuard, 0).getUTCDate();
   const todayIso = todayISO();
-  const monthIncomplete = period >= todayIso.slice(0, 7) && Number(todayIso.slice(8, 10)) < lastDayOfPeriod;
+  const monthIncomplete = !editing && period >= todayIso.slice(0, 7) && Number(todayIso.slice(8, 10)) < lastDayOfPeriod;
+
+  const book = () => pay.mutateAsync({
+    employeeId: employee.id, period, payDate: date, gross: grossN,
+    lopDays: Number(lopDays) || 0, lopAmount: lopN, incentive: bonusN,
+    advanceRecovered: advN, advanceLoanId: advN > 0 ? advId : null,
+    tds: tdsN, pf: pfN, esi: esiN, esiEmployer: esiEmployerN, pfEmployer: pfEmployerN, other: otherN, bankAccountId: accountId,
+    pfWage: pfKept && pre ? pre.pfWage : employee.pf_applicable ? pfCalc.base : null,
+    arrears: arrearsN,
+    /* R-2771: an edit keeps the row's notes (LOP reason, "incentive from bank line …"). */
+    ...(editing ? { notes: editing.notes ?? null } : {}),
+  });
+  const [busy, setBusy] = React.useState(false);
+  const saving = busy || pay.isPending || undoOld.isPending;
 
   async function submit() {
-    if (!valid) return;
-    await pay.mutateAsync({
-      employeeId: employee.id, period, payDate: date, gross: grossN,
-      lopDays: Number(lopDays) || 0, lopAmount: lopN, incentive: bonusN,
-      advanceRecovered: advN, advanceLoanId: advN > 0 ? advId : null,
-      tds: tdsN, pf: pfN, esi: esiN, esiEmployer: esiEmployerN, pfEmployer: pfEmployerN, other: otherN, bankAccountId: accountId,
-      pfWage: employee.pf_applicable ? pfCalc.base : null,
-      arrears: arrearsN,
+    if (!valid || saving) return;
+    if (!editing) {
+      await book();
+      onClose();
+      return;
+    }
+    /* R-2771: reverse the old run, then book these figures — never books if the reverse was refused. */
+    setBusy(true);
+    const r = await rebookSalary(stillBooked ? stillBooked.id : null, {
+      /* From here the lists are stale until the new run is booked — re-read them if the form goes away first. */
+      undo: async (id) => { await undoOld.mutateAsync(id); pendingRefresh.current = true; },
+      pay: book,
     });
-    onClose();
+    setBusy(false);
+    if (r.oldRemoved) setOldRemoved(true);
+    if (r.ok) {
+      pendingRefresh.current = false; // the booking itself re-read everything
+      toast.success(`Salary for ${periodLabel(period)} changed`, { description: "The register, payslip and 24Q / Form 16 working now read the new figures." });
+      onClose();
+    }
   }
 
   return (
-    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Dialog open onOpenChange={(v) => { if (!v && !saving) onClose(); }}>
       <DialogContent className="md:!max-w-xl">
         <DialogHeader>
-          <DialogTitle>Pay salary — {employee.name}</DialogTitle>
-          <DialogDescription>Period {period}. This books the salary + deductions now; the net pay clears your bank once you reconcile the debit in Banking.</DialogDescription>
+          <DialogTitle>{editing ? "Edit salary" : "Pay salary"} — {employee.name}</DialogTitle>
+          <DialogDescription>
+            {editing
+              ? <>{periodLabel(period)} as booked. Change any figure and Save — the booked salary and its expense are reversed and these figures are booked instead. Nothing changes until you Save.</>
+              : <>Period {period}. This books the salary + deductions now; the net pay clears your bank once you reconcile the debit in Banking.</>}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
+          {editing && oldRemoved && (
+            <p role="alert" className="rounded-md border border-rose/40 bg-rose-soft px-3 py-2 text-xs text-rose" data-testid="edit-salary-old-removed">
+              The old salary for {periodLabel(period)} was removed, but the new one could not be booked. Fix the figures and press Save again — if you cancel now, {periodLabel(period)} has no salary booked.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor="payroll-salary-to-pay" className="block text-xs font-medium text-ink-2 mb-1">Salary to pay (₹)</label>
               <Input id="payroll-salary-to-pay" type="number" min={0} value={gross} onChange={(e) => setGross(e.target.value)} />
-              {!payPeriod.complete && (
+              {!editing && !payPeriod.complete && (
                 <p className="text-xs text-ink-3 mt-1">
                   {exitPay
                     ? <>Final month — prorated to <b>{payPeriod.elapsed} of {payPeriod.daysInMonth} days</b>, last working day {formatDate(exitPay.lastDay)}.</>
@@ -2164,6 +2177,19 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
               {payPeriod.complete && (
                 <p className="text-xs text-ink-3 mt-1">
                   Full month · {payPeriod.daysInMonth} days ({periodLabel(period)}). Absences are deducted below as LOP.
+                </p>
+              )}
+              {revisedSinceBooked && (
+                <p className="text-xs text-amber-ink mt-1" data-testid="edit-salary-revised-since">
+                  {periodLabel(period)} was booked at {rupee(revisedSinceBooked.bookedAt)}/month; the salary for this month was later revised to {rupee(monthGross)}/month.
+                  {revisedSinceBooked.arrears === "paid"
+                    ? <>Its revision arrears were already paid with a later salary — keep the booked salary: paying {periodLabel(period)} at the revised salary as well would pay the raise twice. After saving, the arrears already paid show as paid more than is due.</>
+                    : <>Saving books the month again under the revised salary — revision arrears for {periodLabel(period)} will not be offered afterwards.</>}{" "}
+                  {revisedSinceBooked.arrears === "due" && grossN !== revisedSinceBooked.atRevised && (
+                    <button type="button" className="font-medium underline" onClick={() => setGross(String(revisedSinceBooked.atRevised))}>
+                      Pay at the revised salary ({rupee(revisedSinceBooked.atRevised)})
+                    </button>
+                  )}
                 </p>
               )}
               {monthGross !== employee.monthly_gross ? (
@@ -2276,7 +2302,18 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
                 </div>
               </div>
             )}
-            <p className="text-xs text-ink-3 -mt-1">{tdsEstimate.note}{tdsEdited ? " (tumne badla)" : ""}</p>
+            {keptStatutory ? (
+              <p className={cn("text-xs -mt-1", statutoryDiffers ? "text-amber-ink" : "text-ink-3")} data-testid="edit-salary-kept-statutory">
+                TDS, PF and ESI are kept as booked for {periodLabel(period)}.{" "}
+                {statutoryDiffers && <>For these figures the auto amounts are PF {rupee(pfCalc.employee)}, ESI {rupee(esiCalc.employee)}, TDS {rupee(tdsEstimate.thisMonth)}.{" "}</>}
+                <button type="button" className="text-amber-ink font-medium hover:underline"
+                  onClick={() => { setKeptStatutory(false); setTdsEdited(false); setPfEdited(false); setEsiEdited(false); }}>
+                  Recalculate PF / ESI / TDS
+                </button>
+              </p>
+            ) : (
+              <p className="text-xs text-ink-3 -mt-1">{tdsEstimate.note}{tdsEdited ? " (tumne badla)" : ""}</p>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="payroll-tds" className="block text-xs font-medium text-ink-2 mb-1">TDS (₹){!tdsEdited && <span className="text-emerald ml-1 font-normal">auto s.192</span>}</label>
@@ -2359,8 +2396,8 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={pay.isPending}>Cancel</Button>
-          <Button variant="primary" loading={pay.isPending} disabled={!valid} onClick={submit}>Pay {rupee(net > 0 ? net : 0)}</Button>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="primary" loading={saving} disabled={!valid} onClick={submit}>{editing ? "Save" : "Pay"} {rupee(net > 0 ? net : 0)}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

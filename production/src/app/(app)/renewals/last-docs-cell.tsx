@@ -14,7 +14,7 @@ import Link from "next/link";
 import { cn, formatDate } from "@/lib/utils";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import {
-  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, priorDueInvoiceGap, quoteExpiryText, quoteStateLabel, renewalDueText,
+  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel, renewalDueText,
   sourceQuoteState,
   type DocTone, type LastDocs, type LastInvoice, type SentRenewal,
 } from "./last-docs";
@@ -136,12 +136,13 @@ export function SentDueLines({ sent, daysUntil, todayIst, className }: {
 }) {
   /* A part proforma is due on ITS date — Bill next part already moved renewal_date a term on. */
   const days = sent.kind === "part" && sent.dueDate ? daysBetweenIst(todayIst, sent.dueDate) : daysUntil;
-  const expiry = quoteExpiryText(sent.expiresDate, todayIst);
-  const expired = expiry.startsWith("Expired");
+  /* R-2767: the validity only when 3 days or less are left or it expired — no "No expiry set" on a part */
+  const expiry = quoteExpiryNote(sent.expiresDate, todayIst);
+  const expired = !!expiry?.startsWith("Expired");
   return (
     <div className={cn("text-2xs tabular-nums", className)} data-testid="renewal-sent-due">
       <p className={days < 0 ? "font-medium text-rose-600" : "text-ink-3"}>{sent.kind === "part" ? `Part bill ${renewalDueText(days).toLowerCase()}` : renewalDueText(days)}</p>
-      <p className={expired ? "font-medium text-rose-600" : "text-ink-2"}>{expiry}</p>
+      {expiry && <p className={expired ? "font-medium text-rose-600" : "text-ink-2"}>{expiry}</p>}
     </div>
   );
 }

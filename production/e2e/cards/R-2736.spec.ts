@@ -12,7 +12,7 @@
  *     went out at cost 0 → "Margin unknown" → owner approval.
  *   · CT R2736 Bespoke Pvt Ltd: 2 seats of "CT R2736 Bespoke Plan" — no catalogue row at all, so the
  *     cost stays unknown and the approval stays.
- * Both quotes are made by the route the Renewals "Review renewal quote" button calls (a DRAFT).
+ * Both quotes are made by the route the Renewals "Send renewal" button calls (a DRAFT).
  */
 import { expect, test, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, E2E_TENANT_SQL, localDb, onlyInCardTests, openAppPage, pageAs, waitForHydrated } from "./card-steps";
@@ -54,7 +54,7 @@ function seed(): void {
 const linked = (sub: string) => db().one(`select coalesce(renewal_quote_id, '') from public.subscriptions where id = '${sub}'`);
 const lineOf = (id: string) => db().one(`select (line_items->0->>'rate') || ',' || (line_items->0->>'cost') || ',' || coalesce(line_items->0->>'item_id', '') || ',' || total_cost from public.quotes where id = '${id}'`);
 
-/** The draft renewal quote — the same POST the Renewals "Review renewal quote" button makes. */
+/** The draft renewal quote — the same POST the Renewals "Send renewal" button makes. */
 async function reviewQuote(page: Page, sub: string): Promise<string> {
   const existing = linked(sub);
   if (existing) return existing;
@@ -80,7 +80,7 @@ test.describe("R-2736 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: Review renewal quote for the Workspace customer → line cost = catalogue ₹7,440 a seat (₹620 × 12), price stays the customer's ₹9,600 (not the catalogue ₹8,832), no item_id", async ({ browser, baseURL }) => {
+  test("Step 1: Send renewal for the Workspace customer → line cost = catalogue ₹7,440 a seat (₹620 × 12), price stays the customer's ₹9,600 (not the catalogue ₹8,832), no item_id", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = await reviewQuote(page, SUB_GW);
     expect(lineOf(id)).toBe(`9600,7440,,${7440 * 20}`);
