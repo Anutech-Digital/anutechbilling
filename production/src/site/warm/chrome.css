@@ -84,7 +84,8 @@
   background: var(--w-mint-soft);
   color: var(--w-teal) !important;
 }
-.anutech-site[data-site-theme="warm"] header .nav-item:is([aria-expanded="true"], [style*="font-weight:600"], [style*="font-weight: 600"]) {
+.anutech-site[data-site-theme="warm"] header .nav-item[aria-expanded="true"],
+.anutech-site[data-site-theme="warm"] header .nav-item[style*="font-weight"][style*="600"] {
   background: var(--w-mint);
   color: var(--w-teal-dark) !important;
 }
@@ -149,6 +150,9 @@
 
 /* Customer login: the design's outlined-teal button, fills teal on hover. */
 .anutech-site[data-site-theme="warm"] header .hdr-row > a.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 44px;
   padding: 0 18px !important;
   border-radius: 12px !important;
@@ -279,7 +283,7 @@
   color: var(--w-muted-2) !important;
   margin-top: 2px;
 }
-.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child):is([style*="color:var(--primary)"], [style*="color: var(--primary)"]) > span:first-child {
+.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child)[style*="var(--primary)"] > span:first-child {
   color: var(--w-teal);
 }
 .anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child):active { background: var(--w-mint-soft); }
@@ -337,6 +341,9 @@
   justify-content: center;
 }
 .anutech-site[data-site-theme="warm"] > section:has(+ footer) .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 54px;
   padding: 0 28px;
   border-radius: 14px;
@@ -462,7 +469,6 @@
   border-top: 1px solid var(--w-line);
 }
 .anutech-site[data-site-theme="warm"] > footer > .wrap > div:last-child > button {
-  order: 3;
   min-height: 32px;
   color: var(--w-teal) !important;
   font-size: 13px !important;
@@ -549,17 +555,14 @@
 }
 
 /* ── Cart drawer (light touch): warm panel edge and rounded corners on the left ─────────────── */
-.anutech-site[data-site-theme="warm"] div[style*="rgba(12,17,22"],
-.anutech-site[data-site-theme="warm"] div[style*="rgba(12, 17, 22"] {
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12"][style*="inset"] {
   background: rgba(18, 49, 42, 0.38) !important;
 }
-.anutech-site[data-site-theme="warm"] div[style*="rgba(12,17,22"] + div,
-.anutech-site[data-site-theme="warm"] div[style*="rgba(12, 17, 22"] + div {
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12"][style*="inset"] + div {
   border-radius: 20px 0 0 20px;
   overflow: hidden;
 }
-.anutech-site[data-site-theme="warm"] div[style*="rgba(12,17,22"] + div > div:first-child > div:first-child > div:last-child,
-.anutech-site[data-site-theme="warm"] div[style*="rgba(12, 17, 22"] + div > div:first-child > div:first-child > div:last-child {
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12"][style*="inset"] + div > div:first-child > div:first-child > div:last-child {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
   font-weight: 800 !important;
 }
