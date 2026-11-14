@@ -636,13 +636,16 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, c
   if (!stage) return <Skeleton className="h-8 w-28" aria-label="Loading the next step" data-testid="stage-action-loading" />;
   const { primary, menu } = stageButtons(stage, sub, ctx, { canQuotes, canPay, canInvoices });
   const grow = layout === "card" ? "flex-1" : undefined;
+  /* R-2764 (R-2759 spec, 14 Nov): in the table the longest label ("Record payment") + ⋯ ran 4px past the
+     184px Action column at 1280 — the table button is 12px narrower (padding + gaps), same words and icon. */
+  const tight = layout === "table";
   return (
-    <div className={cn("flex min-w-0 items-center gap-1.5", layout === "card" && "w-full")} data-testid="stage-actions">
+    <div className={cn("flex min-w-0 items-center", tight ? "gap-1" : "gap-1.5", layout === "card" && "w-full")} data-testid="stage-actions">
       {primary && (
         <Button
           variant={strong && primary.kind !== "follow-up" ? "primary" : "default"}
           size="sm"
-          className={cn("shrink-0", grow)}
+          className={cn("shrink-0", grow, tight && "gap-1.5 px-2")}
           loading={busy}
           disabled={disabled}
           onClick={() => onRun(primary.kind)}
