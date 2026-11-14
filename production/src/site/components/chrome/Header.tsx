@@ -21,6 +21,7 @@ import { LICENCE_EDITIONS } from "@/site/lib/data/catalog";
 import { DOMAIN_TEASER_NO_PRICE, teaserTag, type DomainTeaser } from "@/site/lib/data/domain-teaser";
 import { HOSTING_DESCRIPTION } from "@/site/lib/data/hosting-copy";
 import { emailFromRate } from "@/site/lib/live-catalog";
+import { ThemeSwitch } from "@/site/components/chrome/ThemeSwitch";
 
 interface MenuItem { label: string; note: string; href: string }
 interface Menu {
@@ -157,7 +158,12 @@ const MOBILE_PAGES = [
  *   without it, the typed fallback editions decide, never a figure written here.
  * @param domainTeaser the live .in teaser (layout: getSiteTldPrices); without it, no number.
  */
-export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE }: { emailFrom?: number; domainTeaser?: DomainTeaser } = {}) {
+export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE, warm = false }: {
+  emailFrom?: number;
+  domainTeaser?: DomainTeaser;
+  /** Website theme is Warm (Settings → Branding): show the Warm theme's light/dark switch. */
+  warm?: boolean;
+} = {}) {
   const fromRs = emailFrom ?? emailFromRate(LICENCE_EDITIONS);
   const noteOf = (note: string) =>
     note === EMAIL_FROM_NOTE ? `Mailboxes from ₹${Math.round(fromRs).toLocaleString("en-IN")}/mo`
@@ -277,6 +283,7 @@ export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE }: { e
         <Link href={CLIENT_AREA_URL as never} className="btn btn-sm hide-mobile" aria-label="Customer login (hosting & domains)"
           title="Customer login (hosting & domains)"
           style={{ background: orange ? "var(--dark)" : "var(--primary)", borderColor: orange ? "var(--dark)" : "var(--primary)", color: "#fff", whiteSpace: "nowrap" }}>Customer login</Link>
+        {warm && <ThemeSwitch />}
         <button
           className="only-mobile"
           aria-label={mobile ? "Close menu" : "Open menu"}

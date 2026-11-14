@@ -1,0 +1,33 @@
+/**
+ * Warm theme — the header's light/dark switch (ThemeSwitch.tsx), as the design draws it: a 64×34
+ * track, sun by day and moon by night in the knob, marigold focus ring. Rendered only on Warm.
+ */
+.anutech-site[data-site-theme="warm"] .w-tt {
+  flex: none; height: 44px; padding: 0 2px; border: 0; background: none; cursor: pointer;
+  display: inline-flex; align-items: center; -webkit-tap-highlight-color: transparent;
+}
+.anutech-site[data-site-theme="warm"] .w-tt-track {
+  position: relative; display: block; width: 64px; height: 34px; border-radius: 999px;
+  background: linear-gradient(135deg, #FDF1D6, #DCEFE8);
+  box-shadow: inset 0 0 0 1px #E2E7E2, inset 0 2px 4px rgba(18, 49, 42, 0.08);
+  transition: background .4s ease, box-shadow .4s ease;
+}
+.anutech-site[data-site-theme="warm"] .w-tt-knob {
+  position: absolute; top: 3px; left: 3px; width: 28px; height: 28px; border-radius: 50%;
+  background: #FFFFFF; color: #E5A11F; box-shadow: 0 2px 6px rgba(18, 49, 42, 0.25);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .45s cubic-bezier(.3, 1.4, .5, 1), background .4s ease;
+}
+.anutech-site[data-site-theme="warm"] .w-tt[aria-checked="true"] .w-tt-track {
+  background: linear-gradient(135deg, #0B2721, #163D34);
+  box-shadow: inset 0 0 0 1px #3A4A44, inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+.anutech-site[data-site-theme="warm"] .w-tt[aria-checked="true"] .w-tt-knob {
+  transform: translateX(30px); background: #24302B; color: #F4B740; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.anutech-site[data-site-theme="warm"] .w-tt:hover .w-tt-track { box-shadow: inset 0 0 0 1px #9ED3C3, inset 0 2px 4px rgba(18, 49, 42, 0.08); }
+.anutech-site[data-site-theme="warm"] .w-tt:focus-visible { outline: none; }
+.anutech-site[data-site-theme="warm"] .w-tt:focus-visible .w-tt-track { outline: 3px solid #F4B740; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] .w-tt-knob { transition: none; }
+}

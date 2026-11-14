@@ -44,17 +44,17 @@
 }
 
 /* ── Header bar ─────────────────────────────────────────────────────────────────────────────── */
-.anutech-site[data-site-theme="warm"] header {
+.anutech-site[data-site-theme="warm"] > header {
   background: var(--w-surface) !important;
   border-bottom: 1px solid var(--w-line) !important;
   color: var(--w-ink);
 }
-.anutech-site[data-site-theme="warm"] header .hdr-row {
+.anutech-site[data-site-theme="warm"] > header .hdr-row {
   height: 66px !important;
 }
 @media (min-width: 1400px) {
   .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
-  .anutech-site[data-site-theme="warm"] header .hdr-row {
+  .anutech-site[data-site-theme="warm"] > header .hdr-row {
     max-width: 1320px;
     padding-left: 32px;
     padding-right: 32px;
@@ -62,12 +62,12 @@
 }
 
 /* Main nav: centred 44px pills, teal hover, mint when open or on that section's page. */
-.anutech-site[data-site-theme="warm"] header nav[aria-label="Main"] {
+.anutech-site[data-site-theme="warm"] > header nav[aria-label="Main"] {
   gap: 2px !important;
   align-items: center;
   justify-content: center;
 }
-.anutech-site[data-site-theme="warm"] header .nav-item {
+.anutech-site[data-site-theme="warm"] > header .nav-item {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -80,26 +80,26 @@
   text-decoration: none;
   transition: background-color .15s ease, color .15s ease;
 }
-.anutech-site[data-site-theme="warm"] header .nav-item:hover {
+.anutech-site[data-site-theme="warm"] > header .nav-item:hover {
   background: var(--w-mint-soft);
   color: var(--w-teal) !important;
 }
-.anutech-site[data-site-theme="warm"] header .nav-item[aria-expanded="true"],
-.anutech-site[data-site-theme="warm"] header .nav-item[style*="font-weight"][style*="600"] {
+.anutech-site[data-site-theme="warm"] > header .nav-item[aria-expanded="true"],
+.anutech-site[data-site-theme="warm"] > header .nav-item[style*="font-weight"][style*="600"] {
   background: var(--w-mint);
   color: var(--w-teal-dark) !important;
 }
-.anutech-site[data-site-theme="warm"] header .nav-item > span[aria-hidden] {
+.anutech-site[data-site-theme="warm"] > header .nav-item > span[aria-hidden] {
   display: inline-block;
   color: currentColor !important;
   opacity: .7;
   transition: transform .25s cubic-bezier(.2, .8, .2, 1);
 }
-.anutech-site[data-site-theme="warm"] header .nav-item[aria-expanded="true"] > span[aria-hidden] { transform: rotate(180deg); }
-.anutech-site[data-site-theme="warm"] header .nav-item:focus-visible { outline-offset: 0; }
+.anutech-site[data-site-theme="warm"] > header .nav-item[aria-expanded="true"] > span[aria-hidden] { transform: rotate(180deg); }
+.anutech-site[data-site-theme="warm"] > header .nav-item:focus-visible { outline-offset: 0; }
 
 /* Cart: borderless 44px target with a cart glyph and a mint count pill (design). */
-.anutech-site[data-site-theme="warm"] header a[href="/cart"] {
+.anutech-site[data-site-theme="warm"] > header a[href="/cart"] {
   min-height: 44px;
   min-width: 44px;
   justify-content: center;
@@ -113,7 +113,7 @@
   position: relative;
   transition: background-color .15s ease;
 }
-.anutech-site[data-site-theme="warm"] header a[href="/cart"]::before {
+.anutech-site[data-site-theme="warm"] > header a[href="/cart"]::before {
   content: "";
   width: 22px;
   height: 22px;
@@ -122,7 +122,7 @@
 }
 /* The design's thin divider between the menus and the right-hand actions. */
 @media (min-width: 980px) {
-  .anutech-site[data-site-theme="warm"] header a[href="/cart"]::after {
+  .anutech-site[data-site-theme="warm"] > header a[href="/cart"]::after {
     content: "";
     position: absolute;
     left: -14px;
@@ -133,8 +133,8 @@
     background: var(--w-line);
   }
 }
-.anutech-site[data-site-theme="warm"] header a[href="/cart"]:hover { background: var(--w-mint-soft); }
-.anutech-site[data-site-theme="warm"] header a[href="/cart"] > .mono {
+.anutech-site[data-site-theme="warm"] > header a[href="/cart"]:hover { background: var(--w-mint-soft); }
+.anutech-site[data-site-theme="warm"] > header a[href="/cart"] > .mono {
   font-family: var(--font-sans) !important;
   font-size: 13px !important;
   font-weight: 600;
@@ -143,13 +143,13 @@
   background: var(--w-mint) !important;
   color: var(--w-teal-dark) !important;
 }
-.anutech-site[data-site-theme="warm"] header a[href="/cart"] > .mono:not([style*="border-hairline"]) {
+.anutech-site[data-site-theme="warm"] > header a[href="/cart"] > .mono:not([style*="border-hairline"]) {
   background: var(--w-teal) !important;
   color: var(--w-on-teal) !important;
 }
 
 /* Customer login: the design's outlined-teal button, fills teal on hover. */
-.anutech-site[data-site-theme="warm"] header .hdr-row > a.btn {
+.anutech-site[data-site-theme="warm"] > header .hdr-row > a.btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -163,14 +163,14 @@
   font-weight: 600;
   box-shadow: none;
 }
-.anutech-site[data-site-theme="warm"] header .hdr-row > a.btn:hover {
+.anutech-site[data-site-theme="warm"] > header .hdr-row > a.btn:hover {
   background: var(--w-teal) !important;
   color: var(--w-on-teal) !important;
   transform: none;
 }
 
 /* Phone menu button: 44×44, rounded 12; teal outline + mint while the menu is open. */
-.anutech-site[data-site-theme="warm"] header .hdr-row > button.only-mobile {
+.anutech-site[data-site-theme="warm"] > header .hdr-row > button.only-mobile {
   width: 44px;
   height: 44px;
   padding: 0 !important;
@@ -181,23 +181,23 @@
   font-size: 18px !important;
   line-height: 1;
 }
-.anutech-site[data-site-theme="warm"] header .hdr-row > button.only-mobile[aria-expanded="true"] {
+.anutech-site[data-site-theme="warm"] > header .hdr-row > button.only-mobile[aria-expanded="true"] {
   border: 1.5px solid var(--w-teal) !important;
   background: var(--w-mint) !important;
   color: var(--w-teal-dark) !important;
 }
 
 /* ── Desktop menu panel: a floating rounded card (radius 16, soft shadow) under the bar ────── */
-.anutech-site[data-site-theme="warm"] header > div[style*="position:absolute"],
-.anutech-site[data-site-theme="warm"] header > div[style*="position: absolute"] {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position:absolute"],
+.anutech-site[data-site-theme="warm"] > header > div[style*="position: absolute"] {
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
   padding: 8px clamp(16px, 2.5vw, 32px) 0;
   animation: w-chrome-menu .22s cubic-bezier(.2, .8, .2, 1) both !important;
 }
-.anutech-site[data-site-theme="warm"] header > div[style*="position:absolute"] > .wrap,
-.anutech-site[data-site-theme="warm"] header > div[style*="position: absolute"] > .wrap {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position:absolute"] > .wrap,
+.anutech-site[data-site-theme="warm"] > header > div[style*="position: absolute"] > .wrap {
   max-width: 1120px;
   background: var(--w-surface);
   border: 1px solid var(--w-line);
@@ -207,7 +207,7 @@
   gap: 24px !important;
   align-items: start;
 }
-.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap a:not(.btn) {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap a:not(.btn) {
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -217,36 +217,36 @@
   color: var(--w-ink);
   transition: background-color .15s ease, color .15s ease, padding-left .15s ease;
 }
-.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap a:not(.btn):hover {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap a:not(.btn):hover {
   background: var(--w-mint-soft) !important;
   color: var(--w-teal);
   padding-left: 18px !important;
 }
-.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap a:not(.btn) > div:first-child {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap a:not(.btn) > div:first-child {
   font-weight: 600 !important;
 }
 /* Promo card inside the panel. */
-.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap > div:last-child {
   background: var(--w-mint-soft) !important;
   border: 1px solid var(--w-mint) !important;
   border-radius: 14px !important;
 }
-.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child > div:nth-child(2) {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap > div:last-child > div:nth-child(2) {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
   font-weight: 800 !important;
   color: var(--w-ink);
 }
-.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child .mono-label {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap > div:last-child .mono-label {
   color: var(--w-teal) !important;
   font-weight: 600;
 }
-.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child a:not(.btn) {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap > div:last-child a:not(.btn) {
   display: inline;
   min-height: 0;
   padding: 0 !important;
   color: var(--w-teal) !important;
 }
-.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child a:not(.btn):hover {
+.anutech-site[data-site-theme="warm"] > header > div[style*="position"] > .wrap > div:last-child a:not(.btn):hover {
   background: none !important;
   padding: 0 !important;
   text-decoration: underline;
@@ -257,7 +257,7 @@
 }
 
 /* ── Phone menu (the drawer under the bar) ──────────────────────────────────────────────────── */
-.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] {
+.anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] {
   border-top: 1px solid var(--w-line) !important;
   background: var(--w-surface) !important;
   box-shadow: 0 24px 48px rgba(18, 49, 42, 0.14);
@@ -265,7 +265,7 @@
   max-height: calc(100vh - 110px) !important;
   animation: w-chrome-menu .26s cubic-bezier(.2, .8, .2, 1) both !important;
 }
-.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child) {
+.anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] > a:not(:last-child) {
   display: flex !important;
   flex-direction: column;
   justify-content: center;
@@ -274,21 +274,21 @@
   border-bottom: 1px solid #EEF2EE !important;
   color: var(--w-ink) !important;
 }
-.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child) > span:first-child {
+.anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] > a:not(:last-child) > span:first-child {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
   font-size: 17px !important;
   font-weight: 700 !important;
 }
-.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child) > span:last-child {
+.anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] > a:not(:last-child) > span:last-child {
   color: var(--w-muted-2) !important;
   margin-top: 2px;
 }
-.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child)[style*="var(--primary)"] > span:first-child {
+.anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] > a:not(:last-child)[style*="var(--primary)"] > span:first-child {
   color: var(--w-teal);
 }
-.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child):active { background: var(--w-mint-soft); }
+.anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] > a:not(:last-child):active { background: var(--w-mint-soft); }
 /* Customer login: the design's full-width outlined-teal button at the foot of the menu. */
-.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:last-child {
+.anutech-site[data-site-theme="warm"] > header > nav[aria-label="Mobile"] > a:last-child {
   display: flex !important;
   align-items: center;
   justify-content: center;

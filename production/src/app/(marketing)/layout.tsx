@@ -24,6 +24,7 @@ import "@/site/warm/company.css";
 import "@/site/warm/legal-shop.css";
 import "@/site/warm/domains.css";
 import "@/site/warm/hosting.css";
+import "@/site/warm/switch.css";
 import { SITE_URL } from "@/site/lib/config";
 
 /**
@@ -54,6 +55,7 @@ import { UtilityBar, CtaBand, Footer, ConsentBanner } from "@/site/components/ch
 import { AgentChat } from "@/site/components/agent/AgentChat";
 import { SitePreviewBar } from "@/site/components/chrome/SitePreviewBar";
 import { BackToTop } from "@/site/components/chrome/BackToTop";
+import { THEME_BOOT_SCRIPT } from "@/site/components/chrome/ThemeSwitch";
 import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 import { bookMailboxMonthly } from "@/lib/catalog/catalog-prices";
 import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
@@ -87,7 +89,9 @@ export default async function MarketingLayout({ children }: { children: React.Re
         {/* R-1508: signed-in team member previewing the site — Back to dashboard + Report a problem. */}
         <SitePreviewBar />
         <UtilityBar />
-        <Header emailFrom={emailFrom} domainTeaser={domains} />
+        {/* Warm theme: apply a saved light/dark choice before paint (ThemeSwitch.tsx). */}
+        {theme === "warm" && <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />}
+        <Header emailFrom={emailFrom} domainTeaser={domains} warm={theme === "warm"} />
         <main id="main">{children}</main>
         <CtaBand />
         <Footer />

@@ -45,7 +45,7 @@
   /* Inter for body text; the site's mono (IBM Plex) stays for its small labels. */
   --font-sans: var(--font-site-body), "Inter", system-ui, sans-serif;
 
-  background: #F5F7F4;
+  background: var(--w-bg);
 }
 
 /* Headings: Plus Jakarta Sans 700–800. */
@@ -56,11 +56,11 @@
 
 /* Buttons: 12px radius; marigold main CTA, outlined-teal secondary. */
 .anutech-site[data-site-theme="warm"] .btn { border-radius: 12px; }
-.anutech-site[data-site-theme="warm"] :is(.btn-primary, .btn-os) { background: #F4B740; color: #17241F; } /* 8.9:1 */
-.anutech-site[data-site-theme="warm"] :is(.btn-primary, .btn-os):hover { background: #E9A92C; }
-.anutech-site[data-site-theme="warm"] .btn-primary:disabled:hover { background: #F4B740; }
-.anutech-site[data-site-theme="warm"] .btn-outline { background: transparent; color: #0E6B5C; border: 1.5px solid #0E6B5C; }
-.anutech-site[data-site-theme="warm"] .btn-outline:hover { background: #0E6B5C; color: #FFFFFF; border-color: #0E6B5C; }
+.anutech-site[data-site-theme="warm"] :is(.btn-primary, .btn-os) { background: var(--w-marigold); color: var(--w-on-marigold); } /* 8.9:1 */
+.anutech-site[data-site-theme="warm"] :is(.btn-primary, .btn-os):hover { background: var(--w-marigold-hover); }
+.anutech-site[data-site-theme="warm"] .btn-primary:disabled:hover { background: var(--w-marigold); }
+.anutech-site[data-site-theme="warm"] .btn-outline { background: transparent; color: var(--w-teal); border: 1.5px solid var(--w-teal); }
+.anutech-site[data-site-theme="warm"] .btn-outline:hover { background: var(--w-teal); color: var(--w-on-teal); border-color: var(--w-teal); }
 
 /* Hover lift on buttons and cards — hover-capable devices only. */
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
@@ -78,7 +78,7 @@
 .anutech-site[data-site-theme="warm"] .chip[aria-pressed="true"] { background: #0E6B5C; border-color: #0E6B5C; }
 
 /* Focus: the design's 3px marigold ring. */
-.anutech-site[data-site-theme="warm"] :focus-visible { outline: 3px solid #F4B740; outline-offset: 3px; }
+.anutech-site[data-site-theme="warm"] :focus-visible { outline: 3px solid var(--w-marigold); outline-offset: 3px; }
 
 /* ── Home + Business Email pages (HomeV2's C palette, HomeCompany, ProductPeek) ──────────────
    Those components draw from --hv-* variables whose fallbacks are the classic values, so only
@@ -127,15 +127,15 @@
    ground → automation (white, with a photo) → proof (mint, with a photo) → six steps as a
    timeline (white) → IT cards (ground) → facts → FAQ (white) → teal rounded closing card.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
-.anutech-site[data-site-theme="warm"] .hc { background: #F5F7F4; color: #4B5A53; overflow-x: clip; }
+.anutech-site[data-site-theme="warm"] .hc { background: var(--w-bg); color: var(--w-muted); overflow-x: clip; }
 
 /* Section labels and headings, as the design draws them. */
 .anutech-site[data-site-theme="warm"] .hc .hc-eyebrow {
   font-family: var(--font-site-body), "Inter", system-ui, sans-serif;
-  font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: #0E6B5C;
+  font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: var(--w-teal);
 }
-.anutech-site[data-site-theme="warm"] .hc .hc-h2 { font-size: clamp(2rem, 3.6vw, 2.52rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.12; color: #17241F; }
-.anutech-site[data-site-theme="warm"] .hc .hc-sub { font-size: 16.5px; color: #4B5A53; }
+.anutech-site[data-site-theme="warm"] .hc .hc-h2 { font-size: clamp(2rem, 3.6vw, 2.52rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.12; color: var(--w-ink); }
+.anutech-site[data-site-theme="warm"] .hc .hc-sub { font-size: 16.5px; color: var(--w-muted); }
 .anutech-site[data-site-theme="warm"] .hc .hc-btn { border-radius: 14px; min-height: 52px; padding: 0 26px; font-size: 16px; }
 
 /* ── Hero: dark forest band behind the text and the form, photo slideshow under a tint ───── */
@@ -170,7 +170,7 @@
   position: relative; max-width: 1100px; width: 100%; justify-self: center; padding: 0 0 clamp(32px, 4.16vw, 58px);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-visual::before {
-  content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: #F5F7F4;
+  content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: var(--w-bg);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-text { padding-top: 16px; padding-bottom: 54px; display: flex; flex-direction: column; gap: 22px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-text > * { margin: 0; }
@@ -179,38 +179,38 @@
   background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.28); border-radius: 999px; padding: 6px 14px;
   font-size: 14px; font-weight: 500; letter-spacing: 0; text-transform: none; color: #FFFFFF;
 }
-.anutech-site[data-site-theme="warm"] .hc .hc-hero .hc-eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #F4B740; }
+.anutech-site[data-site-theme="warm"] .hc .hc-hero .hc-eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--w-marigold); }
 .anutech-site[data-site-theme="warm"] .hc .hc-h1 {
   font-size: clamp(2.4rem, 5vw, 3.4rem); line-height: 1.16; letter-spacing: -0.03em; font-weight: 800; color: #FFFFFF;
   text-shadow: 0 2px 24px rgba(0,0,0,0.25);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-h1 em {
-  display: inline-block; line-height: 1; color: #17241F; background: #F4B740; border-radius: 0.22em;
+  display: inline-block; line-height: 1; color: var(--w-on-marigold); background: var(--w-marigold); border-radius: 0.22em;
   padding: 0.02em 0.2em 0.1em; margin: 0 0.03em; text-shadow: none;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-lead { font-size: 17px; color: #D5E3DD; max-width: 600px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-ticks { color: #FFFFFF; font-size: 15px; font-weight: 500; gap: 10px 22px; }
-.anutech-site[data-site-theme="warm"] .hc .hc-ticks li::before { color: #F4B740; font-weight: 800; }
+.anutech-site[data-site-theme="warm"] .hc .hc-ticks li::before { color: var(--w-marigold); font-weight: 800; }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero .hc-actions { margin-top: 8px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero .hc-btn-primary { font-weight: 700; box-shadow: 0 6px 18px rgba(0,0,0,0.25); }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero .hc-btn-wa { background: rgba(255,255,255,0.1); border: 1.5px solid rgba(255,255,255,0.4); color: #FFFFFF; }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-form { align-self: start; max-width: 480px; width: 100%; justify-self: end; }
 .anutech-site[data-site-theme="warm"] .hc .hc-form {
-  background: #FFFFFF; border: 1px solid #E2E7E2; border-radius: 24px; padding: 26px; gap: 8px;
+  background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 24px; padding: 26px; gap: 8px;
   box-shadow: 0 24px 60px rgba(18,49,42,0.12);
 }
-.anutech-site[data-site-theme="warm"] .hc .hc-form-title { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; color: #17241F; }
-.anutech-site[data-site-theme="warm"] .hc .hc-form-sub { font-size: 15px; color: #4B5A53; }
-.anutech-site[data-site-theme="warm"] .hc .hc-form label { font-size: 14px; color: #2C3B35; }
+.anutech-site[data-site-theme="warm"] .hc .hc-form-title { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; color: var(--w-ink); }
+.anutech-site[data-site-theme="warm"] .hc .hc-form-sub { font-size: 15px; color: var(--w-muted); }
+.anutech-site[data-site-theme="warm"] .hc .hc-form label { font-size: 14px; color: var(--w-ink-2); }
 .anutech-site[data-site-theme="warm"] .hc .hc-form :is(input, textarea) {
-  border-radius: 12px; border: 1.5px solid #CFD8D2; background: #FAFBF9; font-size: 16px; padding: 12px 14px;
+  border-radius: 12px; border: 1.5px solid var(--w-line-strong); background: var(--w-surface-2); font-size: 16px; padding: 12px 14px;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-form input { min-height: 48px; }
-.anutech-site[data-site-theme="warm"] .hc .hc-form :is(input, textarea):focus { outline: 3px solid #F4B740; outline-offset: 1px; border-color: #0E6B5C; }
+.anutech-site[data-site-theme="warm"] .hc .hc-form :is(input, textarea):focus { outline: 3px solid var(--w-marigold); outline-offset: 1px; border-color: var(--w-teal); }
 .anutech-site[data-site-theme="warm"] .hc .hc-form .hc-btn { width: 100%; }
 
 /* ── Automation: white band, intro beside a photo, features as ruled rows ──────────────── */
-.anutech-site[data-site-theme="warm"] .hc #software { background: #FFFFFF; border: 0; padding-block: clamp(30px, 3.84vw, 54px); }
+.anutech-site[data-site-theme="warm"] .hc #software { background: var(--w-surface); border: 0; padding-block: clamp(30px, 3.84vw, 54px); }
 .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); column-gap: 40px; align-items: center;
 }
@@ -221,12 +221,12 @@
 }
 .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 { grid-column: 1 / -1; margin-top: 35px; gap: 8px 40px; }
 .anutech-site[data-site-theme="warm"] .hc #software .hc-tile {
-  background: transparent; border: 0; border-top: 1px solid #E2E7E2; border-radius: 0; box-shadow: none;
+  background: transparent; border: 0; border-top: 1px solid var(--w-line); border-radius: 0; box-shadow: none;
   padding: 22px 0 6px; display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 16px; row-gap: 6px;
 }
 .anutech-site[data-site-theme="warm"] .hc #software .hc-tile:hover { transform: none; box-shadow: none; }
-.anutech-site[data-site-theme="warm"] .hc #software .hc-tile .hc-ico { grid-row: 1 / span 2; width: 44px; height: 44px; border-radius: 12px; background: #DCEFE8; color: #0E6B5C; margin: 0; }
-.anutech-site[data-site-theme="warm"] .hc #software .hc-tile b { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 18px; color: #17241F; }
+.anutech-site[data-site-theme="warm"] .hc #software .hc-tile .hc-ico { grid-row: 1 / span 2; width: 44px; height: 44px; border-radius: 12px; background: var(--w-mint); color: var(--w-teal); margin: 0; }
+.anutech-site[data-site-theme="warm"] .hc #software .hc-tile b { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 18px; color: var(--w-ink); }
 
 /* ── Proof: mint band, a wide photo on top, then the text beside the list ──────────────── */
 .anutech-site[data-site-theme="warm"] .hc .hc-proof {
@@ -234,38 +234,38 @@
   padding-block: clamp(36px, 4.4vw, 64px); gap: 35px;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof::before {
-  content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: #DCEFE8;
+  content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: var(--w-mint);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof::after {
   content: ""; grid-column: 1 / -1; grid-row: 1; height: clamp(154px, 21vw, 280px);
   background: url(/site/warm/c88525bf772afe60547d448a1a0d13b7.jpg) center 35% / cover no-repeat; border-radius: 22px;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof > * { grid-row: 2; }
-.anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-eyebrow { color: #0A4F44; }
-.anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-sub { font-size: 17px; color: #2C3B35; }
-.anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-btn-ghost { background: #0E6B5C; color: #FFFFFF; border-color: #0E6B5C; }
+.anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-eyebrow { color: var(--w-teal-dark); }
+.anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-sub { font-size: 17px; color: var(--w-ink-2); }
+.anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-btn-ghost { background: var(--w-teal); color: var(--w-on-teal); border-color: var(--w-teal); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof-list {
   background: transparent; border: 0; border-radius: 0; padding: 0; gap: 0 28px;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
 }
-.anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { padding: 12px 0; border-bottom: 1px solid #B9DCCF; font-size: 16px; color: #17241F; }
-.anutech-site[data-site-theme="warm"] .hc .hc-proof-list li span { color: #0E6B5C; }
+.anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { padding: 12px 0; border-bottom: 1px solid #B9DCCF; font-size: 16px; color: var(--w-ink); }
+.anutech-site[data-site-theme="warm"] .hc .hc-proof-list li span { color: var(--w-teal); }
 
 /* ── How a project works: white band, centred intro, the six steps as a timeline ───────── */
-.anutech-site[data-site-theme="warm"] .hc #how { background: #FFFFFF; border: 0; padding-block: clamp(30px, 3.84vw, 54px); }
+.anutech-site[data-site-theme="warm"] .hc #how { background: var(--w-surface); border: 0; padding-block: clamp(30px, 3.84vw, 54px); }
 .anutech-site[data-site-theme="warm"] .hc #how > .hc-wrap > :is(.hc-eyebrow, .hc-h2, .hc-sub) { text-align: center; margin-inline: auto; max-width: 760px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-steps { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0 24px; margin-top: 35px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-steps li {
   position: relative; flex-direction: column; gap: 14px; padding: 0; border: 0;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-steps li::before {
-  content: ""; position: absolute; top: 23px; left: 56px; right: -16px; height: 2px; background: #CFD8D2;
+  content: ""; position: absolute; top: 23px; left: 56px; right: -16px; height: 2px; background: var(--w-line-strong);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-steps li:last-child::before { display: none; }
 .anutech-site[data-site-theme="warm"] .hc .hc-step-n {
-  width: 48px; height: 48px; background: #0E6B5C; color: #FFFFFF; border: 0; box-shadow: 0 0 0 6px #FFFFFF;
+  width: 48px; height: 48px; background: var(--w-teal); color: var(--w-on-teal); border: 0; box-shadow: 0 0 0 6px var(--w-surface);
 }
-.anutech-site[data-site-theme="warm"] .hc .hc-steps li:has(.hc-who-you) .hc-step-n { background: #F4B740; color: #17241F; }
+.anutech-site[data-site-theme="warm"] .hc .hc-steps li:has(.hc-who-you) .hc-step-n { background: var(--w-marigold); color: var(--w-on-marigold); }
 /* The "You" / "We" tag stays (it is content): a small label under the dot, as the design's
    "You decide" / "We do". */
 .anutech-site[data-site-theme="warm"] .hc .hc-steps li > .hc-step-n { order: 0; }
@@ -274,41 +274,41 @@
   font-family: var(--font-site-body), "Inter", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-steps li > .hc-step-body { order: 2; }
-.anutech-site[data-site-theme="warm"] .hc .hc-who-you { background: #FDF1D6; color: #7A4B00; }
-.anutech-site[data-site-theme="warm"] .hc .hc-who-we { background: #DCEFE8; color: #0A4F44; }
-.anutech-site[data-site-theme="warm"] .hc .hc-step-num { font-family: var(--font-site-body), "Inter", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: #0A4F44; }
+.anutech-site[data-site-theme="warm"] .hc .hc-who-you { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+.anutech-site[data-site-theme="warm"] .hc .hc-who-we { background: var(--w-mint); color: var(--w-teal-dark); }
+.anutech-site[data-site-theme="warm"] .hc .hc-step-num { font-family: var(--font-site-body), "Inter", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--w-teal-dark); }
 .anutech-site[data-site-theme="warm"] .hc .hc-step-body b { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 18px; line-height: 1.3; }
-.anutech-site[data-site-theme="warm"] .hc .hc-step-body span { font-size: 15px; color: #4B5A53; }
+.anutech-site[data-site-theme="warm"] .hc .hc-step-body span { font-size: 15px; color: var(--w-muted); }
 .anutech-site[data-site-theme="warm"] .hc .hc-step-body { gap: 6px; }
 
 /* ── IT for your office: cards on the ground, 20px corners, taller photos ──────────────── */
 .anutech-site[data-site-theme="warm"] .hc .hc-it { padding-block: clamp(30px, 3.84vw, 54px); }
 .anutech-site[data-site-theme="warm"] .hc .hc-grid4 { gap: 20px; margin-top: 8px; }
-.anutech-site[data-site-theme="warm"] .hc .hc-card { border-radius: 20px; padding: 0 22px 18px; border-color: #E2E7E2; box-shadow: none; }
-.anutech-site[data-site-theme="warm"] .hc .hc-card-img { margin: 0 -22px 14px; aspect-ratio: auto; height: 170px; border-bottom-color: #E2E7E2; }
+.anutech-site[data-site-theme="warm"] .hc .hc-card { border-radius: 20px; padding: 0 22px 18px; border-color: var(--w-line); box-shadow: none; }
+.anutech-site[data-site-theme="warm"] .hc .hc-card-img { margin: 0 -22px 14px; aspect-ratio: auto; height: 170px; border-bottom-color: var(--w-line); }
 .anutech-site[data-site-theme="warm"] .hc .hc-card-name { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 20px; font-weight: 700; }
-.anutech-site[data-site-theme="warm"] .hc .hc-card-cta { color: #0E6B5C; border-top-color: #E2E7E2; }
+.anutech-site[data-site-theme="warm"] .hc .hc-card-cta { color: var(--w-teal); border-top-color: var(--w-line); }
 
 /* ── Facts: white band ─────────────────────────────────────────────────────────────────── */
-.anutech-site[data-site-theme="warm"] .hc .hc-band:has(.hc-facts) { background: #FFFFFF; border-color: #E2E7E2; }
-.anutech-site[data-site-theme="warm"] .hc .hc-facts .hc-fact-ico { display: flex; margin: 0 auto 10px; background: #DCEFE8; border: 0; color: #0E6B5C; }
+.anutech-site[data-site-theme="warm"] .hc .hc-band:has(.hc-facts) { background: var(--w-surface); border-color: var(--w-line); }
+.anutech-site[data-site-theme="warm"] .hc .hc-facts .hc-fact-ico { display: flex; margin: 0 auto 10px; background: var(--w-mint); border: 0; color: var(--w-teal); }
 
 /* ── FAQ: white band, 860px column, bolder questions ───────────────────────────────────── */
 .anutech-site[data-site-theme="warm"] .hc .hc-faq { position: relative; isolation: isolate; max-width: 860px; padding-block: clamp(30px, 3.84vw, 54px); }
 .anutech-site[data-site-theme="warm"] .hc .hc-faq::before {
-  content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: #FFFFFF;
+  content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: var(--w-surface);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-faq .hc-h2 { font-size: clamp(2rem, 3.6vw, 2.26rem); }
-.anutech-site[data-site-theme="warm"] .hc .hc-faq-row { border-top-color: #E2E7E2; }
+.anutech-site[data-site-theme="warm"] .hc .hc-faq-row { border-top-color: var(--w-line); }
 .anutech-site[data-site-theme="warm"] .hc .hc-faq-row button {
-  min-height: 60px; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-weight: 700; font-size: 17px; color: #17241F;
+  min-height: 60px; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-weight: 700; font-size: 17px; color: var(--w-ink);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-faq-row button span:last-child {
   display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; border-radius: 50%;
-  background: #DCEFE8; color: #0A4F44; font-size: 18px;
+  background: var(--w-mint); color: var(--w-teal-dark); font-size: 18px;
 }
-.anutech-site[data-site-theme="warm"] .hc .hc-faq-row button[aria-expanded="true"] span:last-child { background: #0E6B5C; color: #FFFFFF; }
-.anutech-site[data-site-theme="warm"] .hc .hc-faq-row p { padding-right: 56px; color: #4B5A53; }
+.anutech-site[data-site-theme="warm"] .hc .hc-faq-row button[aria-expanded="true"] span:last-child { background: var(--w-teal); color: var(--w-on-teal); }
+.anutech-site[data-site-theme="warm"] .hc .hc-faq-row p { padding-right: 56px; color: var(--w-muted); }
 
 /* ── Closing call: a rounded teal card on the ground ───────────────────────────────────── */
 .anutech-site[data-site-theme="warm"] .hc .hc-final { background: transparent; padding: clamp(30px, 3.84vw, 54px) 0; }
@@ -319,7 +319,7 @@
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-final-in .hc-h2 { color: #FFFFFF; font-size: clamp(2rem, 4vw, 2.78rem); }
 .anutech-site[data-site-theme="warm"] .hc .hc-on-dark-sub { color: #DCEFE8; font-size: 18px; margin-inline: auto; }
-.anutech-site[data-site-theme="warm"] .hc .hc-btn-light { background: #F4B740; color: #17241F; font-weight: 700; min-height: 56px; padding: 0 32px; font-size: 17px; }
+.anutech-site[data-site-theme="warm"] .hc .hc-btn-light { background: var(--w-marigold); color: var(--w-on-marigold); font-weight: 700; min-height: 56px; padding: 0 32px; font-size: 17px; }
 
 /* ── Narrower screens ──────────────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
@@ -347,6 +347,116 @@
   .anutech-site[data-site-theme="warm"] .hc :is(.hc-ticks, .hc-actions) { justify-content: center; }
   .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > :is(.hc-eyebrow, .hc-h2, .hc-sub) { text-align: center; }
   .anutech-site[data-site-theme="warm"] .hc .hc-final-in .hc-btn { width: 100%; }
+}
+
+/* ── Dark variant of the blocks above (shared site classes, --hv-* and the Home layout) ───────
+   Light is unchanged: the rules above colour through var(--w-…), and these only add values for
+   what a component paints itself (site.css tokens, --hv-* used by HomeV2/HomeCompany/ProductPeek
+   and /email, white cards in HomeCompany's own <style>). Same rules twice: chosen dark, and the
+   device's dark setting when the visitor has not chosen light. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] {
+  --text: #E9F0EC;
+  --text-secondary: #C3D1CB;
+  --text-muted: #AFC0B8;
+  --text-disabled: #71837C;
+  --border-strong: #4C5E57;
+  --border: #3A4A44;
+  --border-light: #35443F;
+  --border-hairline: #2F3B37;
+  --tint: #26352F;
+  --tint-2: #252E2A;
+  --primary: #5ED0B3;
+  --primary-hover: #8FE3CA;
+  --accent: #5ED0B3;
+  --accent-hover: #8FE3CA;
+  --success: #5CCB98;
+  --warning: #E8B54A;
+  --danger: #F28B82;
+  --dark-body: #B5CBC2;
+  --hv-ink: #E9F0EC;
+  --hv-ink2: #D2DDD8;
+  --hv-body: #AFC0B8;
+  --hv-sec: #9FB1A9;
+  --hv-faint: #8A9C94;
+  --hv-blue: #5ED0B3;
+  --hv-blue-dk: #8FE3CA;
+  --hv-blue-tint: #2F4F46;
+  --hv-surf-t: #252E2A;
+  --hv-sect-t: #26352F;
+  --hv-strip: #222B28;
+  --hv-strip-bd: #3A4A44;
+  --hv-border: #4C5E57;
+  --hv-border-l: #3A4A44;
+  --hv-hair: #33413C;
+  --hv-strong: #4C5E57;
+  --hv-table-head: #2F3B37;
+  --hv-chip: #26352F;
+  --hv-chip-bd: #3A4A44;
+  --hv-card-img: linear-gradient(135deg, #26352F, #2F4F46);
+}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .card,
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .chip:not([aria-pressed="true"]) { background: var(--w-surface); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] svg [fill="#DCE8FB"] { fill: #2F4F46; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] svg [fill="#B9D0F5"] { fill: #3F6E62; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] svg [stroke="#B9D0F5"] { stroke: #3F6E62; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] svg [stroke="#1668E3"] { stroke: #5ED0B3; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] svg [fill="#1668E3"] { fill: #5ED0B3; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hc :is(.hc-card, .hc-tile) { background: var(--w-surface); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] :is(.pk-win, .pk-float) { background: var(--w-surface); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] :is(.pk-green, .pk-float-ico) { background: var(--w-mint); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { border-bottom-color: #3F6157; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] {
+    --text: #E9F0EC;
+    --text-secondary: #C3D1CB;
+    --text-muted: #AFC0B8;
+    --text-disabled: #71837C;
+    --border-strong: #4C5E57;
+    --border: #3A4A44;
+    --border-light: #35443F;
+    --border-hairline: #2F3B37;
+    --tint: #26352F;
+    --tint-2: #252E2A;
+    --primary: #5ED0B3;
+    --primary-hover: #8FE3CA;
+    --accent: #5ED0B3;
+    --accent-hover: #8FE3CA;
+    --success: #5CCB98;
+    --warning: #E8B54A;
+    --danger: #F28B82;
+    --dark-body: #B5CBC2;
+    --hv-ink: #E9F0EC;
+    --hv-ink2: #D2DDD8;
+    --hv-body: #AFC0B8;
+    --hv-sec: #9FB1A9;
+    --hv-faint: #8A9C94;
+    --hv-blue: #5ED0B3;
+    --hv-blue-dk: #8FE3CA;
+    --hv-blue-tint: #2F4F46;
+    --hv-surf-t: #252E2A;
+    --hv-sect-t: #26352F;
+    --hv-strip: #222B28;
+    --hv-strip-bd: #3A4A44;
+    --hv-border: #4C5E57;
+    --hv-border-l: #3A4A44;
+    --hv-hair: #33413C;
+    --hv-strong: #4C5E57;
+    --hv-table-head: #2F3B37;
+    --hv-chip: #26352F;
+    --hv-chip-bd: #3A4A44;
+    --hv-card-img: linear-gradient(135deg, #26352F, #2F4F46);
+  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .card,
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .chip:not([aria-pressed="true"]) { background: var(--w-surface); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] svg [fill="#DCE8FB"] { fill: #2F4F46; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] svg [fill="#B9D0F5"] { fill: #3F6E62; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] svg [stroke="#B9D0F5"] { stroke: #3F6E62; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] svg [stroke="#1668E3"] { stroke: #5ED0B3; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] svg [fill="#1668E3"] { fill: #5ED0B3; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hc :is(.hc-card, .hc-tile) { background: var(--w-surface); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] :is(.pk-win, .pk-float) { background: var(--w-surface); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] :is(.pk-green, .pk-float-ico) { background: var(--w-mint); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { border-bottom-color: #3F6157; }
 }
 
 /* ── Shared warm tokens for the per-page files in src/site/warm/ ────────────────────────────
