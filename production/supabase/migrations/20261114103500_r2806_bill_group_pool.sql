@@ -19,9 +19,9 @@
 -- * subscriptions.bill_group_id — subscriptions billed together share it. Set only by the "Bill together"
 --   RPC (R-2810), which puts it on every member AND every member's sale-quote siblings, so one group id is
 --   the whole pool. Null (every row today) = nothing below changes.
--- * public.billing_pool_subscriptions(sub) — the subscriptions whose part money is ONE pool: the sub, its
---   sale quote's subscriptions (R-2092) and its bill group's members (+ their quote's, in case the R-2810
---   invariant is ever broken by hand). No group → exactly the old "this sub + its quote's".
+-- * public.billing_pool_subscriptions(sub) — the subscriptions whose part money is ONE pool: the closure of
+--   "same sale quote" (R-2092) and "same bill group" from the sub, inside its company — every member gets the
+--   same pool. No group → exactly the old "this sub + its quote's".
 -- * instalment_credit_parts, tg_subscription_billings_use_cn_credit and raise_subscription_billing's R-2642
 --   receipt day read that pool: receipts of every member's sale quote + every member part's request, minus
 --   every member part's invoice ONCE (by invoice id). So a together invoice is paid once and absorbed once.
@@ -56,21 +56,20 @@ stable
 security definer
 set search_path = public
 as $$
-  /* R-2806: the subscriptions whose part money is ONE pool — this one, its sale quote's (R-2092) and its
-     bill group's (Bill together), plus the quote's of every group member. No group → this + its quote's. */
-  with me as (
-    select s.id, s.tenant_id, s.quote_id, s.bill_group_id from public.subscriptions s where s.id = p_subscription_id
-  ), near as (
-    select s2.id, s2.quote_id, s2.bill_group_id from public.subscriptions s2, me
-     where s2.id = me.id
-        or (me.quote_id is not null and s2.tenant_id = me.tenant_id and s2.quote_id = me.quote_id)
-        or (me.bill_group_id is not null and s2.tenant_id = me.tenant_id and s2.bill_group_id = me.bill_group_id)
+  /* R-2806: the subscriptions whose part money is ONE pool — the closure of "same sale quote" (R-2092) and
+     "same bill group" (Bill together) from this one, inside its company. Every member of a pool gets the same
+     pool (a sub added later to a grouped sub's quote is in it too). No group → this + its quote's, as before. */
+  with recursive pool(id, quote_id, bill_group_id) as (
+    select s.id, s.quote_id, s.bill_group_id from public.subscriptions s where s.id = p_subscription_id
+    union
+    select s2.id, s2.quote_id, s2.bill_group_id
+      from pool p
+      join public.subscriptions s2
+        on s2.tenant_id = (select s0.tenant_id from public.subscriptions s0 where s0.id = p_subscription_id)
+       and ((p.quote_id is not null and s2.quote_id = p.quote_id)
+            or (p.bill_group_id is not null and s2.bill_group_id = p.bill_group_id))
   )
-  select s3.id from public.subscriptions s3, me
-   where s3.id in (select id from near)
-      or (s3.tenant_id = me.tenant_id
-          and (s3.quote_id in (select quote_id from near where quote_id is not null)
-               or s3.bill_group_id in (select bill_group_id from near where bill_group_id is not null)));
+  select pool.id from pool;
 $$;
 revoke all on function public.billing_pool_subscriptions(uuid) from public, anon, authenticated;
 grant execute on function public.billing_pool_subscriptions(uuid) to service_role;
@@ -85,9 +84,7 @@ set search_path = public
 as $$
   /* R-2044; R-2092: ONE pool per quote. R-2095: cancelled part invoices (credited_invoice_ids).
      R-2806: ONE pool per bill group (Bill together) — billing_pool_subscriptions; no group = the quote's pool as before. */
-  with me as (
-    select s.id, s.tenant_id, s.quote_id from public.subscriptions s where s.id = p_subscription_id
-  ), subs as (
+  with subs as (
     select bp.subscription_id as id from public.billing_pool_subscriptions(p_subscription_id) bp
   ), sale_quotes as (
     select distinct s3.quote_id from public.subscriptions s3
@@ -99,7 +96,7 @@ as $$
     select distinct x.inv from parts, unnest(parts.credited_invoice_ids) as x(inv)
      where not exists (select 1 from parts p2 where p2.invoice_id = x.inv)
   )
-  select (coalesce((select sum(p.amount)::int from public.payments p, me
+  select (coalesce((select sum(p.amount)::int from public.payments p
                      where p.quote_id in (select quote_id from sale_quotes) and p.status = 'received'), 0)
         + coalesce((select sum(least(coalesce(q.amount, 0), coalesce(pr.received, 0)))::int
                       from public.quotes q
@@ -207,15 +204,14 @@ declare
 begin
   select b.* into v_b from public.subscription_billings b where b.id = p_billing_id;
   if not found then return; end if;
-  select s.id, s.tenant_id, s.quote_id, s.plan, s.seats, s.billing_cycle::text as cycle
+  select s.id, s.tenant_id, s.quote_id, s.plan, s.seats, s.billing_cycle::text as cycle, s.bill_group_id   -- R-2806
     into v_sub from public.subscriptions s where s.id = v_b.subscription_id;
   if not found then return; end if;
 
   /* R-2806 (Bill together): a part of a subscription in a bill group — a live part request whose lines
      name this part (billing_id) fixes the group, across the group's pool (different sale quotes, or none).
      Only for a grouped subscription: without bill_group_id nothing below changes. */
-  if v_b.invoice_id is null
-     and exists (select 1 from public.subscriptions sg where sg.id = v_sub.id and sg.bill_group_id is not null) then
+  if v_b.invoice_id is null and v_sub.bill_group_id is not null then
     select q.id, q.line_items into v_req
       from public.quotes q
      where q.tenant_id = v_b.tenant_id
@@ -233,6 +229,9 @@ begin
           join public.subscription_billings b2 on b2.id = (l->>'billing_id')::uuid
           join public.subscriptions s2 on s2.id = b2.subscription_id
          where b2.invoice_id is null and b2.tenant_id = v_b.tenant_id
+           /* only parts still in this pool and at this part's GST rate — never a part whose money is another pool's */
+           and b2.subscription_id in (select bp.subscription_id from public.billing_pool_subscriptions(v_sub.id) bp)
+           and b2.tax_rate is not distinct from v_b.tax_rate
          order by x.n;
       return;
     end if;
@@ -393,6 +392,7 @@ declare
   v_once     record;   -- R-2095
   v_pre      date;     -- R-2642: the part's day before R-2631's GST shift
   v_rcpt     date;     -- R-2642: the day the receipts behind it covered it
+  v_pool     integer;  -- R-2806: the pool's credit, read once
 begin
   /* R-2095 (Sept): the FIRST part of a sale billed in parts also carries the sale quote's one-time
      lines (setup, migration …) — billed once, never spread and never lost (quote_one_time_lines).
@@ -584,7 +584,8 @@ begin
      paid only by money really there; short → pending with the balance due. */
   v_received := 0;
   v_applied  := 0;
-  v_credit := least(public.instalment_credit(v_b.subscription_id), v_gross);
+  v_pool := public.instalment_credit(v_b.subscription_id);   -- R-2806: once (it reads the whole bill group's pool)
+  v_credit := least(v_pool, v_gross);
   v_status := case when v_credit >= v_gross then 'paid' else 'pending' end::invoice_status;
 
   /* R-372: the fallback was 0, which made every termless instalment due on issue.
@@ -626,8 +627,8 @@ begin
     )
     select (min(cum.received_at) at time zone 'Asia/Kolkata')::date into v_rcpt
       from cum
-     where cum.c >= cum.total - greatest(public.instalment_credit(v_b.subscription_id) - v_gross, 0)
-       and cum.total - greatest(public.instalment_credit(v_b.subscription_id) - v_gross, 0) > 0;
+     where cum.c >= cum.total - greatest(v_pool - v_gross, 0)
+       and cum.total - greatest(v_pool - v_gross, 0) > 0;
   end if;
   v_id := public.next_document_number('invoice', v_b.tenant_id, v_inv_date);
   if v_id is null then
