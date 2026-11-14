@@ -64,7 +64,7 @@ import {
   RENEWAL_QUOTE_VERBS,
   type RenewalRowLike,
 } from "./reminders";
-import { renewalRisk } from "./risk";
+import { renewalRisk, riskChased, topRiskPick, topRiskReasons } from "./risk";
 import { priorTermDue, priorTermDueText } from "./prior-due";
 import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
 import { renewalRowAction, type RowAction } from "./row-action";
@@ -103,7 +103,6 @@ import { istToday } from "@/lib/dates/ist";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { renewalStage, type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
@@ -299,7 +298,6 @@ interface QueueItem {
   amount: RenewalAmount;
   contact: RowContact | undefined;
   atRisk: boolean;
-  riskReason: string;
   /** R-2404 */
   followup: RenewalFollowup;
   decision: RenewalDecision;
@@ -679,7 +677,8 @@ export default function RenewalsPage() {
       linkedQuote: linkedQuote ?? null,
       renewalPaid: paid(r),
       flags: {
-        atRisk: atRiskIds.has(r.sub.id) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
+        /* R-2756: a Won't renew / stopped row is not a renewal to chase — no at-risk flag on it. */
+        atRisk: atRiskIds.has(r.sub.id) && riskChased(r.sub) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
         vendorHold: vendorHoldState(r.sub, today),
         priorTermUnpaid: priorTermDueText(r.sub),
         promiseBroken: followup.promiseBroken ? { promisedOn: followup.promisedOn } : null,
@@ -709,11 +708,6 @@ export default function RenewalsPage() {
       docs,
       contact: r.sub.customer_id ? contacts?.get(r.sub.customer_id) : undefined,
       atRisk: atRiskIds.has(r.sub.id),
-      riskReason: [
-        ...(isNonRenewing(r.sub) ? ["Customer said they won't renew"] : []),
-        ...(r.daysUntil < 0 ? [`Renewal ${Math.abs(r.daysUntil)}d overdue, not paid`] : []),
-        ...risk.reasons.filter((x) => x !== "Seat usage not checked"),
-      ].join(" · ") || "High renewal risk",
     };
   };
   const items = {} as Record<QueueTab, QueueItem[]>;
@@ -769,16 +763,12 @@ export default function RenewalsPage() {
   const brokenCount = fuCount({ promiseBroken: true });
 
   const activeSubs    = all.filter((s) => s.status === "active").length;
-  const topHighRisk   = highRiskSubs[0]?.sub.customer_name ?? "a key customer";
-  // Real, computed reasons for the top high-risk sub — never fabricate signals
-  // (NPS/logins) we don't collect on a money screen.
-  const topReasons    = highRiskSubs[0]
-    ? [
-        ...(isNonRenewing(highRiskSubs[0].sub) ? ["Customer said they won't renew"] : []),
-        ...(highRiskSubs[0].daysUntil < 0 ? [`Renewal ${Math.abs(highRiskSubs[0].daysUntil)}d overdue, not paid`] : []),
-        ...renewalRisk(highRiskSubs[0].sub).reasons,
-      ]
-    : [];
+  /* R-2756: Top risk / the Renewal AI pick = the most overdue CHASED at-risk row (never a Won't renew,
+     stopped, paused or expired one), and its day count is the row chip's own (stage.days), naming
+     the date it counts from. Real, computed reasons only — never fabricated signals (NPS/logins). */
+  const topRisk       = topRiskPick(allItems);
+  const topHighRisk   = topRisk?.sub.customer_name ?? "a key customer";
+  const topReasons    = topRisk ? topRiskReasons(topRisk, todayIst) : [];
 
   const openTab = (t: string) => { setSelected(new Set()); setTile(null); setBucketTab(t); };
   /* R-2405: press a tile → its rows; press it again → back to the tabs. */
@@ -1012,12 +1002,12 @@ export default function RenewalsPage() {
         title="Forecast"
         className="mb-4"
         summary={<StripFact label="Next 6 months" value={rupee(forecast.totalAmount, { compact: true })} />}
-        extras={highRiskSubs.length > 0 ? (
+        extras={topRisk ? (
           <StripLink
             tone="rose"
             title="Renewal AI · next best action — the top renewal at risk"
             onClick={() => {
-              const cid = highRiskSubs[0]?.sub.customer_id;
+              const cid = topRisk.sub.customer_id;
               router.push((cid ? `/customers/${cid}` : "/customers") as never);
             }}
           >
@@ -1029,8 +1019,8 @@ export default function RenewalsPage() {
           forecast={forecast}
           atRiskCount={highRiskSubs.length}
           atRiskArr={groups.atRiskArr}
-          topName={topHighRisk}
-          topCustomerId={highRiskSubs[0]?.sub.customer_id ?? null}
+          topName={topRisk ? topHighRisk : null}
+          topCustomerId={topRisk?.sub.customer_id ?? null}
           topReasons={topReasons}
         />
       </CollapsibleKpiStrip>

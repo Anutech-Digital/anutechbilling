@@ -18,7 +18,8 @@ export function ForecastPanel({
   forecast: RenewalForecast;
   atRiskCount: number;
   atRiskArr: number;
-  topName: string;
+  /** R-2756: null = no chased renewal at risk (only Won't renew / stopped ones) — no pick, no "call this week". */
+  topName: string | null;
   topCustomerId: string | null;
   topReasons: string[];
 }) {
@@ -52,7 +53,7 @@ export function ForecastPanel({
       </div>
 
       {/* Renewal AI — next best action */}
-      {atRiskCount > 0 && (
+      {atRiskCount > 0 && topName && (
         <GeminiCard
           title="Renewal AI · Next best actions"
           actions={
@@ -74,7 +75,7 @@ export function ForecastPanel({
             {rupee(atRiskArr, { compact: true })} a year.
           </strong>{" "}
           Top priority: <strong>{topName}</strong>
-          {topReasons.length > 0 ? <> — {topReasons.join(" · ").toLowerCase()}</> : null}.
+          {topReasons.length > 0 ? <> — {topReasons.join(" · ")}</> : null}.
           Call or WhatsApp this week to secure the renewal.
         </GeminiCard>
       )}
