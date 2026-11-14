@@ -45,7 +45,7 @@ describe("R-2817 rowAnchor — the earliest date the renewal's money fell due", 
     expect(rowAnchor(null, null, TODAY)).toEqual({ date: null, kind: "renewal", days: null });
   });
   it("reads only the date part of a timestamp", () => {
-    expect(rowAnchor("2026-11-12T00:00:00Z", "2026-10-01T18:30:00Z", TODAY).date).toBe("2026-10-01");
+    expect(rowAnchor("2026-11-12T00:00:00Z", "2026-10-01T00:00:00Z", TODAY).date).toBe("2026-10-01");
   });
 });
 
@@ -56,11 +56,13 @@ describe("R-2817 renewalStage — chip, note and days count from the anchor", ()
     expect(s.note).toBe("Overdue 44d · part due 1 Oct 2026");
   });
 
-  it("SCN Bit Labs: Overdue 2d from the renewal date; the part's later due date is named, never 'Due today'", () => {
+  it("SCN Bit Labs: 2d from the renewal date; the part bill (due today) is not called overdue, never 'Due today'", () => {
     const s = stage(scn, partDoc("2026-11-14"));
     expect(s).toMatchObject({ key: "sent", days: -2, anchorDate: "2026-11-12", anchorKind: "renewal" });
-    expect(s.note).toBe("Overdue 2d · part due 14 Nov 2026");
+    expect(s.note).toBe("Renewal date 2d ago · part due 14 Nov 2026");
     expect(`${s.label} ${s.note}`).not.toMatch(/Due today/);
+    /* once the part bill is late too, it is plain overdue (from the earlier date) */
+    expect(stage(scn, partDoc("2026-11-13")).note).toBe("Overdue 2d · part due 13 Nov 2026");
   });
 
   it("a draft part quote counts the same way", () => {
@@ -68,14 +70,16 @@ describe("R-2817 renewalStage — chip, note and days count from the anchor", ()
     expect(s).toMatchObject({ key: "draft", days: -2, anchorDate: "2026-11-12" });
   });
 
-  it("invoiced part: overdue from the anchor (earlier of part due / renewal date)", () => {
+  it("invoiced part: days from the anchor; 'overdue' only when the bill is past its own due date", () => {
     const inv = (dueDate: string) => ({ invoice: { id: "INV-P", kind: "part" as const, amountDue: 3835, dueDate } });
     const g = stage(greentin, inv("2026-10-01"));
     expect(g).toMatchObject({ key: "invoiced", days: -44, anchorDate: "2026-10-01", anchorKind: "part" });
     expect(g.label).toBe("Invoiced · ₹3,835 overdue 44d");
     const s = stage(scn, inv("2026-11-14"));
     expect(s).toMatchObject({ days: -2, anchorDate: "2026-11-12", anchorKind: "renewal" });
-    expect(s.label).toBe("Invoiced · ₹3,835 overdue 2d");
+    expect(s.label).toBe("Invoiced · ₹3,835 due");
+    expect(s.note).toBe("Renewal date 2d ago · part due 14 Nov 2026");
+    expect(s.partDueDate).toBe("2026-11-14");
   });
 
   it("a whole-term renewal quote / invoice counts from renewal_date (its own due date is not a part's)", () => {
@@ -100,7 +104,7 @@ describe("R-2817 renewalStage — chip, note and days count from the anchor", ()
     expect(none).toMatchObject({ anchorDate: null, days: null, label: "No renewal date" });
   });
 
-  it("Overdue-tab invariant: renewal_date passed → every day-counted stage is overdue, whatever the part's date", () => {
+  it("Overdue-tab invariant: renewal_date passed → days < 0 and never 'Due today' / 'Due in', whatever the part's date", () => {
     const parts = ["2026-11-14", "2026-11-20", "2026-12-31", "2026-10-01", null];
     for (const due of parts) {
       for (const st of ["sent", "viewed", "accepted", "draft"]) {
@@ -111,7 +115,8 @@ describe("R-2817 renewalStage — chip, note and days count from the anchor", ()
       if (due) {
         const s = stage(scn, { invoice: { id: "I", kind: "part", amountDue: 1, dueDate: due } });
         expect(s.days).toBeLessThan(0);
-        expect(s.label).toMatch(/overdue/);
+        expect(`${s.label} ${s.note ?? ""}`).not.toMatch(/Due today|Due in/);
+        expect(s.label).toMatch(due < TODAY ? /overdue (2|44)d$/ : / due$/);
       }
     }
   });
@@ -135,6 +140,10 @@ describe("R-2817 Due column and AI words read the same anchor", () => {
     expect(stageOverdueWords(stage(greentin, partDoc("2026-10-01")), TODAY)).toBe("Part due 44d ago (1 Oct 2026)");
     /* SCN: counted from the renewal date — not called a part date even though a part exists */
     expect(stageOverdueWords(stage(scn, partDoc("2026-11-14")), TODAY)).toBe("Renewal date passed 2d ago (12 Nov 2026)");
+    /* an invoiced part still inside its terms is not "Invoice overdue" */
+    const inv = { invoice: { id: "I", kind: "part" as const, amountDue: 1, dueDate: "2026-11-14" } };
+    expect(stageOverdueWords(stage(scn, inv), TODAY)).toBe("Renewal date passed 2d ago (12 Nov 2026)");
+    expect(stageOverdueWords(stage(greentin, { invoice: { ...inv.invoice, dueDate: "2026-10-01" } }), TODAY)).toBe("Part bill overdue 44d (due 1 Oct 2026)");
   });
 });
 
@@ -160,5 +169,17 @@ describe("R-2817 IST midnight — chip and Due column move together (frozen cloc
       expect(s.note).toBe(`Overdue ${-expected}d · part due 1 Oct 2026`);
       vi.useRealTimers();
     }
+  });
+});
+
+describe("R-2817 review fixes", () => {
+  it("a stopped / ending row owing a part counts days from the same anchor as its note", () => {
+    const sub = { ...greentin, status: "suspended" };
+    const s = stage(sub, partDoc("2026-10-01"));
+    expect(s).toMatchObject({ key: "stopped", days: -44, anchorDate: "2026-10-01", anchorKind: "part" });
+    expect(s.note).toMatch(/Overdue 44d · part due 1 Oct 2026$/);
+    expect(s.renewalDays).toBe(-14);
+    const e = stage({ ...greentin, auto_renew: false }, partDoc("2026-10-01"));
+    expect(e).toMatchObject({ key: "ending", days: -44, anchorDate: "2026-10-01" });
   });
 });

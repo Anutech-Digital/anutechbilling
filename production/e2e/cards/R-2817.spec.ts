@@ -30,12 +30,13 @@ test.describe("R-2817 card test", () => {
     let compared = 0;
     for (const r of rows) {
       const chip = (await r.getByTestId("stage-chip").getAttribute("title")) ?? (await r.getByTestId("stage-chip").innerText());
-      const m = /overdue (\d+)d/i.exec(chip);
+      /* "Overdue 44d" / "overdue 44d" / "Renewal date 2d ago" — the chip's day count */
+      const m = /overdue (\d+)d|Renewal date (\d+)d ago/i.exec(chip);
       if (!m) continue;   // "Part not billed (Nov)" etc. — no day count on the chip
       const dueSub = (await r.locator('[data-cell="due"] p').nth(1).innerText()).trim();
       /* a sent quote's "exp. in Nd" line replaces the day words — then the date's tooltip carries the anchor */
       if (/^exp\.|expired/.test(dueSub)) continue;
-      expect(dueSub, `row: ${(await r.innerText()).replace(/\s+/g, " ").slice(0, 80)}`).toBe(`${m[1]}d ago`);
+      expect(dueSub, `row: ${(await r.innerText()).replace(/\s+/g, " ").slice(0, 80)}`).toBe(`${m[1] ?? m[2]}d ago`);
       compared += 1;
     }
     expect(compared).toBeGreaterThan(0);

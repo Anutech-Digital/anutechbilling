@@ -293,33 +293,42 @@ export function renewalStage(input: StageInput): RenewalStage {
   };
 
   /* R-2817: a document's day count = the row's anchor (the earlier of the part's own due date and renewal_date);
-     a part with its own due date names it (userAudit14Nov), also when the count is from the renewal date. */
+     a part with its own due date names it (userAudit14Nov), also when the count is from the renewal date.
+     `billLate` = the bill itself is past ITS due date (the part's, else renewal_date). When only the renewal
+     date has passed and the part's bill is not due yet, the words say so ("Renewal date 2d ago · part due
+     14 Nov") — never "Overdue" for a bill still inside its terms, never "Due today" on an Overdue-tab row. */
   const docWhen = (x: { kind: "renewal" | "part"; dueDate?: string | null }) => {
     const partDue = x.kind === "part" && x.dueDate ? x.dueDate.slice(0, 10) : null;
     const a = rowAnchor(sub.renewal_date, partDue, todayIst);
     const own = partDue && partDue !== sub.renewal_date?.slice(0, 10) ? partDue : null;
-    const when = a.days == null ? null : `${dueWords(a.days)}${own ? ` · part due ${formatDate(own)}` : ""}`;
-    return { days: a.days, when, anchor: { anchorDate: a.date, anchorKind: a.kind, partDueDate: own } };
+    const billDays = own ? istDays(todayIst, own) : a.days;
+    const billLate = billDays != null && billDays < 0;
+    const when = a.days == null ? null
+      : own && a.days < 0 && !billLate ? `Renewal date ${-a.days}d ago · part due ${formatDate(own)}`
+      : `${dueWords(a.days)}${own ? ` · part due ${formatDate(own)}` : ""}`;
+    return { days: a.days, when, billLate, anchor: { anchorDate: a.date, anchorKind: a.kind, partDueDate: own } };
   };
   const sentWords = (x: StageDoc) => {
     const period = x.period?.trim() || null;
     return period ? `Renewal quote sent · ${period}` : "Renewal quote sent";
   };
   /* rev-r2738 HIGH 2: an ended row still shows (and collects) the renewal money it is owed. */
-  const owedOnEnded = owedDoc
-    ? { quoteId: owedDoc.quoteId, quoteStatus: owedDoc.status, note: [sentWords(owedDoc), docWhen(owedDoc).when].filter(Boolean).join(" · ") }
+  /* R-2817: the owed document's day count is also the row's (note, days and Due column agree). */
+  const owedWhen = owedDoc ? docWhen(owedDoc) : null;
+  const owedOnEnded = owedDoc && owedWhen
+    ? { quoteId: owedDoc.quoteId, quoteStatus: owedDoc.status, note: [sentWords(owedDoc), owedWhen.when].filter(Boolean).join(" · "), days: owedWhen.days, ...owedWhen.anchor }
     : invoice ? { note: `Invoiced · ${stageMoney(invoice.amountDue, invoice.currency)} due` } : {};
 
   /* Stopped-like (rev-r2738 MED 3, coordinator): suspended, cancelled, paused, expired — no renewal to send. */
   const stoppedLabel = sub.renewal_state === "suspended" ? "Service stopped" : STOPPED_LABEL[sub.status ?? ""];
   if (stoppedLabel) {
-    return { ...base, ...owedOnEnded, key: "stopped", label: stoppedLabel, tone: "danger", days: renewalDays, flags };
+    return { ...base, days: renewalDays, ...owedOnEnded, key: "stopped", label: stoppedLabel, tone: "danger", flags };
   }
   if (sub.auto_renew === false) {
     /* rev-r2738 LOW 10: past its date it has ended — the chip says so. */
     const label = !sub.renewal_date ? "Won't renew"
       : renewalDays != null && renewalDays < 0 ? `Ended ${formatDate(sub.renewal_date)}` : `Won't renew · ends ${formatDate(sub.renewal_date)}`;
-    return { ...base, ...owedOnEnded, key: "ending", label, tone: "warning", days: renewalDays, flags };
+    return { ...base, days: renewalDays, ...owedOnEnded, key: "ending", label, tone: "warning", flags };
   }
 
   /* rev-r2738 HIGH 1: a paid renewal (or a later part paid) never hides an earlier document still unpaid. */
@@ -334,17 +343,13 @@ export function renewalStage(input: StageInput): RenewalStage {
   }
 
   if (invoice) {
-    /* R-2817: from the row's anchor — the earlier of the part's due date and renewal_date. Past the renewal
-       date the renewal is overdue (the Overdue tab, grace) even when the part's bill gives later terms —
-       that later date is named in the note, so the bill's own terms stay visible. */
-    const partDue = invoice.kind === "part" && invoice.dueDate ? invoice.dueDate.slice(0, 10) : null;
-    const own = partDue && partDue !== sub.renewal_date?.slice(0, 10) ? partDue : null;
-    const a = rowAnchor(sub.renewal_date, partDue, todayIst);
-    const days = a.days;
+    /* R-2817: the row's anchor (docWhen) — "overdue" only when the bill is past ITS own due date (as the Last
+       invoice cell says); a bill still inside its terms reads "due", and the note says the renewal date passed. */
+    const { days, when, billLate, anchor } = docWhen(invoice);
     const amt = stageMoney(invoice.amountDue, invoice.currency);
-    const label = days != null && days < 0 ? `Invoiced · ${amt} overdue ${-days}d` : `Invoiced · ${amt} due`;
-    const note = [invoice.period, own ? `part due ${formatDate(own)}` : null].filter(Boolean).join(" · ") || null;
-    return { ...base, key: "invoiced", label, tone: daysTone(days), days, anchorDate: a.date, anchorKind: a.kind, partDueDate: own, note, flags };
+    const label = billLate && days != null && days < 0 ? `Invoiced · ${amt} overdue ${-days}d` : `Invoiced · ${amt} due`;
+    const note = [invoice.period, anchor.partDueDate ? when : null].filter(Boolean).join(" · ") || null;
+    return { ...base, ...anchor, key: "invoiced", label, tone: daysTone(days), days, note, flags };
   }
 
   /* R-2232: a linked renewal quote not passed as open is never a reason to make another one. */

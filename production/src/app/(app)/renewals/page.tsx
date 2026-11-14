@@ -413,14 +413,19 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
     );
   };
   /* R-2817: the Due date / day count = the chip's own anchor (stage.ts rowAnchor); renewal_date while the stage loads. */
-  const dueOf = (item: QueueItem) => dueCellFacts(item.stage, item.sub, item.daysUntil);
+  const dueMemo = new Map<QueueItem, ReturnType<typeof dueCellFacts>>();
+  const dueOf = (item: QueueItem) => {
+    let f = dueMemo.get(item);
+    if (!f) { f = dueCellFacts(item.stage, item.sub, item.daysUntil); dueMemo.set(item, f); }
+    return f;
+  };
   /* R-2817: once the stage is read, the line under the date counts from the same anchor as the chip
      (the part's own date is then already in the anchor — not counted a second time). */
   const sentDue = (item: QueueItem, className?: string) => {
     const sent = item.docs?.sent;
     if (item.status.key !== "quote-sent" || !sent) return null;
     const anchored = item.stage?.days != null;
-    return <SentDueLines sent={anchored ? { ...sent, dueDate: null } : sent} daysUntil={anchored ? item.stage!.days! : item.daysUntil} todayIst={todayIst} className={className} />;
+    return <SentDueLines sent={anchored ? { ...sent, dueDate: null, kind: item.stage!.anchorKind === "part" ? "part" : "renewal" } : sent} daysUntil={anchored ? item.stage!.days! : item.daysUntil} todayIst={todayIst} className={className} />;
   };
 
   return (

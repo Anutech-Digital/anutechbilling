@@ -107,8 +107,11 @@ export function riskChased(sub: { auto_renew?: boolean | null; status?: string |
 /** The stage facts the day words read (a RenewalStage fits). */
 export interface StageDays {
   key: string; days: number | null; renewalDays: number | null;
-  /** R-2817: what `days` counts from (stage.ts rowAnchor); absent = judged by renewalDays !== days (older callers). */
+  /** R-2817: what `days` counts from (stage.ts rowAnchor) and that date; absent = judged by renewalDays !== days (older callers). */
   anchorKind?: "part" | "renewal";
+  anchorDate?: string | null;
+  /** R-2817: the part's own due date when it is not the anchor's date's twin (stage.ts partDueDate). */
+  partDueDate?: string | null;
 }
 
 /**
@@ -125,8 +128,11 @@ export interface StageDays {
 export function stageOverdueWords(stage: StageDays | null | undefined, todayIst: string): string | null {
   if (!stage || stage.days == null || stage.days >= 0 || NOT_CHASED_STAGES.has(stage.key)) return null;
   const late = -stage.days;
-  const from = formatDate(addDaysISO(todayIst, stage.days));
+  /* R-2817: the date is the stage's own anchor (the Due column's date), never re-derived */
+  const from = formatDate(stage.anchorDate ?? addDaysISO(todayIst, stage.days));
   const partDate = stage.anchorKind ? stage.anchorKind === "part" : stage.renewalDays !== stage.days;
+  /* an invoice whose part bill is due LATER than the passed renewal date is not "overdue" itself (R-2817) */
+  if (stage.key === "invoiced" && !partDate && stage.partDueDate) return `Renewal date passed ${late}d ago (${from})`;
   if (stage.key === "invoiced") return partDate ? `Part bill overdue ${late}d (due ${from})` : `Invoice overdue ${late}d (due ${from})`;
   return partDate ? `Part due ${late}d ago (${from})` : `Renewal date passed ${late}d ago (${from})`;
 }
