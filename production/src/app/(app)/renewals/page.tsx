@@ -414,11 +414,14 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
   };
   /* R-2817: the Due date / day count = the chip's own anchor (stage.ts rowAnchor); renewal_date while the stage loads. */
   const dueOf = (item: QueueItem) => dueCellFacts(item.stage, item.sub, item.daysUntil);
-  const sentDue = (item: QueueItem, className?: string) => (
-    item.status.key === "quote-sent" && item.docs?.sent
-      ? <SentDueLines sent={item.docs.sent} daysUntil={item.daysUntil} anchorDays={item.stage?.days} todayIst={todayIst} className={className} />
-      : null
-  );
+  /* R-2817: once the stage is read, the line under the date counts from the same anchor as the chip
+     (the part's own date is then already in the anchor — not counted a second time). */
+  const sentDue = (item: QueueItem, className?: string) => {
+    const sent = item.docs?.sent;
+    if (item.status.key !== "quote-sent" || !sent) return null;
+    const anchored = item.stage?.days != null;
+    return <SentDueLines sent={anchored ? { ...sent, dueDate: null } : sent} daysUntil={anchored ? item.stage!.days! : item.daysUntil} todayIst={todayIst} className={className} />;
+  };
 
   return (
     <>

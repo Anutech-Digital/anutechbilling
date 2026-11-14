@@ -128,16 +128,14 @@ const TONE: Record<DocTone, string> = {
 };
 
 /** Under the renewal date of a "Renewal quote sent" row: its due words (the chip no longer says them) + the quote's validity. */
-export function SentDueLines({ sent, daysUntil, todayIst, className, anchorDays }: {
+export function SentDueLines({ sent, daysUntil, todayIst, className }: {
   sent: SentRenewal;
   daysUntil: number;
   todayIst: string;
   className?: string;
-  /** R-2817: the row stage's own day count (stage.ts rowAnchor — the chip's number); null/absent = not read yet. */
-  anchorDays?: number | null;
 }) {
-  /* R-2817: the chip's day count when the stage is read; before that a part proforma counts from ITS date. */
-  const days = anchorDays ?? (sent.kind === "part" && sent.dueDate ? daysBetweenIst(todayIst, sent.dueDate) : daysUntil);
+  /* A part proforma is due on ITS date — Bill next part already moved renewal_date a term on. */
+  const days = sent.kind === "part" && sent.dueDate ? daysBetweenIst(todayIst, sent.dueDate) : daysUntil;
   /* R-2767: the validity only when 3 days or less are left or it expired — no "No expiry set" on a part */
   const expiry = quoteExpiryNote(sent.expiresDate, todayIst);
   const expired = !!expiry?.startsWith("Expired");
