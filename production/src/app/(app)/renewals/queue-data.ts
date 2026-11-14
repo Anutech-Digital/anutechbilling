@@ -145,7 +145,8 @@ export function useRenewalPaymentsForMonth(month: { start: string; end: string }
       const supabase = createClient();
       return fetchAllRows<RenewalQuotePayment>((from, to) => supabase
         .from("quotes")
-        .select("id, amount, payment_amount, payment_status, status, renewal_subscription_id, renewal_term_date")
+        /* R-2751: subtotal / discount_pct / tax_rate → the paid renewal's amount before GST (tiles.ts quoteAmountBeforeGst). */
+        .select("id, amount, payment_amount, payment_status, status, renewal_subscription_id, renewal_term_date, subtotal, discount_pct, tax_rate")
         .eq("is_renewal", true)
         .gte("renewal_term_date", month.start)
         .lte("renewal_term_date", month.end)

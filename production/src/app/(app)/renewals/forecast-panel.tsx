@@ -48,7 +48,8 @@ export function ForecastPanel({
             </div>
           ))}
         </div>
-        <p className="mt-1.5 text-3xs text-ink-3">Estimate: MRR × 12 in the renewal month (ex-GST); excludes churn and expansion.</p>
+        {/* R-2751: one basis with the rows and tiles; this month's bar is the Renewed tile's "due in <month>". */}
+        <p className="mt-1.5 text-3xs text-ink-3">Before GST, like the rows and tiles. {forecast.months[0]?.label.slice(0, 3)}: paid + still due (the Renewed this month tile); later months: term amounts of the renewals due then. Estimate — excludes churn and expansion.</p>
       </div>
 
       {/* Renewal AI — next best action */}

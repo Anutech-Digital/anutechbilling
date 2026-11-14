@@ -180,24 +180,24 @@ describe("R-2403 ONE status per row", () => {
 describe("R-2403 the renewal amount for the term (not MRR /mo)", () => {
   it("yearly: the term amount '/yr' + GST (MAHARSHI 26 seats ₹6,500/mo → ₹78,000/yr)", () => {
     const a = renewalAmount({ mrr: 6500, term_months: 12, term_amount: 78_000, billing_cycle: "yearly", renewal_quote_id: null }, null);
-    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", fromQuote: false });
+    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", quoteNote: null });
   });
 
   it("no term_amount → mrr × term months", () => {
     expect(renewalAmount({ mrr: 6500, term_months: 12, billing_cycle: "yearly" }, null).text).toBe("₹78,000/yr");
   });
 
-  it("an open renewal quote: its total incl. GST, naming the quote", () => {
+  it("R-2751: a sent renewal quote keeps the term amount before GST; its total incl. GST is only a note", () => {
     const a = renewalAmount(
       { mrr: 6500, term_months: 12, term_amount: 78_000, billing_cycle: "yearly", renewal_quote_id: "Q-A1" },
       { id: "Q-A1", amount: 92_040, status: "sent", payment_status: "none" });
-    expect(a).toMatchObject({ value: 92_040, text: "₹92,040", gst: "incl. GST · Q-A1", fromQuote: true });
+    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", quoteNote: "Quote ₹92,040 incl. GST" });
   });
 
   it("a closed / other quote is ignored", () => {
     const sub = { mrr: 100, term_months: 12, billing_cycle: "yearly", renewal_quote_id: "Q-1" };
-    expect(renewalAmount(sub, { id: "Q-1", amount: 5000, status: "rejected" }).fromQuote).toBe(false);
-    expect(renewalAmount(sub, { id: "Q-2", amount: 5000, status: "sent" }).fromQuote).toBe(false);
+    expect(renewalAmount(sub, { id: "Q-1", amount: 5000, status: "rejected" }).quoteNote).toBeNull();
+    expect(renewalAmount(sub, { id: "Q-2", amount: 5000, status: "sent" }).quoteNote).toBeNull();
   });
 
   it("term suffixes", () => {

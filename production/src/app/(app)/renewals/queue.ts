@@ -13,8 +13,8 @@
  *  - every expired row said "Grace over" at 2 days, because the company grace is 0–1 day: the
  *    grace line now shows only when there IS a grace (> 0 days) to be in or out of.
  *  - the amount was MRR "/mo" even for a yearly renewal: the row shows what the customer will be
- *    asked to pay for the term — the open renewal quote's total (incl. GST), else the term amount
- *    (+ GST).
+ *    asked to pay for the term — the term amount (+ GST). R-2751: one basis everywhere; a renewal
+ *    quote never changes it (its total incl. GST is only a note once it is sent).
  *
  * No second copy of the rules: buckets/grace/at-risk come from classify.ts, the paid rule from
  * reminders.ts (isTerminalRenewal), the parts-due count from lib/renewals/split-billed-next-part,
@@ -276,30 +276,40 @@ export function termSuffix(termMonths: number | null | undefined): string {
 }
 
 export interface RenewalAmount {
-  /** Rupees, for sorting and the bulk total. */
+  /** Rupees BEFORE GST — sorting, the tiles, the forecast and the bulk total all read this. */
   value: number;
-  /** "₹78,000/yr" or "₹92,040". */
+  /** "₹78,000/yr". */
   text: string;
-  /** "+ GST" (term amount, ex-GST) or "incl. GST · Q-x" (the renewal quote's total). */
+  /** Always "+ GST" — the one basis (R-2751). */
   gst: string;
-  fromQuote: boolean;
+  /** R-2751: "Quote ₹92,040 incl. GST" once the renewal quote is sent / viewed / accepted; null otherwise (a draft adds nothing). */
+  quoteNote: string | null;
 }
 
+/** R-2751: a renewal quote still being prepared ("Review renewal quote" makes one) — changes nothing on Renewals. */
+const DRAFT_QUOTE = "draft";
+
 /**
- * What the customer is asked to pay for the term: the linked open renewal quote's total
- * (incl. GST) when there is one, else the term amount (ex-GST, "+ GST") — the same choice
- * Payment Follow-up makes for its renewal rows (lib/queries/collections.ts, R-2401).
+ * R-2751 (user audit 14 Nov, job 7) — ONE amount basis on Renewals: every row's figure is the
+ * renewal's TERM AMOUNT BEFORE GST ("₹21,600/yr + GST"), whether or not a renewal quote exists.
+ * Before, a linked open quote — even a draft, which just opening "Review renewal quote" makes —
+ * swapped the row to the quote total incl. GST: SCN Kochi jumped from ₹21,600 to ₹25,488 and
+ * "Due in 30 days" from ₹39.9K to ₹43.8K while every other row stayed before GST. Rows, Sort:
+ * amount, the tiles, the forecast and the bulk/CSV total read `value`. A sent / viewed / accepted
+ * quote only adds `quoteNote` (its total incl. GST); a draft adds nothing.
  */
 export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | null }, quote: RenewalQuoteInfo | null | undefined): RenewalAmount {
   /* R-2422: how it is paid ("Annual · paid quarterly · ₹19,500 each") is frequency.ts — one wording. */
-  const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(quote.status ?? "") && (quote.amount ?? 0) > 0
-    ? quote : null;
-  if (q) {
-    const v = Math.round(q.amount ?? 0);
-    return { value: v, text: rupee(v), gst: `incl. GST · ${q.id}`, fromQuote: true };
-  }
   const v = termAmountOf({ mrr: sub.mrr, term_months: sub.term_months ?? 12, term_amount: sub.term_amount ?? null });
-  return { value: v, text: `${rupee(v)}${termSuffix(sub.term_months)}`, gst: "+ GST", fromQuote: false };
+  const status = quote?.status ?? DRAFT_QUOTE;
+  const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(status) && status !== DRAFT_QUOTE && (quote.amount ?? 0) > 0
+    ? quote : null;
+  return {
+    value: v,
+    text: `${rupee(v)}${termSuffix(sub.term_months)}`,
+    gst: "+ GST",
+    quoteNote: q ? `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST` : null,
+  };
 }
 
 /** A renewal quote that is paid — the row is renewed even if its date has not moved yet. */
