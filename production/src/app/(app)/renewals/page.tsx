@@ -109,7 +109,7 @@ import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/c
 import { renewalStage, type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
-import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage } from "./row-cells";
+import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort } from "./row-cells";
 
 // ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
 
@@ -141,16 +141,21 @@ const FLAG_ICON: Record<FlagKey, React.ComponentProps<typeof Icon>["name"]> = {
   atRisk: "alert", vendorHold: "lock", priorTermUnpaid: "rupee", promiseBroken: "x_circle", followUpDue: "phone",
 };
 
-function StageChip({ stage, size, compact = false }: { stage: RenewalStage | null; size?: "sm"; compact?: boolean }) {
+function StageChip({ stage, size, compact = false, canQuotes = false }: { stage: RenewalStage | null; size?: "sm"; compact?: boolean; canQuotes?: boolean }) {
   if (!stage) return <Skeleton className="h-5 w-24" aria-label="Loading status" data-testid="stage-chip-loading" />;
-  /* R-2759: in the table the chip may wrap (a status is never cut) and its note is the tooltip — two lines at most. */
   /* R-2759: in the table the chip drops the period (Product & period says it); its day count / amount is
      line 2 — two lines, nothing only in a tooltip. */
   const c = compact ? compactStage(stage) : { chip: stage.label, line2: stage.note };
+  /* R-2760 (R-2728 owner ask "clickable link"): a quote stage's chip opens THAT quote. */
+  const quoteHref = compact && canQuotes && stage.quoteId && stage.quoteStatus !== "unknown"
+    && (stage.key === "sent" || stage.key === "draft" || stage.key === "quote-closed") ? `/quotes/${encodeURIComponent(stage.quoteId)}` : null;
+  const badge = <Badge kind={stage.tone} size={size} dot className={compact ? "max-w-full whitespace-normal text-left" : undefined}>{c.chip}</Badge>;
   return (
-    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key} title={compact ? [stage.label, stage.note].filter(Boolean).join(" · ") : undefined}>
+    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key} title={compact ? [stage.label, stage.note, stage.quoteId].filter(Boolean).join(" · ") : undefined}>
       <div className="flex min-w-0 flex-wrap items-center gap-1">
-        <Badge kind={stage.tone} size={size} dot className={compact ? "max-w-full whitespace-normal text-left" : undefined}>{c.chip}</Badge>
+        {quoteHref
+          ? <Link href={quoteHref as never} className="max-w-full rounded-full hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" aria-label={`${stage.label} — open ${stage.quoteId}`} data-testid="stage-chip-quote">{badge}</Link>
+          : badge}
         {stage.flags.map((f) => <StageFlagIcon key={f.key} flag={f} />)}
       </div>
       {c.line2 && <p className="mt-1 break-words text-2xs text-ink-3 tabular-nums" data-testid="stage-line2">{c.line2}</p>}
@@ -461,14 +466,14 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                   <td className="min-w-0 px-2 py-2.5">
                     <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} />
                   </td>
-                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} /></td>
+                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={item.docs?.sent ? quoteExpiryShort(item.docs.sent.expiresDate, todayIst) : null} /></td>
                   <td className="px-2 py-2.5 text-right">
                     <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
                     <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.gst}>{amount.gst}</p>
                   </td>
-                  <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} size="sm" compact /></td>
+                  <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
                   <td className="min-w-0 px-2 py-2.5">
-                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} />
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} priorDue={priorTermDue(sub)} />
                   </td>
                   <td className="min-w-0 px-2 py-2.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} />

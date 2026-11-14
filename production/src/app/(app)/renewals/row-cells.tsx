@@ -25,7 +25,7 @@ import { termEndInclusive } from "@/lib/billing/schedule";
 import type { RenewalStage } from "@/lib/renewals/stage";
 import { renewalTermStart } from "./stage-input";
 import {
-  invoiceStatusWords, invoiceTotalWords, periodWords, quoteStateLabel,
+  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryText, quoteStateLabel,
   type DocTone, type LastDocs, type LastInvoice, type LastQuote,
 } from "./last-docs";
 import type { RowContact } from "./queue-data";
@@ -142,28 +142,42 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency }:
   );
 }
 
-export function DueCell({ date, days }: { date: string | null; days: number | null }) {
-  const sub = dueSubWords(days);
+/** R-2760 (R-2728 owner ask "expires in N days"): a sent quote's validity, short for the Due column; full words are the tooltip. */
+export function quoteExpiryShort(expiresDate: string | null | undefined, todayIst: string): { text: string; title: string } {
+  const title = quoteExpiryText(expiresDate, todayIst);
+  if (!expiresDate) return { text: "no expiry", title };
+  const d = daysBetweenIst(todayIst, expiresDate);
+  return { text: d > 0 ? `exp. in ${d}d` : d === 0 ? "exp. today" : "expired", title };
+}
+
+/** `note`: replaces the "in 6d" line (a sent quote's validity — the chip already says the day count). */
+export function DueCell({ date, days, note }: { date: string | null; days: number | null; note?: { text: string; title: string } | null }) {
+  const sub = note ? note.text : dueSubWords(days);
   return (
     <div className="min-w-0 tabular-nums" data-cell="due">
       {/* "26 Nov 26" — the 88px column (measured: "26 Nov 2026" spilled at 1280); the full date is the tooltip */}
       <p className="whitespace-nowrap text-ink" title={date ? formatDate(date) : undefined}>{date ? shortDate(date.slice(0, 10)) : "—"}</p>
-      {sub && <p className="mt-0.5 whitespace-nowrap text-2xs text-ink-3">{sub}</p>}
+      {sub && <p className="mt-0.5 whitespace-nowrap text-2xs text-ink-3" title={note?.title} data-testid={note ? "due-quote-expiry" : undefined}>{sub}</p>}
     </div>
   );
 }
 
-export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst }: {
+export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst, priorDue = 0 }: {
   docs: LastDocs | undefined;
   loading: boolean;
   failed: boolean;
   canInvoices: boolean;
   canQuotes: boolean;
   todayIst: string;
+  /** R-2747: the row's "Previous term ₹x still unpaid" amount (prior-due.ts); 0 = none. */
+  priorDue?: number;
 }) {
   if (loading) return <p className="text-2xs text-ink-3">…</p>;
   if (failed) return <p className="text-2xs text-ink-3" title="Last invoice couldn't load — reload the page">Couldn&apos;t load</p>;
   const { invoice, earlier } = lastInvoiceOf(docs);
+  /* R-2747 (R-2760: kept in the table): money owed on the subscription with no unpaid invoice — say why */
+  const gap = !invoice ? priorDueInvoiceGap(docs, priorDue, todayIst) : null;
+  if (gap) return <p className="line-clamp-2 break-words text-2xs text-ink-3" title={gap} data-cell="invoice" data-testid="renewal-prior-due-no-invoice">{gap}</p>;
   if (!invoice) return <QuoteInstead quote={docs?.quote ?? null} canQuotes={canQuotes} todayIst={todayIst} />;
   const state = invoiceStatusWords(invoice, todayIst);
   const total = invoiceTotalWords(invoice);

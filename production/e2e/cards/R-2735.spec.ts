@@ -115,7 +115,8 @@ test.describe("R-2735 card test", () => {
 
     const again = await rowOf(page, "overdue", PLAN_A);
     await expect(again).toHaveCount(1, { timeout: 60_000 });
-    await expect(again).toContainText("Renewal quote sent");
+    /* R-2760: the stage chip says "Quote sent" (the part proforma with the customer) */
+    await expect(again.getByTestId("stage-chip")).toContainText("Quote sent");
     await page.context().close();
   });
 
