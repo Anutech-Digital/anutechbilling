@@ -215,10 +215,12 @@ export function renewalHeldReason(held: RenewalHeld | null | undefined, sub: Pic
       return `Renewal held — subscription ${sub.status && sub.status !== "active" ? sub.status : "not active"}. ${kept} Make it active again to move it back to ${back}, or bill the part again.`;
     case "quote_linked":
       return `Renewal held — renewal quote linked. ${kept} Cancel or unlink that quote to move it back to ${back}, or bill the part again.`;
+    /* rev-r2761 MED 1: never advise moving the date back by hand — after the part is billed again and paid that
+       would move a PAID term back. Billing the part closes the hold (subscription_billings_r2761_part_linked_recheck). */
     case "seat_cut":
-      return `Renewal held — seat cut scheduled. ${kept} Bill the part again, or correct the renewal date to ${back}.`;
+      return `Renewal held — seat cut scheduled. ${kept} Bill the part again.`;
     default:
-      return `Renewal held. ${kept} Bill the part again, or correct the renewal date to ${back}.`;
+      return `Renewal held. ${kept} Bill the part again.`;
   }
 }
 

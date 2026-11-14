@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscription_renewal_moves' and column_name = 'resolved_at') and exists(select 1 from pg_proc where oid = to_regprocedure('public.unroll_unpaid_renewal_terms(uuid,text)') and prosrc like '%R-2761%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.roll_paid_renewal_terms(uuid)') and prosrc like '%R-2761%') and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2761_recheck_held' and tgrelid = to_regclass('public.subscriptions')) and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2761_renewal_date_changed' and tgrelid = to_regclass('public.subscriptions')) and exists(select 1 from pg_trigger where tgname = 'invoices_r2761_part_paid_recheck' and tgrelid = to_regclass('public.invoices'))
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscription_renewal_moves' and column_name = 'resolved_at') and exists(select 1 from pg_proc where oid = to_regprocedure('public.unroll_unpaid_renewal_terms(uuid,text)') and prosrc like '%R-2761%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.roll_paid_renewal_terms(uuid)') and prosrc like '%R-2761%') and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2761_recheck_held' and tgrelid = to_regclass('public.subscriptions')) and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2761_renewal_date_changed' and tgrelid = to_regclass('public.subscriptions')) and exists(select 1 from pg_trigger where tgname = 'invoices_r2761_part_paid_recheck' and tgrelid = to_regclass('public.invoices')) and exists(select 1 from pg_trigger where tgname = 'subscription_billings_r2761_part_linked_recheck' and tgrelid = to_regclass('public.subscription_billings')) and exists(select 1 from pg_trigger where tgname = 'subscription_seat_reductions_r2761_cut_cancelled_recheck' and tgrelid = to_regclass('public.subscription_seat_reductions')) and to_regclass('public.subscription_renewal_moves_one_open_held') is not null
 -- deploy-key: r2761renewalheld
 -- 20261113231500_r2761_renewal_held_recheck.sql
 --
@@ -22,8 +22,14 @@
 --     subscriptions_r2761_recheck_held — status back to active / paused, or renewal_quote_id cleared. Fires
 --       after subscriptions_r2735_link_cleared_renews / subscriptions_r2749_reactivated_renews (trigger names
 --       sort), so a waiting roll runs first.
---     invoices_r2761_part_paid_recheck — a marked part's invoice is paid again while a hold is open → the
---       hold is resolved (nothing unpaid any more).
+--     invoices_r2761_part_paid_recheck — a marked part's invoice is paid again while a hold is open (bank
+--       re-reconcile: pending → paid) → the hold is resolved (nothing unpaid any more).
+--     subscription_billings_r2761_part_linked_recheck (rev-r2761 MED 1) — a marked part gets an invoice (Bill
+--       next part again → the proforma paid, or re-billed paid from customer credit: the tax invoice is INSERTED
+--       already 'paid', so the status trigger above never fires) while a hold is open → re-check (resolves it
+--       when nothing is unpaid; no move). Sorts after subscription_billings_r2735_paid_part_renews (roll first).
+--     subscription_seat_reductions_r2761_cut_cancelled_recheck (rev-r2761 LOW 2) — the end-of-term seat cut
+--       that held the undo is cancelled while a hold is open → re-check (moves back if the part is still unpaid).
 -- * subscriptions_r2761_renewal_date_changed — renewal_date changed by anything but the roll / undo (by hand,
 --   a renewal quote, Correct details): a change BACK to the from_date of an active forward move on the chain
 --   ending at the old date writes the 'back' rows (the forward is no longer in effect); open holds are resolved
@@ -31,8 +37,11 @@
 --   (app.r2761_auto_move) so they are not counted twice.
 -- * roll_paid_renewal_terms: R-2749 body + that flag only.
 --
--- Seat-cut holds are re-checked only by the triggers above (the cut applies AT renewal_date; moving the date
--- under it is R-2613's risk) — the Renewals row shows the open hold until the owner re-bills or changes it.
+-- A seat-cut hold stays while the cut is scheduled (the cut applies AT renewal_date; moving the date under it is
+-- R-2613's risk) — the Renewals row says "Bill the part again"; billing it closes the hold.
+-- One open held row per subscription is enforced by a UNIQUE partial index (rev-r2761 LOW 3).
+-- The re-check triggers on parts / seat cuts skip while the roll / undo themselves run (app.r2761_auto_move) —
+-- a nested undo during the undo's own date update could otherwise walk the chain twice.
 -- Test: supabase/tests/r2761_renewal_held_recheck.test.sql (one transaction, rolled back);
 --       supabase/tests/r2749_renewal_undo.test.sql still passes.
 
@@ -59,8 +68,16 @@ update public.subscription_renewal_moves
        end
  where direction = 'held' and hold_kind is null;
 
-create index if not exists subscription_renewal_moves_open_held_idx
-  on public.subscription_renewal_moves (tenant_id, subscription_id)
+/* rev-r2761 LOW 3: ONE open hold per subscription, enforced. Older open duplicates (none expected: R-2749 rows
+   are local / same train) are closed first, newest kept. */
+update public.subscription_renewal_moves m
+   set resolved_at = now(), resolved_why = 'R-2761: older open hold closed (one open hold per subscription)'
+ where m.direction = 'held' and m.resolved_at is null
+   and exists (select 1 from public.subscription_renewal_moves n
+                where n.subscription_id = m.subscription_id and n.direction = 'held' and n.resolved_at is null and n.id > m.id);
+drop index if exists public.subscription_renewal_moves_open_held_idx;
+create unique index if not exists subscription_renewal_moves_one_open_held
+  on public.subscription_renewal_moves (subscription_id)
   where direction = 'held' and resolved_at is null;
 
 -- ── 2. The roll (R-2749 body) — flag around its own update ───────────────────────────────────────────
@@ -164,7 +181,6 @@ declare
   v_kind    text;
   v_n       integer;
   v_paid    boolean;
-  v_new     bigint;
   v_why     text := coalesce(nullif(btrim(p_why), ''), 'renewal part payment undone');
 begin
   v_trusted := current_setting('role', true) = 'service_role'
@@ -236,14 +252,14 @@ begin
                       and h.resolved_at is null and h.id > v_oldest.id
                       and h.from_date = v_sub.renewal_date and h.to_date = v_target
                       and h.hold_kind is not distinct from v_kind) then
-      insert into public.subscription_renewal_moves (tenant_id, subscription_id, billing_id, direction, from_date, to_date, invoice_id, why, hold_kind)
-      values (v_sub.tenant_id, v_sub.id, v_oldest.billing_id, 'held', v_sub.renewal_date, v_target, null,
-              v_why || ' — NOT moved back: ' || v_hold, v_kind)
-      returning id into v_new;
+      /* close the old open hold first — one open hold per subscription (unique index, rev-r2761 LOW 3) */
       update public.subscription_renewal_moves
          set resolved_at = now(), resolved_why = 'held again: ' || v_hold
        where subscription_id = v_sub.id and tenant_id = v_sub.tenant_id and direction = 'held'
-         and resolved_at is null and id <> v_new;
+         and resolved_at is null;
+      insert into public.subscription_renewal_moves (tenant_id, subscription_id, billing_id, direction, from_date, to_date, invoice_id, why, hold_kind)
+      values (v_sub.tenant_id, v_sub.id, v_oldest.billing_id, 'held', v_sub.renewal_date, v_target, null,
+              v_why || ' — NOT moved back: ' || v_hold, v_kind);
     end if;
     return 0;
   end if;
@@ -399,5 +415,67 @@ create trigger subscriptions_r2761_renewal_date_changed
   for each row
   when (old.renewal_date is distinct from new.renewal_date)
   execute function public.tg_r2761_renewal_date_changed();
+
+-- ── 7. A marked part gets an invoice while a hold is open (rev-r2761 MED 1) ──────────────────────────
+create or replace function public.tg_r2761_part_linked_recheck()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+/* R-2761 (rev-r2761 MED 1): Bill next part again → its proforma paid, or re-billed paid from customer credit:
+   the tax invoice is INSERTED already paid and linked here, so invoices_r2761_part_paid_recheck (status UPDATE)
+   never fires. Open hold on the subscription → re-check: nothing unpaid → the hold closes, nothing moves. */
+begin
+  if coalesce(current_setting('app.r2761_auto_move', true), '') = 'on' then
+    return new;
+  end if;
+  if exists (select 1 from public.subscription_renewal_moves h
+              where h.subscription_id = new.subscription_id and h.tenant_id = new.tenant_id
+                and h.direction = 'held' and h.resolved_at is null) then
+    perform public.unroll_unpaid_renewal_terms(new.subscription_id, 'part billed again (invoice ' || new.invoice_id || ')');
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.tg_r2761_part_linked_recheck() from public, anon, authenticated;
+
+drop trigger if exists subscription_billings_r2761_part_linked_recheck on public.subscription_billings;
+create trigger subscription_billings_r2761_part_linked_recheck
+  after insert or update of invoice_id on public.subscription_billings
+  for each row
+  when (new.renews_to is not null and new.invoice_id is not null)
+  execute function public.tg_r2761_part_linked_recheck();
+
+-- ── 8. The seat cut that held the undo is cancelled (rev-r2761 LOW 2) ───────────────────────────────
+create or replace function public.tg_r2761_cut_cancelled_recheck()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+/* R-2761 (rev-r2761 LOW 2): an end-of-term seat cut leaves 'scheduled' as cancelled while the subscription has an
+   open hold → re-check (moves back once if the part is still unpaid; nothing left to protect). Skipped while the
+   roll / undo run (their own date update can cancel a cut through R-2613's redate trigger). */
+begin
+  if coalesce(current_setting('app.r2761_auto_move', true), '') = 'on' then
+    return new;
+  end if;
+  if exists (select 1 from public.subscription_renewal_moves h
+              where h.subscription_id = new.subscription_id and h.tenant_id = new.tenant_id
+                and h.direction = 'held' and h.resolved_at is null) then
+    perform public.unroll_unpaid_renewal_terms(new.subscription_id, 'seat cut cancelled');
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.tg_r2761_cut_cancelled_recheck() from public, anon, authenticated;
+
+drop trigger if exists subscription_seat_reductions_r2761_cut_cancelled_recheck on public.subscription_seat_reductions;
+create trigger subscription_seat_reductions_r2761_cut_cancelled_recheck
+  after update of status on public.subscription_seat_reductions
+  for each row
+  when (old.status = 'scheduled' and new.status = 'cancelled')
+  execute function public.tg_r2761_cut_cancelled_recheck();
 
 commit;
