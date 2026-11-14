@@ -303,26 +303,26 @@
 .anutech-site[data-site-theme="warm"] .hlp #choose > div > div:last-child:not(:nth-child(-n+6)) { border-radius: var(--w-radius-card) !important; }
 
 /* Tables (feature table and the 3-year cost table): light header, as the design's .ct */
-.anutech-site[data-site-theme="warm"] .hlp #choose [style*="min-width"] > div:first-child,
-.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width"] > div:first-child {
+.anutech-site[data-site-theme="warm"] .hlp #choose [style*="min-width:560px"] > div:first-child,
+.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width:620px"] > div:first-child {
   background: var(--w-surface) !important; color: var(--w-muted-2) !important; border-bottom: 1px solid var(--w-line);
 }
-.anutech-site[data-site-theme="warm"] .hlp #choose [style*="min-width"] > div:first-child > div,
-.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width"] > div:first-child > div {
+.anutech-site[data-site-theme="warm"] .hlp #choose [style*="min-width:560px"] > div:first-child > div,
+.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width:620px"] > div:first-child > div {
   color: var(--w-muted-2) !important; font-size: 12px !important; font-weight: 700 !important; letter-spacing: 0.06em !important; text-transform: uppercase;
 }
-.anutech-site[data-site-theme="warm"] .hlp #choose [style*="min-width"] > div:last-child,
-.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width"] > div:last-child { border-bottom: 0 !important; }
+.anutech-site[data-site-theme="warm"] .hlp #choose [style*="min-width:560px"] > div:last-child,
+.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width:620px"] > div:last-child { border-bottom: 0 !important; }
 
 /* ── 4+5 · Step 2 — real cost, then the trial days: one mint band with the design's photo ─── */
 .anutech-site[data-site-theme="warm"] .hlp > section#cost { background: #E6F4EF !important; padding-bottom: 0 !important; }
 .anutech-site[data-site-theme="warm"] .hlp #cost > div > p:first-of-type { color: var(--w-muted) !important; }
 .anutech-site[data-site-theme="warm"] .hlp #cost > div > div:nth-of-type(2) { border-radius: var(--w-radius-card) !important; }
-.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width"] > div:not(:first-child) > div:first-child { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; }
-.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width"] > div:not(:first-child) > div:last-child { color: var(--w-teal-dark) !important; }
+.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width:620px"] > div:not(:first-child) > div:first-child { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; }
+.anutech-site[data-site-theme="warm"] .hlp #cost [style*="min-width:620px"] > div:not(:first-child) > div:last-child { color: var(--w-teal-dark) !important; }
 .anutech-site[data-site-theme="warm"] .hlp #cost > div > p:last-of-type { color: var(--w-muted-2) !important; font-size: 14px !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) {
-  background: #E6F4EF url(/site/warm/55e6aca72159485ec7743e9f3f5e0dc4.jpg) center bottom / cover no-repeat !important;
+  background: linear-gradient(180deg, #E6F4EF 0%, rgba(230,244,239,0) 45%), #E6F4EF url(/site/warm/55e6aca72159485ec7743e9f3f5e0dc4.jpg) center bottom / cover no-repeat !important;
   color: var(--w-ink) !important; padding-top: 24px !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) h2 {
@@ -337,7 +337,10 @@
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) > div > div > div:last-child > div:first-child { color: var(--w-marigold-ink) !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) > div > div > div > div:nth-child(2) { color: var(--w-ink); font-size: 18px !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) > div > div > div > p { color: var(--w-muted) !important; font-size: 15px !important; }
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) > div > p { color: var(--w-muted-2) !important; font-size: 14px !important; }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(5) > div > p {
+  color: var(--w-ink-2) !important; font-size: 14px !important;
+  display: inline-block; background: rgba(255,255,255,0.9); border-radius: 10px; padding: 8px 12px;
+}
 
 /* ── 6 · Step 3 — moving: three cards in a row (marigold-soft, mint, forest) ──────────────── */
 .anutech-site[data-site-theme="warm"] .hlp > section#move { background: var(--w-surface) !important; }
@@ -451,7 +454,7 @@
   /* Photo strip at the top of the hero, fading into solid forest — the design's phone hero. */
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1)::before { bottom: auto; height: 340px; }
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1)::after {
-    background: linear-gradient(180deg, rgba(18,49,42,0.25) 0%, rgba(18,49,42,0.55) 45%, #12312A 340px, #12312A 100%);
+    background: linear-gradient(180deg, rgba(18,49,42,0.25) 0px, rgba(18,49,42,0.55) 150px, #12312A 340px, #12312A 100%);
   }
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) > div > div:nth-child(2) { max-width: none; justify-self: stretch; }
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) > div > div:first-child > div:first-child { white-space: normal; }

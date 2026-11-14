@@ -195,7 +195,8 @@
 .anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child .mono-label {
   font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; color: var(--w-marigold) !important;
 }
-.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child div[style*="font-size: 42px"] {
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child div[style*="font-size: 42px"],
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child div[style*="font-size:42px"] {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: clamp(44px, 4vw, 56px) !important; line-height: 1; font-weight: 800 !important;
   letter-spacing: -0.02em !important; color: #FFFFFF;
 }
