@@ -33,6 +33,7 @@ import { expiredGraceText, isStopped, type RenewalGroups } from "./classify";
 import { isSettledRenewed } from "./row-action";
 import { renewalDueText } from "./last-docs";
 import { renewalActionSet, type RenewalActionSub } from "@/components/features/renewals/renewal-actions-rules";
+import { bulkSendDecision, type RenewalStage, type StageKey } from "@/lib/renewals/stage";
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
@@ -148,6 +149,23 @@ export const STATUS_FILTER_LABEL: Record<RowStatusKey, string> = {
   "non-renewing": "Non-renewing",
   stopped: "Service stopped",
 };
+
+/**
+ * R-2760 (R-2738 followUp): the status filter on the row's ONE stage (lib/renewals/stage.ts) — the
+ * words the chip says. Tiles still add up by time window (tiles.ts).
+ */
+export const STAGE_FILTER_LABEL: Record<StageKey, string> = {
+  due: "Not sent",
+  "part-due": "Part not billed",
+  draft: "Draft part quote",
+  sent: "Quote sent",
+  "quote-closed": "Quote closed",
+  invoiced: "Invoiced",
+  renewed: "Renewed",
+  ending: "Won't renew",
+  stopped: "Stopped",
+};
+export const STAGE_FILTER_ORDER = Object.keys(STAGE_FILTER_LABEL) as StageKey[];
 
 export interface StatusSub {
   status?: string | null;
@@ -303,6 +321,8 @@ export interface QueueRow {
   plan: string | null;
   vendor: string | null;
   statusKey: RowStatusKey;
+  /** R-2760: the row's stage (null while its documents load — it matches no stage filter until then). */
+  stageKey?: StageKey | null;
   atRisk: boolean;
   customer: string;
   /** R-2422: Annual / Monthly (flex) commitment (frequency.ts renewalCommitment); null = unknown. */
@@ -319,7 +339,8 @@ export function sortQueue<T extends QueueRow>(rows: readonly T[], by: QueueSort)
 
 export interface QueueFilters {
   product: string;   // "" = all
-  status: RowStatusKey | "";
+  /** R-2760: a stage (STAGE_FILTER_LABEL); "" = all. */
+  status: StageKey | "";
   vendor: string;    // "" = all
   atRisk: boolean;
   /** R-2422: All · Annual · Monthly. */
@@ -331,7 +352,7 @@ export const NO_FILTERS: QueueFilters = { product: "", status: "", vendor: "", a
 export function filterQueue<T extends QueueRow>(rows: readonly T[], f: QueueFilters): T[] {
   return rows.filter((r) =>
     (!f.product || (r.plan ?? "") === f.product)
-    && (!f.status || r.statusKey === f.status)
+    && (!f.status || r.stageKey === f.status)
     && (!f.vendor || (r.vendor ?? "") === f.vendor)
     && (!f.atRisk || r.atRisk)
     && (f.commitment === "all" || r.commitment === f.commitment));
@@ -342,7 +363,37 @@ export function filterOptions(values: readonly (string | null | undefined)[]): s
   return [...new Set(values.filter((v): v is string => !!v && v.trim() !== ""))].sort((a, b) => a.localeCompare(b));
 }
 
-// ─── Bulk: Send renewal quote ───────────────────────────────────────────────
+// ─── Bulk: Send renewal (R-2760, on the stage) ──────────────────────────────
+
+/** R-2738 followUp: stage.ts has no input for it — a row with no customer email cannot be sent a renewal. */
+export const NO_EMAIL_REASON = "no email on file — add one on the customer first";
+
+/**
+ * R-2760: bulk Send renewal takes exactly the rows whose ONE stage says the whole-term renewal is
+ * still to send (bulkSendDecision — never a split row, R-808; never one sent / invoiced / renewed,
+ * R-2232; not 91+ days out, R-2586) AND that have an email to send to. Every other row is named
+ * with its reason. A row still loading its documents is skipped (never sent on a half-known stage).
+ */
+export function bulkStageTargets<T extends { stage: RenewalStage | null }>(
+  rows: readonly T[],
+  /** undefined = contacts not read yet; null / "" = none on file. */
+  emailOf: (row: T) => string | null | undefined,
+): { send: T[]; skipped: { row: T; reason: string }[] } {
+  const send: T[] = [];
+  const skipped: { row: T; reason: string }[] = [];
+  for (const r of rows) {
+    if (!r.stage) { skipped.push({ row: r, reason: "still loading — try again in a moment" }); continue; }
+    const d = bulkSendDecision(r.stage);
+    if (!d.send) { skipped.push({ row: r, reason: d.reason }); continue; }
+    const email = emailOf(r);
+    if (email === undefined) { skipped.push({ row: r, reason: "contact details still loading — try again in a moment" }); continue; }
+    if (!(email ?? "").trim()) { skipped.push({ row: r, reason: NO_EMAIL_REASON }); continue; }
+    send.push(r);
+  }
+  return { send, skipped };
+}
+
+// ─── Bulk: Send renewal quote (older rule, kept for its callers) ────────────
 
 /** R-2586: why bulk Send renewal quote skips a Later row — named in its confirm. */
 export const LATER_SKIP_REASON = "renews in 91+ days — too early to send";

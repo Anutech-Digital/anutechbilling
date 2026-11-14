@@ -10,7 +10,7 @@ import {
   lastDocsBySubscription, quoteExpiryText, renewalDueText, quoteStateLabel, invoiceStatusWords, daysBetweenIst,
   type LastDocsInput, type DocQuote, type DocBilling, type DocInvoice,
 } from "./last-docs";
-import { renewalRowStatus, STATUS_FILTER_LABEL, filterQueue, NO_FILTERS, QUEUE_TABLE_COLS, QUEUE_TABLE_BUDGET_PX, QUEUE_FLEX_MIN_PX } from "./queue";
+import { renewalRowStatus, STAGE_FILTER_LABEL, filterQueue, NO_FILTERS, QUEUE_TABLE_COLS, QUEUE_TABLE_BUDGET_PX, QUEUE_FLEX_MIN_PX } from "./queue";
 import { tileMatches, monthOf } from "./tiles";
 import { istToday } from "@/lib/dates/ist";
 
@@ -157,13 +157,13 @@ describe("R-2728 'Renewal quote sent' — which rows", () => {
     expect(renewalRowStatus(s, -2, { tenantGraceDays: 7, today: TODAY, quoteSent: sent }).note).toMatch(/In grace/);
   });
 
-  it("the status filter has 'Renewal quote sent' and lists exactly those rows", () => {
-    expect(STATUS_FILTER_LABEL["quote-sent"]).toBe("Renewal quote sent");
+  it("the status filter has 'Quote sent' (R-2760: the row's stage) and lists exactly those rows", () => {
+    expect(STAGE_FILTER_LABEL.sent).toBe("Quote sent");
     const rows = [
-      { id: "a", daysUntil: -3, amount: 1, plan: null, vendor: null, statusKey: "quote-sent" as const, atRisk: false, customer: "A" },
-      { id: "b", daysUntil: -3, amount: 1, plan: null, vendor: null, statusKey: "overdue" as const, atRisk: false, customer: "B" },
+      { id: "a", daysUntil: -3, amount: 1, plan: null, vendor: null, statusKey: "quote-sent" as const, stageKey: "sent" as const, atRisk: false, customer: "A" },
+      { id: "b", daysUntil: -3, amount: 1, plan: null, vendor: null, statusKey: "overdue" as const, stageKey: "due" as const, atRisk: false, customer: "B" },
     ];
-    expect(filterQueue(rows, { ...NO_FILTERS, status: "quote-sent" }).map((r) => r.id)).toEqual(["a"]);
+    expect(filterQueue(rows, { ...NO_FILTERS, status: "sent" }).map((r) => r.id)).toEqual(["a"]);
   });
 
   it("tiles: a sent row is counted once — in its own window, as money still due (not Renewed)", () => {

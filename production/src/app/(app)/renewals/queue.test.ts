@@ -220,7 +220,9 @@ describe("R-2403 sort and filter", () => {
   it("filters: product, status, vendor, at risk", () => {
     expect(filterQueue(rows, NO_FILTERS).length).toBe(3);
     expect(filterQueue(rows, { ...NO_FILTERS, product: "M365" }).map((r) => r.id)).toEqual(["c"]);
-    expect(filterQueue(rows, { ...NO_FILTERS, status: "overdue" }).map((r) => r.id)).toEqual(["a"]);
+    /* R-2760: the status filter is the row's stage (stageKey) */
+    const staged = rows.map((x) => ({ ...x, stageKey: x.id === "a" ? ("due" as const) : ("sent" as const) }));
+    expect(filterQueue(staged, { ...NO_FILTERS, status: "due" }).map((r) => r.id)).toEqual(["a"]);
     expect(filterQueue(rows, { ...NO_FILTERS, vendor: "google" }).map((r) => r.id)).toEqual(["b", "a"]);
     expect(filterQueue(rows, { ...NO_FILTERS, atRisk: true }).map((r) => r.id)).toEqual(["a"]);
   });
@@ -287,7 +289,7 @@ describe("R-2403 the page wires the one queue", () => {
       expect(page).toContain(l);
     }
     expect(page).toMatch(/<BulkActionBar count=\{selectedRows\.length\} noun="renewal"/);
-    expect(page).toContain("bulkQuoteTargets(selectedRows,");
+    expect(page).toContain("bulkStageTargets(selectedRows, emailOf)");   // R-2760: on the stage
     expect(page).toContain("tickedShown.length > 0 ? tickedShown : visibleRows");   // R-2753: the one Remind button acts on the ticked rows
     expect(page.match(/"\/api\/renewals\/send-now"/g)?.length).toBe(1);   // the existing route, one call site
   });
