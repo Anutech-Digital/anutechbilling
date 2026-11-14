@@ -108,6 +108,7 @@ import {
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
+import { dueCellFacts } from "./due-anchor";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 import { BillTogetherGroups, tickedOf, useBillTogether } from "@/components/features/renewals/bill-together";
@@ -411,9 +412,11 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
       </>
     );
   };
+  /* R-2817: the Due date / day count = the chip's own anchor (stage.ts rowAnchor); renewal_date while the stage loads. */
+  const dueOf = (item: QueueItem) => dueCellFacts(item.stage, item.sub, item.daysUntil);
   const sentDue = (item: QueueItem, className?: string) => (
     item.status.key === "quote-sent" && item.docs?.sent
-      ? <SentDueLines sent={item.docs.sent} daysUntil={item.daysUntil} todayIst={todayIst} className={className} />
+      ? <SentDueLines sent={item.docs.sent} daysUntil={item.daysUntil} anchorDays={item.stage?.days} todayIst={todayIst} className={className} />
       : null
   );
 
@@ -469,7 +472,8 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   <FollowupLine followup={followup} names={names} />
                 </div>
                 <div className="shrink-0 text-right">
-                  <p className="text-xs text-ink-2">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
+                  {/* R-2817: the row's ONE anchor date — the chip's own date (due-anchor.ts) */}
+                  <p className="text-xs text-ink-2" title={dueOf(item).title ?? undefined}>{dueOf(item).date ? formatDate(dueOf(item).date!) : "—"}</p>
                   {sentDue(item)}
                 </div>
               </div>
@@ -534,7 +538,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   <td className="min-w-0 px-2 py-2.5">
                     <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null} />
                   </td>
-                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
+                  <td className="px-2 py-2.5" title={dueOf(item).title ?? undefined}><DueCell date={dueOf(item).date} days={dueOf(item).days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-2 py-2.5 text-right">
                     <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
                     <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteShort ? `${amount.gst} · ${amount.quoteShort}` : amount.gst}</p>
