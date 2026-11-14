@@ -146,8 +146,18 @@ export interface RenewalStage {
   tone: StageTone;
   /** A second line only when the chip shows the period instead of the day count ("Overdue 3d"). */
   note: string | null;
-  /** IST days to the date that counts for the chip (the part's due date for a part, else renewal_date); null = no date. */
+  /** IST days to the row's anchor (anchorDate) — the ONE day count of the row (R-2817); null = no date. */
   days: number | null;
+  /**
+   * R-2817: the row's ONE anchor date — the earliest date this renewal's money fell due: the open part's
+   * due date or renewal_date, whichever is earlier (rowAnchor). The chip, its note, the Due column, the
+   * drawer and the AI / At-risk words all count from it. null = no date.
+   */
+  anchorDate: string | null;
+  /** "part" = the anchor is a part's own due date (before renewal_date); else renewal_date. */
+  anchorKind: AnchorKind;
+  /** R-2817: the open part's own due date when it differs from renewal_date (named on the chip note / Due tooltip); else null. */
+  partDueDate: string | null;
   /** IST days to renewal_date — grace over, Won't renew vs Cancel are judged on it; null = no date. */
   renewalDays: number | null;
   /** Billed in parts: IST days to the start of the next term's first part (ownerRule's 7-day window); else null. */
@@ -169,6 +179,25 @@ const OPEN_DOC = new Set(["sent", "viewed", "accepted"]);
 const STOPPED_LABEL: Record<string, string> = { suspended: "Service stopped", cancelled: "Cancelled", paused: "Paused", expired: "Expired" };
 /** rev-r2738 MED 5: a linked renewal quote that is closed — its own word on the chip. */
 const CLOSED_QUOTE_WORD: Record<string, string> = { rejected: "rejected", cancelled: "cancelled", expired: "expired", void: "cancelled" };
+
+export type AnchorKind = "part" | "renewal";
+export interface RowAnchor { date: string | null; kind: AnchorKind; days: number | null }
+
+/**
+ * R-2817 (Renewals audit 14 Nov, Q2): the row's ONE anchor date. The earliest date this renewal's money
+ * fell due — a part's own due date or renewal_date, whichever is EARLIER:
+ *   - Greentin Check: renews 31 Oct, its part due 1 Oct unpaid → 1 Oct (44d), in the chip AND the Due column;
+ *   - SCN Bit Labs: renews 12 Nov (Overdue tab), its part billed that day with 2 days to pay (due 14 Nov) →
+ *     12 Nov (Overdue 2d) — the tabs go by renewal_date, so a row in Overdue never says "Due today".
+ * A part due on the renewal date itself is the renewal date (kind "renewal": no "part due" words).
+ */
+export function rowAnchor(renewalDate: string | null | undefined, partDue: string | null | undefined, todayIst: string): RowAnchor {
+  const ren = renewalDate ? renewalDate.slice(0, 10) : null;
+  const part = partDue ? partDue.slice(0, 10) : null;
+  const date = part && (!ren || part < ren) ? part : ren;
+  const kind: AnchorKind = date && date === part && date !== ren ? "part" : "renewal";
+  return { date, kind, days: date ? daysBetweenIst(todayIst, date) : null };
+}
 
 /** Whole IST calendar days from today to a date (last-docs.ts daysBetweenIst — one copy). */
 export const istDays = daysBetweenIst;
@@ -257,14 +286,20 @@ export function renewalStage(input: StageInput): RenewalStage {
   const doc = d && (OPEN_DOC.has(d.status) || d.status === "draft") && d.paymentStatus !== "received" ? d : null;
   /* With the customer and unpaid (a draft is not owed). */
   const owedDoc = doc && doc.status !== "draft" ? doc : null;
-  const base = { split, renewalDays, partDays, quoteId: null, quoteStatus: null, invoiceId: invoice?.id ?? null, partsBehind: 0, note: null };
+  const renewalAnchor = rowAnchor(sub.renewal_date, null, todayIst);
+  const base = {
+    split, renewalDays, partDays, quoteId: null, quoteStatus: null, invoiceId: invoice?.id ?? null, partsBehind: 0, note: null,
+    anchorDate: renewalAnchor.date, anchorKind: renewalAnchor.kind, partDueDate: null as string | null,
+  };
 
-  /* The day count of a document: the part's own due date, else renewal_date; a part names its date (userAudit14Nov). */
+  /* R-2817: a document's day count = the row's anchor (the earlier of the part's own due date and renewal_date);
+     a part with its own due date names it (userAudit14Nov), also when the count is from the renewal date. */
   const docWhen = (x: { kind: "renewal" | "part"; dueDate?: string | null }) => {
-    const ref = x.kind === "part" && x.dueDate ? x.dueDate : sub.renewal_date;
-    const days = ref ? istDays(todayIst, ref) : null;
-    const when = days == null ? null : x.kind === "part" && ref !== sub.renewal_date ? `${dueWords(days)} · part due ${formatDate(ref)}` : dueWords(days);
-    return { days, when };
+    const partDue = x.kind === "part" && x.dueDate ? x.dueDate.slice(0, 10) : null;
+    const a = rowAnchor(sub.renewal_date, partDue, todayIst);
+    const own = partDue && partDue !== sub.renewal_date?.slice(0, 10) ? partDue : null;
+    const when = a.days == null ? null : `${dueWords(a.days)}${own ? ` · part due ${formatDate(own)}` : ""}`;
+    return { days: a.days, when, anchor: { anchorDate: a.date, anchorKind: a.kind, partDueDate: own } };
   };
   const sentWords = (x: StageDoc) => {
     const period = x.period?.trim() || null;
@@ -299,11 +334,17 @@ export function renewalStage(input: StageInput): RenewalStage {
   }
 
   if (invoice) {
-    const ref = invoice.kind === "part" && invoice.dueDate ? invoice.dueDate : sub.renewal_date;
-    const days = ref ? istDays(todayIst, ref) : null;
+    /* R-2817: from the row's anchor — the earlier of the part's due date and renewal_date. Past the renewal
+       date the renewal is overdue (the Overdue tab, grace) even when the part's bill gives later terms —
+       that later date is named in the note, so the bill's own terms stay visible. */
+    const partDue = invoice.kind === "part" && invoice.dueDate ? invoice.dueDate.slice(0, 10) : null;
+    const own = partDue && partDue !== sub.renewal_date?.slice(0, 10) ? partDue : null;
+    const a = rowAnchor(sub.renewal_date, partDue, todayIst);
+    const days = a.days;
     const amt = stageMoney(invoice.amountDue, invoice.currency);
     const label = days != null && days < 0 ? `Invoiced · ${amt} overdue ${-days}d` : `Invoiced · ${amt} due`;
-    return { ...base, key: "invoiced", label, tone: daysTone(days), days, note: invoice.period ?? null, flags };
+    const note = [invoice.period, own ? `part due ${formatDate(own)}` : null].filter(Boolean).join(" · ") || null;
+    return { ...base, key: "invoiced", label, tone: daysTone(days), days, anchorDate: a.date, anchorKind: a.kind, partDueDate: own, note, flags };
   }
 
   /* R-2232: a linked renewal quote not passed as open is never a reason to make another one. */
@@ -312,9 +353,9 @@ export function renewalStage(input: StageInput): RenewalStage {
     : null;
   const sentDoc = doc ?? linked;
   if (sentDoc) {
-    const { days, when } = docWhen(sentDoc);
+    const { days, when, anchor } = docWhen(sentDoc);
     const period = sentDoc.period?.trim() || null;
-    const common = { ...base, tone: daysTone(days), days, quoteId: sentDoc.quoteId, quoteStatus: sentDoc.status, note: when, flags };
+    const common = { ...base, ...anchor, tone: daysTone(days), days, quoteId: sentDoc.quoteId, quoteStatus: sentDoc.status, note: when, flags };
     const closed = CLOSED_QUOTE_WORD[sentDoc.status];
     if (closed) {
       /* rev-r2738 MED 5: rejected / cancelled / expired — its own words; not chased for payment, not resent. */
@@ -323,7 +364,7 @@ export function renewalStage(input: StageInput): RenewalStage {
     if (sentDoc.status === "draft" && sentDoc.kind === "renewal") {
       /* userAudit14Nov: opening the editor makes a draft — nothing went to the customer, so the row stays "due"
          (its Send renewal reopens THAT draft, R-2232). */
-      return { ...common, key: "due", label: renewalDays == null ? "No renewal date" : dueWords(renewalDays), tone: daysTone(renewalDays), days: renewalDays, note: null };
+      return { ...common, anchorDate: base.anchorDate, anchorKind: base.anchorKind, partDueDate: null, key: "due", label: renewalDays == null ? "No renewal date" : dueWords(renewalDays), tone: daysTone(renewalDays), days: renewalDays, note: null };
     }
     if (sentDoc.status === "draft") {
       return { ...common, key: "draft", label: period ? `Draft part quote · ${period}` : "Draft part quote" };

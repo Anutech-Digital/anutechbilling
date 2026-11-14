@@ -105,7 +105,11 @@ export function riskChased(sub: { auto_renew?: boolean | null; status?: string |
 }
 
 /** The stage facts the day words read (a RenewalStage fits). */
-export interface StageDays { key: string; days: number | null; renewalDays: number | null }
+export interface StageDays {
+  key: string; days: number | null; renewalDays: number | null;
+  /** R-2817: what `days` counts from (stage.ts rowAnchor); absent = judged by renewalDays !== days (older callers). */
+  anchorKind?: "part" | "renewal";
+}
 
 /**
  * The overdue words for a row, from its stage's own day count (the number on the chip), naming
@@ -122,7 +126,7 @@ export function stageOverdueWords(stage: StageDays | null | undefined, todayIst:
   if (!stage || stage.days == null || stage.days >= 0 || NOT_CHASED_STAGES.has(stage.key)) return null;
   const late = -stage.days;
   const from = formatDate(addDaysISO(todayIst, stage.days));
-  const partDate = stage.renewalDays !== stage.days;
+  const partDate = stage.anchorKind ? stage.anchorKind === "part" : stage.renewalDays !== stage.days;
   if (stage.key === "invoiced") return partDate ? `Part bill overdue ${late}d (due ${from})` : `Invoice overdue ${late}d (due ${from})`;
   return partDate ? `Part due ${late}d ago (${from})` : `Renewal date passed ${late}d ago (${from})`;
 }
