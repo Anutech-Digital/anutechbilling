@@ -1,6 +1,0 @@
-/**
- * Warm theme — pages outside the website's own layouts, wrapped by WarmScope.tsx: the Workspace
- * and Support checkouts, the ad landing pages, the ResellerOS product pages (pricing, about,
- * privacy, terms), privacy request, unsubscribe and "not found". Designed as artboards in the
- * owner's canvas first. Every selector starts with .w-scope[data-site-theme="warm"].
- */

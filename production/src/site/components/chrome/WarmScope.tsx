@@ -17,7 +17,11 @@ import { getWebsiteTheme } from "@/lib/website-theme.server";
 import { THEME_BOOT_SCRIPT } from "@/site/components/chrome/ThemeSwitch";
 import "@/site/warm-only.css";
 import "@/site/site-warm.css";
-import "@/site/warm/extra-pages.css";
+// One file per page group, each scoped under .w-scope[data-site-theme="warm"] (site-warm-scope.test.ts).
+import "@/site/warm/extra-checkout.css";
+import "@/site/warm/extra-lp.css";
+import "@/site/warm/extra-product-pages.css";
+import "@/site/warm/extra-forms.css";
 
 interface WarmScopeProps {
   children: React.ReactNode;

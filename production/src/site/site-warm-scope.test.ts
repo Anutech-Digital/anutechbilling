@@ -144,7 +144,7 @@ describe("site-warm.css never hides page content", () => {
 describe("every warm stylesheet is loaded where its pages render", () => {
   const product = readFileSync(path.join(root, "src/app/(product)/layout.tsx"), "utf8");
   it("the company site's layout imports each page-group file except product.css", () => {
-    for (const f of warmFiles.filter((f) => f.startsWith("src/site/warm/") && !f.endsWith("product.css") && !f.endsWith("extra-pages.css"))) {
+    for (const f of warmFiles.filter((f) => f.startsWith("src/site/warm/") && !f.endsWith("product.css") && !f.includes("/extra-"))) {
       expect(layout).toContain(`import "@/${f.replace(/^src\//, "")}";`);
     }
   });
@@ -172,9 +172,11 @@ describe("WarmScope (pages outside the website layouts)", () => {
   it("never creates a box, so Classic lays out exactly as before", () => {
     expect(scope).toMatch(/style=\{\{ display: "contents" \}\}/);
   });
-  it("reads the same switch and loads the gate and the extra pages' styles", () => {
+  it("reads the same switch and loads the gate and every extra-*.css", () => {
     expect(scope).toMatch(/getWebsiteTheme\(websiteTenantId\(\)\)/);
     expect(scope).toContain('import "@/site/warm-only.css";');
-    expect(scope).toContain('import "@/site/warm/extra-pages.css";');
+    for (const f of warmFiles.filter((f) => f.includes("/extra-"))) {
+      expect(scope).toContain(`import "@/${f.replace(/^src\//, "")}";`);
+    }
   });
 });
