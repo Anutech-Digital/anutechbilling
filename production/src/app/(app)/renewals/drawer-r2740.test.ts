@@ -219,7 +219,8 @@ describe("R-2740 wiring", () => {
   it("the page opens it from the product name (a button) and ?sub=", () => {
     const page = read("./page.tsx");
     expect(page).toMatch(/<RenewalDrawer\b/);
-    expect(page).toMatch(/drawerSubFromSearch\(window\.location\.search\)/);
+    expect(page).toMatch(/useRenewalDrawerSub\(\)/);
+    expect(read("./renewal-drawer.tsx")).toMatch(/drawerSubFromSearch\(window\.location\.search\)/);
     expect(read("./row-cells.tsx")).toMatch(/data-testid="renewal-open-drawer"/);
   });
 });

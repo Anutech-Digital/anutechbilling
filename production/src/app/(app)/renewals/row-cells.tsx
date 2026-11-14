@@ -127,8 +127,10 @@ export function CustomerCell({ name, customerId, contact, more }: { name: string
   );
 }
 
-export function ProductCell({ plan, seats, vendor, term, termShort, frequency }: {
+export function ProductCell({ plan, seats, vendor, term, termShort, frequency, onOpen }: {
   plan: string | null; seats: number | null; vendor: string | null; term: string | null; termShort: string | null; frequency: string | null;
+  /** R-2740: the product name opens the row drawer (keyboard reachable — the row press is mouse only). */
+  onOpen?: () => void;
 }) {
   const vendorWord = vendor ? vendor[0].toUpperCase() + vendor.slice(1) : null;
   const line1 = [plan, seats != null ? `${seats} seats` : null, vendorWord].filter(Boolean).join(" · ");
@@ -136,7 +138,14 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency }:
   const title2 = [term ? `Renews for ${term}` : null, frequency].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0" data-cell="product">
-      <p className="truncate text-ink" title={line1}>{line1}</p>
+      {onOpen ? (
+        <button type="button" onClick={onOpen} title={`${line1} — open details`} data-testid="renewal-open-drawer"
+          className="block max-w-full truncate rounded-sm text-left text-ink underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+          {line1}
+        </button>
+      ) : (
+        <p className="truncate text-ink" title={line1}>{line1}</p>
+      )}
       {termShort && <p className="mt-0.5 truncate text-2xs text-ink-3 tabular-nums" title={title2}>{termShort}</p>}
     </div>
   );
