@@ -209,7 +209,8 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                 <dl>
                   <Fact label="This term">{currentTermWords(sub) ?? "—"}</Fact>
                   <Fact label="Next term">{nextTermWords(sub) ?? "—"}</Fact>
-                  <Fact label="Amount"><span className="tabular-nums">{item.amount.text}</span> <span className="text-ink-3">{item.amount.gst}</span></Fact>
+                  <Fact label="Amount"><span className="tabular-nums">{item.amount.text}</span> <span className="text-ink-3">{item.amount.gst}</span>
+                    {item.amount.quoteNote && <span className="block text-xs text-ink-3">{item.amount.quoteNote}</span>}</Fact>
                   <Fact label="Billed">{item.frequency ?? "—"}</Fact>
                   <Fact label="Term length">{termLengthWords(sub.term_months)}</Fact>
                 </dl>
