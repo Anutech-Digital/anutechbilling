@@ -13,7 +13,7 @@
  * salary in force when that month was booked. The next Pay salary offers them as one explicit line
  * (pay_salary_with_arrears), booked in the PAYING month.
  */
-import { ctcFromEmployee } from "./ctc";
+import { ctcFromEmployee, employeeCtcOptions, type CtcPolicy } from "./ctc";
 import { ESI_WAGE_CEILING } from "./esi";
 import { periodLabelShort } from "./period-label";
 
@@ -142,11 +142,13 @@ export interface CtcSwitches extends SalaryStructure {
 }
 
 /** The largest whole-rupee monthly gross whose CTC (ctcFromEmployee — the same CTC the profile
- *  shows) is at most `annualCtc`, keeping the employee's Basic / DA share and PF / ESI switches. */
-export function grossForAnnualCtc(annualCtc: number, current: CtcSwitches, asOf: string): number {
+ *  shows) is at most `annualCtc`, keeping the employee's Basic / DA share and PF / ESI switches.
+ *  R-2770: with the company payroll policy (gratuity / CTC includes employer; missing = defaults). */
+export function grossForAnnualCtc(annualCtc: number, current: CtcSwitches, asOf: string, policy?: CtcPolicy | null): number {
   const target = Math.round(annualCtc || 0);
   if (target <= 0) return 0;
-  const ctcOf = (g: number) => ctcFromEmployee({ ...current, ...scaledStructure(current, g) }, { asOf }).annualCtc;
+  const opts = employeeCtcOptions(policy, asOf);
+  const ctcOf = (g: number) => ctcFromEmployee({ ...current, ...scaledStructure(current, g) }, opts).annualCtc;
   /* CTC rises with gross on each side of the ESI ceiling, but drops just above it (employer ESI
      stops), so search the two pieces separately and take the larger gross that fits. */
   const largestFitting = (lo: number, hi: number): number | null => {
