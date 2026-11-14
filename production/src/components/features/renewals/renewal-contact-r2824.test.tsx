@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as React from "react";
 import { render, cleanup, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Subscription } from "@/lib/supabase/database.types";
 
 const CUST = "33333333-3333-4333-8333-333333333333";
@@ -95,12 +96,12 @@ const item = (contact: DrawerItem["contact"]): DrawerItem => ({
 
 describe("the drawer header", () => {
   it("shows the contact", () => {
-    render(<RenewalDrawer item={item({ name: "Asha", phone: "9876500002", email: null, country: "India" })} open onClose={() => {}} names={undefined} followupRows={[]} strong={false} />);
+    render(<QueryClientProvider client={new QueryClient()}><RenewalDrawer item={item({ name: "Asha", phone: "9876500002", email: null, country: "India" })} open onClose={() => {}} names={undefined} followupRows={[]} strong={false} /></QueryClientProvider>);
     const head = screen.getByTestId("renewal-drawer");
     expect(within(head).getByText("+919876500002")).toBeTruthy();
   });
   it("shows 'Add contact' when the customer has none", () => {
-    render(<RenewalDrawer item={item({ name: null, phone: null, email: null })} open onClose={() => {}} names={undefined} followupRows={[]} strong={false} />);
+    render(<QueryClientProvider client={new QueryClient()}><RenewalDrawer item={item({ name: null, phone: null, email: null })} open onClose={() => {}} names={undefined} followupRows={[]} strong={false} /></QueryClientProvider>);
     expect(screen.getByText("Add contact")).toBeTruthy();
   });
 });
