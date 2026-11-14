@@ -19,9 +19,10 @@ import {
 import { rupee } from "@/lib/utils";
 import { ctcFromEmployee, employeeCtcOptions } from "@/lib/payroll/ctc";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
+import { DEFAULT_PAYROLL_POLICY } from "@/lib/payroll/policy";
 import { periodLabel } from "@/lib/payroll/period-label";
 import {
-  arrearsForMonth, defaultEffectiveMonth, grossForAnnualCtc, nextPeriod, revisionBookedNote, revisionMonth, salaryInForce, scaledStructure,
+  arrearsForMonth, defaultEffectiveMonth, grossForAnnualCtc, nextPeriod, revisionBookedNote, revisionMonth, salaryInForce, structureForGross,
 } from "@/lib/payroll/salary-revision";
 import { useEmployeeSalaryHistory, useReviseSalary, useSalaryRevisions, type Employee } from "@/lib/queries/payroll";
 import { istToday } from "@/lib/dates/ist";
@@ -58,6 +59,8 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
   const policyQ = usePayrollPolicy();
   /* No default-policy guess (code review): the CTC / gross boxes and Save wait for the policy. */
   const policyReady = policyQ.isSuccess;
+  /* R-2773: one Basic rule with Add / Edit employee — no salary yet → the policy Basic %, else the employee's own share. */
+  const policyBasicPct = policyQ.data?.basicPct ?? DEFAULT_PAYROLL_POLICY.basicPct;
   const ctcOpts = employeeCtcOptions(policyQ.data, asOf);
   const currentCtc = ctcFromEmployee({ ...current, ...switches }, ctcOpts).annualCtc;
   const [gross, setGross] = React.useState(String(employee.monthly_gross || ""));
@@ -73,7 +76,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
 
   const applyGross = (g: number) => {
     if (splitTyped) return;
-    const s = scaledStructure(current, g);
+    const s = structureForGross(current, g, policyBasicPct);
     setBasic(s.basic_monthly != null ? String(s.basic_monthly) : "");
     setDa(String(s.da_monthly ?? 0));
   };
@@ -82,7 +85,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
     setGross(v);
     const g = Math.max(0, Math.round(Number(v) || 0));
     applyGross(g);
-    const s = splitTyped ? { monthly_gross: g, basic_monthly: basic === "" ? null : Number(basic), da_monthly: Number(da) || 0 } : scaledStructure(current, g);
+    const s = splitTyped ? { monthly_gross: g, basic_monthly: basic === "" ? null : Number(basic), da_monthly: Number(da) || 0 } : structureForGross(current, g, policyBasicPct);
     setCtc(g > 0 ? String(ctcFromEmployee({ ...s, ...switches }, ctcOpts).annualCtc) : "");
   };
   const onCtc = (v: string) => {
