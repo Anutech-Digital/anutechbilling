@@ -64,13 +64,19 @@ const shown = (l, ctx) => {
 async function invoiceViews() {
   const rule = (await db.query("select from_at from public.app_rule_dates where key = $1", [R2727_PERIOD_RULE_KEY]).catch(() => ({ rows: [] }))).rows[0];
   const ruleFrom = iso(rule?.from_at);
+  /* The quote exactly as the PDF route (admin .eq("invoice_id", id).maybeSingle()) and the invoice page
+     (useQuoteByInvoiceId) load it: by quotes.invoice_id, no tenant filter; two rows = maybeSingle error = none. */
   const { rows } = await db.query(`
-    select to_jsonb(i) as invoice, to_jsonb(q) as quote
-      from public.invoices i join public.quotes q on q.id = i.quote_id and q.tenant_id = i.tenant_id
-     where i.status::text in ('pending', 'paid', 'overdue')
+    select to_jsonb(i) as invoice,
+           case when (select count(*) from public.quotes q where q.invoice_id = i.id) = 1
+                then (select to_jsonb(q) from public.quotes q where q.invoice_id = i.id) end as quote
+      from public.invoices i
+     where i.quote_id is not null and i.status::text in ('pending', 'paid', 'overdue')
      order by i.id`);
   const subsByCustomer = new Map();
-  const { rows: subs } = await db.query("select id, tenant_id, customer_id, renewal_quote_id, domain, start_date::text, term_months from public.subscriptions");
+  /* useCustomerSubscriptions: the customer's rows, start_date desc (Postgres DESC = nulls first). */
+  const { rows: subs } = await db.query(
+    "select id, tenant_id, customer_id, renewal_quote_id, domain, start_date::text, term_months from public.subscriptions order by start_date desc, id");
   for (const s of subs) {
     const k = `${s.tenant_id}|${s.customer_id}`;
     if (!subsByCustomer.has(k)) subsByCustomer.set(k, []);
@@ -78,8 +84,18 @@ async function invoiceViews() {
   }
   const out = new Map();
   for (const { invoice, quote } of rows) {
+    if (!quote) {
+      // no quote on either surface: both print the invoice's own lines (and a stamp would add periods)
+      const pdf = buildInvoicePdfProps({ invoice, quote: null, customer: null, tenant: TENANT, subscriptionDomain: null, periodRuleFrom: ruleFrom });
+      const screen = withStoredLinePeriods(invoice.line_items ?? [], invoice, null);
+      out.set(invoice.id, JSON.stringify({
+        pdf: (pdf.lineItems ?? []).map((l) => shown(l, pdf.periodContext)),
+        screen: (screen.lines ?? []).map((l) => shown(l, screen.ctx)),
+      }));
+      continue;
+    }
     const needsSub = !!(quote.is_renewal || quote.is_extension);
-    const custSubs = subsByCustomer.get(`${quote.tenant_id}|${quote.customer_id}`) ?? [];
+    const custSubs = quote.customer_id ? (subsByCustomer.get(`${quote.tenant_id}|${quote.customer_id}`) ?? []) : [];
     // PDF route: loadRenewedSubscription (renewal_subscription_id, else renewal_quote_id) within the tenant
     const tenantSubs = subs.filter((s) => s.tenant_id === invoice.tenant_id);
     const pdfSub = !needsSub ? null : quote.renewal_subscription_id
@@ -172,7 +188,8 @@ try {
   const b2 = (await db.query("select public.r2768_repair_quote_notes(true) as r")).rows[0].r;
   console.log(`second run: A changed ${a2.changed}, B changed ${b2.changed}`);
 
-  failed = invDiff > 0 || !mapSame || linkDiff > 0 || idLeft > 0 || a2.changed !== 0 || b2.changed !== 0;
+  failed = invDiff > 0 || !mapSame || linkDiff > 0 || idLeft > 0 || pdfTextChanged > 0 || acceptTextChanged > 0
+    || a2.changed !== 0 || b2.changed !== 0;
   if (failed || !commit) {
     await db.query("rollback");
     console.log(failed ? "PROOF FAILED — rolled back, nothing changed." : "PROOF OK — rolled back (dry run). Use --commit to keep it on local.");
