@@ -340,7 +340,7 @@ export const SCENARIOS = [
     expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 3 },
     pages: [
       { path: "customers", for: "R-2548 the three SCN Part Bill customers — Subscriptions → Add Subscription → Existing Customer picks them" },
-      { path: "renewals", for: "R-2548 after adding SCN Part Bill Studio's Annual · Half-yearly subscription: 'Bill renewal · part 1 of next year'" },
+      { path: "renewals", for: "R-2548 after adding SCN Part Bill Studio's Annual · Half-yearly subscription: 'Send renewal · part 1 of next year'" },
     ],
   },
   {

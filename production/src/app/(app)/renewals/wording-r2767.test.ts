@@ -58,10 +58,27 @@ describe("R-2767 foreign customers in their own currency (audit P11)", () => {
     expect(a.gst).toBe(EXPORT_GST);
     expect(a.value).toBe(216000);
   });
+  const SALE = { id: "Q1", amount: 254880, status: "paid", currency: "USD", exchange_rate: 90 };
   it("a sent USD renewal quote → its note in $ too", () => {
-    const a = renewalAmount({ ...sub, renewal_quote_id: "QR" }, { id: "QR", amount: 225000, status: "sent", currency: "USD", exchange_rate: 90 });
+    const a = renewalAmount({ ...sub, renewal_quote_id: "QR" }, { id: "QR", amount: 225000, status: "sent", currency: "USD", exchange_rate: 90 }, SALE);
     expect(a.text).toBe("$2,400.00/yr");
     expect(a.quoteNote).toBe("Quote $2,500.00");
+  });
+  it("a renewal quote made in ₹ for a USD customer keeps ITS OWN figure (what the customer holds)", () => {
+    const a = renewalAmount({ ...sub, renewal_quote_id: "QR" }, { id: "QR", amount: 216000, status: "sent", currency: "INR", exchange_rate: 1 }, SALE);
+    expect(a.text).toBe("$2,400.00/yr");
+    expect(a.quoteNote).toBe("Quote ₹2,16,000 incl. GST");
+  });
+  it("a draft / closed USD renewal quote at another rate never re-prices the row (R-2751)", () => {
+    for (const status of ["draft", "expired"]) {
+      const a = renewalAmount({ ...sub, renewal_quote_id: "QR" }, { id: "QR", amount: 216000, status, currency: "USD", exchange_rate: 95 }, SALE);
+      expect(a.text).toBe("$2,400.00/yr");
+      expect(a.quoteNote).toBeNull();
+    }
+  });
+  it("a foreign quote whose rate was never set (default 1) or blank currency stays ₹ — never ₹ with a $ sign", () => {
+    expect(renewalAmount(sub, null, { id: "Q1", amount: 1, status: "paid", currency: "USD", exchange_rate: 1 }).text).toMatch(/^₹/);
+    expect(renewalAmount(sub, null, { id: "Q1", amount: 1, status: "paid", currency: "", exchange_rate: 90 }).text).toMatch(/^₹/);
   });
   it("₹ customers (or a foreign quote with no rate) keep '₹… + GST'", () => {
     expect(renewalAmount(sub, null, { id: "Q1", amount: 1, status: "paid", currency: "INR", exchange_rate: 1 }).gst).toBe("+ GST");

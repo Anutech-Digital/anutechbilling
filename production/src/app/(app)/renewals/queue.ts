@@ -269,13 +269,12 @@ export interface RenewalQuoteInfo {
 /** R-2767: a foreign-currency customer's renewal is shown in their currency — the sale's (or renewal's) quote says which. */
 export const EXPORT_GST = "no GST (LUT)";
 
-function foreignOf(...quotes: (RenewalQuoteInfo | null | undefined)[]): { currency: string; rate: number } | null {
-  for (const q of quotes) {
-    const cur = (q?.currency ?? "INR").toUpperCase();
-    const rate = Number(q?.exchange_rate);
-    if (cur !== "INR" && Number.isFinite(rate) && rate > 0) return { currency: cur, rate };
-  }
-  return null;
+/** A quote's own foreign currency + ₹ rate; null = ₹, or no real rate (quotes.exchange_rate defaults to 1 —
+    the builder treats ≤ 1 as "rate missing" too, so ₹ is never printed with a $ sign). */
+function foreignOf(q: RenewalQuoteInfo | null | undefined): { currency: string; rate: number } | null {
+  const cur = (q?.currency ?? "").trim().toUpperCase() || "INR";
+  const rate = Number(q?.exchange_rate);
+  return cur !== "INR" && Number.isFinite(rate) && rate > 1 ? { currency: cur, rate } : null;
 }
 
 const CLOSED_QUOTE = new Set(["rejected", "expired", "cancelled", "void", "invoiced"]);
@@ -329,24 +328,24 @@ export function renewalAmount(
     ? quote : null;
   /* R-2767 (audit P11): a USD / foreign customer reads their own currency, never "₹… + GST" (exports carry no GST
      under the LUT). value stays ₹ — sorting, tiles, forecast and CSV add up rupees. */
-  const fx = foreignOf(q ?? (quote && sub.renewal_quote_id === quote.id ? quote : null), saleQuote);
-  if (fx) {
-    const foreign = foreignAmount(fx.currency, v, fx.rate);
-    const qf = q ? foreignAmount(fx.currency, Number(q.amount ?? 0), fx.rate) : null;
-    return {
-      value: v,
-      text: `${foreign}${termSuffix(sub.term_months)}`,
-      gst: EXPORT_GST,
-      quoteNote: qf ? `Quote ${qf}` : null,
-      quoteShort: qf ? `quote ${qf}` : null,
-    };
+  /* The row's currency is the SALE quote's (what this customer is billed in) — a draft / closed renewal quote
+     never changes the row (R-2751). The sent quote's note is in THAT quote's own currency: a renewal quote made
+     in ₹ for a USD customer reads "Quote ₹…", the figure the customer holds. */
+  const qfx = q ? foreignOf(q) : null;
+  const qForeign = q && qfx ? foreignAmount(qfx.currency, Number(q.amount ?? 0), qfx.rate) : null;
+  const quoteNote = !q ? null : qForeign ? `Quote ${qForeign}` : `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST`;
+  const quoteShort = !q ? null : qForeign ? `quote ${qForeign}` : `quote ${rupee(Math.round(q.amount ?? 0), { compact: true })}`;
+  const fx = foreignOf(saleQuote);
+  const foreign = fx ? foreignAmount(fx.currency, v, fx.rate) : null;
+  if (foreign) {
+    return { value: v, text: `${foreign}${termSuffix(sub.term_months)}`, gst: EXPORT_GST, quoteNote, quoteShort };
   }
   return {
     value: v,
     text: `${rupee(v)}${termSuffix(sub.term_months)}`,
     gst: "+ GST",
-    quoteNote: q ? `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST` : null,
-    quoteShort: q ? `quote ${rupee(Math.round(q.amount ?? 0), { compact: true })}` : null,
+    quoteNote,
+    quoteShort,
   };
 }
 

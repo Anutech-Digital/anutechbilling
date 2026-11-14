@@ -21,7 +21,7 @@ import { addDaysIso } from "@/lib/quotes/service-period";
 import type { FlagKey, StageFlag } from "@/lib/renewals/stage";
 import { VENDOR_HOLD_TITLE } from "@/lib/renewals/vendor-hold";
 import {
-  docMoney, invoiceStatusWords, invoiceTotalWords, periodWords, quoteStateLabel,
+  docMoney, invoiceStatusWords, invoiceTotalWords, periodWords, quoteExpiryText, quoteStateLabel,
   type DocTone, type DrawerQuote, type LastDocs, type LastInvoice,
 } from "./last-docs";
 import { lastPaidSummary, type LastPaid } from "./last-paid";
@@ -71,8 +71,12 @@ export function drawerQuoteRow(q: DrawerQuote, todayIst: string): DrawerDocRow {
   const base = { kind: "quote" as const, id: q.id, date: q.date, period: q.period, amount, replacedBy: q.supersededBy };
   if (q.supersededBy) return { ...base, status: `Revised — replaced by ${q.supersededBy}`, tone: "muted" };
   if (VOID_QUOTE.has(q.status)) return { ...base, status: "Cancelled", tone: "muted" };
-  const status = quoteStateLabel(q, todayIst);
-  const tone: DocTone = status === "Paid" ? "ok" : status === "Draft" || status === "Expired" || status === "Rejected" ? "muted" : "warn";
+  const state = quoteStateLabel(q, todayIst);
+  const tone: DocTone = state === "Paid" ? "ok" : state === "Draft" || state === "Expired" || state === "Rejected" ? "muted" : "warn";
+  /* R-2767: the row shows a quote's validity only at 3 days or less — the drawer always says it while the
+     quote is with the customer (sent / viewed) */
+  const waiting = (q.status === "sent" || q.status === "viewed") && state !== "Expired" && !!q.expires_date;
+  const status = waiting ? `${state} · ${quoteExpiryText(q.expires_date, todayIst).toLowerCase()}` : state;
   return { ...base, status, tone };
 }
 

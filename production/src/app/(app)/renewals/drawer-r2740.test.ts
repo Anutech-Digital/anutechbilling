@@ -111,7 +111,7 @@ describe("R-2740 all documents of a subscription", () => {
     expect(by["INV-9"]).toMatchObject({ status: "Cancelled", tone: "muted" });
     expect(by["Q-A"].amount).toBe("$1,000");
     expect(by["Q-B"]).toMatchObject({ status: "Revised — replaced by Q-C", tone: "muted", replacedBy: "Q-C" });
-    expect(by["Q-C"].status).toBe("Sent");
+    expect(by["Q-C"].status).toMatch(/^Sent · expires in d+ days$/);   // R-2767: the drawer says the validity while the quote is with the customer
     expect(by["Q-D"]).toMatchObject({ status: "Draft", tone: "muted" });
     /* newest first by date */
     expect(rows.map((r) => r.id)).toEqual(["Q-D", "Q-C", "Q-B", "INV-9", "INV-1", "Q-A"]);
