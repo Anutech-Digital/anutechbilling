@@ -14,6 +14,10 @@
 -- "Expected" = the pf_employer / esi_employer figure on that employee's salary row of that month
 -- (0 when the month has no salary now); the employee is matched by the name on that salary's own
 -- Salaries expense (written by the same pay_salary call), so a later rename does not confuse it. Extra = booked − expected.
+-- LIMIT: matching is by name text. An employee renamed between two bookings (or a Salaries / employer
+-- row whose name or description was edited by hand) shows as +₹ under one name and −₹ under the
+-- other — check both lines (section 2 lists the expense ids) before deciding on any repair.
+-- The work list is written out twice (sections 1 and 2) — change both together.
 --
 -- WHAT IT IS: three SELECTs. It changes NOTHING — the whole file runs inside
 -- `begin; set transaction read only; … rollback;`. It works on a database WITHOUT R-2772 (it does
