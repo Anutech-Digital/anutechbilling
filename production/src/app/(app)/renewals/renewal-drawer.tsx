@@ -36,7 +36,7 @@ import {
 } from "./drawer";
 import { priorDueInvoiceGap, type DocTone, type LastDocs } from "./last-docs";
 import { priorTermDue } from "./prior-due";
-import { nextTermWords } from "./row-cells";
+import { nextTermWords, subscriptionDomain } from "./row-cells";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
 
@@ -184,7 +184,7 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                   : sub.customer_name}
               </SheetTitle>
               <SheetDescription>
-                {[sub.plan, sub.seats != null ? `${sub.seats} seats` : null, sub.vendor ? sub.vendor[0].toUpperCase() + sub.vendor.slice(1) : null, sub.domain].filter(Boolean).join(" · ")}
+                {[sub.plan, sub.seats != null ? `${sub.seats} seats` : null, sub.vendor ? sub.vendor[0].toUpperCase() + sub.vendor.slice(1) : null, subscriptionDomain(sub)].filter(Boolean).join(" · ")}
               </SheetDescription>
               <div className="mt-2 flex flex-wrap items-start justify-between gap-3" data-testid="renewal-drawer-head">
                 <div className="min-w-0">
