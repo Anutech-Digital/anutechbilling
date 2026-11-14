@@ -12,6 +12,10 @@
 --   5. Hand change of renewal_date back to a forward move's from_date → a 'back' row (the stale forward is
 --      closed, rev-r2749 LOW 3); roll / unroll write no extra row. 5b: a held sub's date changed by hand to
 --      another date → held resolved, no back row.
+--   7. (rev-r2761 MED 1) hold made by a full credit note (expired / quote linked / seat cut), the part billed
+--      again through bill_subscription_instalment and paid → hold closed, date kept, no back row.
+--   8. (LOW 2) seat-cut hold, the cut cancelled with the part unpaid → back once, hold closed.
+--   9. (LOW 3) a second open hold on one subscription is refused (unique index).
 --   6. Grants: the new trigger functions are not executable by anon / authenticated; authenticated cannot
 --      update the moves table.
 
@@ -200,12 +204,106 @@ begin
   raise notice 'PASS 5: hand change back closes the forward; other hand change resolves the hold';
 end $$;
 
+-- ── 7. rev-r2761 MED 1: hold made by a FULL CREDIT NOTE, then the part billed again (real path:
+--       bill_subscription_instalment → paid invoice INSERTED from customer credit, or a proforma paid) →
+--       hold closed, date unchanged, no back row. Expired, quote-linked and seat-cut holds. ───────────────
+create function pg_temp.full_cn_and_rebill(p_s uuid, p_k int) returns text language plpgsql as $f$
+declare v_b uuid := ('b2761000-0000-0000-0000-0000000003' || lpad(p_k::text, 2, '0'))::uuid; v_inv text; r jsonb;
+begin
+  v_inv := (select invoice_id from public.subscription_billings where id = v_b);
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform public.issue_credit_note(v_inv, (select amount from public.invoices where id = v_inv), 'cancellation', 'R2761 test full CN', null);
+  perform set_config('request.jwt.claims', '', true);
+  if (select invoice_id from public.subscription_billings where id = v_b) is not null then
+    raise exception 'FAIL 7 setup: full credit note did not free the part'; end if;
+  if pg_temp.open_held(p_s) = '' then raise exception 'FAIL 7 setup: no open hold after the credit note (% / %)', pg_temp.st(p_s), pg_temp.moves(p_s); end if;
+  r := public.bill_subscription_instalment(v_b, false);
+  if r->>'action' = 'request' then
+    insert into public.payments (tenant_id, quote_id, amount, method, reference, status, received_at)
+    values ('b2761000-0000-0000-0000-0000000000f1', r->>'quote_id', (select amount from public.quotes where id = r->>'quote_id'),
+            'bank_transfer', 'R2761-7-' || p_k, 'received', now());
+  elsif r->>'action' <> 'invoice' then
+    raise exception 'FAIL 7: freed part not billed again: %', r;
+  end if;
+  if (select i.status::text from public.subscription_billings b join public.invoices i on i.id = b.invoice_id where b.id = v_b) <> 'paid' then
+    raise exception 'FAIL 7: re-billed part invoice not paid (%)', r; end if;
+  return pg_temp.open_held(p_s);
+end $f$;
+
+do $$
+declare v_s uuid; v_inv text; v_left text;
+begin
+  -- 7a. expired sub
+  v_s := pg_temp.sub(8);
+  v_inv := pg_temp.paid_part(v_s, 8);
+  update public.subscriptions set status = 'expired' where id = v_s;
+  v_left := pg_temp.full_cn_and_rebill(v_s, 8);
+  if v_left <> '' or pg_temp.st(v_s) <> '2027-09-30 renewed' or pg_temp.moves(v_s) like '%back%' then
+    raise exception 'FAIL 7a: expired, re-billed paid → open hold % / % / %', v_left, pg_temp.st(v_s), pg_temp.moves(v_s); end if;
+
+  -- 7b. quote linked
+  v_s := pg_temp.sub(9);
+  v_inv := pg_temp.paid_part(v_s, 9);
+  perform pg_temp.link_quote(v_s, 9, 'Q-R2761-9');
+  v_left := pg_temp.full_cn_and_rebill(v_s, 9);
+  if v_left <> '' or pg_temp.st(v_s) <> '2027-09-30 renewed' or pg_temp.moves(v_s) like '%back%' then
+    raise exception 'FAIL 7b: quote linked, re-billed paid → open hold % / % / %', v_left, pg_temp.st(v_s), pg_temp.moves(v_s); end if;
+
+  -- 7c. seat cut scheduled on an ACTIVE sub
+  v_s := pg_temp.sub(10);
+  update public.subscriptions set seats = 5 where id = v_s;
+  v_inv := pg_temp.paid_part(v_s, 10);
+  insert into public.subscription_seat_reductions (tenant_id, subscription_id, idempotency_key, timing, status, seats_before,
+                                                   seats_removed, seats_after, effective_date)
+  values ('b2761000-0000-0000-0000-0000000000f1', v_s, 'r2761-7c', 'end_of_term', 'scheduled', 5, 2, 3, '2027-09-30');
+  v_left := pg_temp.full_cn_and_rebill(v_s, 10);
+  if v_left <> '' or pg_temp.st(v_s) <> '2027-09-30 renewed' or pg_temp.moves(v_s) like '%back%' then
+    raise exception 'FAIL 7c: seat cut, re-billed paid → open hold % / % / %', v_left, pg_temp.st(v_s), pg_temp.moves(v_s); end if;
+  raise notice 'PASS 7: a hold made by a full credit note closes when the part is billed again and paid (expired / quote / seat cut)';
+end $$;
+
+-- ── 8. rev-r2761 LOW 2: seat-cut hold, the cut is cancelled with the part still unpaid → back once ──────
+do $$
+declare v_s uuid; v_inv text;
+begin
+  v_s := pg_temp.sub(11);
+  update public.subscriptions set seats = 5 where id = v_s;
+  v_inv := pg_temp.paid_part(v_s, 11);
+  insert into public.subscription_seat_reductions (tenant_id, subscription_id, idempotency_key, timing, status, seats_before,
+                                                   seats_removed, seats_after, effective_date)
+  values ('b2761000-0000-0000-0000-0000000000f1', v_s, 'r2761-8', 'end_of_term', 'scheduled', 5, 2, 3, '2027-09-30');
+  perform pg_temp.unpay(v_inv);
+  if pg_temp.open_held(v_s) <> 'seat_cut' or pg_temp.st(v_s) <> '2027-09-30 renewed' then
+    raise exception 'FAIL 8 setup: % / %', pg_temp.open_held(v_s), pg_temp.st(v_s); end if;
+  update public.subscription_seat_reductions set status = 'cancelled' where subscription_id = v_s and idempotency_key = 'r2761-8';
+  if pg_temp.st(v_s) <> '2026-09-30 pending' or pg_temp.open_held(v_s) <> ''
+     or (select count(*) from public.subscription_renewal_moves where subscription_id = v_s and direction = 'back') <> 1 then
+    raise exception 'FAIL 8: cut cancelled → % / open held % / %', pg_temp.st(v_s), pg_temp.open_held(v_s), pg_temp.moves(v_s); end if;
+  raise notice 'PASS 8: seat cut cancelled with the part unpaid → back once, hold closed';
+end $$;
+
+-- ── 9. rev-r2761 LOW 3: one open hold per subscription is enforced ─────────────────────────────────────
+do $$
+declare v_s uuid := 'b2761000-0000-0000-0000-000000000204';   -- sub 4: one open quote_linked hold
+begin
+  if pg_temp.open_held(v_s) <> 'quote_linked' then raise exception 'FAIL 9 setup: %', pg_temp.open_held(v_s); end if;
+  begin
+    insert into public.subscription_renewal_moves (tenant_id, subscription_id, direction, from_date, to_date, why, hold_kind)
+    values ('b2761000-0000-0000-0000-0000000000f1', v_s, 'held', '2027-09-30', '2026-09-30', 'second open hold', 'not_active');
+    raise exception 'FAIL 9: a second open hold was allowed';
+  exception when unique_violation then
+    raise notice 'PASS 9: a second open hold is refused (unique index)';
+  end;
+end $$;
+
 -- ── 6. Grants ──────────────────────────────────────────────────────────────────────────────────────
 do $$
 begin
   if has_function_privilege('authenticated', 'public.tg_r2761_recheck_held()', 'execute')
      or has_function_privilege('authenticated', 'public.tg_r2761_renewal_date_changed()', 'execute')
      or has_function_privilege('authenticated', 'public.tg_r2761_part_paid_recheck()', 'execute')
+     or has_function_privilege('authenticated', 'public.tg_r2761_part_linked_recheck()', 'execute')
+     or has_function_privilege('authenticated', 'public.tg_r2761_cut_cancelled_recheck()', 'execute')
      or has_function_privilege('anon', 'public.tg_r2761_recheck_held()', 'execute') then
     raise exception 'FAIL 6: R-2761 trigger functions executable by anon / authenticated'; end if;
   if has_function_privilege('authenticated', 'public.unroll_unpaid_renewal_terms(uuid,text)', 'execute') then

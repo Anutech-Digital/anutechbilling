@@ -23,7 +23,14 @@ describe("R-2761 renewalHeldReason", () => {
   it("quote linked / seat cut / unknown kind each say what to do", () => {
     expect(renewalHeldReason(held({ kind: "quote_linked" }), sub({ renewal_quote_id: "Q-1" }))).toMatch(/^Renewal held — renewal quote linked\..*Cancel or unlink that quote/);
     expect(renewalHeldReason(held({ kind: "seat_cut" }), sub())).toMatch(/^Renewal held — seat cut scheduled\..*Bill the part again/);
-    expect(renewalHeldReason(held({ kind: null }), sub())).toMatch(/^Renewal held\. /);
+    expect(renewalHeldReason(held({ kind: null }), sub())).toMatch(/^Renewal held\. .*Bill the part again\.$/);
+  });
+  it("rev-r2761 MED 1: seat cut / unknown never advise moving the date back by hand (a re-billed term is paid)", () => {
+    for (const kind of ["seat_cut", null] as const) {
+      const r = renewalHeldReason(held({ kind }), sub()) ?? "";
+      expect(r).toMatch(/Bill the part again\.$/);
+      expect(r).not.toMatch(/correct the renewal date|move it back/i);
+    }
   });
   it("stale hold (renewal_date moved since) or none → null", () => {
     expect(renewalHeldReason(held(), sub({ renewal_date: "2026-09-30" }))).toBeNull();
