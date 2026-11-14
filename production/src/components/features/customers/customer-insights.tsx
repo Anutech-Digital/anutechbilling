@@ -36,6 +36,7 @@ import type { PrimaryContact } from "@/components/features/customers/customer-li
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 import { seatsPhrase, manageSeatsHref } from "@/components/features/subscriptions/seat-words";
 import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
+import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 
 // ════════════════════════════════════════════════════════════════════════
 // Pure logic
@@ -125,11 +126,17 @@ export function deriveCustomerInsights(
   const lifetimePaid = projectPaid + Math.max(0, receivedPayments);
   const overdueCount = invoices.filter((i) => i.status === "overdue").length;
 
-  const nearestRenewal = activeSubs
+  /* R-2756: a subscription marked Won't renew (auto_renew off, R-2225) is not a renewal to send —
+     the next renewal and its "Send renewal quote" come from the renewing ones only; the nearest
+     Won't renew one gets its own next best action ("Won't renew · ends <date>"). */
+  const nearestDate = (list: Subscription[]) => list
     .map((s) => s.renewal_date)
     .filter((d): d is string => !!d)
     .sort()[0];
+  const nearestRenewal = nearestDate(activeSubs.filter((s) => !isNonRenewing(s)));
   const renewalDays = nearestRenewal ? daysBetween(new Date(), nearestRenewal) : null;
+  const endingOn = nearestDate(activeSubs.filter((s) => isNonRenewing(s)));
+  const ending = endingOn ? { on: endingOn, days: daysBetween(new Date(), endingOn) } : null;
 
   const firstName = (c.contact_name || c.name).split(/\s+/)[0];
   const phone = c.contact_phone?.replace(/\s+/g, "");
@@ -142,7 +149,7 @@ export function deriveCustomerInsights(
   const actionableQuote = [...draftQuotes].sort(byNewest)[0] ?? [...openQuotes].sort(byNewest)[0];
 
   const nba = computeNBA({
-    customer: c, firstName, phone, outstanding, overdueCount, renewalDays,
+    customer: c, firstName, phone, outstanding, overdueCount, renewalDays, ending,
     subCount: subs.length, projectReceivable, activeProjectCount: activeProjects.length, projectCount: projects.length,
     draftCount: draftQuotes.length, openCount: openQuotes.length, actionableQuoteId: actionableQuote?.id,
   });
@@ -153,10 +160,12 @@ export function deriveCustomerInsights(
 function computeNBA(args: {
   customer: Customer; firstName: string; phone?: string;
   outstanding: number; overdueCount: number; renewalDays: number | null; subCount: number;
+  /** R-2756: the nearest Won't renew subscription still running — its last day and the days to it. */
+  ending?: { on: string; days: number } | null;
   projectReceivable: number; activeProjectCount: number; projectCount: number;
   draftCount: number; openCount: number; actionableQuoteId?: string;
 }): Nba {
-  const { customer, firstName, phone, outstanding, overdueCount, renewalDays, subCount, projectReceivable, activeProjectCount, projectCount, draftCount, openCount, actionableQuoteId } = args;
+  const { customer, firstName, phone, outstanding, overdueCount, renewalDays, ending, subCount, projectReceivable, activeProjectCount, projectCount, draftCount, openCount, actionableQuoteId } = args;
   const canMessage = !!phone || !!customer.contact_email;
   const channel: "whatsapp" | "email" = phone ? "whatsapp" : "email";
 
@@ -179,6 +188,16 @@ function computeNBA(args: {
         ? "Includes a project payment still owed — collect it before it ages. AI can draft a friendly reminder."
         : "Collect this before it ages further — let AI draft a friendly reminder you can edit and send.",
       cta: canMessage ? { label: "Draft reminder with AI", kind: "draft", channel, purpose: "reminder" } : undefined,
+    };
+  }
+
+  // 2a. R-2756: the nearest thing ending is a Won't renew subscription — say so, never "Send renewal quote".
+  if (ending && ending.days <= 30 && (renewalDays == null || ending.days <= renewalDays)) {
+    return {
+      tone: "info",
+      icon: "clock",
+      title: `Won't renew · ends ${formatDate(ending.on)}`,
+      body: "The customer said they won't renew — no renewal quote or reminder goes out. Parts still due are billed. If they change their mind, use Undo Won't renew on the subscription.",
     };
   }
 
