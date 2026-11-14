@@ -68,6 +68,8 @@ function seed(): void {
 async function rowOn(page: Page, bucket: string): Promise<Locator> {
   await page.setViewportSize({ width: 1568, height: 900 });
   await openAppPage(page, `/renewals?bucket=${bucket}`, /Renewals/);
+  /* R-2764: a tab shows 50 rows, then Show more — find ours by its customer (the page search). */
+  await page.getByLabel("Search renewals by customer or domain").fill(NAME);
   const r = page.locator("tr", { hasText: PLAN }).filter({ visible: true });
   await expect(r).toHaveCount(1, { timeout: 60_000 });
   await expect(r.getByTestId("stage-chip")).toHaveCount(1, { timeout: 60_000 });
