@@ -5,7 +5,7 @@
  * (RenewalActions — the same dialogs). Rules + words: ./drawer.ts; the one read: ./drawer-data.ts.
  *
  *   header      customer (link) · plan · seats · vendor · the stage chip + note · the button
- *   Terms       this term · next term · amount · how it is billed · term length
+ *   Terms       this term · next term · the vendor's own renewal date (R-2823) · amount · how it is billed · term length
  *               (R-2819: owner / manager — Customer pays · Our cost · Margin, or "Cost missing — add in catalogue")
  *   Documents   every quote + invoice (id link · date · period · amount · status), newest first
  *   Payments    date · amount · method · the invoice it paid
@@ -30,7 +30,7 @@ import type { Subscription } from "@/lib/supabase/database.types";
 import type { RenewalStage } from "@/lib/renewals/stage";
 import type { UserName } from "@/lib/hooks/useUserNames";
 import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
-import { vendorHoldState } from "@/lib/renewals/vendor-hold";
+import { vendorHoldState, vendorTermEndOf, vendorTermWords } from "@/lib/renewals/vendor-hold";
 import { useRenewalDrawerData } from "./drawer-data";
 import { useRenewalDrawerCatalog } from "./drawer-cost-data";
 import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, mayShowRenewalCost, renewalCostForSub, type DrawerMoney } from "./drawer-money";
@@ -184,6 +184,8 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   const [showAll, setShowAll] = React.useState(false);
   React.useEffect(() => setShowAll(false), [sub?.id]);
   const todayIst = istToday();
+  /* R-2823: the vendor's own renewal date (subscriptions.vendor_term_end). */
+  const vendorWords = sub ? vendorTermWords({ ...sub, vendor_term_end: vendorTermEndOf(sub) || null }, todayIst) : null;
   /* Esc / Close returns focus to what opened it (the product button), even after the row re-rendered. */
   const restoreFocus = (e: Event) => {
     const el = drawerOpener;
@@ -255,6 +257,8 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                 <dl>
                   <Fact label="This term">{currentTermWords(sub) ?? "—"}</Fact>
                   <Fact label="Next term">{nextTermWords(sub) ?? "—"}</Fact>
+                  {/* R-2823: the vendor's own renewal date, only when known and not the same as ours. */}
+                  {vendorWords && <Fact label="At the vendor"><span className="tabular-nums" data-testid="renewal-drawer-vendor-term">{vendorWords}</span></Fact>}
                   <Fact label={showCost ? "Customer pays" : "Amount"}><span className="tabular-nums">{item.amount.text}</span> <span className="text-ink-3">{item.amount.gst}</span>
                     {showCost && booksLine && <span className="block text-xs text-ink-3 tabular-nums" data-testid="renewal-drawer-books">{booksLine}</span>}
                     {item.amount.quoteNote && <span className="block text-xs text-ink-3">{item.amount.quoteNote}</span>}</Fact>

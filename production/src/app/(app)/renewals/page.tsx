@@ -107,7 +107,8 @@ import {
 } from "@/components/ui/dialog";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
-import { type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
+import { type RenewalStage, type StageKey } from "@/lib/renewals/stage";
+import { StageFlagIcon } from "./stage-flag";
 import { dueCellFacts } from "./due-anchor";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
@@ -141,12 +142,8 @@ function RowActionLine({ action, canQuotes, className }: { action: RowAction; ca
 
 /** R-2758 (R-2738): the row's ONE chip = its stage; facts (at risk, vendor hold, previous term unpaid,
     promise broken, follow-up due) are small icons after it — never a second chip. null = documents
-    still loading: a placeholder, so the chip never flips from a guess (userAudit14Nov). */
-const FLAG_ICON: Record<FlagKey, React.ComponentProps<typeof Icon>["name"]> = {
-  atRisk: "alert", vendorHold: "lock", priorTermUnpaid: "rupee", promiseBroken: "x_circle", followUpDue: "phone",
-  renewalHeld: "clock",
-};
-
+    still loading: a placeholder, so the chip never flips from a guess (userAudit14Nov).
+    R-2823: the vendor hold reads in words ("Hold at Google — unpaid") — StageFlagIcon, ./stage-flag. */
 function StageChip({ stage, size, compact = false, canQuotes = false }: { stage: RenewalStage | null; size?: "sm"; compact?: boolean; canQuotes?: boolean }) {
   if (!stage) return <Skeleton className="h-5 w-24" aria-label="Loading status" data-testid="stage-chip-loading" />;
   /* R-2759: in the table the chip drops the period (Product & period says it); its day count / amount is
@@ -169,14 +166,6 @@ function StageChip({ stage, size, compact = false, canQuotes = false }: { stage:
   );
 }
 
-function StageFlagIcon({ flag }: { flag: StageFlag }) {
-  return (
-    <span role="img" aria-label={flag.reason} title={flag.reason} data-flag={flag.key}
-      className={cn("inline-flex h-5 w-5 items-center justify-center rounded-full", flag.key === "followUpDue" ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-600")}>
-      <Icon name={FLAG_ICON[flag.key]} size={11} />
-    </span>
-  );
-}
 
 function ContactLine({ contact }: { contact: RowContact | undefined }) {
   if (!contact || (!contact.phone && !contact.email)) {
