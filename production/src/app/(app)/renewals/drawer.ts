@@ -202,6 +202,8 @@ export const FLAG_EXPLAIN: Record<FlagKey, { title: string; explain: string }> =
   priorTermUnpaid: { title: "Previous term unpaid", explain: "Money from the term now ending is still owed — collect it along with this renewal." },
   promiseBroken: { title: "Promise broken", explain: "The customer promised to pay by a date that has passed, and the money has not come in." },
   followUpDue: { title: "Follow-up due", explain: "The next follow-up date on this renewal is today or already past — call or message, then log it." },
+  /* R-2761: an open 'held' undo (R-2749) — the renewal date was kept although the part's payment was undone. */
+  renewalHeld: { title: "Renewal held", explain: "A paid renewal part's payment was undone but the renewal date was kept — bill the part again, or make the subscription active / clear the quote link so the date moves back." },
 };
 
 export interface DrawerFlagRow { key: FlagKey | "nonRenewing" | "renewedAnyway"; title: string; reason: string; explain: string }

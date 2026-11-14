@@ -80,7 +80,8 @@ describe("R-2740 all documents of a subscription", () => {
 
   it("the drawer alone follows revisions (the page's read keeps its 9 batched reads)", () => {
     const data = readFileSync(new URL("./last-docs-data.ts", import.meta.url), "utf8");
-    expect(data).toMatch(/if \(opts\.moreQuotes\) round1\.push/);
+    /* R-2765 (changed expectation): the revisions are their own list (`more`), read only when the drawer passes moreQuotes */
+    expect(data).toMatch(/const more = opts\.moreQuotes \? await opts\.moreQuotes\(/);
     const drawerData = readFileSync(new URL("./drawer-data.ts", import.meta.url), "utf8");
     expect(drawerData).toMatch(/superseded_by\.in\.[\s\S]*?revision_of\.in\./);
     expect(drawerData).toMatch(/moreQuotes: readRevisions/);
@@ -239,8 +240,10 @@ describe("R-2740 wiring", () => {
   const read = (f: string) => readFileSync(new URL(f, import.meta.url), "utf8");
   it("the drawer reads once per open, through the rows' own batched readers (no per-document calls)", () => {
     const data = read("./drawer-data.ts");
-    expect(data).toMatch(/readRenewalDocs\(\[ref!\], \{ all: true, moreQuotes: readRevisions \}\)/);
-    expect(data).toMatch(/readRenewalLastPaid\(\[ref!\], \{ historySize: Infinity \}\)/);
+    /* R-2765 (changed expectation): rounds 1–2 read once, then the docs (every quote + invoice) and every payment from them */
+    expect(data).toMatch(/readRenewalDocRows\(\[ref!\], \{ moreQuotes: readRevisions \}\)/);
+    expect(data).toMatch(/docsFromRows\(\[ref!\], rows, \{ all: true \}\)/);
+    expect(data).toMatch(/lastPaidFromDocRows\(\[ref!\], rows, \{ historySize: Infinity \}\)/);
     expect(data).toMatch(/enabled: !!ref/);
     expect(data.match(/useQuery\(/g)).toHaveLength(1);
   });

@@ -33,6 +33,7 @@ const SQL_SALE = new Set([
   "correct_invoice_date",  // R-2173: re-dates one issued sale of ours - an opening balance (not a sale) is refused
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  r2768_invoice_line_period_plan: "R-2768: owner-approved one-off data repair — reads issued quote-made invoices' line_items and amounts only to decide whether storing each line's service_period keeps the printed invoice identical; it totals nothing and no report or GST figure reads it",
   invoice_note_gst_split: "R-2717: reads tax_rate / taxable_value / tax_amount / line_items of the ONE invoice a credit or debit note is being issued on (by id, same tenant), to split that note's GST — issue_credit_note_core / issue_debit_note only; no list or total (a note on a Zoho opening invoice is split the same way)",
   reduce_subscription_seats: "R-2252: the ONE invoice of a subscription part (by its quote / billing row) a seat cut credits — its open and settled amounts for the split, then issue_credit_note_core; no list or total",
   r2626_plan_change_vs_later_part: "R-2626: only checks whether a LATER billing part of one subscription has a live (non-void) invoice, to refuse paying a plan-change quote — no amounts, lists or totals",

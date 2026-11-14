@@ -88,6 +88,7 @@ import { useRenewalLastPaid } from "./last-paid-data";
 import { LastPaidLine } from "./last-paid-cell";
 import type { LastPaid } from "./last-paid";
 import { useRenewalLastDocs } from "./last-docs-data";
+import { useRenewalHolds } from "./held-data";
 import { LastDocsLines, SentDueLines } from "./last-docs-cell";
 import { paidInvoiceOf, type LastDocs } from "./last-docs";
 import { canOpenInvoices } from "@/lib/invoices/access";
@@ -138,6 +139,7 @@ function RowActionLine({ action, canQuotes, className }: { action: RowAction; ca
     still loading: a placeholder, so the chip never flips from a guess (userAudit14Nov). */
 const FLAG_ICON: Record<FlagKey, React.ComponentProps<typeof Icon>["name"]> = {
   atRisk: "alert", vendorHold: "lock", priorTermUnpaid: "rupee", promiseBroken: "x_circle", followUpDue: "phone",
+  renewalHeld: "clock",
 };
 
 function StageChip({ stage, size, compact = false, canQuotes = false }: { stage: RenewalStage | null; size?: "sm"; compact?: boolean; canQuotes?: boolean }) {
@@ -582,6 +584,8 @@ export default function RenewalsPage() {
   const lastPaid = { data: lastPaidQ.data, loading: lastPaidQ.isLoading, failed: lastPaidQ.isError };
   /* R-2728: last quote sent / last invoice / "Renewal quote sent" for every listed renewal — one batched read. */
   const lastDocsQ = useRenewalLastDocs(listed);
+  /* R-2761: open "held" renewal undos (a paid part's payment undone, date kept) → a flag on the row. */
+  const { data: holds } = useRenewalHolds(listed.map((s) => s.id));
   const docsState = { loading: lastDocsQ.isLoading, failed: lastDocsQ.isError && !lastDocsQ.data };
   const [fuFilters, setFuFilters] = React.useState<FollowupFilters>(NO_FOLLOWUP_FILTERS);
   const [followupFor, setFollowupFor] = React.useState<QueueItem | null>(null);
@@ -603,8 +607,8 @@ export default function RenewalsPage() {
   const docsLoadingAll = lastDocsQ.isLoading || docsState.failed || quoteInfoLoading || openRenewalsLoading;
   const built = React.useMemo(() => (subs ? buildQueueItems({
     subs, openRenewalMap, quoteInfo, quoteStatusMap, docs: lastDocsQ.data, docsLoading: docsLoadingAll,
-    fuData, contacts, role: me?.role, graceDays, today: todayDate, todayIst: todayIst,
-  }) : null), [subs, openRenewalMap, quoteInfo, quoteStatusMap, lastDocsQ.data, docsLoadingAll, fuData, contacts, me?.role, graceDays, todayDate, todayIst]);
+    fuData, contacts, role: me?.role, graceDays, today: todayDate, todayIst: todayIst, holds,
+  }) : null), [subs, openRenewalMap, quoteInfo, quoteStatusMap, lastDocsQ.data, docsLoadingAll, fuData, contacts, me?.role, graceDays, todayDate, todayIst, holds]);
   /* The tab from ?bucket= (old values map through resolveBucket) and every tab's narrowed rows —
      kept until the search / filters / sort / data change, so a tab click only swaps the list shown. */
   const counts = React.useMemo(

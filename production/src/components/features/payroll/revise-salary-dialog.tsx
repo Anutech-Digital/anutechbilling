@@ -4,7 +4,8 @@
  * Months before "Effective from" keep the old salary (lib/payroll/salary-revision.ts
  * salaryInForce); booked months are never changed — a month already paid gives arrears that the
  * next Pay salary offers. The breakdown is the profile's own CTC (ctcFromEmployee) with the
- * employee's PF / ESI switches and that month's PF ceiling. One RPC: revise_employee_salary.
+ * employee's PF / ESI switches, that month's PF ceiling and (R-2770) the company payroll policy —
+ * the same CTC as the profile, the Employees table and the Salary Register. One RPC: revise_employee_salary.
  */
 "use client";
 
@@ -16,7 +17,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { rupee } from "@/lib/utils";
-import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { ctcFromEmployee, employeeCtcOptions } from "@/lib/payroll/ctc";
+import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { periodLabel } from "@/lib/payroll/period-label";
 import {
   arrearsForMonth, defaultEffectiveMonth, grossForAnnualCtc, nextPeriod, revisionBookedNote, revisionMonth, salaryInForce, scaledStructure,
@@ -51,9 +53,19 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
   }, [month, historyQ.isSuccess, revisionsQ.isSuccess, lastBooked, minMonth]);
   const asOf = month || istToday().slice(0, 7);
 
-  const currentCtc = ctcFromEmployee({ ...current, ...switches }, { asOf }).annualCtc;
+  /* R-2770: the company payroll policy (gratuity on/off, CTC includes the employer's PF / ESI /
+     gratuity or not) — without it this CTC differed from the profile's for a "CTC = gross" company. */
+  const policyQ = usePayrollPolicy();
+  /* No default-policy guess (code review): the CTC / gross boxes and Save wait for the policy. */
+  const policyReady = policyQ.isSuccess;
+  const ctcOpts = employeeCtcOptions(policyQ.data, asOf);
+  const currentCtc = ctcFromEmployee({ ...current, ...switches }, ctcOpts).annualCtc;
   const [gross, setGross] = React.useState(String(employee.monthly_gross || ""));
-  const [ctc, setCtc] = React.useState(String(currentCtc || ""));
+  const [ctc, setCtc] = React.useState("");
+  const [ctcTouched, setCtcTouched] = React.useState(false);
+  React.useEffect(() => {
+    if (policyReady && !ctcTouched) setCtc(String(currentCtc || ""));
+  }, [policyReady, ctcTouched, currentCtc]);
   const [basic, setBasic] = React.useState(employee.basic_monthly != null ? String(employee.basic_monthly) : "");
   const [da, setDa] = React.useState(String(employee.da_monthly ?? 0));
   const [splitTyped, setSplitTyped] = React.useState(false);
@@ -66,15 +78,17 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
     setDa(String(s.da_monthly ?? 0));
   };
   const onGross = (v: string) => {
+    setCtcTouched(true);
     setGross(v);
     const g = Math.max(0, Math.round(Number(v) || 0));
     applyGross(g);
     const s = splitTyped ? { monthly_gross: g, basic_monthly: basic === "" ? null : Number(basic), da_monthly: Number(da) || 0 } : scaledStructure(current, g);
-    setCtc(g > 0 ? String(ctcFromEmployee({ ...s, ...switches }, { asOf }).annualCtc) : "");
+    setCtc(g > 0 ? String(ctcFromEmployee({ ...s, ...switches }, ctcOpts).annualCtc) : "");
   };
   const onCtc = (v: string) => {
+    setCtcTouched(true);
     setCtc(v);
-    const g = grossForAnnualCtc(Number(v) || 0, { ...current, ...switches }, asOf);
+    const g = grossForAnnualCtc(Number(v) || 0, { ...current, ...switches }, asOf, policyQ.data);
     setGross(g > 0 ? String(g) : "");
     applyGross(g);
   };
@@ -83,7 +97,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
   const basicN = basic.trim() === "" ? null : Math.max(0, Math.round(Number(basic) || 0));
   const daN = Math.max(0, Math.round(Number(da) || 0));
   const next = { monthly_gross: grossN, basic_monthly: basicN, da_monthly: daN };
-  const breakdown = ctcFromEmployee({ ...next, ...switches }, { asOf });
+  const breakdown = ctcFromEmployee({ ...next, ...switches }, ctcOpts);
 
   const same = grossN === employee.monthly_gross && basicN === employee.basic_monthly && daN === (employee.da_monthly ?? 0);
   const splitTooBig = (basicN ?? 0) + daN > grossN;
@@ -102,7 +116,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
      booked before salary revisions are named — their old salary is inferred, check it. */
   const bookedNote = revisionBookedNote(bookedFrom, periodLabel);
 
-  const valid = Boolean(month) && grossN > 0 && !same && !splitTooBig && !tooEarly && !cutIntoPaid;
+  const valid = policyReady && Boolean(month) && grossN > 0 && !same && !splitTooBig && !tooEarly && !cutIntoPaid;
 
   async function submit() {
     if (!valid) return;
@@ -134,15 +148,15 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
               {tooEarly && <p className="mt-1 text-xs text-rose">Pick {periodLabel(minMonth)} or later{latestRev ? ` — a revision from ${periodLabel(latestRev)} already exists` : ""}.</p>}
             </div>
             <div className="text-xs text-ink-3 self-end pb-1">
-              Now: <b className="text-ink-2">{rupee(employee.monthly_gross)}</b>/month · CTC {rupee(currentCtc)}/yr
+              Now: <b className="text-ink-2">{rupee(employee.monthly_gross)}</b>/month · CTC {policyReady ? `${rupee(currentCtc)}/yr` : "…"}
             </div>
             <div>
               <label htmlFor="revise-ctc" className={label}>New annual CTC (₹)</label>
-              <Input id="revise-ctc" type="number" min={0} value={ctc} onChange={(e) => onCtc(e.target.value)} />
+              <Input id="revise-ctc" type="number" min={0} value={ctc} disabled={!policyReady} onChange={(e) => onCtc(e.target.value)} />
             </div>
             <div>
               <label htmlFor="revise-gross" className={label}>New monthly gross (₹)</label>
-              <Input id="revise-gross" type="number" min={0} value={gross} onChange={(e) => onGross(e.target.value)} />
+              <Input id="revise-gross" type="number" min={0} value={gross} disabled={!policyReady} onChange={(e) => onGross(e.target.value)} />
             </div>
             <div>
               <label htmlFor="revise-basic" className={label}>Basic (₹/month)</label>
@@ -153,6 +167,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
               <Input id="revise-da" type="number" min={0} value={da} onChange={(e) => { setSplitTyped(true); setDa(e.target.value); }} />
             </div>
           </div>
+          {policyQ.isError && <p className="text-xs text-rose">The payroll policy did not load, so the CTC can&apos;t be worked out — close this and try again.</p>}
           {splitTooBig && <p className="text-xs text-rose">Basic + DA can&apos;t be more than the monthly gross.</p>}
 
           {grossN > 0 && (

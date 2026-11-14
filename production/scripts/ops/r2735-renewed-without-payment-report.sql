@@ -117,11 +117,20 @@ select o.tenant_id, count(*) over (partition by o.tenant_id) as rows_in_company,
 
 \echo
 \echo '=== 3. Moves of renewal_date by a renewal part (R-2749): forward = part paid, back = payment undone, held = undone but date left (owner decides) ==='
+-- R-2761: a database without R-2749 (no moves table yet) skips this section instead of erroring; hold_kind /
+-- resolved_at (R-2761) are read through to_jsonb so the section also runs before R-2761. An OPEN hold
+-- (direction held, hold_resolved_at empty) is also shown on the Renewals row as "Renewal held".
+select to_regclass('public.subscription_renewal_moves') is not null as r2761_has_moves \gset
+\if :r2761_has_moves
 select m.tenant_id, m.subscription_id, s.customer_name, s.plan, m.direction, m.from_date, m.to_date,
-       m.invoice_id, m.why, m.created_at at time zone 'Asia/Kolkata' as moved_at_ist,
+       m.invoice_id, m.why, to_jsonb(m)->>'hold_kind' as hold_kind, to_jsonb(m)->>'resolved_at' as hold_resolved_at,
+       m.created_at at time zone 'Asia/Kolkata' as moved_at_ist,
        s.renewal_date as renewal_date_now, s.renewal_state::text as renewal_state_now
   from public.subscription_renewal_moves m
   join public.subscriptions s on s.id = m.subscription_id and s.tenant_id = m.tenant_id
  order by m.tenant_id, m.created_at desc, m.id desc;
+\else
+\echo '(section 3 skipped: subscription_renewal_moves is not on this database yet — R-2749 not deployed here)'
+\endif
 
 rollback;

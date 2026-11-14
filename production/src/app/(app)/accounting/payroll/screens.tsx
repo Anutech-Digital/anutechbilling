@@ -37,7 +37,7 @@ import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysFo
 import { isEsiEligible, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
 import { salaryAutoDeductions, monthNetPay, payslipsByEmployee, fyFirstPeriod, annualFromMonthlyCtc, monthlyFromAnnualCtc, basicFromPct, basicShareText, type MonthNetPay } from "@/lib/payroll/net-pay";
-import { ctcTabBreakdown, ctcFormulaText, ctcFormFill, applyStructureBlockedReason, type CtcFormBase } from "@/lib/payroll/ctc";
+import { ctcTabBreakdown, ctcFormulaText, ctcFormFill, applyStructureBlockedReason, employeeCtc, type CtcFormBase } from "@/lib/payroll/ctc";
 import { DEFAULT_PAYROLL_POLICY, newEmployeeDefaults } from "@/lib/payroll/policy";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { bookedStatutoryMonths, bookedStatutoryText, esiRuleNote } from "@/lib/payroll/statutory";
@@ -248,6 +248,24 @@ export function EmployeesTab() {
     return out;
   }, [rows, payslipsQ.isSuccess, payslipsQ.data, revisionsQ.isSuccess, revisionsQ.data, inHandPeriod]);
   const inHandFailed = payslipsQ.isError || revisionsQ.isError;
+  /* R-2770 (Hitesh): "CTC / month" — the SAME number as the employee drawer and the Salary
+     Register CTC tab (lib/payroll/ctc.ts employeeCtc, company payroll policy, this month's PF
+     ceiling). "…" until the policy has loaded — never a ₹0 or a default-policy guess. */
+  const ctcPolicyQ = usePayrollPolicy();
+  const ctcHeaderTitle = (!ctcPolicyQ.data
+    ? "Monthly CTC by the company payroll policy."
+    : ctcPolicyQ.data.ctcIncludesEmployer === false
+    ? "Monthly CTC = monthly gross (company payroll policy: employer PF / ESI / gratuity are paid on top)."
+    : `Monthly CTC = gross + employer PF + employer ESI${ctcPolicyQ.data.gratuity ? " + gratuity" : ""} (company payroll policy).`)
+    + " Same figure as the employee's profile and the Salary Register CTC tab.";
+  const ctcCell = (e: Employee) => {
+    if (!e.is_active) return <span className="text-ink-3" title="Not on payroll.">—</span>;
+    if (!(e.monthly_gross > 0)) return <span className="text-ink-3" title="No salary set yet.">—</span>;
+    if (ctcPolicyQ.isError) return <span className="text-ink-3" title="The payroll policy did not load — CTC is not shown.">—</span>;
+    if (!ctcPolicyQ.isSuccess) return <span className="text-ink-3" aria-label="Loading">…</span>;
+    const c = employeeCtc(e, ctcPolicyQ.data, inHandPeriod);
+    return <span className="font-mono tabular-nums text-ink-2" data-testid="employee-ctc-month" title={`Annual CTC ${rupee(c.annualCtc)}`}>{rupee(c.monthlyCtc)}</span>;
+  };
   const inHandCell = (e: Employee) => {
     /* Code review: in the exit month Pay salary pays only up to the last working day — a full-month figure would not match it. */
     if (exitPayDays(e, inHandPeriod)) return <span className="text-ink-3" title={`Exit month — Pay salary for ${periodLabel(inHandPeriod)} pays up to the last working day; see the figure there.`}>Exit month</span>;
@@ -301,6 +319,8 @@ export function EmployeesTab() {
               <thead className="bg-paper-2/50 text-3xs uppercase tracking-wider text-ink-3 font-semibold">
                 <tr>
                   <th className="text-left px-4 py-3 whitespace-nowrap">Employee</th>
+                  {/* R-2770 (Hitesh): CTC just before Gross — same helper as the drawer + Salary Register. */}
+                  <th className="text-right px-2 py-3 whitespace-nowrap" title={ctcHeaderTitle}>CTC / month</th>
                   {/* R-2733: this is the monthly GROSS (base for the pay slip) — not the CTC, which also has employer PF / ESI / gratuity. */}
                   <th className="text-right px-2 py-3 whitespace-nowrap" title="Monthly gross salary — the base for the pay slip, before PF / ESI / TDS. Not the CTC: the CTC also has the employer's PF / ESI / gratuity.">Gross / month</th>
                   <th className="text-right px-2 py-3 whitespace-nowrap" title={`Full month of ${periodLabel(inHandPeriod)}: gross − employee PF − employee ESI − TDS, as Pay salary works it out for a full month. Pay salary before the month ends pre-fills only the days so far, and LOP / advances / bonus change it.`}>In-hand / month</th>
@@ -350,6 +370,7 @@ export function EmployeesTab() {
                           {e.email && <span className="font-mono text-ink-2">{e.email}</span>}
                         </div>
                       </td>
+                      <td className="px-2 py-3 text-right whitespace-nowrap">{ctcCell(e)}</td>
                       <td className="px-2 py-3 text-right">
                         {e.monthly_gross > 0 ? (
                           <span className="font-mono font-semibold tabular-nums text-ink">{rupee(e.monthly_gross)}</span>
@@ -411,6 +432,7 @@ export function EmployeesTab() {
                         <div className="shrink-0 text-right">
                           <div className="font-serif text-xl leading-none text-ink">{rupee(e.monthly_gross)}</div>
                           <div className="text-xs text-ink-3 mt-1">gross · in-hand {inHandCell(e)}</div>
+                          <div className="text-xs text-ink-3">CTC / month {ctcCell(e)}</div>
                         </div>
                       ) : (
                         <Badge kind="warning" size="sm">Salary pending</Badge>

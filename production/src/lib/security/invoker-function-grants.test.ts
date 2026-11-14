@@ -50,8 +50,45 @@ const SERVICE_ROLE_ONLY: Record<string, string> = {
     "revoked on purpose (r2154_dues_drift_per_quote.test.sql case F).",
 };
 
+/** Invoker functions run ONLY by the owner / migration login (one-off repairs), never by the app or
+ *  service_role: no grant to authenticated on purpose. */
+const MIGRATION_LOGIN_ONLY: Record<string, string> = {
+  r2768_customer_quote_notes:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_invoice_line_period_plan:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_js_trim:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_lines_period_months:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_months_words:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_note_lead:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_quote_notes_plan:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_repair_invoice_line_periods:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_repair_quote_notes:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_repaired_notes:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_safe_lines_with_periods:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_scrub_customer_text:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_strip_ids:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2768_undo:
+    "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+};
+
 /** Invoker functions only ever called from inside SECURITY DEFINER code (runs as owner). */
 const DEFINER_INTERNAL: Record<string, string> = {
+  r2768_freeze_allows:
+    "R-2768: only called inside tg_invoices_freeze_issued (security definer) — the narrow logged line-period allowance; revoked from public/anon/authenticated.",
+  r2768_lines_without:
+    "R-2768: only called inside r2768_freeze_allows (from the definer freeze trigger) and the owner-only repair functions; revoked from public/anon/authenticated.",
   customer_name_key:
     "20261003130000: used only by customer_names_agree, inside match_existing_customer (definer).",
   customer_names_agree:
@@ -223,6 +260,7 @@ function analyse(files: Array<[string, string]>): { findings: Finding[]; checked
       continue;
     }
     if (DEFINER_INTERNAL[f.name]) continue;
+    if (MIGRATION_LOGIN_ONLY[f.name]) continue;
     if (!has(f, "authenticated")) {
       findings.push({ file: f.file, fn: k, problem: "SECURITY INVOKER with no `grant execute on function public." + k + " to authenticated`" });
     }
@@ -288,7 +326,7 @@ describe("R-401: new SECURITY INVOKER functions carry an explicit EXECUTE grant"
 
   it("every allow-list entry is still a real invoker function with a reason", () => {
     const invokers = new Set(checked.filter((f) => !f.definer).map((f) => f.name));
-    for (const [name, why] of Object.entries({ ...SERVICE_ROLE_ONLY, ...DEFINER_INTERNAL })) {
+    for (const [name, why] of Object.entries({ ...SERVICE_ROLE_ONLY, ...DEFINER_INTERNAL, ...MIGRATION_LOGIN_ONLY })) {
       expect(invokers.has(name), `${name} is allow-listed but no migration from ${FROM} creates it as invoker`).toBe(true);
       expect(why.length).toBeGreaterThan(20);
     }

@@ -87,7 +87,11 @@ describe("R-2752 wiring", () => {
     expect(page).toMatch(/failed=\{lastPaid\.failed \|\| \(!paid && docsState\.failed\)\}/);
   });
   it("Last paid reads the billed parts' proformas in the same batched round (no per-row read)", () => {
-    expect(data).toMatch(/\.in\("subscription_billing_id", run\)/);
+    /* R-2765 (changed expectation): the proformas come from Last docs' shared rounds 1–2 (one read for
+       both) — data-reads-r2765.test.ts proves a part-proforma payment still counts. */
+    const docs = readFileSync("src/app/(app)/renewals/last-docs-data.ts", "utf8");
+    expect(docs).toMatch(/\.in\("subscription_billing_id", run\)/);
+    expect(data).toMatch(/docRows\.parts\.map\(\(q\) => \(\{ id: q\.id, invoice_id: q\.invoice_id \?\? null, subscription_billing_id: q\.subscription_billing_id \?\? null/);
     expect(data).not.toMatch(/\.single\(\)|\.maybeSingle\(\)/);
   });
 });
