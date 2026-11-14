@@ -35,7 +35,7 @@ import { formatMonthLabel, fyStartYear, fyLabelOfYear, istToday } from "@/lib/da
 import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines, useSalaryBankLines, useSalaryRevisions, type SalaryPayment } from "@/lib/queries/payroll";
 import { monthNetPay, payslipsByEmployee } from "@/lib/payroll/net-pay";
 import { revisionsByEmployee } from "@/lib/payroll/salary-revision";
-import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { employeeCtc } from "@/lib/payroll/ctc";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { fyPayslipActuals } from "@/lib/payroll/ctc-register";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
@@ -179,9 +179,9 @@ function MonthRegister() {
   /* R-2700: the company payroll policy — gratuity on/off and whether the CTC includes the
      employer's PF / ESI / gratuity — the same rule as the employee form's CTC tab (review F1). */
   const payrollPolicy = usePayrollPolicy().data;
-  const includeGratuity = payrollPolicy?.gratuity ?? true;
   const ctcIncludesEmployer = payrollPolicy?.ctcIncludesEmployer ?? true;
-  const ctcOf = (e: (typeof ctcEmployees)[number]) => ctcFromEmployee(e, { asOf: ctcMonth, includeGratuity, ctcIncludesEmployer });
+  /* R-2770: one helper — the same Monthly CTC as the Employees table and the employee drawer. */
+  const ctcOf = (e: (typeof ctcEmployees)[number]) => employeeCtc(e, payrollPolicy, ctcMonth);
   const fyActuals = fyPayslipActuals(allPayQ.data ?? [], ctcFy);
   /* R-2733 (owner: PT does not apply): Net Take Home = the net Pay salary works out for a full
      month (lib/payroll/net-pay.ts — the Employees table's In-hand and the CTC tab read the same),
