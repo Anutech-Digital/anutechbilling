@@ -26,6 +26,7 @@ import "@/site/warm/legal-shop.css";
 import "@/site/warm/domains.css";
 import "@/site/warm/hosting.css";
 import "@/site/warm/switch.css";
+import "@/site/warm/whatsapp.css";
 import { SITE_URL } from "@/site/lib/config";
 
 /**

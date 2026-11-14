@@ -22,6 +22,7 @@ import "@/site/warm/extra-checkout.css";
 import "@/site/warm/extra-lp.css";
 import "@/site/warm/extra-product-pages.css";
 import "@/site/warm/extra-forms.css";
+import "@/site/warm/whatsapp.css"; // last: WhatsApp keeps its green
 
 interface WarmScopeProps {
   children: React.ReactNode;

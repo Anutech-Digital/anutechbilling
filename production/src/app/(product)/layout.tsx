@@ -11,6 +11,7 @@ import { siteWarmBody, siteWarmHeading } from "@/lib/fonts";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { getWebsiteTheme } from "@/lib/website-theme.server";
 import "@/site/warm/product.css";
+import "@/site/warm/whatsapp.css";
 import "@/site/warm-only.css";
 
 export const metadata: Metadata = {

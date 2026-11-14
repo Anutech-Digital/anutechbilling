@@ -1,0 +1,71 @@
+/**
+ * Warm theme — WhatsApp keeps WhatsApp's own green (owner, 14 Nov 2026: "Keep the brand color such as
+ * WhatsApp one to green, since that is more recognisable for frontend users").
+ * Loaded LAST by every warm layout so it wins over the page files that had drawn WhatsApp in marigold,
+ * teal or a white outline. Buttons: WhatsApp green with dark text (white on #25D366 fails AA contrast).
+ * Text links: green text. Classic is untouched (every selector is under the warm scope).
+ */
+.anutech-site[data-site-theme="warm"] a[href*="wa.me"],
+.anutech-product[data-site-theme="warm"] a[href*="wa.me"],
+.w-scope[data-site-theme="warm"] a[href*="wa.me"]:not(:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [class*="h-[50px]"], [style*="25D366" i], [style*="37, 211, 102"])) {
+  color: #0F7B4F !important;
+}
+.anutech-site[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]),
+.anutech-site[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"],
+.anutech-product[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]),
+.anutech-product[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"],
+.w-scope[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]),
+.w-scope[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"] {
+  background: #25D366 !important;
+  color: #0B2B1C !important;
+  border-color: #25D366 !important;
+}
+.anutech-site[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]):hover,
+.anutech-site[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"]:hover,
+.anutech-product[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]):hover,
+.anutech-product[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"]:hover,
+.w-scope[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]):hover,
+.w-scope[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"]:hover {
+  background: #1EBE5B !important;
+  border-color: #1EBE5B !important;
+  color: #0B2B1C !important;
+}
+.anutech-site[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]) svg,
+.anutech-site[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"] svg,
+.anutech-product[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]) svg,
+.anutech-product[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"] svg,
+.w-scope[data-site-theme="warm"] a[href*="wa.me"]:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [style*="25D366" i], [style*="37, 211, 102"]) svg,
+.w-scope[data-site-theme="warm"] a[href*="wa.me"][class*="h-[50px]"] svg {
+  color: currentColor !important;
+}
+/* Dark: brighter green text so a link stays readable on the dark page. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] a[href*="wa.me"]:not(:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [class*="h-[50px]"], [style*="25D366" i], [style*="37, 211, 102"])),
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] a[href*="wa.me"]:not(:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [class*="h-[50px]"], [style*="25D366" i], [style*="37, 211, 102"])),
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] a[href*="wa.me"]:not(:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [class*="h-[50px]"], [style*="25D366" i], [style*="37, 211, 102"])) {
+  color: #5BE39A !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] a[href*="wa.me"]:not(:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [class*="h-[50px]"], [style*="25D366" i], [style*="37, 211, 102"])),
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] a[href*="wa.me"]:not(:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [class*="h-[50px]"], [style*="25D366" i], [style*="37, 211, 102"])),
+  :root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] a[href*="wa.me"]:not(:is(.btn, .hc-btn, .hlp-dark, .wp-btn, .gw-btn, .gw-mini, [class*="h-[50px]"], [style*="25D366" i], [style*="37, 211, 102"])) {
+    color: #5BE39A !important;
+  }
+}
+
+/* Page files that drew a WhatsApp link more specifically than the rules above. */
+/* Email: the "Not sure?" line sits on the dark band — bright green text there. */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > p:last-child a[href*="wa.me"] {
+  color: #5BE39A !important;
+}
+/* Hosting: "Ask about my site" in the forest move panel. */
+.anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(4) > a.hlp-dark[href*="wa.me"] {
+  background: #25D366 !important; color: #0B2B1C !important;
+}
+.anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(4) > a.hlp-dark[href*="wa.me"]:hover {
+  background: #1EBE5B !important;
+}
+/* Buy Workspace: "WhatsApp a quote request" on the forest "Prefer to talk it through?" band. */
+.w-scope[data-site-theme="warm"] div.min-h-screen:has(#talk-to-us) #talk-to-us a[href*="wa.me"][class*="h-[50px]"],
+.w-scope[data-site-theme="warm"] div.min-h-screen:has(#talk-to-us) #talk-to-us a[href*="wa.me"][class*="h-[50px]"]:hover {
+  color: #0B2B1C !important; border-color: #25D366 !important;
+}
