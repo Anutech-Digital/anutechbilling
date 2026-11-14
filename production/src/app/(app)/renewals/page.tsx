@@ -847,11 +847,12 @@ export default function RenewalsPage() {
       toast.info("No renewals to export in the next 90 days");
       return;
     }
+    const owedById = new Map(allItems.map((i) => [i.sub.id, i.owed?.total ?? null]));   // R-2818: the one owed rule, blank while not read
     const rows = upcoming90
       .slice()
       .sort((a, b) => a.daysUntil - b.daysUntil)
       .map(({ sub, daysUntil }) => {
-        const risk = renewalRisk(sub);
+        const risk = renewalRisk(sub, { owed: owedById.get(sub.id) ?? null });
         const amount = renewalAmount(sub, quoteOf(sub));
         return [
           sub.customer_name,
@@ -863,7 +864,7 @@ export default function RenewalsPage() {
           amount.value,   // R-2431: the row's renewal amount (the tiles' money), not mrr × 12
           sub.renewal_date ? formatDate(sub.renewal_date) : "",
           daysUntil,
-          sub.outstanding_amount,
+          owedById.get(sub.id) ?? "",
           risk.label,
           /* R-2431: new columns at the END, so a template reading by position still lines up. */
           "Term amount, + GST",   // R-2751: one basis — a renewal quote never changes the amount
