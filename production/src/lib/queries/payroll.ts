@@ -15,6 +15,7 @@ import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
+import { salaryGuardNext, type SalaryTdsLock } from "@/lib/payroll/salary-edit";
 import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
@@ -797,7 +798,8 @@ export function useDeleteSalaryPayment(opts: { quiet?: boolean; hold?: boolean }
     mutationFn: async (salaryId: string) => {
       const supabase = createClient();
       const { error } = await supabase.rpc("delete_salary_payment", { p_salary_id: salaryId });
-      if (error) throw new Error(error.message);
+      // R-2812: keep the refusal's HINT (the page that lifts it) for the toast button.
+      if (error) throw Object.assign(new Error(error.message), { hint: error.hint ?? null });
     },
     onSuccess: () => {
       if (opts.hold) {
@@ -806,8 +808,27 @@ export function useDeleteSalaryPayment(opts: { quiet?: boolean; hold?: boolean }
       } else refreshSalaryData(qc);
       if (!opts.quiet) toast.success("Salary undone — you can pay it again");
     },
-    // Blocked (bank-reconciled)? Point to Banking to un-reconcile first.
-    onError: (err) => guardErrorToast(err, { label: "Open Banking", href: "/accounting/banking" }),
+    // Blocked? Point to the page that lifts it (bank line / challan → Banking, filed return → Compliance).
+    onError: (err) => guardErrorToast(err, salaryGuardNext((err as { hint?: string | null } | null)?.hint)),
+  });
+}
+
+/** R-2812: is this salary's TDS already deposited (challan) or in a filed 24Q? Read when its row
+ *  menu opens — the same check delete_salary_payment / edit_salary_payment refuse with. */
+export function useSalaryTdsLock(salaryId: string | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["salary-payments", "tds-lock", salaryId],
+    enabled: enabled && Boolean(salaryId),
+    // Asked afresh on every open: a challan booked / return marked filed a minute ago must show.
+    staleTime: 0,
+    queryFn: async (): Promise<SalaryTdsLock | null> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("salary_tds_lock", { p_salary_id: salaryId! });
+      if (error) throw new Error(error.message);
+      const row = (Array.isArray(data) ? data[0] : data) as { o_kind: string | null; o_what: string | null; o_href: string | null } | null;
+      if (!row?.o_kind || (row.o_kind !== "deposited" && row.o_kind !== "filed")) return null;
+      return { kind: row.o_kind, what: row.o_what ?? "", href: row.o_href ?? "/accounting/banking" };
+    },
   });
 }
 
