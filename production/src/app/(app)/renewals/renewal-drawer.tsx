@@ -80,10 +80,6 @@ export function useRenewalDrawerSub(): [string | null, (id: string) => void, () 
   return [id, open, close];
 }
 
-/** A row press outside its links, buttons and boxes opens the drawer (R-2740). */
-export function isRowOpenClick(target: EventTarget | null): boolean {
-  return !(target instanceof Element) || !target.closest("a,button,input,select,textarea,label,[role=menuitem],[role=checkbox],[data-no-drawer]");
-}
 
 export interface DrawerItem {
   sub: Subscription;

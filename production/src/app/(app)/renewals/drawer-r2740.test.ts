@@ -255,8 +255,9 @@ describe("R-2740 wiring", () => {
     expect(page).toMatch(/useRenewalDrawerSub\(\)/);
     expect(read("./renewal-drawer.tsx")).toMatch(/drawerSubFromSearch\(window\.location\.search\)/);
     expect(read("./row-cells.tsx")).toMatch(/data-testid="renewal-open-drawer"/);
-    /* a click inside a row's own (portalled) dialog or menu never opens the drawer */
-    expect(page).toMatch(/e\.currentTarget\.contains\(e\.target as Node\) && isRowOpenClick\(e\.target\)/);
+    /* R-1658: no mouse-only row click — the product name (a button) is the way in */
+    expect(page).not.toMatch(/data-testid="renewal-row"\s+onClick/);
+    expect(read("./renewal-drawer.tsx")).not.toMatch(/isRowOpenClick/);
     /* the drawer's button looks like the row's (one value) */
     expect(page.match(/strong=\{queueStrong\}/g)).toHaveLength(2);
   });

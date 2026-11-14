@@ -110,7 +110,7 @@ import { renewalStage, type RenewalStage, type StageFlag, type FlagKey, type Sta
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort } from "./row-cells";
-import { RenewalDrawer, useRenewalDrawerSub, isRowOpenClick } from "./renewal-drawer";
+import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 
 // ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
 
@@ -331,7 +331,7 @@ interface RenewalQueueProps {
   lastPaid: { data: Map<string, LastPaid> | undefined; loading: boolean; failed: boolean };
   /** R-2728: the last-docs read's state (the rows carry their own `docs`). */
   docsState: { loading: boolean; failed: boolean };
-  /** R-2740: open the row drawer (the product name, or a press on the row outside its controls). */
+  /** R-2740: open the row drawer — from the product name, a real button (no mouse-only row click, R-1658). */
   onOpen: (subId: string) => void;
 }
 
@@ -468,8 +468,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
             {rows.map((item) => {
               const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
               return (
-                <tr key={sub.id} className="cursor-pointer border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row"
-                  onClick={(e) => { if (e.currentTarget.contains(e.target as Node) && isRowOpenClick(e.target)) onOpen(sub.id); }}>
+                <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
                   <td className="px-2 py-2.5">
                     <input
                       type="checkbox"
