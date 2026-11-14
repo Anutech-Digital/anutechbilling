@@ -19,7 +19,9 @@ const r = (id: string, tab: TileRow["tab"], amount: number, over: Partial<TileRo
 });
 const q = (id: string, sub: string, amount: number, over: Partial<RenewalQuotePayment> = {}): RenewalQuotePayment => ({
   id, amount, payment_amount: amount, payment_status: "received", status: "accepted",
-  renewal_subscription_id: sub, renewal_term_date: "2026-11-05", ...over,
+  renewal_subscription_id: sub, renewal_term_date: "2026-11-05",
+  /* R-2751: the tile counts a paid quote before GST (subtotal less discount) — here the subtotal is the figure. */
+  subtotal: amount, discount_pct: 0, ...over,
 });
 
 /* A book shaped on the staging audit: yearly renewals, one billed monthly, one won't renew. */

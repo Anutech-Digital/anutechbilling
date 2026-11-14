@@ -137,8 +137,9 @@ import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteDocumentKind, quoteIsPaid, quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import {
   extensionTitle, isMonthExtension, isOneTimeQuote, oneTimeLineNote,
-  quoteLinePeriodContext, renewedSubscriptionDomain,
+  quoteLinePeriodContext, renewedSubscription,
 } from "@/lib/quotes/service-period";
+import { renewalPeriodLabel } from "@/lib/quotes/renewal-period-label";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
@@ -239,7 +240,7 @@ export default function QuoteDetailPage() {
   const { data: allSubs, isLoading: subsLoading } = useQuoteSubscriptions(quote ?? null);
   /* R-1764: each subscription line's "Domain:" and "Subscription period:" in the preview. */
   const periodCtx = React.useMemo(
-    () => (quote ? quoteLinePeriodContext(quote, renewedSubscriptionDomain(quote, allSubs)) : null),
+    () => (quote ? quoteLinePeriodContext(quote, renewedSubscription(quote, allSubs)) : null),
     [quote, allSubs],
   );
   const recreateSub = useRecreateSubscription();
@@ -317,7 +318,7 @@ export default function QuoteDetailPage() {
   const approvalEconomics = React.useMemo(() => quote ? quoteEconomics(quote) : null, [quote]);
   const approvalNeed      = React.useMemo(() => approvalEconomics ? requiredApproval(approvalEconomics) : null, [approvalEconomics]);
   /* R-2367: everyone who made or revised this quote family — they cannot approve it. */
-  const { data: chainMakers } = useQuoteChainMakers(quote?.id);
+  const { data: chainMakers, isError: chainMakersFailed } = useQuoteChainMakers(quote?.id);
   const approvalRec       = React.useMemo(
     () => quote ? { ...quoteApprovalRecord(quote), makers: chainMakers, note: (quote as { approval_note?: string | null }).approval_note ?? null } : null,
     [quote, chainMakers],
@@ -340,7 +341,7 @@ export default function QuoteDetailPage() {
      the rule cannot be satisfied) from "the roster has not arrived yet" (undefined → the
      banner keeps the old role wording). Treating a slow query as "nobody can approve"
      would flash a dead end on every load. */
-  const { data: team, isSuccess: teamLoaded } = useTeamMembers();
+  const { data: team, isSuccess: teamLoaded, isError: teamFailed } = useTeamMembers();
   const approverNames = React.useMemo(() => {
     if (!teamLoaded || !quote) return undefined;
     return approverSentence(eligibleApprovers(team ?? [], quote, chainMakers ?? []));
@@ -659,6 +660,27 @@ export default function QuoteDetailPage() {
      the state check: only a quote whose fix IS Revise gets the "pick the state" confirm (an old
      link on a quote that has its state now just lands on the page). Handled once per visit — the
      ref resets when the URL drops ?revise, so a second click after Cancel asks again. */
+  /* R-2727: the renewal editor's "Save & open approval" lands here with ?approve=1 — the approval
+     drawer opens once the team and the quote's makers have loaded, and only for a viewer this page
+     itself lets approve (viewerCanApprove — the same Review & decide rule). Anyone else just lands. */
+  const approveIntent = searchParams.get("approve");
+  const approveIntentHandled = React.useRef(false);
+  React.useEffect(() => {
+    if (approveIntent !== "1") { approveIntentHandled.current = false; return; }
+    if (approveIntentHandled.current || !quote) return;
+    /* R-2727 review: who may approve could not be read → say so and clean the URL (no silent wait). */
+    if (teamFailed || chainMakersFailed) {
+      approveIntentHandled.current = true;
+      router.replace(`/quotes/${quote.id}` as never);
+      toast.error("Couldn't check who may approve this quote", { description: "Reload the page, then use Review & decide on the quote." });
+      return;
+    }
+    if (!me || !teamLoaded || chainMakers === undefined) return;
+    approveIntentHandled.current = true;
+    router.replace(`/quotes/${quote.id}` as never);   // clean the URL
+    if (viewerCanApprove) setApprovalOpen(true);
+  }, [approveIntent, quote, me, teamLoaded, teamFailed, chainMakers, chainMakersFailed, viewerCanApprove, router]);
+
   const reviseIntent = searchParams.get("revise");
   const reviseIntentHandled = React.useRef(false);
   React.useEffect(() => {
@@ -950,6 +972,14 @@ export default function QuoteDetailPage() {
       : PAYMENT_META[paymentBadge]
     : null;
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
+  /* R-2746: "Renewal · <from> – <to>" over the lines — the same dates as each line's Subscription period. */
+  const renewalLabel = renewalPeriodLabel(items, periodCtx);
+  const lineItemsSub = (
+    <>
+      {`${items.length} item${items.length === 1 ? "" : "s"}`}
+      {renewalLabel && <span className="text-ink-2 tabular-nums" data-testid="renewal-period-label"> · {renewalLabel.text}</span>}
+    </>
+  );
   /* R-2423: WHAT this quote is (quote-kind.ts — stored facts only, no stamp when they do not say)
      and which subscription it is for. */
   const leadPart = leadBillingId ? partFacts?.get(leadBillingId) ?? null : null;
@@ -2165,7 +2195,7 @@ export default function QuoteDetailPage() {
       </Card>
 
       {/* Line items */}
-      <Card title="Line items" sub={`${items.length} item${items.length === 1 ? "" : "s"}`} flush>
+      <Card title="Line items" sub={lineItemsSub} flush>
         {/* Phone (S32, 1 Oct 2026): this page opens from the WhatsApp link, so it is
             read on a phone first. Five columns squeezed the item name to one word
             per line; under md each line is a row of name + amount, qty × rate below. */}

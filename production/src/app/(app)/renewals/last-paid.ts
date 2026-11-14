@@ -15,13 +15,19 @@
  * (status 'refunded') never becomes "last paid".
  * One quote can make SEVERAL subscriptions (two domains on one quote — subscriptions.quote_id is
  * not unique), so a payment on it is not this subscription's alone: the line says "covers N
- * subscriptions" instead of passing the whole amount off as this one's. Pure — tested in last-paid-r2422.test.ts;
+ * subscriptions" instead of passing the whole amount off as this one's.
+ * R-2752 (user audit 14 Nov): a billed part's proforma (quotes.subscription_billing_id →
+ * subscription_billings) is one of its documents too — the same link last-docs.ts uses. Without it
+ * Greentin Behind read "never paid" next to "Invoice INV-F588-27-0060 · Paid" (the UPI payment was
+ * recorded on the part proforma Q-F588-27-0062). Pure — tested in last-paid-r2422.test.ts;
  * the batched read is last-paid-data.ts.
  */
 import { rupee, formatDate } from "@/lib/utils";
 import { paymentMethodLabel } from "@/lib/payments/method-label";
 
 export const NEVER_PAID = "— never paid in the app";
+/** R-2752: the invoice is settled (its own words: "Paid" / "Covered by advance") but no receipt is linked. */
+export const paidNoReceipt = (words: string) => `— ${words}, no receipt in the app`;
 export const HISTORY_SIZE = 3;
 
 export interface LastPaidInput {
@@ -29,8 +35,12 @@ export interface LastPaidInput {
   /** Every subscription made from one of those quotes (not only the rows on screen) — to count who shares a payment. */
   quoteSiblings?: ReadonlyArray<{ id: string; quote_id: string | null }>;
   /** quotes linked to a subscription by renewal_subscription_id / add_seats_subscription_id (+ the subs' own quotes, for their invoice_id). */
-  linkedQuotes: ReadonlyArray<{ id: string; renewal_subscription_id: string | null; add_seats_subscription_id: string | null; invoice_id: string | null }>;
-  billings: ReadonlyArray<{ subscription_id: string; invoice_id: string | null }>;
+  linkedQuotes: ReadonlyArray<{
+    id: string; renewal_subscription_id: string | null; add_seats_subscription_id: string | null; invoice_id: string | null;
+    /** R-2752: a billed part's proforma → the subscription of that billing row. */
+    subscription_billing_id?: string | null;
+  }>;
+  billings: ReadonlyArray<{ id?: string; subscription_id: string; invoice_id: string | null }>;
   invoices: ReadonlyArray<{ id: string; quote_id: string | null }>;
   payments: ReadonlyArray<{
     id: string; amount: number; method: string; status: string; received_at: string;
@@ -71,9 +81,12 @@ export function linkedDocs(input: Pick<LastPaidInput, "subs" | "linkedQuotes" | 
     if (s.quote_id) addTo(quoteSubs, s.quote_id, s.id);
     if (s.renewal_quote_id) addTo(quoteSubs, s.renewal_quote_id, s.id);
   }
+  const billingSub = new Map(input.billings.filter((b) => b.id).map((b) => [b.id as string, b.subscription_id]));
   for (const q of input.linkedQuotes) {
     if (q.renewal_subscription_id) addTo(quoteSubs, q.id, q.renewal_subscription_id);
     if (q.add_seats_subscription_id) addTo(quoteSubs, q.id, q.add_seats_subscription_id);
+    const partOf = q.subscription_billing_id ? billingSub.get(q.subscription_billing_id) : undefined;
+    if (partOf) addTo(quoteSubs, q.id, partOf);
   }
   for (const b of input.billings) if (b.invoice_id) addTo(invoiceSubs, b.invoice_id, b.subscription_id);
   /* An invoice raised from a linked quote — either side of the link. */
@@ -95,8 +108,12 @@ export function linkedDocs(input: Pick<LastPaidInput, "subs" | "linkedQuotes" | 
 const newestFirst = (a: PaidLine, b: PaidLine) =>
   b.receivedAt.localeCompare(a.receivedAt) || b.paymentId.localeCompare(a.paymentId);
 
-/** subscription id → its last captured payment + the last 3; a subscription with none is absent. */
-export function lastPaidBySubscription(input: LastPaidInput): Map<string, LastPaid> {
+/**
+ * subscription id → its last captured payment + the last 3; a subscription with none is absent.
+ * R-2740: the row drawer passes `historySize: Infinity` — every payment, the same links and rules.
+ */
+export function lastPaidBySubscription(input: LastPaidInput, opts: { historySize?: number } = {}): Map<string, LastPaid> {
+  const size = opts.historySize ?? HISTORY_SIZE;
   const { quoteSubs, invoiceSubs, invoiceOfQuote } = linkedDocs(input);
   const bySub = new Map<string, PaidLine[]>();
   const seen = new Set<string>();
@@ -122,7 +139,8 @@ export function lastPaidBySubscription(input: LastPaidInput): Map<string, LastPa
   }
   const out = new Map<string, LastPaid>();
   for (const [sid, xs] of bySub) {
-    const history = xs.sort(newestFirst).slice(0, HISTORY_SIZE);
+    const sorted = xs.sort(newestFirst);
+    const history = Number.isFinite(size) ? sorted.slice(0, size) : sorted;
     out.set(sid, { last: history[0], history });
   }
   return out;

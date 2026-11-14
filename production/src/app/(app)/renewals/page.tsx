@@ -2,7 +2,7 @@
  * Renewals — ONE work queue (R-2403, 3 Nov 2026; was the prototype C8 bucket cards).
  *
  * Layout:
- *   - Page header (eyebrow/title/subtitle + Export / Bulk reminder)
+ *   - Page header (eyebrow/title/subtitle + Export / Remind — R-2753: the ticked rows, else the open tab)
  *   - Tiles (R-2405, tiles.ts): Overdue · Due in 30 / 31–60 / 61–90 days · Won't renew ·
  *     Renewed this month — count + renewal ₹; a press shows exactly those rows in the queue
  *   - Forecast strip (closed by default, R-2266): 6-month forecast, Renewal AI top pick
@@ -12,7 +12,7 @@
  *     risk chip); a table from 1280px (cards on smaller screens) with customer + contact,
  *     product + seats, renewal date, the renewal AMOUNT for the term, ONE status chip
  *     (queue.ts renewalRowStatus) and the shared RenewalActions (R-2401); tick rows → bulk
- *     Send renewal quote / Send reminder.
+ *     Send renewal quote / Assign owner (the reminder is the header's one Remind button, R-2753).
  *
  * Risk model — REAL signals only (see renewalRisk):
  *   - Seat utilisation (used/seats) — only when seats were actually checked (R-453)
@@ -41,10 +41,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Icon } from "@/components/ui/icon";
-import { FAB } from "@/components/ui/fab";
 import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
 import { rupee, formatDate } from "@/lib/utils";
-import { daysUntilRenewal, isFlexSubscription, onRenewalsPage } from "@/lib/renewals/buckets";
+import { isFlexSubscription, onRenewalsPage } from "@/lib/renewals/buckets";
 import { cn } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -54,10 +53,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { Input } from "@/components/ui/input";
 import {
-  bulkReminderPlan,
-  bulkReminderConfirm,
-  bulkReminderSkipLine,
-  type BulkReminderSkip,
+  reminderPlan,
+  reminderScope,
+  reminderButtonLabel,
+  type BulkReminderResult,
   matchesRenewalSearch,
   readJsonSafe,
   sendBulkReminders,
@@ -65,35 +64,37 @@ import {
   RENEWAL_QUOTE_VERBS,
   type RenewalRowLike,
 } from "./reminders";
-import { renewalRisk } from "./risk";
-import { priorTermDueText } from "./prior-due";
+import { renewalRisk, topRiskPick, topRiskReasons } from "./risk";
+import { priorTermDue } from "./prior-due";
 import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
 import { renewalRowAction, type RowAction } from "./row-action";
 import { GraceOverCard } from "./grace-over-card";
 import { NoRenewalDateCard } from "./no-date-card";
-import { classifyRenewals, chasedRenewal } from "./classify";
+import { chasedRenewal } from "./classify";
 import {
-  QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STATUS_FILTER_LABEL, NO_FILTERS, TILE_TABS,
-  queueTabs, noRenewalDate, resolveBucket, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
-  sortQueue, filterQueue, filterOptions, bulkQuoteTargets, bulkQuoteConfirm,
-  type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount, type RowStatusKey,
+  QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STAGE_FILTER_LABEL, STAGE_FILTER_ORDER, NO_FILTERS, TILE_TABS,
+  noRenewalDate, resolveBucket, renewalAmount, QUEUE_TABLE_MIN_VIEWPORT_PX,
+  sortQueue, filterQueue, filterOptions, bulkStageTargets, bulkQuoteConfirm,
+  type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RenewalAmount,
 } from "./queue";
+import { buildQueueItems, firstRows, QUEUE_PAGE_ROWS, type QueueItem } from "./queue-items";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
-import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, type TileKey, type TileRow } from "./tiles";
+import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
+import { RenewalReminderDialog, type ReminderDialogState } from "./reminder-dialog";
 import { RenewalTileRow, TileViewBar } from "./tiles-card";
 import { ForecastPanel } from "./forecast-panel";
-import { renewalFrequency, renewalCommitment, type Commitment } from "./frequency";
+import { renewalCommitment } from "./frequency";
 import { useRenewalLastPaid } from "./last-paid-data";
 import { LastPaidLine } from "./last-paid-cell";
 import type { LastPaid } from "./last-paid";
 import { useRenewalLastDocs } from "./last-docs-data";
 import { LastDocsLines, SentDueLines } from "./last-docs-cell";
-import type { LastDocs } from "./last-docs";
+import { paidInvoiceOf, type LastDocs } from "./last-docs";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import {
-  renewalFollowup, renewalDecision, showDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
-  DECISION_LABEL, DECISION_TONE, NO_FOLLOWUP_FILTERS, ASSIGN_NEEDS_ROLE,
-  type RenewalFollowup, type RenewalDecision, type FollowupFilters,
+  filterByFollowup, bulkAssignRequests, bulkAssignReport,
+  NO_FOLLOWUP_FILTERS, ASSIGN_NEEDS_ROLE,
+  type RenewalFollowup, type FollowupFilters,
 } from "./followup";
 import { FollowupDialog } from "@/components/features/collections/followup-dialog";
 import { postFollowup, FollowupSaveError } from "@/lib/queries/payment-followups";
@@ -103,33 +104,11 @@ import { istToday } from "@/lib/dates/ist";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
-import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
-import { isGraceOver } from "@/components/features/renewals/renewal-actions-rules";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
-
-// ─── Vendor logo pill ─────────────────────────────────────────────────────────
-
-function VendorPill({ vendor }: { vendor: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    google:    { label: "Google",    cls: "bg-blue-50 text-blue-700" },
-    microsoft: { label: "Microsoft", cls: "bg-indigo-50 text-indigo-700" },
-    zoho:      { label: "Zoho",      cls: "bg-amber-50 text-amber-700" },
-    other:     { label: "Other",     cls: "bg-muted text-muted-foreground" },
-  };
-  const v = map[vendor] ?? { label: vendor ? vendor[0].toUpperCase() + vendor.slice(1) : "Other", cls: map.other.cls };
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-medium",
-        v.cls,
-      )}
-    >
-      {v.label}
-    </span>
-  );
-}
+import { type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
+import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort } from "./row-cells";
+import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 
 // ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
 
@@ -154,12 +133,41 @@ function RowActionLine({ action, canQuotes, className }: { action: RowAction; ca
 
 // ─── Row pieces ───────────────────────────────────────────────────────────────
 
-function StatusChip({ status, size }: { status: RowStatus; size?: "sm" }) {
+/** R-2758 (R-2738): the row's ONE chip = its stage; facts (at risk, vendor hold, previous term unpaid,
+    promise broken, follow-up due) are small icons after it — never a second chip. null = documents
+    still loading: a placeholder, so the chip never flips from a guess (userAudit14Nov). */
+const FLAG_ICON: Record<FlagKey, React.ComponentProps<typeof Icon>["name"]> = {
+  atRisk: "alert", vendorHold: "lock", priorTermUnpaid: "rupee", promiseBroken: "x_circle", followUpDue: "phone",
+};
+
+function StageChip({ stage, size, compact = false, canQuotes = false }: { stage: RenewalStage | null; size?: "sm"; compact?: boolean; canQuotes?: boolean }) {
+  if (!stage) return <Skeleton className="h-5 w-24" aria-label="Loading status" data-testid="stage-chip-loading" />;
+  /* R-2759: in the table the chip drops the period (Product & period says it); its day count / amount is
+     line 2 — two lines, nothing only in a tooltip. */
+  const c = compact ? compactStage(stage) : { chip: stage.label, line2: stage.note };
+  /* R-2760 (R-2728 owner ask "clickable link"): a quote stage's chip opens THAT quote. */
+  const quoteHref = compact && canQuotes && stage.quoteId && stage.quoteStatus !== "unknown"
+    && (stage.key === "sent" || stage.key === "draft" || stage.key === "quote-closed") ? `/quotes/${encodeURIComponent(stage.quoteId)}` : null;
+  const badge = <Badge kind={stage.tone} size={size} dot className={compact ? "max-w-full whitespace-normal text-left" : undefined}>{c.chip}</Badge>;
   return (
-    <div className="min-w-0">
-      <Badge kind={status.tone} size={size} dot>{status.label}</Badge>
-      {status.note && <p className="mt-1 text-2xs font-medium text-rose-600">{status.note}</p>}
+    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key} title={compact ? [stage.label, stage.note, stage.quoteId].filter(Boolean).join(" · ") : undefined}>
+      <div className="flex min-w-0 flex-wrap items-center gap-1">
+        {quoteHref
+          ? <Link href={quoteHref as never} className="max-w-full rounded-full hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" aria-label={`${stage.label} — open ${stage.quoteId}`} data-testid="stage-chip-quote">{badge}</Link>
+          : badge}
+        {stage.flags.map((f) => <StageFlagIcon key={f.key} flag={f} />)}
+      </div>
+      {c.line2 && <p className="mt-1 break-words text-2xs text-ink-3 tabular-nums" data-testid="stage-line2">{c.line2}</p>}
     </div>
+  );
+}
+
+function StageFlagIcon({ flag }: { flag: StageFlag }) {
+  return (
+    <span role="img" aria-label={flag.reason} title={flag.reason} data-flag={flag.key}
+      className={cn("inline-flex h-5 w-5 items-center justify-center rounded-full", flag.key === "followUpDue" ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-600")}>
+      <Icon name={FLAG_ICON[flag.key]} size={11} />
+    </span>
   );
 }
 
@@ -189,16 +197,10 @@ function AmountCell({ amount, frequency, className }: { amount: RenewalAmount; f
     <div className={className}>
       <p className="font-medium tabular-nums text-ink">{amount.text}</p>
       <p className="text-2xs text-ink-3">{amount.gst}</p>
+      {/* R-2751: a sent renewal quote's total incl. GST is a note, never the figure. */}
+      {amount.quoteNote && <p className="text-2xs text-ink-3">{amount.quoteNote}</p>}
       {frequency && <p className="text-2xs text-ink-2">{frequency}</p>}
     </div>
-  );
-}
-
-function AtRiskMark({ reason }: { reason: string }) {
-  return (
-    <span className="inline-flex items-center gap-0.5 text-2xs font-medium text-rose-600" title={reason}>
-      <Icon name="alert" size={11} className="shrink-0" />At risk
-    </span>
   );
 }
 
@@ -206,24 +208,43 @@ function AtRiskMark({ reason }: { reason: string }) {
  * R-2404: where the customer's decision stands, who works the renewal and when they follow up
  * next, the promise to pay. Under the ONE status chip; "Paid" / "Won't renew" are that chip already.
  */
-function FollowupLine({ followup, decision, names, statusKey }: { followup: RenewalFollowup; decision: RenewalDecision; names: Map<string, UserName> | undefined; statusKey: RowStatusKey }) {
+/** R-2760: the Due column shows a renewal quote's validity only while it is with the customer (sent / viewed) —
+    a part proforma has none, an accepted quote no longer expires for the customer. */
+function showsExpiry(item: { stage: RenewalStage | null; docs?: LastDocs }): boolean {
+  const sent = item.docs?.sent;
+  return !!sent && sent.kind === "renewal" && (sent.status === "sent" || sent.status === "viewed")
+    && item.stage?.key === "sent" && item.stage.quoteId === sent.quoteId;
+}
+
+/** R-2759: the table row's owner / next follow-up / promise, as the customer name's tooltip (the drawer, R-2740, will show them). */
+function followupWords(followup: RenewalFollowup, names: Map<string, UserName> | undefined): string {
   const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
-  /* R-2728: the "Renewal quote sent" chip already says "Quote sent" — one fact, one place. */
-  const decisionShown = showDecision(decision) && !(decision === "quote-sent" && statusKey === "quote-sent");
+  return [
+    owner ? `Owner: ${owner}` : "No owner yet",
+    followup.nextFollowUpOn ? `Next follow-up ${formatDate(followup.nextFollowUpOn)}` : null,
+    followup.promisedOn && followup.promiseStatus !== "kept"
+      ? `${followup.promiseBroken ? "Promise broken" : "Promised"} ${formatDate(followup.promisedOn)}${followup.promisedAmount ? ` · ${rupee(followup.promisedAmount)}` : ""}`
+      : null,
+  ].filter(Boolean).join(" · ");
+}
+
+function FollowupLine({ followup, names }: { followup: RenewalFollowup; names: Map<string, UserName> | undefined }) {
+  const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
+  /* R-2758 (R-2738): the stage chip is the ONE status — no second "decision" chip; a follow-up that is
+     due and a broken promise are the chip's flag icons. */
   return (
     <div className="mt-1.5 space-y-0.5 text-2xs">
-      {decisionShown && <Badge kind={DECISION_TONE[decision]} size="sm">{DECISION_LABEL[decision]}</Badge>}
       <p className={cn("truncate", owner ? "text-ink-2" : "text-ink-3")} title={owner ? `Owner: ${owner}` : "No owner yet"}>
         <Icon name="user" size={10} className="mr-0.5 inline shrink-0" />{owner ?? "No owner"}
       </p>
-      {followup.nextFollowUpOn && (
-        <p className={cn("tabular-nums", followup.followUpDue ? "font-medium text-rose-600" : "text-ink-3")}>
+      {followup.nextFollowUpOn && !followup.followUpDue && (
+        <p className="tabular-nums text-ink-3">
           Next: {formatDate(followup.nextFollowUpOn)}
         </p>
       )}
-      {followup.promisedOn && followup.promiseStatus !== "kept" && (
-        <p className={cn("tabular-nums", followup.promiseBroken ? "font-medium text-rose-600" : "text-ink-2")}>
-          {followup.promiseBroken ? "Promise broken" : "Promised"} · {formatDate(followup.promisedOn)}
+      {followup.promisedOn && followup.promiseStatus !== "kept" && !followup.promiseBroken && (
+        <p className="tabular-nums text-ink-2">
+          Promised · {formatDate(followup.promisedOn)}
           {followup.promisedAmount ? ` · ${rupee(followup.promisedAmount)}` : ""}
         </p>
       )}
@@ -270,30 +291,25 @@ function AssignOwnerDialog({
   );
 }
 
-// ─── The queue (table ≥1280px, cards below) ───────────────────────────────────
+// ─── The queue (table ≥1260px, cards below) ───────────────────────────────────
 
-interface QueueItem {
-  sub: Subscription;
-  daysUntil: number;
-  status: RowStatus;
-  amount: RenewalAmount;
-  contact: RowContact | undefined;
-  atRisk: boolean;
-  riskReason: string;
-  /** R-2404 */
-  followup: RenewalFollowup;
-  decision: RenewalDecision;
-  customerOwnerId: string | null;
-  /** R-2422: worked out once per row (frequency.ts) — the amount cell's words and the Commitment filter. */
-  frequency: string | null;
-  commitment: Commitment;
-  /** R-2728: last quote sent / last invoice / the renewal quote with the customer (last-docs.ts). */
-  docs: LastDocs | undefined;
+/** R-2764: ONE layout in the DOM — the table from a 1260px window, else the cards. Before, both were
+    mounted and one hidden by CSS: every row's buttons and menus twice (14 Nov freeze). The server and
+    the first client frame assume the table (most reseller laptops); the queue only renders once its
+    data is read on the client anyway. */
+const TABLE_QUERY = `(min-width: ${QUEUE_TABLE_MIN_VIEWPORT_PX}px)`;
+function useTableLayout(): boolean {
+  /* one MediaQueryList per queue (banking useIsWide's pattern); no matchMedia (old browser / jsdom) → the table */
+  const [mq] = React.useState(() => (typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(TABLE_QUERY) : null));
+  const subscribe = React.useCallback((cb: () => void) => {
+    mq?.addEventListener?.("change", cb);
+    return () => mq?.removeEventListener?.("change", cb);
+  }, [mq]);
+  return React.useSyncExternalStore(subscribe, () => (mq ? mq.matches : true), () => true);
 }
 
 interface RenewalQueueProps {
   rows: QueueItem[];
-  graceDays: number;
   strong: boolean;
   selected: ReadonlySet<string>;
   onSelect: (ids: string[], on: boolean) => void;
@@ -305,9 +321,11 @@ interface RenewalQueueProps {
   lastPaid: { data: Map<string, LastPaid> | undefined; loading: boolean; failed: boolean };
   /** R-2728: the last-docs read's state (the rows carry their own `docs`). */
   docsState: { loading: boolean; failed: boolean };
+  /** R-2740: open the row drawer — from the product name, a real button (no mouse-only row click, R-1658). */
+  onOpen: (subId: string) => void;
 }
 
-function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid, docsState }: RenewalQueueProps) {
+function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid, docsState, onOpen }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -316,20 +334,39 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
   const { data: openRenewals } = useOpenRenewalQuotes();
   const quoteStatus = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
   const canInvoices = canOpenInvoices(me?.role);
-  const allOn = rows.length > 0 && rows.every((r) => selected.has(r.sub.id));
-  const someOn = rows.some((r) => selected.has(r.sub.id));
-
+  /* R-2764: the row buttons read the viewer from here — no user / open-quotes read per row. */
+  /* null while the user is read: the row buttons show but stay disabled (R-2710: no click before the role is known). */
+  const viewer = React.useMemo(() => (me ? { role: me.role, tenantGracePeriodDays: me.tenantGracePeriodDays ?? 0 } : null), [me]);
+  const table = useTableLayout();
+  /* R-2764: 50 rows, then "Show N more" (the parent remounts this per tab / tile, so it starts at 50 again). */
+  const [limit, setLimit] = React.useState(QUEUE_PAGE_ROWS);
   if (rows.length === 0) {
     return <div className="py-10 text-center text-sm text-ink-3">{emptyText}</div>;
   }
+
+  const page = firstRows(rows, limit);
+  /* R-2764: "Select all renewals on screen" = the rows shown (not the ones behind Show more). */
+  const allOn = page.shown.every((r) => selected.has(r.sub.id));
+  const someOn = page.shown.some((r) => selected.has(r.sub.id));
+  const showMore = page.more > 0 && (
+    <div className="border-t border-hairline px-3 py-3 text-center">
+      <Button variant="default" size="sm" onClick={() => setLimit((n) => n + QUEUE_PAGE_ROWS)} data-testid="renewals-show-more">
+        Show {Math.min(page.more, QUEUE_PAGE_ROWS)} more
+        <span className="text-ink-3">· {page.shown.length} of {rows.length} shown</span>
+      </Button>
+    </div>
+  );
 
   const byId = new Map(rows.map((r) => [r.sub.id, r]));
   /* R-2404: owner, next date, promise, notes, "confirmed" — Payment Follow-up's dialog, for this renewal.
      R-2422: it, Nudge and Voice note sit behind the row's ONE next-step button + ⋯ (RenewalActions). */
   const followupFor = (sub: Subscription) => (sub.customer_id ? () => { const it = byId.get(sub.id); if (it) onFollowup(it); } : undefined);
-  const lastPaidFor = (sub: Subscription, className?: string) => (
-    <LastPaidLine paid={lastPaid.data?.get(sub.id)} loading={lastPaid.loading} failed={lastPaid.failed} canInvoices={canInvoices} canQuotes={canQuotes} className={className} />
-  );
+  /* R-2752: paid facts agree — an invoice the row shows as Paid is never next to "never paid" (wait
+     for the docs too before saying "never paid") */
+  const lastPaidFor = (item: QueueItem, className?: string) => {
+    const paid = lastPaid.data?.get(item.sub.id);   // no receipt → it waits for (or says it lost) the docs, never a false "never paid"
+    return <LastPaidLine paid={paid} paidInvoice={paidInvoiceOf(item.docs, todayIst)} loading={lastPaid.loading || (!paid && docsState.loading)} failed={lastPaid.failed || (!paid && docsState.failed)} canInvoices={canInvoices} canQuotes={canQuotes} className={className} />;
+  };
   /* R-2728: the last quote sent + last invoice, clickable. A draft renewal quote keeps R-2232's
      "Renewal quote Q-x not sent yet" line; otherwise these lines replace "Renewal sent Q-x · due …". */
   const todayIst = istToday();
@@ -341,7 +378,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
     return (
       <>
         {keepActionLine && <RowActionLine action={action} canQuotes={canQuotes} className={className} />}
-        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} className={className} />
+        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} priorDue={priorTermDue(item.sub)} className={className} />
       </>
     );
   };
@@ -350,16 +387,14 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
       ? <SentDueLines sent={item.docs.sent} daysUntil={item.daysUntil} todayIst={todayIst} className={className} />
       : null
   );
-  /* R-2728: a sent renewal quote / part bill → ⋯ Record payment (the quote's own dialog, ?pay=1). */
-  const payQuoteOf = (item: QueueItem) => (item.status.key === "quote-sent" ? item.docs?.sent?.quoteId : undefined);
 
   return (
     <>
-      {/* Cards — viewports < 1280px (phones and small laptops), two per row from md. */}
-      <ul className="xl:hidden p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
-        {rows.map((item) => {
-          const { sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision } = item;
-          const priorDue = priorTermDueText(sub);  // R-1703
+      {/* Cards — viewports < 1260px (phones and small laptops), two per row from md. R-2764: only one layout is mounted. */}
+      {!table && (
+      <ul className="p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0" data-testid="renewals-cards">
+        {page.shown.map((item) => {
+          const { sub, daysUntil: days, amount, frequency, contact, followup, stage } = item;
           const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
           return (
             <li key={sub.id} className="bg-paper border border-hairline rounded-lg p-3">
@@ -373,56 +408,47 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                 />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-ink truncate">{sub.customer_name}</p>
-                  <p className="text-2xs text-ink-3 truncate mt-0.5">
+                  {/* R-2740: the product opens the row drawer (the renewal's documents, payments, follow-ups) */}
+                  <button type="button" onClick={() => onOpen(sub.id)} data-testid="renewal-open-drawer"
+                    className="mt-0.5 block max-w-full truncate rounded-sm text-left text-2xs text-ink-3 underline-offset-2 hover:text-ink hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                    aria-label={`Open details — ${sub.customer_name} · ${sub.plan}`}>
                     {sub.plan} · {sub.seats} seats
-                  </p>
+                  </button>
                   <ContactLine contact={contact} />
-                  {lastPaidFor(sub, "mt-0.5")}
+                  {lastPaidFor(item, "mt-0.5")}
                 </div>
                 <AmountCell amount={amount} frequency={frequency} className="text-right shrink-0" />
               </div>
 
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div className="min-w-0">
-                  <StatusChip status={status} size="sm" />
-                  <FollowupLine followup={followup} decision={decision} names={names} statusKey={status.key} />
+                  <StageChip stage={stage} size="sm" />
+                  <FollowupLine followup={followup} names={names} />
                 </div>
                 <div className="shrink-0 text-right">
                   <p className="text-xs text-ink-2">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
                   {sentDue(item)}
-                  {atRisk && <AtRiskMark reason={riskReason} />}
                 </div>
               </div>
 
-              {/* R-1796: unpaid past the renewal date — the vendor renewal waits for the payment.
-                  R-2401: grace over → it sits next to Cancel in the actions below. */}
-              {!isGraceOver(sub, days, graceDays) && (
-                <div className="mb-2 empty:hidden">
-                  <VendorHoldBadge sub={sub} />
-                </div>
-              )}
-
-              {priorDue && (
-                <p role="status" className="mb-2 flex items-center gap-1 text-xs font-medium text-rose-600">
-                  <Icon name="alert" size={12} className="shrink-0" />
-                  {priorDue}
-                </p>
-              )}
-
+              {/* R-2758: vendor hold, previous term unpaid and at risk are the stage chip's flag icons;
+                  Renew anyway (grace over) is in the row's ⋯. */}
               {/* R-2232: "Renewal quote Q-x not sent yet" — never a second Generate. R-2728: last quote / invoice. */}
               {docsFor(item, action, "mb-2 text-xs")}
 
               <div className="pt-2 border-t border-hairline/60">
-                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging recordPaymentQuoteId={payQuoteOf(item)} />
+                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
               </div>
             </li>
           );
         })}
       </ul>
+      )}
 
-      {/* Desktop table — viewports >= 1280px. Column budget in queue.ts (QUEUE_TABLE_COLS) keeps it
-          inside the ~944px card with the sidebar open, Actions always on screen (R-2403). */}
-      <div className="hidden xl:block">
+      {/* Desktop table — R-2759: from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX; a 1280 laptop's inner width
+          is 1264–1276), eight columns on the queue.ts budget, every cell at most two lines (row-cells.tsx). */}
+      {table && (
+      <div data-testid="renewals-table">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             {QUEUE_TABLE_COLS.map((c) => (
@@ -431,32 +457,28 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
           </colgroup>
           <thead>
             <tr className="border-b border-hairline bg-muted/30">
-              <th className="px-2 py-2.5">
-                <input
-                  type="checkbox"
-                  aria-label="Select all renewals on screen"
-                  className="cursor-pointer accent-amber"
-                  checked={allOn}
-                  ref={(el) => { if (el) el.indeterminate = someOn && !allOn; }}
-                  onChange={(e) => onSelect(rows.map((r) => r.sub.id), e.target.checked)}
-                />
-              </th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Customer</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Product</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Renewal date</th>
-              <th className="px-3 py-2.5 text-right text-xs font-medium text-ink-3">Renewal amount</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Status</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Actions</th>
+              {QUEUE_TABLE_COLS.map((c) => c.key === "select" ? (
+                <th key={c.key} className="px-2 py-2.5">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all renewals on screen"
+                    className="cursor-pointer accent-amber"
+                    checked={allOn}
+                    ref={(el) => { if (el) el.indeterminate = someOn && !allOn; }}
+                    onChange={(e) => onSelect(page.shown.map((r) => r.sub.id), e.target.checked)}
+                  />
+                </th>
+              ) : (
+                <th key={c.key} className={cn("px-2 py-2.5 text-xs font-medium text-ink-3", c.align === "right" ? "text-right" : "text-left")}>{c.label}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((item) => {
-              const { sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision } = item;
-              const priorDue = priorTermDueText(sub);  // R-1703
-              const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
+            {page.shown.map((item) => {
+              const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
               return (
-                <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20">
-                  <td className="px-2 py-3">
+                <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
+                  <td className="px-2 py-2.5">
                     <input
                       type="checkbox"
                       aria-label={`Select ${sub.customer_name} — ${sub.plan}`}
@@ -465,68 +487,21 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                       onChange={(e) => onSelect([sub.id], e.target.checked)}
                     />
                   </td>
-
-                  {/* Customer + contact */}
-                  <td className="px-3 py-3 min-w-0">
-                    {sub.customer_id ? (
-                      <Link href={`/customers/${sub.customer_id}` as never} className="block truncate font-semibold text-ink hover:underline" title={sub.customer_name}>
-                        {sub.customer_name}
-                      </Link>
-                    ) : (
-                      <p className="truncate font-semibold text-ink" title={sub.customer_name}>{sub.customer_name}</p>
-                    )}
-                    <ContactLine contact={contact} />
-                    {lastPaidFor(sub, "mt-0.5")}
-                    {atRisk && <AtRiskMark reason={riskReason} />}
+                  <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
+                  <td className="min-w-0 px-2 py-2.5">
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} onOpen={() => onOpen(sub.id)} />
                   </td>
-
-                  {/* Product · seats · vendor */}
-                  <td className="px-3 py-3 min-w-0">
-                    <p className="truncate text-ink" title={sub.plan ?? undefined}>{sub.plan}</p>
-                    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-2xs text-ink-3">
-                      <span className="tabular-nums">{sub.seats} seats</span>
-                      <VendorPill vendor={sub.vendor} />
-                    </p>
+                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
+                  <td className="px-2 py-2.5 text-right">
+                    <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
+                    <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteShort ? `${amount.gst} · ${amount.quoteShort}` : amount.gst}</p>
                   </td>
-
-                  {/* Renewal date + reminders sent */}
-                  <td className="px-3 py-3">
-                    <p className="text-ink">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
-                    {sentDue(item, "mt-0.5")}
-                    {sub.reminder_count > 0 && (
-                      <p className="mt-1 text-2xs text-ink-3 tabular-nums">
-                        {sub.reminder_count} email{sub.reminder_count === 1 ? "" : "s"} sent
-                      </p>
-                    )}
+                  <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
+                  <td className="min-w-0 px-2 py-2.5">
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} priorDue={priorTermDue(sub)} />
                   </td>
-
-                  {/* Renewal amount for the term */}
-                  <td className="px-3 py-3 text-right">
-                    <AmountCell amount={amount} frequency={frequency} />
-                    {priorDue && (
-                      <p role="status" className="mt-1 text-2xs font-medium text-rose-600" title="Paying the renewal quote covers only the new term — record the earlier amount separately under Payments → Subscription dues.">
-                        {priorDue}
-                      </p>
-                    )}
-                  </td>
-
-                  {/* ONE status */}
-                  <td className="px-3 py-3">
-                    <StatusChip status={status} />
-                    <FollowupLine followup={followup} decision={decision} names={names} statusKey={status.key} />
-                  </td>
-
-                  {/* Actions */}
-                  <td className="px-3 py-3">
-                    <div className="flex flex-col items-start gap-1.5">
-                      {docsFor(item, action, "text-2xs")}
-                      {!isGraceOver(sub, days, graceDays) && (
-                        <div className="empty:hidden">
-                          <VendorHoldBadge sub={sub} />
-                        </div>
-                      )}
-                      <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging recordPaymentQuoteId={payQuoteOf(item)} />
-                    </div>
+                  <td className="min-w-0 px-2 py-2.5">
+                    <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
                   </td>
                 </tr>
               );
@@ -534,18 +509,26 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
           </tbody>
         </table>
       </div>
+      )}
+      {showMore}
     </>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/** R-239 / R-2403: a row as the queue filters / sort read it (queue.ts filterQueue, sortQueue). */
+const asQueueRow = (i: QueueItem) => ({
+  id: i.sub.id, daysUntil: i.daysUntil, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
+  statusKey: i.status.key, stageKey: i.stage?.key ?? null, atRisk: i.atRisk, customer: i.sub.customer_name, commitment: i.commitment, item: i,
+});
+
 const SELECT_CLS = "bg-paper border border-hairline rounded-md text-xs px-2.5 py-1.5 font-medium text-ink focus:outline-none focus:border-amber cursor-pointer";
 
 export default function RenewalsPage() {
   const { data: subs, isLoading, error, refetch } = useSubscriptions();
   /* R-453: an open renewal quote whose link-back is missing still shows "Open quote". */
-  const { data: openRenewals } = useOpenRenewalQuotes();
+  const { data: openRenewals, isLoading: openRenewalsLoading } = useOpenRenewalQuotes();
   const openRenewalMap = React.useMemo(() => openRenewalQuoteMap(openRenewals ?? []), [openRenewals]);
   const quoteStatusMap = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
   const { data: me } = useCurrentUser();
@@ -568,6 +551,8 @@ export default function RenewalsPage() {
      the sidebar badge opens ?bucket=urgent) still open the right tab (queue.ts resolveBucket). */
   const [bucketRaw, setBucketTab] = useUrlChoice<string>("bucket", RENEWAL_BUCKETS, "urgent");
   const [bulkSending, setBulkSending] = React.useState(false);
+  /* R-2753: the one reminder dialog (null = closed) — who is emailed / skipped, then the result. */
+  const [reminder, setReminder] = React.useState<ReminderDialogState<QueueItem> | null>(null);
   const confirm = useConfirm();
   /* R-239: customer / domain search across the tabs (KPIs stay whole-book). */
   const [search, setSearch] = React.useState("");
@@ -586,8 +571,9 @@ export default function RenewalsPage() {
   const listed = React.useMemo(() => (subs ?? [])
     .filter(onRenewalsPage)
     .map((s) => withRenewalQuote(s, openRenewalMap)), [subs, openRenewalMap]);
-  const { data: contacts } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
-  const { data: quoteInfo } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
+  /* R-2753: isLoading — the Remind button waits for the contacts, so a customer with no email is never counted in "Email N". */
+  const { data: contacts, isLoading: contactsLoading } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
+  const { data: quoteInfo, isLoading: quoteInfoLoading } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
   /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
   const { data: fuData } = useRenewalFollowups(listed.map((s) => s.id), listed.map((s) => s.customer_id ?? ""));
   const { data: names } = useUserNames();
@@ -599,6 +585,8 @@ export default function RenewalsPage() {
   const docsState = { loading: lastDocsQ.isLoading, failed: lastDocsQ.isError && !lastDocsQ.data };
   const [fuFilters, setFuFilters] = React.useState<FollowupFilters>(NO_FOLLOWUP_FILTERS);
   const [followupFor, setFollowupFor] = React.useState<QueueItem | null>(null);
+  /* R-2740: the row drawer — ?sub=<id> (shareable, Back closes it). */
+  const [drawerSub, openDrawer, closeDrawer] = useRenewalDrawerSub();
   const [assignOpen, setAssignOpen] = React.useState(false);
   const [assigning, setAssigning] = React.useState(false);
   const canReassign = mayReassignFollowup(me?.role);
@@ -606,6 +594,45 @@ export default function RenewalsPage() {
     () => [...(names?.values() ?? [])].filter((u) => !u.inactive).sort((a, b) => a.label.localeCompare(b.label)),
     [names],
   );
+
+  /* R-2764 (R-2742 PERF-1, 14 Nov freeze): every row of every tab is built ONCE per data change
+     (queue-items.ts) — not on each tab click, tick or search keystroke. `todayDate` changes with the IST day. */
+  const todayIst = istToday(today);
+  /* noon IST of today — the rules read the IST day from it (same day as `new Date()`). */
+  const todayDate = React.useMemo(() => new Date(`${todayIst}T12:00:00+05:30`), [todayIst]);
+  const docsLoadingAll = lastDocsQ.isLoading || docsState.failed || quoteInfoLoading || openRenewalsLoading;
+  const built = React.useMemo(() => (subs ? buildQueueItems({
+    subs, openRenewalMap, quoteInfo, quoteStatusMap, docs: lastDocsQ.data, docsLoading: docsLoadingAll,
+    fuData, contacts, role: me?.role, graceDays, today: todayDate, todayIst: todayIst,
+  }) : null), [subs, openRenewalMap, quoteInfo, quoteStatusMap, lastDocsQ.data, docsLoadingAll, fuData, contacts, me?.role, graceDays, todayDate, todayIst]);
+  /* The tab from ?bucket= (old values map through resolveBucket) and every tab's narrowed rows —
+     kept until the search / filters / sort / data change, so a tab click only swaps the list shown. */
+  const counts = React.useMemo(
+    () => (built ? Object.fromEntries(QUEUE_TABS.map((t) => [t, built.tabs[t].length])) as Record<QueueTab, number> : null),
+    [built],
+  );
+  const resolved = !counts
+    ? { tab: "overdue" as QueueTab, atRisk: false }
+    : (LEGACY_BUCKETS as readonly string[]).includes(bucketRaw)
+      ? resolveBucket(bucketRaw as LegacyBucket, counts)
+      : resolveBucket(bucketRaw as QueueTab, counts);
+  const atRiskOn = filters.atRisk || resolved.atRisk;
+  const narrowed = React.useMemo(() => {
+    if (!built) return null;
+    const active: QueueFilters = { ...filters, atRisk: atRiskOn };
+    /* R-239: the search narrows the tabs (and their counts) only; R-2403: so do the filters.
+       R-2404: Mine · Follow-up due · Promise broken narrow the tabs the same way. */
+    const narrow = (list: QueueItem[]): QueueItem[] =>
+      sortQueue(filterQueue(filterByFollowup(list, fuFilters, me?.userId).filter((i) => matchesRenewalSearch(i.sub, search)).map(asQueueRow), active), sort)
+        .map((r) => r.item);
+    return { narrow, tabs: Object.fromEntries(QUEUE_TABS.map((t) => [t, narrow(built.items[t])])) as Record<QueueTab, QueueItem[]> };
+  }, [built, filters, atRiskOn, fuFilters, me?.userId, search, sort]);
+  /* R-2404 chip counts — whole queue, so a person sees "Mine (12)" before pressing it. */
+  const fuCounts = React.useMemo(() => {
+    if (!built) return { mine: 0, due: 0, broken: 0 };
+    const c = (f: Partial<FollowupFilters>) => filterByFollowup(built.allItems, { ...NO_FOLLOWUP_FILTERS, ...f }, me?.userId).length;
+    return { mine: c({ mine: true }), due: c({ followUpDue: true }), broken: c({ promiseBroken: true }) };
+  }, [built, me?.userId]);
 
   if (isLoading) {
     return (
@@ -665,29 +692,19 @@ export default function RenewalsPage() {
     );
   }
 
-  // Enrich with days-until-renewal (skip cancelled / no-date)
-  /* R-1541: the bucket rules live in lib/renewals/buckets.ts — the sidebar's Renewals badge
-     (nav_badges) counts Overdue + ≤7 days with the same numbers and opens ?bucket=urgent. */
-  const enriched = all
-    .filter(onRenewalsPage)
-    .map((s) => ({
-      sub: withRenewalQuote(s, openRenewalMap),
-      daysUntil: daysUntilRenewal(s.renewal_date!, today),
-    }));
-
   /* R-1124: ONE classification (./classify.ts) feeds every number and list on this page.
-     R-2403: a renewal whose quote is paid leaves Overdue (renewedPaid). */
+     R-2403: a renewal whose quote is paid leaves Overdue (renewedPaid). R-2764: worked out once per
+     data change (buildQueueItems, in the useMemo above) — a tab click re-uses it. */
+  if (!built || !narrowed || !counts) return null;
+  const { enriched, groups, items, allItems } = built;
   const quoteOf = (sub: Subscription) => quoteInfo?.get(sub.renewal_quote_id ?? "");
-  const paid = (r: { sub: Subscription }) => isPaidRenewalQuote(r.sub, quoteOf(r.sub));
-  const groups   = classifyRenewals(enriched, (r) => renewalRisk(r.sub).level === "high", today, paid);
-  const tabs     = queueTabs(groups);
 
   /* Forecast (audit B7): agle 6 mahine, mahina-war — "is quarter kitna aayega?"
      ab list jodne se nahi, curve se dikhta hai. */
   /* R-2225: a Won't renew subscription brings no renewal money.
      R-2431: each renewal at its term amount before GST (termAmountOf — the tiles' amount for a row
      without a renewal quote), flex parts included, one per month. */
-  const forecast = renewalForecast(
+  const forecastByDate = renewalForecast(
     enriched.map((r) => r.sub).filter(chasedRenewal),
     new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()),
   );
@@ -696,49 +713,7 @@ export default function RenewalsPage() {
   /* R-2422: a flex (monthly-commitment) subscription is a renewal too (owner, 3 Nov). */
   const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90 && chasedRenewal(r.sub));
   const highRiskSubs = groups.atRisk;
-  const atRiskIds    = new Set(highRiskSubs.map((r) => r.sub.id));
 
-  /* R-2403: each listed row gets its ONE status, its renewal amount and its contact. */
-  const todayIst = istToday(today);
-  const toItem = (r: { sub: Subscription; daysUntil: number }): QueueItem => {
-    const risk = renewalRisk(r.sub);
-    const docs = lastDocsQ.data?.get(r.sub.id);
-    /* R-2728: a renewal quote / part bill with the customer, unpaid → "Renewal quote sent" (stays listed). */
-    const status = renewalRowStatus(r.sub, r.daysUntil, { tenantGraceDays: graceDays, today, renewalPaid: paid(r), quoteSent: docs?.sent ?? null });
-    /* R-2404: the renewal's follow-up state + where the decision stands. */
-    const customerOwnerId = r.sub.customer_id ? fuData?.ownerByCustomer.get(r.sub.customer_id) ?? null : null;
-    const followup = renewalFollowup(r.sub.id, fuData?.rows ?? [], { customerOwnerId, today: todayIst, paid: status.key === "renewed" });
-    const linkedQuote = quoteOf(r.sub);
-    return {
-      sub: r.sub,
-      daysUntil: r.daysUntil,
-      status,
-      followup,
-      customerOwnerId,
-      decision: renewalDecision(r.sub, {
-        statusKey: status.key,
-        /* the draft/sent status from the open renewal quotes, else the linked quote's own */
-        quote: r.sub.renewal_quote_id
-          ? { id: r.sub.renewal_quote_id, status: quoteStatusMap.get(r.sub.renewal_quote_id) ?? linkedQuote?.status ?? null, payment_status: linkedQuote?.payment_status ?? null }
-          : null,
-        followup,
-      }),
-      amount: renewalAmount(r.sub, quoteOf(r.sub)),
-      frequency: renewalFrequency(r.sub),
-      commitment: renewalCommitment(r.sub),
-      docs,
-      contact: r.sub.customer_id ? contacts?.get(r.sub.customer_id) : undefined,
-      atRisk: atRiskIds.has(r.sub.id),
-      riskReason: [
-        ...(isNonRenewing(r.sub) ? ["Customer said they won't renew"] : []),
-        ...(r.daysUntil < 0 ? [`Renewal ${Math.abs(r.daysUntil)}d overdue, not paid`] : []),
-        ...risk.reasons.filter((x) => x !== "Seat usage not checked"),
-      ].join(" · ") || "High renewal risk",
-    };
-  };
-  const items = {} as Record<QueueTab, QueueItem[]>;
-  for (const t of QUEUE_TABS) items[t] = tabs[t].map(toItem);
-  const allItems = QUEUE_TABS.flatMap((t) => items[t]);
 
   /* R-2405: the tiles add up the rows' own renewal amounts; a pressed tile lists those rows.
      R-2586: the tiles stay on the 90-day window (TILE_TABS) — Later is a look-ahead list. */
@@ -746,56 +721,41 @@ export default function RenewalsPage() {
     id: i.sub.id, tab: t, statusKey: i.status.key, amount: i.amount.value, renewalDate: i.sub.renewal_date,
   }] as const)));
   const tileFigures = renewalTiles([...tileRowOf.values()], monthQuotes ?? [], month);
+  /* R-2751: this month's Forecast bar = the Renewed tile's "of ₹X due in <month>" (paid + still due, before GST). */
+  const forecast = forecastWithThisMonth(forecastByDate, tileFigures.renewedMonth, month);
   const paidSubs = new Set(paidRenewalsInMonth(monthQuotes ?? [], month).map((q) => q.renewal_subscription_id ?? ""));
 
-  const counts = Object.fromEntries(QUEUE_TABS.map((t) => [t, tabs[t].length])) as Record<QueueTab, number>;
-  const resolved = (LEGACY_BUCKETS as readonly string[]).includes(bucketRaw)
-    ? resolveBucket(bucketRaw as LegacyBucket, counts)
-    : resolveBucket(bucketRaw as QueueTab, counts);
   const bucketTab = resolved.tab;
-  const atRiskOn = filters.atRisk || resolved.atRisk;
-  const activeFilters: QueueFilters = { ...filters, atRisk: atRiskOn };
-
-  /* R-239: the search narrows the tabs (and their counts) only; R-2403: so do the filters. */
-  const asQueueRow = (i: QueueItem) => ({
-    id: i.sub.id, daysUntil: i.daysUntil, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
-    statusKey: i.status.key, atRisk: i.atRisk, customer: i.sub.customer_name, commitment: i.commitment, item: i,
-  });
-  /* R-2404: Mine · Follow-up due · Promise broken narrow the tabs the same way. */
-  const narrow = (list: QueueItem[]): QueueItem[] =>
-    sortQueue(filterQueue(filterByFollowup(list, fuFilters, me?.userId).filter((i) => matchesRenewalSearch(i.sub, search)).map(asQueueRow), activeFilters), sort)
-      .map((r) => r.item);
-  const shown = Object.fromEntries(QUEUE_TABS.map((t) => [t, narrow(items[t])])) as Record<QueueTab, QueueItem[]>;
+  const shown = narrowed.tabs;
   /* R-2405: a pressed tile lists its rows from every tab (search / filters / sort still apply). */
   /* R-2586: Later rows are not tile rows (no tileRowOf entry) — a pressed tile never lists them. */
-  const tileShown = narrow(tile ? allItems.filter((i) => {
+  const tileShown = narrowed.narrow(tile ? allItems.filter((i) => {
     const tr = tileRowOf.get(i.sub.id);
     return !!tr && tileMatches(tile, tr, month, paidSubs);
   }) : []);
 
   const productOptions = filterOptions(allItems.map((i) => i.sub.plan));
   const vendorOptions  = filterOptions(allItems.map((i) => i.sub.vendor));
-  const statusCount    = (k: RowStatusKey) => allItems.filter((i) => i.status.key === k).length;
-  const statusOptions  = (Object.keys(STATUS_FILTER_LABEL) as RowStatusKey[]).filter((k) => statusCount(k) > 0 || filters.status === k);
+  /* R-2760: the status filter is the row's ONE stage — the chip's words, with counts. */
+  const stageCounts    = new Map<StageKey, number>();
+  for (const i of allItems) if (i.stage) stageCounts.set(i.stage.key, (stageCounts.get(i.stage.key) ?? 0) + 1);
+  const statusCount    = (k: StageKey) => stageCounts.get(k) ?? 0;
+  const statusOptions  = STAGE_FILTER_ORDER.filter((k) => statusCount(k) > 0 || filters.status === k);
   const fuOn = fuFilters.mine || fuFilters.followUpDue || fuFilters.promiseBroken;
   const filtered = !!(filters.product || filters.status || filters.vendor || filters.commitment !== "all" || atRiskOn || fuOn);
-  /* R-2404: chip counts — whole queue, so a person sees "Mine (12)" before pressing it. */
-  const fuCount = (f: Partial<FollowupFilters>) => filterByFollowup(allItems, { ...NO_FOLLOWUP_FILTERS, ...f }, me?.userId).length;
-  const mineCount = fuCount({ mine: true });
-  const dueCount = fuCount({ followUpDue: true });
-  const brokenCount = fuCount({ promiseBroken: true });
+  const { mine: mineCount, due: dueCount, broken: brokenCount } = fuCounts;
 
-  const activeSubs    = all.filter((s) => s.status === "active").length;
-  const topHighRisk   = highRiskSubs[0]?.sub.customer_name ?? "a key customer";
-  // Real, computed reasons for the top high-risk sub — never fabricate signals
-  // (NPS/logins) we don't collect on a money screen.
-  const topReasons    = highRiskSubs[0]
-    ? [
-        ...(isNonRenewing(highRiskSubs[0].sub) ? ["Customer said they won't renew"] : []),
-        ...(highRiskSubs[0].daysUntil < 0 ? [`Renewal ${Math.abs(highRiskSubs[0].daysUntil)}d overdue, not paid`] : []),
-        ...renewalRisk(highRiskSubs[0].sub).reasons,
-      ]
-    : [];
+  /* R-2751: the header counts the rows on the tabs (each row is on exactly one tab), so it equals the tabs added up;
+     with a search / filter on, it also says how many of them match (= the narrowed tab counts added up). */
+  const queueCount    = allItems.length;
+  const shownCount    = QUEUE_TABS.reduce((s, t) => s + shown[t].length, 0);
+  /* R-2756: Top risk / the Renewal AI pick = the most overdue CHASED at-risk row (never a Won't renew,
+     stopped, paused or expired one), and its day count is the row chip's own (stage.days), naming
+     the date it counts from. Real, computed reasons only — never fabricated signals (NPS/logins).
+     No pick while the stages are still being read — the name never flips after load (as the row chip, R-2758). */
+  const topRisk       = lastDocsQ.isLoading || quoteInfoLoading || openRenewalsLoading ? null : topRiskPick(allItems);
+  const topHighRisk   = topRisk?.sub.customer_name ?? "a key customer";
+  const topReasons    = topRisk ? topRiskReasons(topRisk, todayIst) : [];
 
   const openTab = (t: string) => { setSelected(new Set()); setTile(null); setBucketTab(t); };
   /* R-2405: press a tile → its rows; press it again → back to the tabs. */
@@ -837,7 +797,7 @@ export default function RenewalsPage() {
           sub.outstanding_amount,
           risk.label,
           /* R-2431: new columns at the END, so a template reading by position still lines up. */
-          amount.fromQuote ? "Renewal quote, incl. GST" : "Term amount, + GST",
+          "Term amount, + GST",   // R-2751: one basis — a renewal quote never changes the amount
           isFlexSubscription(sub) ? "Monthly (flex)" : renewalCommitment(sub) === "monthly" ? "Monthly" : "Annual",
         ];
       });
@@ -849,54 +809,35 @@ export default function RenewalsPage() {
     toast.success(`Exported ${rows.length} renewal${rows.length === 1 ? "" : "s"}`);
   };
 
-  // Real bulk reminder — actually calls the per-sub send-now endpoint for every
-  // subscription renewing within 30 days, then reports the true count (and
-  // honestly flags stub email-mode). No fake "sent" toast.
-  async function handleBulkReminder() {
+  /* R-2753: ONE reminder button. It acts on the ticked rows, else on the rows of the open tab (or
+     pressed tile) as they show — never on rows from another tab (14 Nov audit: on Overdue it
+     offered two 8–30 customers). The dialog lists who is emailed and who is skipped with the
+     reason; nobody is emailed before "Email N" (R-239), and the result stays in the dialog. */
+  const visibleRows = tile ? tileShown : shown[bucketTab];
+  /* Urgent rows: the primary button is filled — the queue and the row drawer (R-2740) read the same value. */
+  const queueStrong = tile ? tile === "overdue" || tile === "due30" : bucketTab === "overdue" || bucketTab === "due7";
+  /* only ticked rows still on screen — a tick hidden by a later search / filter is not reminded */
+  const tickedShown = visibleRows.filter((i) => selected.has(i.sub.id));
+  const scope = reminderScope(tickedShown.length, tile ? TILE_LABEL[tile] : QUEUE_TAB_LABEL[bucketTab], visibleRows.length);
+  /* undefined = contacts not read yet (the send route still checks); null = no email on file. */
+  const emailOf = (i: QueueItem): string | null | undefined =>
+    !i.sub.customer_id ? null : contacts ? contacts.get(i.sub.customer_id)?.email ?? null : undefined;
+  function openReminder() {
     if (bulkSending) return;
-    /* R-239: renewed / suspended customers are never reminded, and nobody is emailed
-       until the operator has seen the count and the names. */
-    /* R-1124: lapsed rows still in grace are included (and named apart in the confirm). */
-    /* R-2225: a Won't renew row is left out inside bulkReminderPlan. */
-    /* R-2431: a flex part is skipped (its request goes out on its date) — and named. */
-    const { send: targets, skipped } = bulkReminderPlan(enriched, today, graceDays);
-    if (targets.length === 0) {
-      if (skipped.length > 0) toast.info("No reminders to send", { description: bulkReminderSkipLine(skipped) });
-      else toast.info("No renewals due in the next 30 days, and none lapsed in grace");
-      return;
-    }
-    await sendReminders(targets, skipped);
+    const scopeRows = tickedShown.length > 0 ? tickedShown : visibleRows;
+    /* R-1124 in grace → emailed; R-2225 Won't renew, R-2431 flex, R-808 split-billed, past grace,
+       no email, reminded today → skipped and named (reminders.ts reminderPlan). */
+    const plan = reminderPlan(scopeRows, { today, tenantGraceDays: graceDays, emailOf, isPaid: (i) => i.status.key === "renewed" });
+    setReminder({ scope, ...plan });
   }
 
-  /* R-2403: Send reminder on the ticked rows — the same rule (≤30 days or in grace) and confirm. */
-  async function handleSelectedReminder() {
-    if (bulkSending) return;
-    const { send: targets, skipped } = bulkReminderPlan(selectedRows, today, graceDays);
-    if (targets.length === 0) {
-      toast.info("None of the selected renewals is due for a reminder", {
-        description: [
-          "A reminder goes to renewals due in the next 30 days, or past the date and still in grace. Use Send renewal quote for the others.",
-          bulkReminderSkipLine(skipped),
-        ].filter(Boolean).join(" "),
-      });
-      return;
-    }
-    await sendReminders(targets, skipped);
-  }
-
-  /* R-1642: names who failed and why, and "Retry failed" re-sends only those (after the
-     same confirm — R-239: nobody is emailed without seeing the names first). */
-  async function sendReminders<T extends (typeof enriched)[number]>(targets: T[], skipped: readonly BulkReminderSkip[] = []) {
-    const ok = await confirm({ ...bulkReminderConfirm(targets, skipped), confirmLabel: `Email ${targets.length}`, icon: "mail" });
-    if (!ok) return;
-    await runSend(targets, undefined, (failed) => void sendReminders(failed));
-  }
 
   /* R-2403: Send renewal quote on the ticked rows — each through the row's own send-now route,
      only rows whose button is Send renewal quote; the rest are named in the confirm. */
   async function handleSelectedQuote() {
     if (bulkSending) return;
-    const { send, skipped } = bulkQuoteTargets(selectedRows, (id) => quoteStatusMap.get(id ?? "") ?? null, graceDays);
+    /* R-2760: the rows whose stage says "send the renewal" and that have an email (bulkStageTargets). */
+    const { send, skipped } = bulkStageTargets(selectedRows, emailOf, docsState.failed);
     if (send.length === 0) {
       toast.info("Nothing to send for the selected renewals", {
         description: skipped.slice(0, 3).map((s) => `${s.row.sub.customer_name} — ${s.reason}`).join("; "),
@@ -906,10 +847,32 @@ export default function RenewalsPage() {
     await sendQuotes(send, skipped);
   }
 
-  async function sendQuotes(send: QueueItem[], skipped: ReturnType<typeof bulkQuoteTargets<QueueItem>>["skipped"]) {
+  async function sendQuotes(send: QueueItem[], skipped: ReturnType<typeof bulkStageTargets<QueueItem>>["skipped"]) {
     const ok = await confirm({ ...bulkQuoteConfirm(send, skipped), confirmLabel: `Send ${send.length}`, icon: "mail" });
     if (!ok) return;
     await runSend(send, RENEWAL_QUOTE_VERBS, (failed) => void sendQuotes(failed, []));
+  }
+
+  /* Each row through the existing send-now route, one after another; then the lists refresh and,
+     when every row went, the ticks clear. */
+  async function sendAll<T extends RenewalRowLike>(targets: T[]): Promise<BulkReminderResult<T>> {
+    setBulkSending(true);
+    try {
+      const result = await sendBulkReminders(targets, async (subscriptionId) => {
+        const res = await fetch("/api/renewals/send-now", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscription_id: subscriptionId }),
+        });
+        return { ok: res.ok, json: await readJsonSafe(res) };
+      });
+      if (result.failed.length === 0) setSelected(new Set());
+      return result;
+    } finally {
+      setBulkSending(false);
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      qc.invalidateQueries({ queryKey: ["quotes"] });
+    }
   }
 
   async function runSend<T extends RenewalRowLike>(
@@ -917,19 +880,7 @@ export default function RenewalsPage() {
     verbs: { done: string; failed: string } | undefined,
     retryFailed: (failed: T[]) => void,
   ) {
-    setBulkSending(true);
-    const result = await sendBulkReminders(targets, async (subscriptionId) => {
-      const res = await fetch("/api/renewals/send-now", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription_id: subscriptionId }),
-      });
-      return { ok: res.ok, json: await readJsonSafe(res) };
-    });
-    setBulkSending(false);
-    qc.invalidateQueries({ queryKey: ["subscriptions"] });
-    qc.invalidateQueries({ queryKey: ["quotes"] });
-    if (result.failed.length === 0) setSelected(new Set());
+    const result = await sendAll(targets);
     const m = bulkReminderReport(result, verbs);
     const failedRows = result.failed.map((f) => f.row);
     const retry = { label: "Retry failed", onClick: () => retryFailed(failedRows) };
@@ -977,7 +928,8 @@ export default function RenewalsPage() {
           </p>
           <h1 className="font-serif text-3xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
-            {activeSubs} active subscription{activeSubs !== 1 ? "s" : ""}
+            {queueCount} subscription{queueCount !== 1 ? "s" : ""} in the queue
+            {shownCount !== queueCount && <> · {shownCount} match the search / filters</>}
             {duesLine && (
               <>
                 {" · "}
@@ -1000,24 +952,30 @@ export default function RenewalsPage() {
           </p>
         </div>
 
-        {/* Header actions — hidden on mobile (replaced by FAB) to avoid overflow */}
-        <div className="hidden md:flex shrink-0 items-center gap-2">
+        {/* Header actions. R-2753: no floating email button on a phone (it was the biggest control
+            over the Forecast) — the one Remind button stays here, small, on every size; Export is
+            desktop only. */}
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="default"
             size="sm"
+            className="hidden md:inline-flex"
             onClick={handleExport}
           >
             <Icon name="download" size={14} />
             Export
           </Button>
+          {/* R-2753: the ONE reminder button — the ticked rows, else the open tab's rows (label says which). */}
           <Button
             variant="primary"
             size="sm"
-            disabled={bulkSending}
-            onClick={handleBulkReminder}
+            disabled={bulkSending || contactsLoading || scope.count === 0}
+            title={contactsLoading ? "Reading each customer's email…" : undefined}
+            onClick={openReminder}
+            data-testid="renewals-remind"
           >
             <Icon name="mail" size={14} />
-            {bulkSending ? "Sending…" : "Bulk reminder"}
+            {bulkSending ? "Sending…" : reminderButtonLabel(scope)}
           </Button>
         </div>
       </div>
@@ -1034,12 +992,12 @@ export default function RenewalsPage() {
         title="Forecast"
         className="mb-4"
         summary={<StripFact label="Next 6 months" value={rupee(forecast.totalAmount, { compact: true })} />}
-        extras={highRiskSubs.length > 0 ? (
+        extras={topRisk ? (
           <StripLink
             tone="rose"
             title="Renewal AI · next best action — the top renewal at risk"
             onClick={() => {
-              const cid = highRiskSubs[0]?.sub.customer_id;
+              const cid = topRisk.sub.customer_id;
               router.push((cid ? `/customers/${cid}` : "/customers") as never);
             }}
           >
@@ -1051,8 +1009,8 @@ export default function RenewalsPage() {
           forecast={forecast}
           atRiskCount={highRiskSubs.length}
           atRiskArr={groups.atRiskArr}
-          topName={topHighRisk}
-          topCustomerId={highRiskSubs[0]?.sub.customer_id ?? null}
+          topName={topRisk ? topHighRisk : null}
+          topCustomerId={topRisk?.sub.customer_id ?? null}
           topReasons={topReasons}
         />
       </CollapsibleKpiStrip>
@@ -1097,10 +1055,10 @@ export default function RenewalsPage() {
               <option value="">All products</option>
               {productOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
-            <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as RowStatusKey | "" }))} aria-label="Filter by status" className={SELECT_CLS}>
+            <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as StageKey | "" }))} aria-label="Filter by status" className={SELECT_CLS}>
               <option value="">All statuses</option>
               {/* R-2728: each status with its count across the queue (e.g. "Renewal quote sent (3)"). */}
-              {statusOptions.map((k) => <option key={k} value={k}>{STATUS_FILTER_LABEL[k]} ({statusCount(k)})</option>)}
+              {statusOptions.map((k) => <option key={k} value={k}>{STAGE_FILTER_LABEL[k]} ({statusCount(k)})</option>)}
             </select>
             <select value={filters.vendor} onChange={(e) => setFilters((f) => ({ ...f, vendor: e.target.value }))} aria-label="Filter by vendor" className={SELECT_CLS}>
               <option value="">All vendors</option>
@@ -1160,9 +1118,9 @@ export default function RenewalsPage() {
         </div>
         <div className="border-t border-hairline">
           <RenewalQueue
+            key={tile ?? bucketTab}   /* R-2764: a new tab / tile starts at 50 rows again */
             rows={tile ? tileShown : shown[bucketTab]}
-            graceDays={graceDays}
-            strong={tile ? tile === "overdue" || tile === "due30" : bucketTab === "overdue" || bucketTab === "due7"}
+            strong={queueStrong}
             selected={selected}
             onSelect={onSelect}
             emptyText={tabEmpty}
@@ -1170,9 +1128,27 @@ export default function RenewalsPage() {
             names={names}
             lastPaid={lastPaid}
             docsState={docsState}
+            onOpen={openDrawer}
           />
         </div>
       </Card>
+
+      {/* R-2740: the row drawer — every quote + invoice, payments, follow-ups, flags explained (read-only). */}
+      {(() => {
+        const drawerItem = drawerSub ? allItems.find((i) => i.sub.id === drawerSub) ?? null : null;
+        /* the same filled / outline button as the row it came from */
+        return (
+          <RenewalDrawer
+            item={drawerItem}
+            open={!!drawerSub}
+            onClose={closeDrawer}
+            names={names}
+            followupRows={fuData?.rows ?? []}
+            onFollowup={drawerItem?.sub.customer_id ? () => setFollowupFor(drawerItem) : undefined}
+            strong={queueStrong}
+          />
+        );
+      })()}
 
       {/* R-2404: Payment Follow-up's own dialog, about this renewal (its history = the renewal's activity log). */}
       {followupFor?.sub.customer_id && (
@@ -1197,13 +1173,11 @@ export default function RenewalsPage() {
         onAssign={(p) => void assignOwner(selectedRows, p)}
       />
 
-      {/* R-2403: tick rows → the existing send-now route, after the existing kind of confirm. */}
+      {/* R-2403: tick rows → the existing send-now route, after the existing kind of confirm.
+          R-2753: the reminder for ticked rows is the header's one button ("Remind N selected"). */}
       <BulkActionBar count={selectedRows.length} noun="renewal" onClear={() => setSelected(new Set())}>
         <BulkBarButton icon="mail" onClick={() => void handleSelectedQuote()} disabled={bulkSending}>
-          Send renewal quote
-        </BulkBarButton>
-        <BulkBarButton icon="mail" onClick={() => void handleSelectedReminder()} disabled={bulkSending}>
-          Send reminder
+          Send renewal
         </BulkBarButton>
         <BulkBarButton
           icon="user"
@@ -1217,12 +1191,8 @@ export default function RenewalsPage() {
         </BulkBarButton>
       </BulkActionBar>
 
-      {/* Mobile FAB — Bulk reminder action (header buttons hidden on phone) */}
-      <FAB
-        icon="mail"
-        label={bulkSending ? "Sending…" : "Bulk reminder"}
-        onClick={handleBulkReminder}
-      />
+      {/* The dialog's send = the existing send-now route per row (R-1642 reasons per failure). */}
+      <RenewalReminderDialog state={reminder} onClose={() => setReminder(null)} onSend={(rows) => sendAll(rows)} emailOf={emailOf} />
     </div>
   );
 }

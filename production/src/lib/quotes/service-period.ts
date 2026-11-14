@@ -19,6 +19,8 @@
  */
 import { utcDateISO } from "@/lib/dates/ist";
 import { domainLineYears } from "@/lib/provisioning/products";
+import { followingTermStart } from "@/lib/billing/subscription-schedule";
+import { storedLinePeriod } from "@/lib/quotes/stored-line-period";
 
 export type QuoteServicePeriod =
   | { kind: "range"; from: string; to: string }
@@ -219,6 +221,9 @@ export interface LinePeriodLine {
   /** R-2712: years paid for on a multi-year line (R-156); a new sale's period runs that long. */
   years?: number | null;
   domains?: Array<{ domain: string; seats: number }> | null;
+  /** R-2744: the period the invoice stored for this line at issue (stored-line-period.ts) — read
+   *  only when the context says `storedPeriods`. */
+  service_period?: unknown;
 }
 
 export interface LinePeriodContext {
@@ -229,10 +234,18 @@ export interface LinePeriodContext {
   extensionMonths?: number | null;
   /** quotes.renewal_term_date — the renewal date of the term a renewal quote was made for. */
   renewalTermDate?: string | null;
+  /** R-2727: the first day of the term the renewal buys, by billing's rule (followingTermStart) —
+   *  ON renewal_date for an app-made subscription (renewal_date = start + whole terms), the day
+   *  after it for a row whose renewal_date is the term's last day (Zoho import). Absent (the
+   *  subscription was not read) → the day after renewal_term_date, as before. */
+  renewalStart?: string | null;
   /** The date a new sale's term starts on when its line has no start_date (the quote's date). */
   startFallback?: string | null;
   /** quotes.domain, else the renewed subscription's domain. A line's own domain wins. */
   domain?: string | null;
+  /** R-2744: an issued invoice's lines carry the period stored at issue (withStoredLinePeriods) —
+   *  print that, never a period worked out again from today's quote / subscription. */
+  storedPeriods?: boolean;
 }
 
 export interface LinePeriod { from: string; to: string; months: number | null }
@@ -283,6 +296,8 @@ function validMonths(m: number | null | undefined): m is number {
 
 /** The dates one line's money covers, or null when they are not certain. */
 export function lineServicePeriod(line: LinePeriodLine, ctx: LinePeriodContext): LinePeriod | null {
+  /* R-2744: a stamped invoice prints what it stored at issue (null = no period on this line). */
+  if (ctx.storedPeriods === true) return storedLinePeriod(line) ?? null;
   if (ctx.isOneOff === true || !isTermLine(line)) return null;
 
   // 1. Add-seats: the window the line names.
@@ -298,6 +313,11 @@ export function lineServicePeriod(line: LinePeriodLine, ctx: LinePeriodContext):
     const m = ctx.extensionMonths;
     if (!rtd || !validMonths(m)) return null;
     if (termMonths === 1 && m !== 1) return null; // monthly line, longer field: conflict
+    /* R-2727: an app-made subscription's next term starts ON renewal_date (billing's
+       followingTermStart) and record_payment rolls renewal_date by m months → it covers
+       renewal_date … renewal_date + m − 1 day. */
+    const start = isoDateOf(ctx.renewalStart);
+    if (start === rtd) return { from: rtd, to: addDaysIso(addMonthsIso(rtd, m), -1), months: m };
     return { from: addDaysIso(rtd, 1), to: addMonthsIso(rtd, m), months: m };
   }
 
@@ -349,16 +369,74 @@ export function lineSubscriptionNotes(line: LinePeriodLine, ctx: LinePeriodConte
   return [lineDomainText(line, ctx), linePeriodText(line, ctx)].filter((s): s is string => !!s);
 }
 
-/** The domain of the subscription a renewal / extension quote renews: the one named by
+/**
+ * R-2727 review (HIGH + MED): an ISSUED invoice's PDF must never re-print a different period.
+ * Invoices store no service period — it is worked out from the backing quote each time the PDF is
+ * drawn — so the R-2727 billing-rule start (followingTermStart) would move every renewal invoice of
+ * an app-made subscription issued before this change one day earlier. A hard-coded date cannot say
+ * when "before" is: staging and live deploy on different days, and an invoice the OLD code issued
+ * after such a date would still re-print. So the new rule applies to an invoice only when it was
+ * CREATED (invoices.created_at — never invoice_date, which the correct-invoice-date RPC can move)
+ * on/after the moment this card's migration ran on that database (public.app_rule_dates, key
+ * R2727_PERIOD_RULE_KEY; migration 20261113181025 — the DB step and the code go live together).
+ * No row yet, row unreadable, no created_at, or an older invoice → exactly as before (domain only,
+ * day-after rule). Quotes, emails, WhatsApp, the accept page and the editor always use the new
+ * rule. The real long-term fix is a period stored on each invoice line (separate card).
+ */
+export const R2727_PERIOD_RULE_KEY = "r2727_invoice_period_rule";
+
+/** True when the invoice was created on/after the rule's go-live moment (`ruleFromAt`, an ISO
+ *  timestamp from app_rule_dates) on this database. Unknown on either side → false: the old rule. */
+export function invoiceUnderPeriodRule(
+  invoice: { created_at?: string | null },
+  ruleFromAt: string | null | undefined,
+): boolean {
+  const from = Date.parse(ruleFromAt ?? "");
+  const made = Date.parse(invoice.created_at ?? "");
+  return Number.isFinite(from) && Number.isFinite(made) && made >= from;
+}
+
+/** What an invoice PDF passes to quoteLinePeriodContext for the renewed subscription: the full facts
+ *  for an invoice created on/after the rule's go-live moment (invoiceUnderPeriodRule), else exactly
+ *  what it passed before R-2727 (the subscription's domain, only when the quote stores none). */
+export function invoicePeriodSubscription(
+  invoice: { created_at?: string | null },
+  ruleFromAt: string | null | undefined,
+  quote: { domain?: string | null },
+  subscription: string | RenewedSubscriptionFacts | null | undefined,
+): string | RenewedSubscriptionFacts | null {
+  if (invoiceUnderPeriodRule(invoice, ruleFromAt)) return subscription ?? null;
+  if ((quote.domain ?? "").trim()) return null;
+  const domain = typeof subscription === "string" ? subscription : subscription?.domain;
+  return (domain ?? "").trim() || null;
+}
+
+/** R-2727: what a renewal / extension quote's lines need from the subscription it renews — its
+ *  domain (renewal quotes store none) and its start + term (to tell an app-made, whole-term row
+ *  from a last-day row, as billing's followingTermStart does). */
+export interface RenewedSubscriptionFacts {
+  domain?: string | null;
+  start_date?: string | null;
+  term_months?: number | null;
+}
+
+/** The subscription a renewal / extension quote renews: the one named by
  *  quotes.renewal_subscription_id (R-1574), else the one whose renewal_quote_id is this quote. */
+export function renewedSubscription<S extends { id: string; renewal_quote_id?: string | null } & RenewedSubscriptionFacts>(
+  q: { id: string; renewal_subscription_id?: string | null },
+  subs: ReadonlyArray<S> | null | undefined,
+): S | null {
+  const list = subs ?? [];
+  return (q.renewal_subscription_id ? list.find((s) => s.id === q.renewal_subscription_id) : undefined)
+    ?? list.find((s) => s.renewal_quote_id === q.id) ?? null;
+}
+
+/** The domain of the subscription a renewal / extension quote renews (renewedSubscription). */
 export function renewedSubscriptionDomain(
   q: { id: string; renewal_subscription_id?: string | null },
   subs: ReadonlyArray<{ id: string; renewal_quote_id?: string | null; domain?: string | null }> | null | undefined,
 ): string | null {
-  const list = subs ?? [];
-  const sub = (q.renewal_subscription_id ? list.find((s) => s.id === q.renewal_subscription_id) : undefined)
-    ?? list.find((s) => s.renewal_quote_id === q.id);
-  return (sub?.domain ?? "").trim() || null;
+  return (renewedSubscription(q, subs)?.domain ?? "").trim() || null;
 }
 
 /** The context from a stored quote row (snake_case). `subscriptionDomain`: the renewed
@@ -369,13 +447,22 @@ export function quoteLinePeriodContext(
     is_one_off?: boolean | null; extension_months?: number | null;
     renewal_term_date?: string | null; created_date?: string | null; domain?: string | null;
   },
-  subscriptionDomain?: string | null,
+  /** The renewed subscription's domain, or (R-2727) the subscription's facts — domain, start, term. */
+  subscription?: string | RenewedSubscriptionFacts | null,
 ): LinePeriodContext {
+  const sub = typeof subscription === "string" ? { domain: subscription } : (subscription ?? null);
+  const rtd = isoDateOf(q.renewal_term_date);
+  /* R-2727: billing's rule for where the next term starts — only when the subscription's start is known. */
+  const renewalStart = rtd && sub?.start_date && (q.is_renewal === true || q.is_extension === true)
+    ? followingTermStart({ term_months: sub.term_months ?? 12, start_date: sub.start_date, renewal_date: rtd })
+    : null;
   return {
     isRenewal: q.is_renewal, isExtension: q.is_extension, isAddSeats: q.is_add_seats,
     isOneOff: q.is_one_off, extensionMonths: q.extension_months,
     renewalTermDate: q.renewal_term_date ?? null,
+    /* only when known — a context without it is exactly the pre-R-2727 object (old invoices). */
+    ...(renewalStart ? { renewalStart } : {}),
     startFallback: q.created_date ?? null,
-    domain: (q.domain ?? "").trim() || (subscriptionDomain ?? "").trim() || null,
+    domain: (q.domain ?? "").trim() || (sub?.domain ?? "").trim() || null,
   };
 }

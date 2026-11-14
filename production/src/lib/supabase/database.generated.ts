@@ -931,6 +931,24 @@ export type Database = {
           },
         ]
       }
+      app_rule_dates: {
+        Row: {
+          from_at: string
+          key: string
+          note: string | null
+        }
+        Insert: {
+          from_at?: string
+          key: string
+          note?: string | null
+        }
+        Update: {
+          from_at?: string
+          key?: string
+          note?: string | null
+        }
+        Relationships: []
+      }
       ai_action_log: {
         Row: {
           action: string

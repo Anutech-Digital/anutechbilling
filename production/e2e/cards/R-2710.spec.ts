@@ -54,6 +54,12 @@ async function clickWhenReady(button: Locator) {
   await button.click();
 }
 
+/* R-2754: after R-2758 a sent quote's "Change renewal" lives in the row's ⋯ menu. */
+async function changeRenewal(r: Locator, page: Page) {
+  await clickWhenReady(r.getByRole("button", { name: /^More renewal actions for / }));
+  await clickWhenReady(page.getByRole("menuitem", { name: /Change renewal/ }));
+}
+
 async function row(page: Page) {
   await openAppPage(page, "/renewals?bucket=d30", /Renewals/);
   const r = page.locator("tr", { hasText: NAME }).filter({ visible: true });
@@ -68,18 +74,18 @@ test.describe("R-2710 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: Renewals → 8–30 tab: the row's one button is 'Review renewal quote' (nothing sent yet)", async ({ browser, baseURL }) => {
+  test("Step 1: Renewals → 8–30 tab: the row's one button is 'Send renewal' (nothing sent yet; R-2758 label)", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await row(page);
-    await expect(await onlyOne(r.getByRole("button", { name: /Review renewal quote/ }), "Review renewal quote")).toBeVisible();
+    await expect(await onlyOne(r.getByRole("button", { name: /^Send renewal$/ }), "Send renewal")).toBeVisible();
     await expect(r.getByRole("button", { name: /Send renewal quote/ })).toHaveCount(0);
   });
 
   test("Step 2: click it → /quotes/Q-…/edit opens with the line filled in, a DRAFT linked to the subscription; nothing emailed", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await row(page);
-    await clickWhenReady(r.getByRole("button", { name: /Review renewal quote/ }));
-    await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit$/, { timeout: 120_000 });   // a cold dev server compiles the route + the editor
+    await clickWhenReady(r.getByRole("button", { name: /^Send renewal$/ }));
+    await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit(?:\?returnTo=%2Frenewals[^/]*)?$/, { timeout: 120_000 });   // R-2754: ?returnTo=<Renewals tab>; a cold dev server compiles the route + the editor
     const id = linked();
     expect(id).not.toBe("");
     expect(page.url()).toContain(`/quotes/${encodeURIComponent(id)}/edit`);
@@ -89,7 +95,7 @@ test.describe("R-2710 card test", () => {
     await expect(page.locator("[data-renewal-send]").filter({ visible: true })).toBeVisible({ timeout: 60_000 });
   });
 
-  test("Step 3: change the term to 3 years → the footer's next step is 'Save & send to customer'; sent (▾ Save & mark sent — local customer messages are off) → extension 36 months, ₹3,600; row reads 'Change renewal quote'", async ({ browser, baseURL }) => {
+  test("Step 3: change the term to 3 years → the footer's next step is 'Save & send to customer'; sent (▾ Save & mark sent — local customer messages are off) → extension 36 months, ₹3,600; row's ⋯ offers 'Change renewal'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = linked();
     /* The local company has no catalogue row for this plan, so the line has no vendor cost and the
@@ -106,19 +112,21 @@ test.describe("R-2710 card test", () => {
     await page.getByRole("menuitem", { name: /Save & mark sent/ }).click();
     await expect.poll(() => quoteRow(id), { timeout: 60_000 }).toBe("sent,36,3600");
     const r = await row(page);
-    await expect(r.getByRole("button", { name: /Change renewal quote/ })).toBeVisible({ timeout: 60_000 });
+    await clickWhenReady(r.getByRole("button", { name: /^More renewal actions for / }));
+    await expect(page.getByRole("menuitem", { name: /Change renewal/ })).toBeVisible({ timeout: 60_000 });
+    await page.keyboard.press("Escape");
   });
 
-  test("Step 4: Change renewal quote → the R2 draft opens in the editor; a second click re-opens the same R2 (no R3)", async ({ browser, baseURL }) => {
+  test("Step 4: ⋯ Change renewal → the R2 draft opens in the editor; a second click re-opens the same R2 (no R3)", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = linked();
     let r = await row(page);
-    await clickWhenReady(r.getByRole("button", { name: /Change renewal quote/ }));
-    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 120_000 });
+    await changeRenewal(r, page);
+    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit(?:\\?returnTo=%2Frenewals[^/]*)?$`), { timeout: 120_000 });
     expect(quoteRow(`${id}-R2`)).toBe("draft,36,3600");
     r = await row(page);
-    await clickWhenReady(r.getByRole("button", { name: /Change renewal quote/ }));
-    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 120_000 });
+    await changeRenewal(r, page);
+    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit(?:\\?returnTo=%2Frenewals[^/]*)?$`), { timeout: 120_000 });
     expect(db().one(`select count(*) from public.quotes where revision_of = '${id}'`)).toBe("1");
   });
 

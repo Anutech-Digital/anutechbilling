@@ -16,6 +16,8 @@ import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
 import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { defaultLeadQuoteNotes, pricingValidityLine } from "@/lib/quotes/default-quote-notes";
+import { editorStaffNote, joinEditorNotes, splitNotesForEditor, type EditorNotes } from "@/lib/quotes/editor-notes";
+import { BACK_TO_RENEWALS_LABEL, RETURN_TO_PARAM, renewalsReturnTo } from "@/lib/renewals/back-to-renewals";
 import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
 import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix, lineRateUnitSuffix } from "@/lib/quotes/line-rate-unit";
@@ -28,6 +30,11 @@ import { isNameOnlyCustomer } from "@/lib/customers/name-only";
 import { toastError } from "@/lib/errors/toast-error";
 import { canSend, requiredApproval } from "@/lib/quotes/approval";
 import { lineEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
+import {
+  renewalLineStart, startsOnCard, customerHasLiveSubscription, renewalSendStep, viewerMayApproveInEditor, RENEWAL_OPEN_APPROVAL_LABEL,
+  RENEWAL_APPROVAL_CHECK_FAILED_LABEL,
+} from "@/lib/quotes/renewal-editor";
+import { renewalPeriodLabel, lineStartsAddsInfo } from "@/lib/quotes/renewal-period-label";
 import {
   sendQuoteEmail, quoteRecipient, saveAndSendPlan,
   quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
@@ -68,7 +75,8 @@ import { paletteMayOpen } from "@/components/layout/palette-access";
 import { useCustomers } from "@/lib/queries/customers";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
-import { useCreateQuote, useQuote } from "@/lib/queries/quotes";
+import { useCreateQuote, useQuote, useQuoteChainMakers, useRequestApproval } from "@/lib/queries/quotes";
+import { useTeamMembers } from "@/lib/queries/team";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
 import { useUpdateLead, useQuoteLead, useCreateLead } from "@/lib/queries/leads";
 import { prospectContactProblem, hasProspectContact, prospectLeadRow, validProspectGstin } from "@/lib/quotes/prospect-contact";
@@ -122,6 +130,40 @@ import { SupportPlanPicker } from "@/components/features/quotes/support-plan-pic
 import { canEditSupportCatalog } from "@/lib/support/catalog-row";
 import { WORKSPACE_LIST_PRICE_PM, floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import Link from "next/link";
+
+/** R-2727: a line's Starts — the date box, or on a renewal line the renewal period's start as fixed
+ *  text (record_payment rolls a renewal by the subscription's term; a box would change nothing). */
+function LineStartsField({ start, value, onChange, inputClassName, textClassName, ariaLabel, inputTitle }: {
+  start: ReturnType<typeof renewalLineStart>;
+  value: string;
+  onChange: (v: string) => void;
+  inputClassName: string;
+  textClassName: string;
+  ariaLabel?: string;
+  inputTitle?: string;
+}) {
+  if (start.kind === "fixed") {
+    return (
+      <span
+        data-testid="renewal-line-start"
+        title={start.date ? "The renewal term's first day — the subscription's term sets it (as billing does), so it is not typed here" : "No term start on this line of a renewal quote"}
+        className={textClassName}
+      >
+        {start.date ? formatDate(start.date) : "—"}
+      </span>
+    );
+  }
+  return (
+    <input
+      aria-label={ariaLabel}
+      type="date"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      title={inputTitle}
+      className={inputClassName}
+    />
+  );
+}
 
 /** R-408: a new quote has no approval record yet — canSend() then judges by the lines alone. */
 const NO_APPROVAL_ROW = {
@@ -217,7 +259,7 @@ function QuoteBuilderBody() {
     [allCatalog],
   );
   const isRegistrationLine = (l: QuoteLineItem) => isTermLine(l, domainItemIds);
-  const { data: currentUser } = useCurrentUser();
+  const { data: currentUser, isLoading: currentUserLoading, isError: currentUserFailed } = useCurrentUser();
   /* R-1532: a business that is not GST-registered / under composition issues a Bill of
      Supply — its quotes carry 0% GST, locked (R-1529's database refuses GST on the invoice). */
   const gstRegistration = useGstRegistration();
@@ -264,6 +306,8 @@ function QuoteBuilderBody() {
     return m ? decodeURIComponent(m[1]) : null;
   }, [pathname]);
   const prefillFrom = duplicateOf ?? editOf;
+  /* R-2754: opened from Renewals (?returnTo=/renewals?bucket=…) → "Back to Renewals" + return after save. */
+  const backToRenewals = editOf ? renewalsReturnTo(searchParams.get(RETURN_TO_PARAM)) : null;
   const urlCustomer       = searchParams.get("customer");  // Customer 360 → "Add service"
   // Invoice mode (?invoice=1): the same builder, but on save it generates a GST
   // invoice immediately (a "direct invoice") instead of just saving a quote.
@@ -527,6 +571,10 @@ function QuoteBuilderBody() {
   const [leadCountry, setLeadCountry] = React.useState(leadCountryInit);
   React.useEffect(() => { if (leadCountryInit) setLeadCountry(leadCountryInit); }, [leadCountryInit]);
   const [notes, setNotes] = React.useState("");
+  /* R-2754: the stored notes split for the box — the box holds only what the customer reads;
+     the system sentence that names the subscription by id (and any "Staff only" part) is held
+     here and stored again on save, so the Renewals link (open-renewal-quotes.ts) survives. */
+  const [notesParts, setNotesParts] = React.useState<EditorNotes>({ customer: "", hidden: "", original: "" });
   const [lineItems, setLineItems] = React.useState<QuoteLineItem[]>([]);
   /* R-388 — a line's cost has three states, and `cost: number` alone cannot say which:
        • PENDING  (costPendingRef): never known — prefilled before/without a catalogue row.
@@ -839,7 +887,17 @@ function QuoteBuilderBody() {
     if (sourceQuote.billing_cycle)        setBillingCycle(sourceQuote.billing_cycle);
     if (sourceQuote.payment_terms_days != null) setPaymentTermsDays(sourceQuote.payment_terms_days);
     if (sourceQuote.terms_conditions)     setTermsConditions(sourceQuote.terms_conditions);
-    if (sourceQuote.notes)                setNotes(sourceQuote.notes);
+    if (sourceQuote.notes) {
+      const parts = splitNotesForEditor(
+        sourceQuote.notes,
+        Array.isArray(sourceQuote.line_items) ? (sourceQuote.line_items as QuoteLineItem[]) : [],
+        { plan: sourceQuote.plan ?? null, extensionMonths: sourceQuote.extension_months ?? null },
+      );
+      /* Only an in-place Edit keeps the held-back part: a Duplicate is a new quote, not this
+         subscription's renewal quote, so it starts from the customer line alone. */
+      if (editOf) setNotesParts(parts);
+      setNotes(parts.customer);
+    }
 
     /* ── The fields this effect used to leave behind ─────────────────────────────
        Harmless while this only ever DUPLICATED (a fresh quote starting at INR and a
@@ -1027,6 +1085,9 @@ function QuoteBuilderBody() {
   const cycleLabel = ({ yearly: "Billed yearly", half_yearly: "Billed half-yearly", quarterly: "Billed quarterly", monthly: "Billed monthly" } as Record<string, string>)[effectiveCycle] ?? "Billed yearly";
   const billingUnit        = cycleUnitLabel(effectiveCycle);
   const showPerInvoice     = billingN > 1;
+  /* R-2746: a renewal / extension draft names WHICH period it buys, over the lines (the lines' own
+     dates, R-2727) — and a line's fixed Starts then shows only when it differs. */
+  const renewalLabel = renewalPeriodLabel(lineItems, editedQuotePeriod);
   /* R-806: what one payment covers — from the lines' own dates/term, never assumed. */
   const servicePeriodLabel = servicePeriodText(quoteServicePeriod({
     lines:    lineItems,
@@ -1405,19 +1466,45 @@ function QuoteBuilderBody() {
      "Save & mark sent" and the toast says plainly that no email went. */
   // R-469 (6): a typed prospect's own email counts too.
   const sendRecipient = quoteRecipient(isLeadMode ? leadEmail : customerId ? customer?.contact_email : prospectEmail);
+  const approvalNeed = React.useMemo(() => requiredApproval(lineEconomics(lineItems)), [lineItems]);
   const sendAllowed = React.useMemo(() => canSend(
     quoteApprovalRecord(editOf && sourceQuote ? sourceQuote : NO_APPROVAL_ROW),
-    requiredApproval(lineEconomics(lineItems)),
-  ).allowed, [editOf, sourceQuote, lineItems]);
+    approvalNeed,
+  ).allowed, [editOf, sourceQuote, approvalNeed]);
   const sendPlan = saveAndSendPlan({ recipient: sendRecipient, sendAllowed });
   /* R-2710: editing a renewal quote (a whole-term renewal, not an extension / plan change) — the
      footer's next step is "Save & send to customer". */
+  const staffNote = editorStaffNote(notesParts);
   const renewalEdit = !!editOf && sourceQuote?.is_renewal === true && sourceQuote.is_extension !== true
     && (sourceQuote.extension_months ?? 0) > 0;
   /* It must not promise an email it will not send (saveAndSendLabel's rule). */
   const RENEWAL_SEND_LABEL: Record<typeof sendPlan, string> = {
     email: "Save & send to customer", "mark-sent": "Save & mark sent", "needs-approval": "Save & ask for approval",
   };
+  /* R-2727: a renewal that needs approval (a domain renewal's cost is unknown → the owner, R-388).
+     Whoever may clear it — the quote page's canApprove on the same team + quote_chain_makers — gets
+     "Save & open approval" (lands in Review & decide); anyone else "Save & ask for approval", which
+     now really asks. An owner never asks himself. */
+  const { data: renewalMakers, isLoading: makersLoading, isError: makersFailed } = useQuoteChainMakers(renewalEdit && editOf ? editOf : undefined);
+  const { data: teamMembers, isSuccess: teamLoaded, isLoading: teamLoading, isError: teamFailed } = useTeamMembers();
+  const requestApproval = useRequestApproval();
+  const renewalMayApprove = renewalEdit && viewerMayApproveInEditor({
+    viewer: currentUser ? { id: currentUser.userId, role: currentUser.role } : null,
+    record: quoteApprovalRecord(sourceQuote ?? NO_APPROVAL_ROW),
+    need: approvalNeed,
+    team: teamLoaded ? (teamMembers ?? []) : undefined,
+    makers: renewalMakers,
+  });
+  const renewalStep = renewalSendStep(sendPlan, renewalMayApprove);
+  /* Who may approve is still loading → the button waits (a click now would take the wrong step). A
+     failed read (R-2727 review) → the button says so and stays off — never a guessed step. */
+  const approvalStepLoading = renewalEdit && sendPlan === "needs-approval" && (currentUserLoading || teamLoading || makersLoading);
+  const approvalStepFailed = renewalEdit && sendPlan === "needs-approval" && !approvalStepLoading
+    && (currentUserFailed || teamFailed || makersFailed);
+  const renewalSendLabel = approvalStepFailed ? RENEWAL_APPROVAL_CHECK_FAILED_LABEL
+    : renewalStep === "open-approval" ? RENEWAL_OPEN_APPROVAL_LABEL : RENEWAL_SEND_LABEL[sendPlan];
+  /* R-2713 part 1: an existing customer's line shows its Starts on the phone card. */
+  const customerLive = customerHasLiveSubscription(customerId, allSubscriptions);
   const [emailing, setEmailing] = React.useState(false);
 
   /** Email an already-saved quote; on failure keep a "Try again" on the toast. */
@@ -1642,7 +1729,7 @@ function QuoteBuilderBody() {
         payment_terms_days: isInvoiceMode ? paymentTermsDays : null,
         terms_conditions:   termsConditions.trim() || null,
         status:        saveStatus,
-        notes:         notes || null,
+        notes:         joinEditorNotes(notesParts, notes),
         expires_date:  addDaysISO(istToday(), validityDays),
         /* R-389 (F7): licence lines only — support / one-time services are not seats
            (Q-FBB9-27-0013 saved 27 for 25 Workspace seats). A quote with no licence line
@@ -1762,12 +1849,40 @@ function QuoteBuilderBody() {
       } else if (plan === "mark-sent") {
         const out = markedSentOutcome(quote.id);
         toast.warning(out.title, { description: out.description, duration: 10000 });
+      } else if (plan === "needs-approval" && renewalEdit && afterAction === "send-now" && renewalStep === "open-approval") {
+        /* R-2727: the viewer clears it — straight into the quote page's Review & decide. */
+        toast.info(`${quote.id} saved as draft — approve it, then send`, { description: "Nothing was emailed yet." });
+        router.push(`/quotes/${quote.id}?approve=1` as never);
+        return;
+      } else if (plan === "needs-approval" && renewalEdit && afterAction === "send-now" && currentUser && approvalNeed.tier !== "none") {
+        /* R-2727: "Save & ask for approval" asks — the quote page's Request approval, same call. */
+        const tier = approvalNeed.tier;
+        try {
+          await requestApproval.mutateAsync({ id: quote.id, tier, userId: currentUser.userId });
+          toast.success(`Sent to ${tier === "owner" ? "the owner" : "a manager"} for approval.`, {
+            description: `${quote.id} is saved as a draft — nothing was emailed. Send it once it is approved.`,
+          });
+        } catch {
+          /* the hook toasts; the draft is saved and the quote page keeps Request approval */
+        }
       } else if (plan === "needs-approval") {
         const out = needsApprovalOutcome(quote.id);
         toast.warning(out.title, { description: out.description, duration: 10000 });
       }
 
       const suffix = afterAction === "email" || afterAction === "whatsapp" ? `?send=${afterAction}` : "";
+      /* R-2754: opened from Renewals → back to the same Renewals tab (the quote stays one click away). */
+      if (!suffix && backToRenewals) {
+        /* mark-sent / needs-approval already said what happened (above) — no second, green toast. */
+        if (plan !== "mark-sent" && plan !== "needs-approval") {
+          toast.success(`${quote.id} saved`, {
+            action: { label: "Open quote", onClick: () => router.push(`/quotes/${quote.id}` as never) },
+          });
+        }
+        /* replace: browser Back from Renewals must not reopen the editor of a quote just saved. */
+        router.replace(backToRenewals as never);
+        return;
+      }
       router.push(`/quotes/${quote.id}${suffix}` as any);
     } catch {
       // toast in hook
@@ -1808,10 +1923,17 @@ function QuoteBuilderBody() {
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto flex flex-col gap-4" onPointerDownCapture={markTouched} onKeyDownCapture={markTouched}>
+      {/* R-2754: opened from Renewals → one click back to the same tab (the app's back-link look). */}
+      {backToRenewals && (
+        <Link href={backToRenewals as never} data-back-to-renewals className="inline-flex min-h-9 items-center gap-1 self-start text-sm text-ink-3 hover:text-ink">
+          <Icon name="arrow_left" size={14} /> {BACK_TO_RENEWALS_LABEL}
+        </Link>
+      )}
       {/* Page head */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">
-          <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.back()} />
+          {/* R-2754: opened from Renewals → the "Back to Renewals" link above is the one way back. */}
+          {!backToRenewals && <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.back()} />}
           <div>
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
               {isInvoiceMode ? (bosStatus ? "Direct invoice · Bill of Supply" : "Direct invoice · GST tax invoice") : "Quotation · Auto-generated"}
@@ -2434,7 +2556,10 @@ function QuoteBuilderBody() {
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-hairline">
           <div>
             <div className="text-sm font-semibold">Line Items</div>
-            <div className="text-xs text-ink-3 mt-0.5">{lineItems.length} item{lineItems.length === 1 ? "" : "s"}</div>
+            <div className="text-xs text-ink-3 mt-0.5">
+              {lineItems.length} item{lineItems.length === 1 ? "" : "s"}
+              {renewalLabel && <span className="text-ink-2 tabular-nums" data-testid="renewal-period-label"> · {renewalLabel.text}</span>}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="default" icon="package" onClick={() => setPackageOpen(true)}>
@@ -2510,6 +2635,24 @@ function QuoteBuilderBody() {
               const lineDiscountPct = line.discount_pct ?? 0;
               const netRate  = line.rate * (1 - lineDiscountPct / 100);
               const lineMargin = computeMargin(line.cost * line.qty, netRate * line.qty);
+              /* R-2727 / R-2713: a renewal line's start is the renewal period's (fixed); the phone
+                 card shows Starts outside "More" when the date matters. */
+              const lineStart = renewalLineStart(line, editedQuotePeriod);
+              const showStarts = lineStartsAddsInfo(lineStart, renewalLabel);   // R-2746
+              const startsUp = showStarts && startsOnCard(line, editedQuotePeriod, customerLive);
+              /* A div, not a <label>: on a renewal line LineStartsField renders read-only text, so the
+                 date input (when there is one) carries its own aria-label (a11y guard label-no-for). */
+              const startsField = (
+                <div className="block">
+                  <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Starts</span>
+                  <LineStartsField
+                    ariaLabel="Starts"
+                    start={lineStart} value={line.start_date ?? ""} onChange={(v) => updateStartDate(line.id, v)}
+                    inputClassName="mt-0.5 w-full px-2 py-1.5 text-sm border border-hairline rounded bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
+                    textClassName="mt-0.5 block px-2 py-1.5 text-sm tabular-nums text-ink border border-hairline rounded bg-paper-2/40"
+                  />
+                </div>
+              );
               return (
                 <div key={line.id} className="p-3 space-y-2.5">
                   <div className="flex items-start justify-between gap-2">
@@ -2584,25 +2727,19 @@ function QuoteBuilderBody() {
                       <OneTimeLicenceNote line={line} className="mt-0.5 block" />
                     </label>
                   </div>
+                  {startsUp && <div className="grid grid-cols-2 gap-2">{startsField}</div>}
                   <LineBandNote line={line} catalog={catalog} />
                   <LineSupportToggle line={line} catalog={catalog} lineItems={lineItems} onAdd={addLine} />
                   {/* The rest is set once and rarely touched — folded so qty, rate and amount
                       lead the card (2 Oct 2026). */}
                   <details className="group rounded-md border border-hairline/70 px-2.5 py-1.5">
                     <summary className="cursor-pointer list-none flex items-center justify-between gap-2 text-2xs text-ink-3">
-                      <span>More · starts {line.start_date ? formatDate(line.start_date) : "on payment"} · {isSupportSkuId(line.item_id) ? "own service" : costUnknown(line) ? "margin unknown" : `margin ${lineMargin.marginPct}%`}</span>
+                      <span>More{startsUp || !showStarts ? "" : <> · starts {lineStart.kind === "fixed" ? (lineStart.date ? formatDate(lineStart.date) : "—") : line.start_date ? formatDate(line.start_date) : "on payment"}</>} · {isSupportSkuId(line.item_id) ? "own service" : costUnknown(line) ? "margin unknown" : `margin ${lineMargin.marginPct}%`}</span>
                       <Icon name="chevron_down" size={12} className="transition-transform group-open:rotate-180" />
                     </summary>
                     <div className="mt-2 space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                    <label className="block">
-                      <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Starts</span>
-                      <input
-                        type="date" value={line.start_date ?? ""}
-                        onChange={(e) => updateStartDate(line.id, e.target.value)}
-                        className="mt-0.5 w-full px-2 py-1.5 text-sm border border-hairline rounded bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
-                      />
-                    </label>
+                    {showStarts && !startsUp && startsField}
                     {!line.bulk && (
                       <label className="block col-span-2">
                         <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Domain (optional)</span>
@@ -2684,6 +2821,9 @@ function QuoteBuilderBody() {
                 // ("monthly") line stores ₹/seat/MONTH, which already IS one invoice.
                 const commitment  = line.commitment ?? "annual_yearly";
                 const unitLabel   = lineRateUnitSuffix(line, billingN, billingUnit);   // quote-level frequency (0161); R-1673: one-time line says so
+                /* R-2746: the fixed Starts of a renewal line — shown only when it is not the label's start. */
+                const rowStart    = renewalLineStart(line, editedQuotePeriod);
+                const rowShowStarts = lineStartsAddsInfo(rowStart, renewalLabel);
                 const lineDiv     = perInvoiceDivisor(billingN, commitment);
                 const displayRate = Math.round(line.rate / lineDiv);
                 const displayCost = Math.round(line.cost / lineDiv);
@@ -2757,17 +2897,20 @@ function QuoteBuilderBody() {
                           </select>
                         </div>
                         <OneTimeLicenceNote line={line} className="basis-full order-last" />
+                        {/* R-2746: hidden when it only repeats the "Renewal · …" label's start. */}
+                        {rowShowStarts && (
                         <div className="flex items-center gap-1">
                           <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Starts</span>
-                          <input
-                            aria-label={`Start date for ${line.name}`}
-                            type="date"
-                            value={line.start_date ?? ""}
-                            onChange={(e) => updateStartDate(line.id, e.target.value)}
-                            title="Service start date — leave blank to start on the payment date"
-                            className="text-2xs px-1.5 py-0.5 border border-hairline rounded bg-paper text-ink focus:outline-none focus:ring-1 focus:ring-amber focus:border-amber"
+                          {/* R-2727: a renewal line shows the renewal period's start (fixed). */}
+                          <LineStartsField
+                            start={rowStart} value={line.start_date ?? ""} onChange={(v) => updateStartDate(line.id, v)}
+                            ariaLabel={`Start date for ${line.name}`}
+                            inputTitle="Service start date — leave blank to start on the payment date"
+                            inputClassName="text-2xs px-1.5 py-0.5 border border-hairline rounded bg-paper text-ink focus:outline-none focus:ring-1 focus:ring-amber focus:border-amber"
+                            textClassName="text-2xs px-1.5 py-0.5 tabular-nums text-ink"
                           />
                         </div>
+                        )}
                         {/* Per-line domain — this subscription provisions against it
                             (Google Workspace / M365 / Zoho). Optional. Bulk lines carry
                             their own per-domain list instead. */}
@@ -2912,6 +3055,12 @@ function QuoteBuilderBody() {
                 rows={6}
               />
               <p className="text-2xs text-ink-3 mt-1">Shown on customer-facing {isInvoiceMode ? "invoice" : "quote"} PDF.</p>
+              {/* R-2754: what is kept out of the box — staff only, ids taken out. */}
+              {staffNote && (
+                <p className="text-2xs text-ink-3 mt-1" data-staff-note>
+                  <span className="font-medium text-ink-2">Staff note (not shown to the customer):</span> {staffNote}
+                </p>
+              )}
 
               {/* Terms & Conditions (Zoho-style) — document-level, separate from notes. */}
               <div className="mt-4">
@@ -3336,12 +3485,19 @@ function QuoteBuilderBody() {
               variant="primary"
               icon="send"
               data-renewal-send
-              loading={createQuote.isPending || emailing}
-              disabled={sendDisabled}
+              loading={createQuote.isPending || emailing || requestApproval.isPending || approvalStepLoading}
+              disabled={sendDisabled || approvalStepFailed}
               onClick={() => void handleSubmit("sent", "send-now")}
-              title={sendPlan === "email" && sendRecipient ? `Save and email the renewal quote to ${sendRecipient} with its accept / pay link` : sendPlan === "mark-sent" ? "No customer email — saves it as sent without emailing (use ▾ to email or WhatsApp it)" : "The discount / margin needs approval — saved as a draft, nothing is emailed yet"}
+              data-renewal-step={approvalStepFailed ? "check-failed" : renewalStep}
+              data-approval-ready={approvalStepLoading ? "0" : "1"}
+              title={approvalStepFailed ? "Couldn't read who may approve this quote — reload the page and try again. Nothing was saved or sent."
+                : sendPlan === "email" && sendRecipient ? `Save and email the renewal quote to ${sendRecipient} with its accept / pay link`
+                : sendPlan === "mark-sent" ? "No customer email — saves it as sent without emailing (use ▾ to email or WhatsApp it)"
+                : `${approvalNeed.reasons[0] ?? "This quote needs approval."} ${renewalStep === "open-approval"
+                  ? "Saves it as a draft and opens the approval for you — nothing is emailed until it is approved and sent."
+                  : `Saves it as a draft and asks ${approvalNeed.tier === "owner" ? "the owner" : "a manager"} to approve — nothing is emailed yet.`}`}
             >
-              {RENEWAL_SEND_LABEL[sendPlan]}
+              {renewalSendLabel}
             </Button>
           )}
           <DropdownMenu modal={false}>

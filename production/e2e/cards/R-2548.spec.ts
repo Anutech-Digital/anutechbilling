@@ -48,9 +48,7 @@ const renewA = addDays(today, 30);           // A + C renew in 30 days (Renewals
 const startA = addMonths(renewA, -12);
 const renewB = addDays(today, 3);            // B renews in 3 days (Payment Follow-up horizon ≤ 7)
 const startB = addMonths(renewB, -12);
-const termEndA = addDays(addMonths(renewA, 12), -1);
 const part1EndA = addDays(addMonths(renewA, 6), -1);
-const expectedLineA = `Renewal for ${shown(renewA)}–${shown(termEndA)} · part 1 (${shown(renewA)}–${shown(part1EndA)}): 10 × ₹3,000`;
 
 /**
  * Reload the scenario ONCE per run. After a failed step Playwright starts a new worker and runs
@@ -168,15 +166,19 @@ test.describe("R-2548 — end of an annual commitment billed in parts: 'Bill ren
     }
   });
 
-  test("Step 2a: Renewals — the row's button reads 'Bill renewal · part 1 of next year' with the 'Renewal for …' line", async ({ browser, baseURL }) => {
+  /* R-2760 (R-2738 ownerRule, 13 Nov): on Renewals the label "Bill renewal · part 1 of next year" is retired —
+     one verb "Bill next part", the row's button only inside the 7 days before the part starts (A renews in
+     30 days → Follow up; Bill next part in ⋯). Payment Follow-up (2b) keeps the older rows. */
+  test("Step 2a: Renewals — 30 days out the row's one button is Follow up; ⋯ has 'Bill next part' (no 'Bill renewal · part 1' label)", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     try {
       const row = await renewalsRow(page, A);
-      await expect(row.getByRole("button", { name: BUTTON })).toBeVisible();
-      await expect(row.getByRole("button", { name: /^Bill next part$/ })).toHaveCount(0);
-      const line = row.getByText(/^Renewal for /);
-      await expect(line).toHaveText(expectedLineA);
-      test.info().annotations.push({ type: "note", description: `Line: "${(await line.innerText()).trim()}"` });
+      await expect(row.getByTestId("stage-primary")).toHaveText(/Follow up/, { timeout: 60_000 });
+      await expect(row.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
+      await expect(row.getByRole("button", { name: BUTTON })).toHaveCount(0);
+      await row.getByRole("button", { name: /More renewal actions/ }).click();
+      await expect(page.getByRole("menuitem", { name: /^Bill next part$/ })).toBeVisible();
+      await page.keyboard.press("Escape");
     } finally {
       await page.context().close();
     }
@@ -204,12 +206,14 @@ test.describe("R-2548 — end of an annual commitment billed in parts: 'Bill ren
     }
   });
 
-  test("Step 3a: Click the button → dialog 'Bill renewal · part 1 of next year — proforma', first period starts on the renewal date; Cancel makes nothing", async ({ browser, baseURL }) => {
+  test("Step 3a: ⋯ Bill next part → the proforma dialog, first period starts on the renewal date; Cancel makes nothing", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     try {
       const row = await renewalsRow(page, A);
-      await row.getByRole("button", { name: BUTTON }).click();
-      const dlg = page.getByRole("dialog", { name: `${BUTTON} — proforma` });
+      await expect(row.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
+      await row.getByRole("button", { name: /More renewal actions/ }).click();
+      await page.getByRole("menuitem", { name: /^Bill next part$/ }).click();
+      const dlg = page.getByRole("dialog", { name: /— proforma$/ });
       await expect(dlg).toBeVisible({ timeout: 60_000 });
       const first = dlg.getByRole("listitem").first();
       await expect(first).toBeVisible({ timeout: 30_000 });
@@ -217,20 +221,20 @@ test.describe("R-2548 — end of an annual commitment billed in parts: 'Bill ren
       const period = (await first.innerText()).replace(/\s+/g, " ").trim();
       await dlg.getByRole("button", { name: /^Cancel$/ }).click();
       await expect(dlg).toBeHidden();
-      // Nothing made: the row still offers the same button (no proforma for that part yet).
+      // Nothing made: the row is still "not sent" (no proforma for that part yet).
       const again = await renewalsRow(page, A);
-      await expect(again.getByRole("button", { name: BUTTON })).toBeVisible();
-      test.info().annotations.push({ type: "note", description: `Dialog first period: "${period}". After Cancel the row still says '${BUTTON}'.` });
+      await expect(again.getByTestId("stage-primary")).toHaveText(/Follow up/);
+      test.info().annotations.push({ type: "note", description: `Dialog first period: "${period}". After Cancel the row still says Follow up (nothing billed).` });
     } finally {
       await page.context().close();
     }
   });
 
-  test("Step 3b: An annual subscription paid in one go still shows 'Send renewal quote'", async ({ browser, baseURL }) => {
+  test("Step 3b: An annual subscription paid in one go shows 'Send renewal'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     try {
       const row = await renewalsRow(page, C);
-      await expect(row.getByRole("button", { name: /^Send renewal quote$/ })).toBeVisible();
+      await expect(row.getByTestId("stage-primary")).toHaveText(/Send renewal/, { timeout: 60_000 });
       await expect(row.getByRole("button", { name: BUTTON })).toHaveCount(0);
     } finally {
       await page.context().close();

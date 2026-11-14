@@ -37,25 +37,15 @@ export interface VendorHoldSub extends VendorHoldInput {
   plan:          string | null;
 }
 
-export function VendorHoldBadge({ sub, size = "sm" }: { sub: VendorHoldSub; size?: "sm" | "md" }) {
-  const state = vendorHoldState(sub);
-  const { data: me } = useCurrentUser();
+/**
+ * R-2758: "Renew anyway" as a hook — the badge's button and the Renewals row's ⋯ item (grace over,
+ * R-2738: no more buttons side by side) run the SAME prompt + RPC.
+ */
+export function useRenewAnyway(sub: VendorHoldSub) {
   const askText = useAskText();
   const qc = useQueryClient();
   const [busy, setBusy] = React.useState(false);
-
-  if (state === "none") return null;
-  if (state === "overridden") {
-    return (
-      <p className="text-2xs text-ink-3" data-testid="vendor-hold-overridden">
-        {VENDOR_HOLD_OVERRIDDEN}
-      </p>
-    );
-  }
-
-  const allowed = canRenewAnyway(me?.role);
-
-  async function onRenewAnyway() {
+  async function run() {
     const p = renewAnywayPrompt(sub);
     const reason = await askText({ title: p.title, body: p.body, label: p.label, placeholder: p.placeholder, confirmLabel: "Renew anyway", icon: "refresh" });
     if (!reason) return;
@@ -77,6 +67,24 @@ export function VendorHoldBadge({ sub, size = "sm" }: { sub: VendorHoldSub; size
       setBusy(false);
     }
   }
+  return { run, busy };
+}
+
+export function VendorHoldBadge({ sub, size = "sm" }: { sub: VendorHoldSub; size?: "sm" | "md" }) {
+  const state = vendorHoldState(sub);
+  const { data: me } = useCurrentUser();
+  const renew = useRenewAnyway(sub);
+
+  if (state === "none") return null;
+  if (state === "overridden") {
+    return (
+      <p className="text-2xs text-ink-3" data-testid="vendor-hold-overridden">
+        {VENDOR_HOLD_OVERRIDDEN}
+      </p>
+    );
+  }
+
+  const allowed = canRenewAnyway(me?.role);
 
   return (
     <div className="flex flex-wrap items-center gap-1.5" data-testid="vendor-hold">
@@ -84,7 +92,7 @@ export function VendorHoldBadge({ sub, size = "sm" }: { sub: VendorHoldSub; size
         {VENDOR_HOLD_LABEL}
       </Badge>
       {allowed ? (
-        <Button variant="ghost" size="sm" loading={busy} onClick={onRenewAnyway}
+        <Button variant="ghost" size="sm" loading={renew.busy} onClick={() => void renew.run()}
           title="Owner / manager: remove the hold for this term (reason goes to the activity log)">
           Renew anyway
         </Button>

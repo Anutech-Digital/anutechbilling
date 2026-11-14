@@ -32,6 +32,9 @@ import { domainLineYears, isDomainPurchaseLine } from "@/lib/provisioning/produc
 import { istToday, toIstDate, utcDateISO } from "@/lib/dates/ist";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
+import {
+  RENEWAL_CATALOG_COLUMNS, pickDomainCatalogItem, domainRenewalCatalogCost, type RenewalCatalogRow,
+} from "@/lib/renewals/renewal-catalog-cost";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -176,6 +179,8 @@ export interface DomainRenewalQuoteInput {
   existingQuoteId?: string | null;
   /** R-2710: "draft" = a NEW quote for Review renewal quote to open in the editor; else 'sent' (the cron). */
   status?: "draft";
+  /** R-2736: `subscriptions.item_id` — the catalogue row whose cost the line carries. */
+  itemId?: string | null;
   /** Injected in tests; the live read otherwise. */
   price?: (domain: string) => Promise<RenewalPrice>;
 }
@@ -234,6 +239,23 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
 
   const subtotal = price.rupees;
   const amount = grossAmount(subtotal, taxRate);
+
+  /* R-2736: OUR cost from the catalogue — the subscription's item, else the tenant's ONE Domain row for
+     this extension, priced per year. It was always 0 ("not known here"), so every domain renewal quote
+     read "margin unknown" and went to the owner for approval. Not found / unread → 0 = unknown as before. */
+  const tld = splitDomain(input.domain)?.tld ?? "";
+  const { data: catalogRows, error: catalogErr } = await supabase
+    .from("items")
+    .select(RENEWAL_CATALOG_COLUMNS)
+    .eq("tenant_id", input.tenantId);
+  if (catalogErr) console.error(`[domain-renewals] subscription ${input.subscriptionId}: catalogue not read — ${catalogErr.message}`);
+  const catalogPick = Array.isArray(catalogRows) && (tld || input.itemId)
+    ? pickDomainCatalogItem(catalogRows as RenewalCatalogRow[], { itemId: input.itemId ?? null, tld })
+    : null;
+  const cost = domainRenewalCatalogCost(catalogPick?.row ?? null, 1);
+  if (!cost.known) {
+    console.warn(`[domain-renewals] subscription ${input.subscriptionId} (${input.domain}): cost not priced — ${cost.reason}. The quote goes out with cost unknown.`);
+  }
   const lineItems: QuoteLineItem[] = [{
     id: "renewal-1",
     // The same name the subscription was created with: record_payment copies a paid
@@ -242,8 +264,10 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
     description: domainRenewalDescription(1),   // R-2710: lineForYears rewrites it when the term changes
     qty: 1,
     rate: subtotal,
-    // Our cost is not known here (the registrar's is read by the engine at renewal).
-    cost: 0,
+    cost: cost.perSeat,   // R-2736: the catalogue's yearly cost (0 = unknown)
+    /* No item_id (R-2736 review): a linked line is re-priced from the catalogue on Duplicate / Revise,
+       and this line's price is ResellerClub's live renewal price. The name already gives it the
+       Register-for picker (isDomainRegistrationLine). */
     commitment: "annual_yearly",
     // No `domain` on this line: provisioning reads a line's domain as one to REGISTER.
   }];
@@ -271,9 +295,9 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
       expires_date: utcDateISO(validUntil),
       line_items: lineItems,
       subtotal,
-      // 0, as the cart's own quotes store it: our cost is not known here. NOT null, because
-      // the quote screens (a blocked folder) read total_cost as always a number.
-      total_cost: 0,
+      // R-2736: the line's catalogue cost (qty 1). 0 = unknown — NOT null, because the quote
+      // screens read total_cost as always a number.
+      total_cost: cost.total,
       tax_rate: taxRate,
       extension_months: 12,
       ...(input.status === "draft" ? { status: "draft" } : {}),   // R-2710

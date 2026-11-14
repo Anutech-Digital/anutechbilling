@@ -113,6 +113,10 @@ const SQL_NOT_SALE: Record<string, string> = {
   unreconcile_bank_receipt: "money in",
   project_receipt_undo_preview: "R-1999: one invoice status by id per kist, before / after a rolled-back dry run of un-reconciling a project line — not GST or revenue",
   waive_late_charges: "late fee",
+  roll_paid_renewal_terms: "R-2735: is a renewal part's own tax invoice paid — moves renewal_date, not GST or revenue",
+  tg_r2735_invoice_paid_renews: "R-2735: invoice turned paid → renew its marked part's subscription — not GST or revenue",
+  unroll_unpaid_renewal_terms: "R-2749: is a renewal part's own tax invoice still paid — moves renewal_date back, not GST or revenue",
+  tg_r2749_wont_renew_open_part: "R-2749: is the renewal part's own invoice unpaid — refuses Won't renew, not GST or revenue",
   // R-1739's own functions
   _opening_invoice_settle: "keeps an opening invoice's paid amount",
   _record_opening_invoice_payment: "payment on an opening invoice",
@@ -187,6 +191,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: every invoice's number / Zoho number / Zoho id (skip what is already in the books) and the per-month recount of what came in from Zoho — not a revenue or GST report",
   "src/lib/payments/payment-link.server.ts": "R-2415: the open invoices (by id) a Send-reminder pay link may carry, and their due for the stale-link sweep — not a list or a total",
   "src/app/(app)/renewals/last-docs-data.ts": "R-2728: the newest invoice raised from one subscription's own quotes / billed parts (number, date, paid or unpaid) for the Renewals row's 'Invoice …' link — not a list, GST or revenue",
+  "src/lib/renewals/bill-next.server.ts": "R-2757: the tax invoices (by id) of one subscription's own EARLIER billed parts, to name any still unpaid in the Bill next part dialog — not a list, GST or revenue",
   "src/app/(app)/renewals/last-paid-data.ts":"R-2422: the invoice numbers raised from one subscription's own quotes (by quote_id), to name what a payment paid on the Renewals row's Last paid — not a list or a total",
   "src/lib/payments/online-fee.server.ts": "R-2416: one invoice's online-fee waiver flag (by id) for the fee policy on capture — not a list or a total",
   "src/app/(app)/collections/leftover-tds-dialog.tsx": "R-2410: one invoice by id, to open its Record payment sheet in TDS mode — not a list or a total",

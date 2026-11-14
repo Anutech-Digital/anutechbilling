@@ -21,7 +21,8 @@ import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
-import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext } from "@/lib/quotes/service-period";
+import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext, invoicePeriodSubscription, type RenewedSubscriptionFacts } from "@/lib/quotes/service-period";
+import { withStoredLinePeriods } from "@/lib/quotes/stored-line-period";
 import { invoiceBuyer } from "@/lib/invoices/invoice-buyer";
 
 /**
@@ -138,8 +139,11 @@ export function buildInvoicePdfProps(args: {
    * seller may not have, so the safe default is to say nothing (AGENTS.md §2).
    */
   razorpayConfigured?: boolean;
-  /** R-1764: the renewed subscription's domain, for a renewal quote that stores none. */
-  subscriptionDomain?: string | null;
+  /** R-1764: the renewed subscription's domain (or, R-2727, its domain + start + term — where the next term starts). */
+  subscriptionDomain?: string | RenewedSubscriptionFacts | null;
+  /** R-2727 review: when the new period rule went live on this database (app_rule_dates.from_at,
+   *  loadInvoicePeriodRuleFrom). Omitted / null → every invoice prints its period as before R-2727. */
+  periodRuleFrom?: string | null;
 }): InvoicePDFProps {
   const { invoice, quote, customer, tenant } = args;
   // Quote-backed invoice → derive from the quote; quote-less (project-milestone)
@@ -177,20 +181,32 @@ export function buildInvoicePdfProps(args: {
      Only a legacy row with no snapshot reads the live customer. Same rule as the invoice page. */
   const buyer = invoiceBuyer(invoice, customer);
 
-  return {
-    invoice,
+  /* R-2727 review: an invoice created before the rule went live here prints its period exactly as before. */
+  const quoteCtx = quote ? quoteLinePeriodContext(quote, invoicePeriodSubscription(invoice, args.periodRuleFrom, quote, args.subscriptionDomain)) : null;
+  /* R-2744: an invoice issued with stored line periods prints its own frozen lines + THOSE periods
+     (withStoredLinePeriods), never anything worked out again from today's quote / subscription.
+     Not stamped → the same objects as before. */
+  const printed = withStoredLinePeriods(
     /* A quote-less invoice carries its OWN lines (migration 20260817110000).
        Subscription instalments cannot link to their quote — build-props prefers the
        quote for every amount above, so a ₹2,360 instalment linked to its ₹28,320
        quote would print ₹28,320 — and an invoice with no description, HSN or
        quantity does not satisfy CGST Rule 46. This also fills in the project
        milestone invoices that used to print "No line items recorded". */
-    lineItems:   useQuote
+    useQuote
       ? (quote?.line_items ?? invoice.line_items ?? [])
       : (invoice.line_items ?? quote?.line_items ?? []),
+    invoice,
     /* R-1764: the quote's own "Domain:" / "Subscription period:" — only while the lines ARE the
        quote's. An instalment or quote-less invoice covers a part, so it says no period. */
-    periodContext: useQuote && quote ? quoteLinePeriodContext(quote, args.subscriptionDomain) : null,
+    useQuote ? quoteCtx : null,
+    quoteCtx,
+  );
+
+  return {
+    invoice,
+    lineItems:     printed.lines,
+    periodContext: printed.ctx,
     subtotal,
     discountPct: a.discountPct,
     discount:    a.discount,
@@ -260,8 +276,8 @@ export function buildQuotePdfProps(args: {
   logoDataUri?: string | null;
   /** R-376 (f): the lead a customer-less quote was raised on — its state is the place of supply. */
   lead?: { state_code?: string | null; gstin?: string | null; country?: string | null } | null;
-  /** R-1764: the renewed subscription's domain, for a renewal quote that stores none. */
-  subscriptionDomain?: string | null;
+  /** R-1764: the renewed subscription's domain (or, R-2727, its domain + start + term — where the next term starts). */
+  subscriptionDomain?: string | RenewedSubscriptionFacts | null;
   /** R-1532: tenants.gst_registration (readTenantGstRegistration) — a Bill of Supply business's
    *  0% quote prints "No GST — Bill of Supply" instead of CGST/SGST/IGST rows. */
   gstRegistration?: string | null;

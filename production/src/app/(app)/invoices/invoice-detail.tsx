@@ -45,6 +45,7 @@ import { noteTotalsByInvoice } from "@/lib/invoices/note-totals";
 import { isCreditNoteLate, creditNoteDeadline } from "@/lib/gst/credit-note-deadline";
 import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialog";
 import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
+import { withStoredLinePeriods } from "@/lib/quotes/stored-line-period";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
@@ -88,7 +89,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const { data: quote, isLoading: quoteLoading } = useQuoteByInvoiceId(invoice.id);
   /* R-1764: the printed invoice says each subscription line's domain and period in the
      quote's own words (the lines below are the quote's whenever a quote exists). */
-  const periodContext = useQuotePeriodContext(quote ?? null);
+  const periodContext = useQuotePeriodContext(quote ?? null, invoice);   // R-2727: same period as the PDF
   const { data: payments } = usePaymentsByQuote(quote?.id);
   /* R-1564: a subscription instalment has no quote of its own — Record payment goes through
      its subscription's quote (record_instalment_payment), so the button shows for it too. */
@@ -179,7 +180,16 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      `invoices.line_items`, and this read of the quote alone is why the dialog and the PDF
      printed "No line items recorded on the parent quote." over a correct ₹5,00,000 + GST:
      right money, a document that did not say what was sold (CGST Rule 46(g)). */
-  const lineItems = quote?.line_items ?? invoice.line_items ?? [];
+  const lineItems = React.useMemo(
+    () => quote?.line_items ?? invoice.line_items ?? [],
+    [quote?.line_items, invoice.line_items],
+  );
+  /* R-2744: the Tax Invoice view prints the period each line stored at issue (same as the PDF);
+     an invoice issued before R-2744 keeps the computed period. */
+  const printed = React.useMemo(
+    () => withStoredLinePeriods(lineItems, invoice, periodContext),
+    [lineItems, invoice, periodContext],
+  );
   /* R-445: skeleton while the quote loads — never the "no items" fallback, which looked real. */
   const itemsView = invoiceLineItemsView(quoteLoading, quote?.line_items, invoice.line_items);
   /* R-066. This used to be `subtotal = quote?.subtotal ?? invoice.amount` and then 18%
@@ -540,8 +550,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           open={pdfDialogOpen}
           onOpenChange={setPdfDialogOpen}
           invoice={invoice}
-          lineItems={lineItems}
-          periodContext={periodContext}
+          lineItems={printed.lines}
+          periodContext={printed.ctx}
           subtotal={subtotal}
           discountPct={quote?.discount_pct ?? 0}
           discount={discount}

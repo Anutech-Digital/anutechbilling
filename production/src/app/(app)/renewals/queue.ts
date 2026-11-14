@@ -13,8 +13,8 @@
  *  - every expired row said "Grace over" at 2 days, because the company grace is 0–1 day: the
  *    grace line now shows only when there IS a grace (> 0 days) to be in or out of.
  *  - the amount was MRR "/mo" even for a yearly renewal: the row shows what the customer will be
- *    asked to pay for the term — the open renewal quote's total (incl. GST), else the term amount
- *    (+ GST).
+ *    asked to pay for the term — the term amount (+ GST). R-2751: one basis everywhere; a renewal
+ *    quote never changes it (its total incl. GST is only a note once it is sent).
  *
  * No second copy of the rules: buckets/grace/at-risk come from classify.ts, the paid rule from
  * reminders.ts (isTerminalRenewal), the parts-due count from lib/renewals/split-billed-next-part,
@@ -33,6 +33,7 @@ import { expiredGraceText, isStopped, type RenewalGroups } from "./classify";
 import { isSettledRenewed } from "./row-action";
 import { renewalDueText } from "./last-docs";
 import { renewalActionSet, type RenewalActionSub } from "@/components/features/renewals/renewal-actions-rules";
+import { bulkSendDecision, type RenewalStage, type StageKey } from "@/lib/renewals/stage";
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
@@ -149,6 +150,23 @@ export const STATUS_FILTER_LABEL: Record<RowStatusKey, string> = {
   stopped: "Service stopped",
 };
 
+/**
+ * R-2760 (R-2738 followUp): the status filter on the row's ONE stage (lib/renewals/stage.ts) — the
+ * words the chip says. Tiles still add up by time window (tiles.ts).
+ */
+export const STAGE_FILTER_LABEL: Record<StageKey, string> = {
+  due: "Not sent",
+  "part-due": "Part not billed",
+  draft: "Draft part quote",
+  sent: "Quote sent",
+  "quote-closed": "Quote closed",
+  invoiced: "Invoiced",
+  renewed: "Renewed",
+  ending: "Won't renew / ended",
+  stopped: "Stopped / cancelled",
+};
+export const STAGE_FILTER_ORDER = Object.keys(STAGE_FILTER_LABEL) as StageKey[];
+
 export interface StatusSub {
   status?: string | null;
   renewal_state?: string | null;
@@ -258,30 +276,44 @@ export function termSuffix(termMonths: number | null | undefined): string {
 }
 
 export interface RenewalAmount {
-  /** Rupees, for sorting and the bulk total. */
+  /** Rupees BEFORE GST — sorting, the tiles, the forecast and the bulk total all read this. */
   value: number;
-  /** "₹78,000/yr" or "₹92,040". */
+  /** "₹78,000/yr". */
   text: string;
-  /** "+ GST" (term amount, ex-GST) or "incl. GST · Q-x" (the renewal quote's total). */
+  /** Always "+ GST" — the one basis (R-2751). */
   gst: string;
-  fromQuote: boolean;
+  /** R-2751: "Quote ₹92,040 incl. GST" once the renewal quote is sent / viewed / accepted; null otherwise (a draft adds nothing). */
+  quoteNote: string | null;
+  /** The same quote in the table's narrow second line: "quote ₹92K" (incl. GST; the full note is the cell's title). */
+  quoteShort: string | null;
 }
 
+/** R-2751: a renewal quote still being prepared ("Review renewal quote" makes one) — changes nothing on Renewals. */
+const DRAFT_QUOTE = "draft";
+
 /**
- * What the customer is asked to pay for the term: the linked open renewal quote's total
- * (incl. GST) when there is one, else the term amount (ex-GST, "+ GST") — the same choice
- * Payment Follow-up makes for its renewal rows (lib/queries/collections.ts, R-2401).
+ * R-2751 (user audit 14 Nov, job 7) — ONE amount basis on Renewals: every row's figure is the
+ * renewal's TERM AMOUNT BEFORE GST ("₹21,600/yr + GST"), whether or not a renewal quote exists.
+ * Before, a linked open quote — even a draft, which just opening "Review renewal quote" makes —
+ * swapped the row to the quote total incl. GST: SCN Kochi jumped from ₹21,600 to ₹25,488 and
+ * "Due in 30 days" from ₹39.9K to ₹43.8K while every other row stayed before GST. Rows, Sort:
+ * amount, the tiles, the forecast and the bulk/CSV total read `value`. A sent / viewed / accepted
+ * quote only adds `quoteNote` (its total incl. GST); a draft adds nothing.
  */
 export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | null }, quote: RenewalQuoteInfo | null | undefined): RenewalAmount {
   /* R-2422: how it is paid ("Annual · paid quarterly · ₹19,500 each") is frequency.ts — one wording. */
-  const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(quote.status ?? "") && (quote.amount ?? 0) > 0
-    ? quote : null;
-  if (q) {
-    const v = Math.round(q.amount ?? 0);
-    return { value: v, text: rupee(v), gst: `incl. GST · ${q.id}`, fromQuote: true };
-  }
   const v = termAmountOf({ mrr: sub.mrr, term_months: sub.term_months ?? 12, term_amount: sub.term_amount ?? null });
-  return { value: v, text: `${rupee(v)}${termSuffix(sub.term_months)}`, gst: "+ GST", fromQuote: false };
+  /* code-review: only a real draft is hidden — a quote with no status (imported) is treated as live. */
+  const status = quote?.status ?? "";
+  const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(status) && status !== DRAFT_QUOTE && (quote.amount ?? 0) > 0
+    ? quote : null;
+  return {
+    value: v,
+    text: `${rupee(v)}${termSuffix(sub.term_months)}`,
+    gst: "+ GST",
+    quoteNote: q ? `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST` : null,
+    quoteShort: q ? `quote ${rupee(Math.round(q.amount ?? 0), { compact: true })}` : null,
+  };
 }
 
 /** A renewal quote that is paid — the row is renewed even if its date has not moved yet. */
@@ -303,6 +335,8 @@ export interface QueueRow {
   plan: string | null;
   vendor: string | null;
   statusKey: RowStatusKey;
+  /** R-2760: the row's stage (null while its documents load — it matches no stage filter until then). */
+  stageKey?: StageKey | null;
   atRisk: boolean;
   customer: string;
   /** R-2422: Annual / Monthly (flex) commitment (frequency.ts renewalCommitment); null = unknown. */
@@ -319,7 +353,8 @@ export function sortQueue<T extends QueueRow>(rows: readonly T[], by: QueueSort)
 
 export interface QueueFilters {
   product: string;   // "" = all
-  status: RowStatusKey | "";
+  /** R-2760: a stage (STAGE_FILTER_LABEL); "" = all. */
+  status: StageKey | "";
   vendor: string;    // "" = all
   atRisk: boolean;
   /** R-2422: All · Annual · Monthly. */
@@ -331,7 +366,7 @@ export const NO_FILTERS: QueueFilters = { product: "", status: "", vendor: "", a
 export function filterQueue<T extends QueueRow>(rows: readonly T[], f: QueueFilters): T[] {
   return rows.filter((r) =>
     (!f.product || (r.plan ?? "") === f.product)
-    && (!f.status || r.statusKey === f.status)
+    && (!f.status || r.stageKey === f.status)
     && (!f.vendor || (r.vendor ?? "") === f.vendor)
     && (!f.atRisk || r.atRisk)
     && (f.commitment === "all" || r.commitment === f.commitment));
@@ -342,7 +377,42 @@ export function filterOptions(values: readonly (string | null | undefined)[]): s
   return [...new Set(values.filter((v): v is string => !!v && v.trim() !== ""))].sort((a, b) => a.localeCompare(b));
 }
 
-// ─── Bulk: Send renewal quote ───────────────────────────────────────────────
+// ─── Bulk: Send renewal (R-2760, on the stage) ──────────────────────────────
+
+/** R-2738 followUp: stage.ts has no input for it — a row with no customer email cannot be sent a renewal. */
+export const NO_EMAIL_REASON = "no email on file — add one on the customer first";
+
+/**
+ * R-2760: bulk Send renewal takes exactly the rows whose ONE stage says the whole-term renewal is
+ * still to send (bulkSendDecision — never a split row, R-808; never one sent / invoiced / renewed,
+ * R-2232; not 91+ days out, R-2586) AND that have an email to send to. Every other row is named
+ * with its reason. A row still loading its documents is skipped (never sent on a half-known stage).
+ */
+export function bulkStageTargets<T extends { stage: RenewalStage | null }>(
+  rows: readonly T[],
+  /** undefined = contacts not read yet; null / "" = none on file. */
+  emailOf: (row: T) => string | null | undefined,
+  /** The documents read failed (no stage can be known) — say so, not "loading". */
+  docsFailed = false,
+): { send: T[]; skipped: { row: T; reason: string }[] } {
+  const send: T[] = [];
+  const skipped: { row: T; reason: string }[] = [];
+  for (const r of rows) {
+    if (!r.stage) {
+      skipped.push({ row: r, reason: docsFailed ? "its quotes / invoices couldn't load — reload the page" : "still loading — try again in a moment" });
+      continue;
+    }
+    const d = bulkSendDecision(r.stage);
+    if (!d.send) { skipped.push({ row: r, reason: d.reason }); continue; }
+    const email = emailOf(r);
+    if (email === undefined) { skipped.push({ row: r, reason: "contact details still loading — try again in a moment" }); continue; }
+    if (!(email ?? "").trim()) { skipped.push({ row: r, reason: NO_EMAIL_REASON }); continue; }
+    send.push(r);
+  }
+  return { send, skipped };
+}
+
+// ─── Bulk: Send renewal quote (older rule — no page caller since R-2760; queue.test.ts keeps its rules) ──
 
 /** R-2586: why bulk Send renewal quote skips a Later row — named in its confirm. */
 export const LATER_SKIP_REASON = "renews in 91+ days — too early to send";
@@ -401,15 +471,24 @@ export function bulkQuoteConfirm(
  * R-2422: Actions is ONE next-step button + ⋯ now (was up to six stacked buttons), so it gives
  * 24px back to Customer, which also carries the "Last paid" line.
  */
-export const QUEUE_TABLE_BUDGET_PX = 944;
-export const QUEUE_FLEX_MIN_PX = 140;
-export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: "select" | "customer" | "product" | "date" | "amount" | "status" | "actions"; width: number | null }> = [
-  { key: "select", width: 36 },
-  { key: "customer", width: null },
-  { key: "product", width: null },
-  /* R-2728: +16px — a "Renewal quote sent" row's date also carries its due words and "Expired 12 days ago". */
-  { key: "date", width: 120 },
-  { key: "amount", width: 128 },
-  { key: "status", width: 140 },
-  { key: "actions", width: 224 },
+/* R-2759 (R-2739b, 14 Nov): the table now shows from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX) — a
+   1280 laptop has a 1264–1276px inner width, so the old xl (1280px) switch showed it the card list.
+   Measured (R-2759 card spec): the table box is 974px at a 1280 window with an overlay scrollbar; a
+   classic Windows scrollbar takes ~17px and a 1260 window 20px more → ~936px is the budget. Eight
+   columns, every cell at most two lines:
+   ☐ · Customer · Product & period · Due · Amount · Status · Last invoice · Action. */
+export const QUEUE_TABLE_MIN_VIEWPORT_PX = 1260;
+export const QUEUE_TABLE_BUDGET_PX = 936;
+export const QUEUE_FLEX_MIN_PX = 108;
+export type QueueColKey = "select" | "customer" | "product" | "due" | "amount" | "status" | "invoice" | "actions";
+export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: QueueColKey; label: string; width: number | null; align?: "right" }> = [
+  { key: "select", label: "", width: 32 },
+  { key: "customer", label: "Customer", width: null },
+  { key: "product", label: "Product & period", width: null },
+  { key: "due", label: "Due", width: 84 },
+  { key: "amount", label: "Amount", width: 112, align: "right" },
+  { key: "status", label: "Status", width: 152 },
+  { key: "invoice", label: "Last invoice", width: 156 },
+  /* "Record payment" + ⋯ on one line (the card spec checks no cell overflows) */
+  { key: "actions", label: "Action", width: 184 },
 ];

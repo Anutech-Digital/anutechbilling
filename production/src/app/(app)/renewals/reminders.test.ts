@@ -104,7 +104,11 @@ describe("R-239 server errors", () => {
 describe("R-239 page wiring", () => {
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "page.tsx"), "utf8");
   it("bulk + send now ask first", () => {
-    expect(src).toMatch(/bulkReminderConfirm\(/);
+    /* R-2753: the one Remind button opens its own dialog (who is emailed / skipped); nothing goes before "Email N". */
+    expect(src).toMatch(/<RenewalReminderDialog /);
+    const dialog = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "reminder-dialog.tsx"), "utf8");
+    expect(dialog).toContain("Nothing is sent until you press Email.");
+    expect(dialog).toMatch(/onClick=\{\(\) => void run\(send\)\}/);
     expect(src).toMatch(/await confirm\(/);
     /* R-2401: Send renewal quote (was Send now) lives in the shared RenewalActions. */
     const shared = readFileSync(join(process.cwd(), "src/components/features/renewals/renewal-actions.tsx"), "utf8");

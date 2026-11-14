@@ -40,10 +40,11 @@ describe("R-1703: 'Previous term ₹X still unpaid'", () => {
   });
 
   it("the Renewals rows (phone + desktop) and the quote page render it", () => {
-    const renewals = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
-    expect(renewals).toMatch(/import \{ priorTermDueText \} from "\.\/prior-due"/);
-    expect(renewals.match(/const priorDue = priorTermDueText\(sub\)/g)?.length).toBe(2);
-    expect(renewals.match(/\{priorDue\}/g)?.length).toBe(2);
+    const renewals = readFileSync("src/app/(app)/renewals/page.tsx", "utf8") + readFileSync("src/app/(app)/renewals/queue-items.ts", "utf8") /* R-2764: rows are built in queue-items.ts */;
+    expect(renewals).toMatch(/import \{ (priorTermDue, )?priorTermDueText \} from "\.\/prior-due"/);  // R-2747: also priorTermDue
+    /* R-2758 (R-2738): it is the stage chip's "previous term unpaid" flag icon (title = the text) on both layouts. */
+    expect(renewals).toContain("priorTermUnpaid: priorTermDueText(r.sub)");
+    expect(renewals.match(/<StageChip stage=\{stage\}/g)?.length).toBe(2);
 
     const quotePage = readFileSync("src/app/(app)/quotes/[id]/page.tsx", "utf8");
     expect(quotePage).toMatch(/renewalSubOfQuote\(/);

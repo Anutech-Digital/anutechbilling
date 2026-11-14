@@ -12,8 +12,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { addMonthsClamped, CYCLE_MONTHS } from "@/lib/billing/schedule";
-import { defaultSeatRate, nextPeriods, partAmounts, partTaxRate, type BillNextPreview } from "@/lib/billing/proforma";
+import { defaultSeatRate, earlierUnpaidParts, nextPeriods, partAmounts, partTaxRate, type BillNextPreview, type EarlierPartInvoice, type EarlierPartQuote } from "@/lib/billing/proforma";
+import { istToday } from "@/lib/dates/ist";
 import { unbilledPartPrice } from "@/lib/billing/sync-instalments.server";
+import { nextTermRenewalDate } from "./split-billed-renewal";
 export type { BillNextPreview, PreviewPeriod } from "@/lib/billing/proforma";
 
 export interface BillNextSub {
@@ -32,14 +34,14 @@ export interface BillNextSub {
 
 interface BillingRow {
   id: string; period_start: string; period_end: string; taxable_amount: number; tax_rate: number | null; invoice_id: string | null;
-  period_index: number;
+  period_index: number; due_on?: string | null;
 }
 
 /** The earliest period of this subscription with no tax invoice and no request — where billing goes on. */
 /** `freed` (R-2519b): the row's proforma was cancelled — Bill next part bills that row itself. */
 export async function firstUnbilledPeriod(db: SupabaseClient, sub: BillNextSub): Promise<{ start: string; row: BillingRow | null; rows: BillingRow[]; freed: boolean }> {
   const { data, error } = await db.from("subscription_billings")
-    .select("id, period_start, period_end, taxable_amount, tax_rate, invoice_id, period_index")
+    .select("id, period_start, period_end, taxable_amount, tax_rate, invoice_id, period_index, due_on")
     .eq("subscription_id", sub.id).order("period_start", { ascending: true });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as BillingRow[];
@@ -56,7 +58,17 @@ export async function firstUnbilledPeriod(db: SupabaseClient, sub: BillNextSub):
   }
   const free = open.find((r) => !requested.has(r.id));
   if (free) return { start: free.period_start, row: free, rows, freed: cancelledOn.has(free.id) };
-  const following = sub.renewal_date ? followingTermStart({ ...sub, term_months: sub.term_months ?? 12 }) : (sub.start_date ?? "");
+  /* R-2735: a term billed before the subscription renewed (unpaid) keeps renewal_date where it was — the
+     next term to bill is the one after the newest term already laid and asked for. */
+  let at = { ...sub, term_months: sub.term_months ?? 12 };
+  for (let i = 0; i < 24 && at.renewal_date; i++) {
+    const nextStart = followingTermStart(at);
+    if (!rows.some((r) => r.period_start >= nextStart)) break;
+    const nextEnd = nextTermRenewalDate(at);
+    if (!nextEnd) break;
+    at = { ...at, renewal_date: nextEnd };
+  }
+  const following = at.renewal_date ? followingTermStart(at) : (sub.start_date ?? "");
   /* The current term was never laid (and not billed elsewhere) → it starts there, not after it. */
   const termStart = addMonthsClamped(following, -Math.max(1, sub.term_months ?? 12));
   const laidInTerm = rows.some((r) => r.period_start >= termStart);
@@ -97,8 +109,31 @@ export async function billNextPreview(db: SupabaseClient, sub: BillNextSub, coun
       reqOf.set(q.subscription_billing_id, { id: q.id, status: q.status, amount: q.amount });
     }
   }
+  /* R-2757: earlier parts still unpaid — their open proforma (on the same subscription_billings rows read
+     above) or their tax invoice with money to collect. Named in the dialog; billing ahead stays allowed. */
+  const earlier = rows.filter((r) => r.period_start < start);
+  const earlierIds = earlier.map((r) => r.id);
+  const earlierInvoiceIds = [...new Set(earlier.map((r) => r.invoice_id).filter((x): x is string => !!x))];
+  const [qRes, iRes] = await Promise.all([
+    earlierIds.length > 0
+      ? db.from("quotes")
+        .select("id, status, amount, payment_amount, payment_status, superseded_by, subscription_billing_id, currency")
+        .in("subscription_billing_id", earlierIds).in("status", ["sent", "viewed", "accepted"])
+      : null,
+    earlierInvoiceIds.length > 0
+      ? db.from("invoices")
+        .select("id, status, amount, net_payable, paid_amount, written_off_at, due_date, currency, fx_rate")
+        .in("id", earlierInvoiceIds)
+      : null,
+  ]);
+  if (qRes?.error) throw new Error(qRes.error.message);
+  if (iRes?.error) throw new Error(iRes.error.message);
+  const earlierQuotes = (qRes?.data ?? []) as EarlierPartQuote[];
+  const earlierInvoices = (iRes?.data ?? []) as EarlierPartInvoice[];
+  const unpaidEarlier = earlierUnpaidParts({ rows: earlier, quotes: earlierQuotes, invoices: earlierInvoices, firstStart: start, todayISO: istToday() });
+
   return {
-    cycle, seats, seatRate, partTaxable, taxRate,
+    cycle, seats, seatRate, partTaxable, taxRate, unpaidEarlier,
     amounts: seatRate != null ? partAmounts({ seats, seatRate, taxRate }) : { taxable: partTaxable, tax: Math.round(partTaxable * taxRate / 100), gross: partTaxable + Math.round(partTaxable * taxRate / 100) },
     firstStart: start,
     periods: periods.map((p) => {

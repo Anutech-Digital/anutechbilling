@@ -4,8 +4,8 @@
  * Audit (Anutech-HQ/drafts/RENEWALS-AUDIT/page-audit.md): the old Insights line read
  * "Urgent MRR ₹5.8L · Upcoming 30d MRR ₹7.0K · At risk ARR ₹69.2L" — monthly and yearly money
  * mixed, and none of it led to a list. Now six tiles, all in the SAME money the table shows (the
- * row's renewal amount: the open renewal quote's total, else the term amount — queue.ts
- * renewalAmount), and a click shows exactly the rows a tile adds up:
+ * row's renewal amount: R-2751 the term amount BEFORE GST, whether or not a renewal quote exists —
+ * queue.ts renewalAmount), and a click shows exactly the rows a tile adds up:
  *
  *   Overdue            the Overdue tab's rows
  *   Due in 30 days     due today .. +30 days (the ≤7 days + 8–30 tabs)
@@ -22,6 +22,9 @@
  * from the renewal quotes themselves (quotes.is_renewal, renewal_term_date = the renewal date it
  * renewed — R-1574) that are fully paid. Pure — tested in tiles-r2405.test.ts.
  */
+import { taxableAfterDiscount } from "@/lib/quotes/amounts";
+import { SAAS_GST_RATE } from "@/lib/gst/hsn";
+import type { RenewalForecast } from "@/lib/renewals/forecast";
 import type { QueueTab, RowStatusKey } from "./queue";
 
 export const TILE_KEYS = ["overdue", "due30", "due60", "due90", "wontRenew", "renewedMonth"] as const;
@@ -61,6 +64,25 @@ export interface RenewalQuotePayment {
   status?: string | null;
   renewal_subscription_id: string | null;
   renewal_term_date: string | null;
+  /** R-2751: for the amount before GST = subtotal less discount (quotes.subtotal / discount_pct / tax_rate). */
+  subtotal?: number | null;
+  discount_pct?: number | null;
+  tax_rate?: number | null;
+}
+
+
+
+/**
+ * R-2751: a paid renewal quote counts in "Renewed this month" at its amount BEFORE GST — the same
+ * basis as every row and tile (queue.ts renewalAmount: term amount + GST). It used the total incl.
+ * GST, so "of ₹1.0L due in Nov" mixed incl. GST (paid) with before GST (still due).
+ * Subtotal less discount; a quote with no subtotal → total ÷ (1 + its GST rate).
+ */
+export function quoteAmountBeforeGst(q: Pick<RenewalQuotePayment, "amount" | "subtotal" | "discount_pct" | "tax_rate">): number {
+  const sub = Math.round(q.subtotal ?? 0);
+  if (sub > 0) return taxableAfterDiscount(sub, q.discount_pct ?? 0);
+  const rate = Math.max(0, q.tax_rate ?? SAAS_GST_RATE);
+  return Math.round(((q.amount ?? 0) * 100) / (100 + rate));
 }
 
 export interface MonthRange {
@@ -152,7 +174,8 @@ export function renewalTiles(rows: readonly TileRow[], quotes: readonly RenewalQ
   /* a row already Renewed (paid, its date not moved yet) with no paid quote loaded counts as renewed too */
   const renewedRows = rows.filter((r) => r.statusKey === "renewed" && inMonth(r.renewalDate, month) && !paidSubs.has(r.id));
   const renewedCount = paid.length + renewedRows.length;
-  const renewedAmount = paid.reduce((s, q) => s + Math.round(q.amount ?? 0), 0)
+  /* R-2751: before GST, like the rows (it was the quote total incl. GST). */
+  const renewedAmount = paid.reduce((s, q) => s + quoteAmountBeforeGst(q), 0)
     + renewedRows.reduce((s, r) => s + Math.round(r.amount), 0);
   const stillDue = sum("renewedMonth");
   const dueAmount = renewedAmount + stillDue.amount;
@@ -169,5 +192,25 @@ export function renewalTiles(rows: readonly TileRow[], quotes: readonly RenewalQ
       pct: dueAmount > 0 ? Math.round((renewedAmount / dueAmount) * 100) : null,
       stillDue,
     },
+  };
+}
+
+/**
+ * R-2751: the Forecast's bar for THIS month = the Renewed tile's "of ₹X due in <month>" (paid +
+ * still due, before GST). The audit saw "91% of ₹1.0L due in Nov" next to a Forecast Nov of
+ * ₹12.6K: the forecast counted only subscriptions still dated in November, but a paid renewal has
+ * already moved its date to next year. Later months stay the forecast's own (term amounts of the
+ * renewals dated then); the totals are summed again so the strip's line adds up.
+ */
+export function forecastWithThisMonth(f: RenewalForecast, renewed: RenewedFigure, month: MonthRange): RenewalForecast {
+  const key = month.start.slice(0, 7);
+  const months = f.months.map((m) => (m.key === key
+    ? { ...m, amount: renewed.dueAmount, count: renewed.count + renewed.stillDue.count }
+    : m));
+  return {
+    ...f,
+    months,
+    totalAmount: months.reduce((s, m) => s + m.amount, 0),
+    totalCount: months.reduce((s, m) => s + m.count, 0),
   };
 }

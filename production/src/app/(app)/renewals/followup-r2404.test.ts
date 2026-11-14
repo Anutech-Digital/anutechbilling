@@ -192,7 +192,7 @@ describe("R-2404 'Customer confirmed the renewal' — payment_followups.outcome"
 describe("R-2404 tenant scoping + wiring", () => {
   const data = readFileSync("src/app/(app)/renewals/queue-data.ts", "utf8");
   const route = readFileSync("src/app/api/collections/followups/route.ts", "utf8");
-  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
+  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8") + readFileSync("src/app/(app)/renewals/queue-items.ts", "utf8") /* R-2764: rows are built in queue-items.ts */;
   it("follow-ups are read on the signed-in session (RLS: same company + a customer you can see), never by a tenant id from the browser", () => {
     expect(data).toMatch(/from\("payment_followups"\)[\s\S]*?\.in\("subscription_id", run\)/);
     expect(data).not.toMatch(/tenant_id/);

@@ -104,8 +104,9 @@ interface CronResult {
   grace_tasks?:     number;
   /** RN-24: subscriptions lapsed to 'expired' because they're not renewing and the term ended. */
   lapsed:           number;
-  /** R-808: split-billed subscriptions whose term rolled on this run (no renewal quote). */
-  split_rolled?:    number;
+  /** R-808 / R-2735: split-billed subscriptions whose new term has begun — NOT rolled here any more; the
+   *  billing cron bills the new term's first part and paying it renews (roll_paid_renewal_terms). */
+  split_awaiting_payment?: number;
   errors:           { subscription_id: string; message: string }[];
   details:          { subscription_id: string; customer: string; step: string; daysUntil: number; emailStatus?: string }[];
   /** S28 — WhatsApp copy of each reminder. `disabled` = switch OFF (the default). */
@@ -324,8 +325,8 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
          quote on top was proven (local DB) to bill the renewed year twice: once as the paid
          quote's whole-year invoice, again as four PENDING instalment invoices. So no quote,
          no reminder ladder and no grace suspension here (unpaid instalments are chased by
-         collections). On the new term's first day renewal_date moves one term on and the
-         billing cron invoices the new term's parts on their dates. lib/renewals/split-billed-renewal.ts */
+         collections). R-2735: renewal_date moves one term on only when the new term's first part is
+         PAID (lib/renewals/pay-to-renew.ts); the billing cron bills the new term's parts on their dates. */
       const split = splitBilledRenewalStep(
         { billing_cycle: sub.billing_cycle, term_months: sub.term_months, start_date: sub.start_date,
           renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id },
@@ -335,34 +336,19 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         if (split.kind === "held_open_quote") {
           result.errors.push({
             subscription_id: sub.id,
-            message: `Billed in parts, and renewal quote ${split.quoteId} is still open. Paying it would bill the new term twice, so the term was not rolled. Cancel or unlink that quote; the next run rolls the term.`,
+            message: `Billed in parts, and renewal quote ${split.quoteId} is still open. Paying it would bill the new term twice, so its new term is not billed. Cancel or unlink that quote; the billing job then bills the new term's first part, and paying it renews the subscription.`,
           });
         } else if (split.kind === "roll") {
-          /* Guarded on the date read: two overlapping runs roll once, not twice. */
-          const { data: rolled, error: rollErr } = await supabase
-            .from("subscriptions")
-            .update({
-              renewal_date:  split.newRenewalDate,
-              renewal_state: "renewed",
-              reminder_count: 0,
-              last_reminder_sent_at_v2: null,
-            })
-            .eq("id", sub.id)
-            .eq("status", "active")
-            .eq("renewal_date", sub.renewal_date!)
-            .is("renewal_quote_id", null)
-            .select("id");
-          if (rollErr) {
-            result.errors.push({ subscription_id: sub.id, message: `Could not roll the term: ${rollErr.message}` });
-          } else if ((rolled ?? []).length > 0) {
-            result.split_rolled = (result.split_rolled ?? 0) + 1;
-            result.details.push({
-              subscription_id: sub.id,
-              customer:        sub.customer_name,
-              step:            `renewed (billed in parts) → ${split.newRenewalDate}`,
-              daysUntil:       0,
-            });
-          }
+          /* R-2735 (Pardeep, 13 Nov — "jab tak payment na aaye renew to karna hi nahi"): the term is NOT
+             rolled here any more. The billing cron bills the new term's first part (termToBill) and the
+             database renews when that part is PAID (roll_paid_renewal_terms). */
+          result.split_awaiting_payment = (result.split_awaiting_payment ?? 0) + 1;
+          result.details.push({
+            subscription_id: sub.id,
+            customer:        sub.customer_name,
+            step:            `billed in parts — renews to ${split.newRenewalDate} when the new term's first part is paid`,
+            daysUntil:       0,
+          });
         }
         return;
       }
@@ -489,6 +475,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               renewalDate:     sub.renewal_date!,
               graceDays,
               existingQuoteId: sub.renewal_quote_id,
+              itemId:          sub.item_id ?? null,   // R-2736: the line cost from its catalogue row
             })
           : await createOrGetRenewalQuote({
           supabase,
@@ -498,6 +485,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           customerName:    sub.customer_name,
           plan:            sub.plan,
           itemId:            sub.item_id ?? null,
+          vendor:          sub.vendor ?? null,   // R-2736: the catalogue cost match stays in this vendor
           seats:           sub.seats,
           mrr:             sub.mrr ?? 0,
           termMonths:      sub.term_months ?? null,
@@ -922,7 +910,7 @@ async function planOnly(
 
   const notes: string[] = [];
   if (splitRolls > 0) {
-    notes.push(`${splitRolls} subscription(s) billed in parts would renew today: the term rolls on and the billing cron invoices the next parts. No renewal quote.`);
+    notes.push(`${splitRolls} subscription(s) billed in parts have reached their new term: the billing cron bills the new term's first part, and each renews only when that part is paid (R-2735). No renewal quote.`);
   }
   if (splitHeld > 0) {
     notes.push(`${splitHeld} subscription(s) billed in parts are due to renew but still have an open renewal quote. They would not roll until a person cancels or unlinks that quote.`);

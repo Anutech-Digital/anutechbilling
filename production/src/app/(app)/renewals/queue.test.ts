@@ -180,24 +180,24 @@ describe("R-2403 ONE status per row", () => {
 describe("R-2403 the renewal amount for the term (not MRR /mo)", () => {
   it("yearly: the term amount '/yr' + GST (MAHARSHI 26 seats ₹6,500/mo → ₹78,000/yr)", () => {
     const a = renewalAmount({ mrr: 6500, term_months: 12, term_amount: 78_000, billing_cycle: "yearly", renewal_quote_id: null }, null);
-    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", fromQuote: false });
+    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", quoteNote: null, quoteShort: null });
   });
 
   it("no term_amount → mrr × term months", () => {
     expect(renewalAmount({ mrr: 6500, term_months: 12, billing_cycle: "yearly" }, null).text).toBe("₹78,000/yr");
   });
 
-  it("an open renewal quote: its total incl. GST, naming the quote", () => {
+  it("R-2751: a sent renewal quote keeps the term amount before GST; its total incl. GST is only a note", () => {
     const a = renewalAmount(
       { mrr: 6500, term_months: 12, term_amount: 78_000, billing_cycle: "yearly", renewal_quote_id: "Q-A1" },
       { id: "Q-A1", amount: 92_040, status: "sent", payment_status: "none" });
-    expect(a).toMatchObject({ value: 92_040, text: "₹92,040", gst: "incl. GST · Q-A1", fromQuote: true });
+    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", quoteNote: "Quote ₹92,040 incl. GST", quoteShort: expect.stringMatching(/^quote ₹92/) });
   });
 
   it("a closed / other quote is ignored", () => {
     const sub = { mrr: 100, term_months: 12, billing_cycle: "yearly", renewal_quote_id: "Q-1" };
-    expect(renewalAmount(sub, { id: "Q-1", amount: 5000, status: "rejected" }).fromQuote).toBe(false);
-    expect(renewalAmount(sub, { id: "Q-2", amount: 5000, status: "sent" }).fromQuote).toBe(false);
+    expect(renewalAmount(sub, { id: "Q-1", amount: 5000, status: "rejected" }).quoteNote).toBeNull();
+    expect(renewalAmount(sub, { id: "Q-2", amount: 5000, status: "sent" }).quoteNote).toBeNull();
   });
 
   it("term suffixes", () => {
@@ -220,7 +220,9 @@ describe("R-2403 sort and filter", () => {
   it("filters: product, status, vendor, at risk", () => {
     expect(filterQueue(rows, NO_FILTERS).length).toBe(3);
     expect(filterQueue(rows, { ...NO_FILTERS, product: "M365" }).map((r) => r.id)).toEqual(["c"]);
-    expect(filterQueue(rows, { ...NO_FILTERS, status: "overdue" }).map((r) => r.id)).toEqual(["a"]);
+    /* R-2760: the status filter is the row's stage (stageKey) */
+    const staged = rows.map((x) => ({ ...x, stageKey: x.id === "a" ? ("due" as const) : ("sent" as const) }));
+    expect(filterQueue(staged, { ...NO_FILTERS, status: "due" }).map((r) => r.id)).toEqual(["a"]);
     expect(filterQueue(rows, { ...NO_FILTERS, vendor: "google" }).map((r) => r.id)).toEqual(["b", "a"]);
     expect(filterQueue(rows, { ...NO_FILTERS, atRisk: true }).map((r) => r.id)).toEqual(["a"]);
   });
@@ -266,7 +268,7 @@ describe("R-2403 bulk: tick rows → Send renewal quote", () => {
 });
 
 describe("R-2403 the page wires the one queue", () => {
-  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
+  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8") + readFileSync("src/app/(app)/renewals/queue-items.ts", "utf8") /* R-2764: rows are built in queue-items.ts */;
   it("tabs are QUEUE_TABS (no At risk tab); At risk is a chip that filters", () => {
     expect(page).toContain("items={QUEUE_TABS.map((t) => ({");
     expect(page).not.toMatch(/\{ id: "risk"/);
@@ -277,7 +279,9 @@ describe("R-2403 the page wires the one queue", () => {
     expect(page).toContain("amount: renewalAmount(r.sub, quoteOf(r.sub)),");
     expect(page).not.toContain(">/mo<");
     expect(page).not.toMatch(/renewalStateLabel|expiredGraceText|Expired \{Math\.abs/);
-    expect(page.match(/<StatusChip status=\{status\}/g)?.length).toBe(2);
+    /* R-2758 (R-2738): the ONE chip is the stage (lib/renewals/stage.ts) — no decision chip beside it. */
+    expect(page.match(/<StageChip stage=\{stage\}/g)?.length).toBe(2);
+    expect(page).not.toMatch(/StatusChip|DECISION_LABEL|<VendorHoldBadge/);
   });
   it("sort + filters + bulk Send renewal quote / Send reminder on the ticked rows", () => {
     expect(page).toContain("sortQueue(filterQueue(");
@@ -285,8 +289,8 @@ describe("R-2403 the page wires the one queue", () => {
       expect(page).toContain(l);
     }
     expect(page).toMatch(/<BulkActionBar count=\{selectedRows\.length\} noun="renewal"/);
-    expect(page).toContain("bulkQuoteTargets(selectedRows,");
-    expect(page).toContain("bulkReminderPlan(selectedRows, today, graceDays)");   // R-2431: send + named skips
+    expect(page).toContain("bulkStageTargets(selectedRows, emailOf, docsState.failed)");   // R-2760: on the stage
+    expect(page).toContain("tickedShown.length > 0 ? tickedShown : visibleRows");   // R-2753: the one Remind button acts on the ticked rows
     expect(page.match(/"\/api\/renewals\/send-now"/g)?.length).toBe(1);   // the existing route, one call site
   });
 });

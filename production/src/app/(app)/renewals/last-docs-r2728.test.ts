@@ -7,10 +7,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  lastDocsBySubscription, quoteExpiryText, renewalDueText, quoteStateLabel, invoicePaidText, daysBetweenIst,
+  lastDocsBySubscription, quoteExpiryText, renewalDueText, quoteStateLabel, invoiceStatusWords, daysBetweenIst,
   type LastDocsInput, type DocQuote, type DocBilling, type DocInvoice,
 } from "./last-docs";
-import { renewalRowStatus, STATUS_FILTER_LABEL, filterQueue, NO_FILTERS, QUEUE_TABLE_COLS, QUEUE_TABLE_BUDGET_PX } from "./queue";
+import { renewalRowStatus, STAGE_FILTER_LABEL, filterQueue, NO_FILTERS, QUEUE_TABLE_COLS, QUEUE_TABLE_BUDGET_PX, QUEUE_FLEX_MIN_PX } from "./queue";
 import { tileMatches, monthOf } from "./tiles";
 import { istToday } from "@/lib/dates/ist";
 
@@ -59,22 +59,24 @@ describe("R-2728 last quote sent + last invoice per subscription", () => {
     expect(m.get(SUB)?.quote?.id).toBe("PI-1");
   });
 
-  it("the newest invoice (quote's invoice or the part's billing invoice), void ones left out; paid / part paid / unpaid", () => {
+  /* R-2737: a void invoice is no longer left out when it is the NEWEST (it shows "Cancelled",
+     last-docs-r2737.test.ts) — an older void one still never hides a newer live one. */
+  it("the newest invoice (quote's invoice or the part's billing invoice), an older void one left out; paid / part paid / unpaid", () => {
     const m = lastDocsBySubscription(input({
       quotes: [q({ id: "Q-ORIG", status: "accepted", payment_status: "invoiced", invoice_id: "INV-1" })],
       billings: [bill({ id: "b1", invoice_id: "INV-3" })],
       invoices: [
         inv({ id: "INV-1", quote_id: "Q-ORIG", invoice_date: "2025-12-02", status: "paid", paid_amount: 11800 }),
         inv({ id: "INV-3", invoice_date: "2026-06-07", status: "pending", amount: 5900, paid_amount: 2000 }),
-        inv({ id: "INV-VOID", quote_id: "Q-ORIG", invoice_date: "2026-10-01", status: "void" }),
+        inv({ id: "INV-VOID", quote_id: "Q-ORIG", invoice_date: "2026-05-01", status: "void" }),
         inv({ id: "INV-DRAFT", quote_id: "Q-ORIG", invoice_date: "2026-10-02", status: "draft" }),
       ],
     }));
     const i = m.get(SUB)?.invoice;
     expect(i).toMatchObject({ id: "INV-3", date: "2026-06-07" });
-    expect(invoicePaidText(i!)).toBe("Part paid · ₹3,900 due");
-    expect(invoicePaidText({ ...i!, status: "paid", paidAmount: 5900 })).toBe("Paid");
-    expect(invoicePaidText({ ...i!, paidAmount: 0 })).toBe("Unpaid · ₹5,900");
+    expect(invoiceStatusWords(i!, "2026-11-13").text).toBe("Part paid · ₹3,900 due");
+    expect(invoiceStatusWords({ ...i!, status: "paid", paidAmount: 5900 }, "2026-11-13").text).toBe("Paid");
+    expect(invoiceStatusWords({ ...i!, paidAmount: 0 }, "2026-11-13").text).toBe("Unpaid · ₹5,900");
   });
 
   it("nothing linked → null, never another subscription's documents", () => {
@@ -155,13 +157,13 @@ describe("R-2728 'Renewal quote sent' — which rows", () => {
     expect(renewalRowStatus(s, -2, { tenantGraceDays: 7, today: TODAY, quoteSent: sent }).note).toMatch(/In grace/);
   });
 
-  it("the status filter has 'Renewal quote sent' and lists exactly those rows", () => {
-    expect(STATUS_FILTER_LABEL["quote-sent"]).toBe("Renewal quote sent");
+  it("the status filter has 'Quote sent' (R-2760: the row's stage) and lists exactly those rows", () => {
+    expect(STAGE_FILTER_LABEL.sent).toBe("Quote sent");
     const rows = [
-      { id: "a", daysUntil: -3, amount: 1, plan: null, vendor: null, statusKey: "quote-sent" as const, atRisk: false, customer: "A" },
-      { id: "b", daysUntil: -3, amount: 1, plan: null, vendor: null, statusKey: "overdue" as const, atRisk: false, customer: "B" },
+      { id: "a", daysUntil: -3, amount: 1, plan: null, vendor: null, statusKey: "quote-sent" as const, stageKey: "sent" as const, atRisk: false, customer: "A" },
+      { id: "b", daysUntil: -3, amount: 1, plan: null, vendor: null, statusKey: "overdue" as const, stageKey: "due" as const, atRisk: false, customer: "B" },
     ];
-    expect(filterQueue(rows, { ...NO_FILTERS, status: "quote-sent" }).map((r) => r.id)).toEqual(["a"]);
+    expect(filterQueue(rows, { ...NO_FILTERS, status: "sent" }).map((r) => r.id)).toEqual(["a"]);
   });
 
   it("tiles: a sent row is counted once — in its own window, as money still due (not Renewed)", () => {
@@ -223,8 +225,8 @@ describe("R-2728 wiring — one batched read, table still fits 1280", () => {
     expect(data).toContain("fetchAllRowsIn");
     expect(data).not.toMatch(/\.single\(\)|\.maybeSingle\(\)/);
   });
-  it("column budget still ≤ 944px", () => {
+  it("column budget still fits (R-2759: the ~924px card at 1260)", () => {
     const fixed = QUEUE_TABLE_COLS.reduce((s, c) => s + (c.width ?? 0), 0);
-    expect(fixed + 2 * 140).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
+    expect(fixed + 2 * QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
   });
 });

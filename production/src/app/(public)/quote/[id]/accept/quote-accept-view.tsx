@@ -51,6 +51,9 @@ export type PublicQuote = {
   /** R-806: "covers 25 Sep 2026 to 31 Aug 2027" / "covers 12 months"; null = unknown,
    *  so no period is claimed. Built server-side by lib/quotes/service-period. */
   service_period?: string | null;
+  /** R-2746: "Renewal · 13 Nov 2026 – 12 Nov 2027" above the lines of a renewal / extension
+   *  quote (lib/quotes/renewal-period-label — the lines' own period); null/absent otherwise. */
+  renewal_period_label?: string | null;
   /** R-809: add-seats (pro-rata) or one-off — paid once, so no "billed yearly" schedule.
    *  From isOneTimeQuote() in lib/quotes/service-period. */
   one_time?: boolean;
@@ -767,6 +770,9 @@ export function QuoteAcceptView({
 
             return (
               <>
+              {quote.renewal_period_label && (
+                <p className="mb-1.5 text-xs text-ink-2 tabular-nums" data-testid="renewal-period-label">{quote.renewal_period_label}</p>
+              )}
               {/* ── Phone: card per line ── */}
               <ul className="sm:hidden mb-6 divide-y divide-hairline border-y-2 border-ink">
                 {rowData.map((r) => (

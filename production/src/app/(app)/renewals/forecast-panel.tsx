@@ -18,7 +18,8 @@ export function ForecastPanel({
   forecast: RenewalForecast;
   atRiskCount: number;
   atRiskArr: number;
-  topName: string;
+  /** R-2756: null = no chased renewal at risk (only Won't renew / stopped ones) — no pick, no "call this week". */
+  topName: string | null;
   topCustomerId: string | null;
   topReasons: string[];
 }) {
@@ -31,7 +32,7 @@ export function ForecastPanel({
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Renewal forecast · next 6 months</p>
           {/* R-2431: one total, in term amounts before GST (the tiles' amount without a quote); monthly (flex) parts are in it. */}
-          <p className="text-xs text-ink-3">Renewals {rupee(forecast.totalAmount, { compact: true })} + GST ({forecast.totalCount} due {forecast.totalCount === 1 ? "date" : "dates"}){forecast.flexCount > 0 ? <> · incl. {forecast.flexCount} monthly (flex) {forecast.flexCount === 1 ? "subscription" : "subscriptions"}, one part each month</> : null}</p>
+          <p className="text-xs text-ink-3">Renewals {rupee(forecast.totalAmount, { compact: true })} + GST ({forecast.totalCount} {forecast.totalCount === 1 ? "renewal" : "renewals"}){forecast.flexCount > 0 ? <> · incl. {forecast.flexCount} monthly (flex) {forecast.flexCount === 1 ? "subscription" : "subscriptions"}, one part each month</> : null}</p>
         </div>
         <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
           {forecast.months.map((m) => (
@@ -48,11 +49,12 @@ export function ForecastPanel({
             </div>
           ))}
         </div>
-        <p className="mt-1.5 text-3xs text-ink-3">Estimate: MRR × 12 in the renewal month (ex-GST); excludes churn and expansion.</p>
+        {/* R-2751: one basis with the rows and tiles; this month's bar is the Renewed tile's "due in <month>". */}
+        <p className="mt-1.5 text-3xs text-ink-3">Before GST, like the rows and tiles. {forecast.months[0]?.label.slice(0, 3)}: paid + still due (the Renewed this month tile); later months: term amounts of the renewals due then. Estimate — excludes churn and expansion.</p>
       </div>
 
       {/* Renewal AI — next best action */}
-      {atRiskCount > 0 && (
+      {atRiskCount > 0 && topName && (
         <GeminiCard
           title="Renewal AI · Next best actions"
           actions={
@@ -74,7 +76,7 @@ export function ForecastPanel({
             {rupee(atRiskArr, { compact: true })} a year.
           </strong>{" "}
           Top priority: <strong>{topName}</strong>
-          {topReasons.length > 0 ? <> — {topReasons.join(" · ").toLowerCase()}</> : null}.
+          {topReasons.length > 0 ? <> — {topReasons.join(" · ")}</> : null}.
           Call or WhatsApp this week to secure the renewal.
         </GeminiCard>
       )}

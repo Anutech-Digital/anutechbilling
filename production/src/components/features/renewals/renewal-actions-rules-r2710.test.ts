@@ -81,7 +81,8 @@ describe("R-2710 wiring", () => {
   it("Review asks the generate route for a DRAFT and opens the editor; Change goes through the shared Revise", () => {
     const src = read("src/components/features/renewals/renewal-actions.tsx");
     expect(src).toMatch(/JSON\.stringify\(\{ review: true \}\)/);
-    expect(src).toMatch(/\/quotes\/\$\{encodeURIComponent\(json\.quoteId\)\}\/edit/);
+    /* R-2754: the editor link carries ?returnTo=<this Renewals tab> (lib/renewals/back-to-renewals.ts). */
+    expect(src).toMatch(/quoteEditHrefFromRenewals\(json\.quoteId, from\)/);
     expect(src).toMatch(/openRenewalRevision\(/);
     expect(src).toMatch(/canReview: canQuotes/);
   });

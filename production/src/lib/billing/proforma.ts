@@ -11,6 +11,7 @@
  */
 import { addMonthsClamped, addDaysISO, CYCLE_MONTHS } from "./schedule";
 import type { BillingCycle } from "@/lib/supabase/database.types";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 
 /** A number from the PI series (R-2519). Older requests keep their Q- number. */
 export function isProformaNumber(id: string | null | undefined): boolean {
@@ -145,6 +146,116 @@ export interface BillNextPreview {
   periods: PreviewPeriod[];
   /** The first period's start — the billing run bills every period starting on/before the last one's start. */
   firstStart: string;
+  /** R-2757: earlier parts of this subscription raised and still unpaid, oldest first ([] = none). */
+  unpaidEarlier: UnpaidEarlierPart[];
+}
+
+/**
+ * R-2757 (user audit 14 Nov — Greentin Check 2095: Oct part Q-F588-27-0059 unpaid 44 days, and Bill
+ * next part offered Nov with no word about it) — a part BEFORE the one being billed whose proforma /
+ * part request is with the customer unpaid, or whose tax invoice still has money to collect. The
+ * dialog names it; billing ahead stays allowed (the owner's call — no money rule blocks it).
+ */
+export interface UnpaidEarlierPart {
+  kind: "proforma" | "invoice";
+  id: string;
+  /** The period(s) it covers, end inclusive (a document over several parts: first start → last end). */
+  start: string;
+  end: string;
+  /** Still to collect on that document (gross), in `currency` (a foreign invoice: ₹ ÷ its fx_rate). */
+  due: number;
+  /** "INR" unless the document is billed in another currency. */
+  currency: string;
+  /** When it fell due (proforma: the part's due_on, else its start; invoice: due_date); null = none set. */
+  dueDate: string | null;
+  /** Whole days past dueDate as of today (IST); 0 = not yet due. */
+  daysOverdue: number;
+}
+
+/** What earlierUnpaidParts reads — subscription_billings (period_end EXCLUSIVE), quotes, invoices. */
+export interface EarlierPartRow { id: string; period_start: string; period_end: string; invoice_id: string | null; due_on?: string | null }
+export interface EarlierPartQuote {
+  id: string; status: string; amount: number | null; payment_amount?: number | null; payment_status?: string | null;
+  superseded_by?: string | null; subscription_billing_id: string | null; currency?: string | null;
+}
+export interface EarlierPartInvoice {
+  id: string; status: string; amount: number; net_payable?: number | null; paid_amount?: number | null;
+  written_off_at?: string | null; due_date?: string | null; currency?: string | null; fx_rate?: number | null;
+}
+
+/* Same "with the customer, unpaid" rule as the Renewals row (renewals/last-docs.ts isOpenUnpaid). */
+const PART_OPEN = new Set(["sent", "viewed", "accepted"]);
+const PART_UNPAID = new Set(["none", "awaiting", "partial"]);
+/* An invoice that never asked (draft) leaves the part's proforma as the ask; void / cancelled asks nothing. */
+const INVOICE_GONE = new Set(["void", "cancelled"]);
+
+function daysPast(dueDate: string | null, todayISO: string): number {
+  if (!dueDate || dueDate.slice(0, 10) >= todayISO) return 0;
+  return Math.round((Date.parse(`${todayISO}T00:00:00Z`) - Date.parse(`${dueDate.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
+}
+
+const cur = (c: string | null | undefined) => (c ?? "INR").trim().toUpperCase() || "INR";
+
+export function earlierUnpaidParts(a: {
+  rows: readonly EarlierPartRow[];
+  quotes: readonly EarlierPartQuote[];
+  invoices: readonly EarlierPartInvoice[];
+  /** The first period Bill next part would bill — only parts starting before it count. */
+  firstStart: string;
+  todayISO: string;
+}): UnpaidEarlierPart[] {
+  const invById = new Map(a.invoices.map((i) => [i.id, i]));
+  const byId = new Map<string, UnpaidEarlierPart>();
+  const out: UnpaidEarlierPart[] = [];
+  const add = (p: UnpaidEarlierPart) => {
+    const had = byId.get(p.id);
+    if (had) { if (p.end > had.end) had.end = p.end; return; }   // one document over several parts: widen its period
+    byId.set(p.id, p);
+    out.push(p);
+  };
+  const rows = a.rows.filter((r) => r.period_start < a.firstStart).sort((x, y) => x.period_start.localeCompare(y.period_start));
+  for (const r of rows) {
+    const last = addDaysISO(r.period_end, -1);
+    const end = last >= r.period_start ? last : r.period_start;
+    const inv = r.invoice_id ? invById.get(r.invoice_id) : undefined;
+    if (inv && inv.status !== "draft") {
+      /* Invoiced: the invoice is the payable document (its proforma no longer asks). */
+      if (INVOICE_GONE.has(inv.status)) continue;
+      const dueInr = invoiceAmountDue(inv);
+      if (dueInr <= 0) continue;
+      /* The books hold ₹; a foreign invoice with its rate is shown in its own currency (as the Renewals row). */
+      const rate = inv.fx_rate ?? 0;
+      const foreign = cur(inv.currency) !== "INR" && rate > 0;
+      const due = foreign ? Math.round((dueInr / rate) * 100) / 100 : dueInr;
+      const dueDate = inv.due_date ?? null;
+      add({ kind: "invoice", id: inv.id, start: r.period_start, end, due, currency: foreign ? cur(inv.currency) : "INR", dueDate, daysOverdue: daysPast(dueDate, a.todayISO) });
+      continue;
+    }
+    if (r.invoice_id && !inv) continue;   // invoiced and settled (paid / not read) — nothing asks
+    for (const q of a.quotes) {
+      if (q.subscription_billing_id !== r.id || q.superseded_by) continue;
+      if (!PART_OPEN.has(q.status) || !PART_UNPAID.has(q.payment_status ?? "none")) continue;
+      const due = Math.max(0, (q.amount ?? 0) - (q.payment_amount ?? 0));
+      if (due <= 0) continue;
+      const dueDate = r.due_on ?? r.period_start;
+      add({ kind: "proforma", id: q.id, start: r.period_start, end, due, currency: cur(q.currency), dueDate, daysOverdue: daysPast(dueDate, a.todayISO) });
+    }
+  }
+  return out;
+}
+
+/** The dialog's count field — "Months to bill" / "Quarters to bill" … (was "Periods", R-2757). */
+export function periodsToBillLabel(cycle: BillingCycle): string {
+  const words: Record<BillingCycle, string> = {
+    monthly: "Months to bill", quarterly: "Quarters to bill", half_yearly: "Half-years to bill", yearly: "Years to bill",
+  };
+  return words[cycle] ?? "Periods to bill";
+}
+
+/** R-2757: the Create button when an earlier part is unpaid — "Bill Nov anyway" (one period), "Create 3 proformas anyway". */
+export function billAnywayLabel(periods: readonly Period[]): string {
+  if (periods.length !== 1) return `Create ${periods.length} proformas anyway`;
+  return `Bill ${MON[Number(periods[0].start.slice(5, 7)) - 1]} anyway`;
 }
 
 
