@@ -14,7 +14,7 @@
 import { computePf, pfWage, type PfContribution, type PfWage } from "./pf";
 import { computeEsi, esiStickyCovered, type EsiContribution } from "./esi";
 import { estimateMonthlyTds, fyStartOfPeriod, type TdsEstimate } from "./income-tax";
-import { salaryInForce, type SalaryRevision, type SalaryStructure } from "./salary-revision";
+import { basicAtPct, salaryInForce, type SalaryRevision, type SalaryStructure } from "./salary-revision";
 import { rupee } from "@/lib/utils";
 
 /** The payslip fields the auto deductions read (salary_payments rows of this employee). */
@@ -178,10 +178,9 @@ export function basicShareText(b: { basicPct: number; overBudget: boolean }): st
 /**
  * R-2733 (b): with no CTC typed the gross is the employee's own — a Basic % is then that share
  * of the monthly gross, and it is written into the form's Basic (what Save stores), never more
- * than gross − DA. null = nothing to set (no gross).
+ * than gross − DA. null = nothing to set (no gross). R-2773: the same rule as a new employee's
+ * policy Basic (salary-revision.ts basicAtPct / structureForGross).
  */
 export function basicFromPct(pct: number, gross: number, da: number): number | null {
-  const g = whole(gross);
-  if (g <= 0 || !Number.isFinite(pct) || pct <= 0) return null;
-  return Math.min(Math.max(0, g - whole(da)), Math.round(g * Math.min(pct, 1)));
+  return basicAtPct(pct, gross, da);
 }

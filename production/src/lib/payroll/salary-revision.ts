@@ -134,6 +134,37 @@ export function scaledStructure(current: SalaryStructure, newGross: number): Sal
   };
 }
 
+/** R-2773: the company payroll policy's default Basic % (policy.ts DEFAULT_PAYROLL_POLICY.basicPct) —
+ *  used when no valid policy % is given. */
+const DEFAULT_BASIC_PCT = 50;
+
+/** Basic = `pct` (0–1) of the gross in whole rupees, never above gross − DA. null = no gross. */
+export function basicAtPct(pct: number, gross: number, da: number): number | null {
+  const g = Math.max(0, Math.round(Number.isFinite(gross) ? gross : 0));
+  if (g <= 0 || !Number.isFinite(pct) || pct <= 0) return null;
+  const d = Math.max(0, Math.round(Number.isFinite(da) ? da : 0));
+  return Math.min(Math.max(0, g - d), Math.round(g * Math.min(pct, 1)));
+}
+
+/**
+ * R-2773 (Hitesh 14 Nov, feedback 043e6753): ONE rule for the Basic that goes with a monthly gross
+ * typed in Add employee, Edit employee and Revise salary.
+ *   • An employee who already has a salary (current.monthly_gross > 0) keeps their own Basic / DA
+ *     share (scaledStructure) — a Basic that is NOT set stays not set (R-2722: PF / gratuity on the
+ *     whole gross, as payroll books it; changing that for saved employees is a data repair).
+ *   • No salary yet (a NEW employee, or one saved with gross 0): Basic = the company payroll policy's
+ *     Basic % of the gross (never above gross − DA), DA as it is. Before this the Add employee form
+ *     left Basic empty, Save wrote null and payroll took the whole gross as Basic (100%).
+ * `policyBasicPct` is the policy's whole-number % (10–100); anything else → 50%.
+ */
+export function structureForGross(current: SalaryStructure | null, newGross: number, policyBasicPct: number): SalaryStructure {
+  const g = Math.max(0, Math.round(Number.isFinite(newGross) ? newGross : 0));
+  if (current && current.monthly_gross > 0) return scaledStructure(current, g);
+  const da = Math.max(0, Math.round(current?.da_monthly ?? 0));
+  const pct = Number.isFinite(policyBasicPct) && policyBasicPct > 0 ? policyBasicPct : DEFAULT_BASIC_PCT;
+  return { monthly_gross: g, basic_monthly: basicAtPct(pct / 100, g, da), da_monthly: da };
+}
+
 /** Switches the CTC follows (the employee's own Statutory & Access settings). */
 export interface CtcSwitches extends SalaryStructure {
   pf_applicable: boolean;
@@ -144,11 +175,12 @@ export interface CtcSwitches extends SalaryStructure {
 /** The largest whole-rupee monthly gross whose CTC (ctcFromEmployee — the same CTC the profile
  *  shows) is at most `annualCtc`, keeping the employee's Basic / DA share and PF / ESI switches.
  *  R-2770: with the company payroll policy (gratuity / CTC includes employer; missing = defaults). */
-export function grossForAnnualCtc(annualCtc: number, current: CtcSwitches, asOf: string, policy?: CtcPolicy | null): number {
+export function grossForAnnualCtc(annualCtc: number, current: CtcSwitches, asOf: string, policy?: (CtcPolicy & { basicPct?: number }) | null): number {
   const target = Math.round(annualCtc || 0);
   if (target <= 0) return 0;
   const opts = employeeCtcOptions(policy, asOf);
-  const ctcOf = (g: number) => ctcFromEmployee({ ...current, ...scaledStructure(current, g) }, opts).annualCtc;
+  // R-2773: the same Basic rule as the gross box (no salary yet → the policy Basic %).
+  const ctcOf = (g: number) => ctcFromEmployee({ ...current, ...structureForGross(current, g, policy?.basicPct ?? DEFAULT_BASIC_PCT) }, opts).annualCtc;
   /* CTC rises with gross on each side of the ESI ceiling, but drops just above it (employer ESI
      stops), so search the two pieces separately and take the larger gross that fits. */
   const largestFitting = (lo: number, hi: number): number | null => {
