@@ -55,6 +55,7 @@ function fakeClient(tables: Record<string, Row[]>, key = jwt("anon")) {
         range(f: number, t: number) { range = [f, t]; return q; },
         limit(n: number) { lim = n; return q; },
         update: vi.fn(() => q), delete: vi.fn(() => q), insert: vi.fn(() => q),
+        abortSignal(sig: AbortSignal) { aborts.push(sig); return q; },
         then<T>(resolve: (v: ReturnType<typeof run>) => T, reject?: (e: unknown) => T) { return Promise.resolve(run()).then(resolve, reject); },
       };
       return q;
@@ -64,6 +65,7 @@ function fakeClient(tables: Record<string, Row[]>, key = jwt("anon")) {
 }
 
 let current: ReturnType<typeof fakeClient>["client"] | null = null;
+const aborts: AbortSignal[] = [];
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => current,
   createAdminClient: () => { throw new Error("admin client must never be called from help tools"); },
@@ -97,6 +99,13 @@ describe("session: own login only", () => {
     expect(r.ok).toBe(true);
     expect(r.text).toBe("Active subscriptions: 2. MRR: ₹3,50,000 a month.");
     expect(log.length).toBeGreaterThan(0);
+  });
+
+  it("refuses a fixed service-role bearer header too", () => {
+    const c = fakeClient({}).client as unknown as Record<string, unknown>;
+    c.rest = { headers: { Authorization: `Bearer ${jwt("service_role")}` } };
+    current = c as never;
+    expect(() => openHelpSession()).toThrow(HelpSessionRefused);
   });
 
   it("refuses a service-role or sb_secret key — the session is never made", () => {
@@ -147,6 +156,16 @@ describe("reader: tenant, tables, secret columns, read-only", () => {
       expect(() => r.read("quotes", cols), cols).toThrow(HelpReadRefused);
     }
     expect(() => r.read("invoices", "id, amount")).not.toThrow();
+  });
+
+  it("filters and order on a secret / non-plain column, or a free-form not() operator, are refused (no oracle)", () => {
+    const { db: r } = db();
+    expect(() => r.read("quotes", "id").eq("public_token", "abc")).toThrow(HelpReadRefused);
+    expect(() => r.read("invoices", "id").ilike("api_key", "a%")).toThrow(HelpReadRefused);
+    expect(() => r.read("leads", "id").order("password_hint")).toThrow(HelpReadRefused);
+    expect(() => r.read("leads", "id").eq("tenant_id,or", B)).toThrow(HelpReadRefused);
+    expect(() => r.read("leads", "id").not("stage", "or(tenant_id.eq.x)", "y")).toThrow(HelpReadRefused);
+    expect(() => r.read("leads", "id").not("stage", "in", "(won,lost)").eq("is_junk", false).range(0, 9).limit(5)).not.toThrow();
   });
 
   it("the query has no write / rpc / select methods at runtime", () => {
@@ -224,14 +243,17 @@ describe("runner rules", () => {
       tool({ name: "t_safe", tier: "safe", run: runSpy }),
       tool({ name: "t_bad", run: async () => ({ text: "x", sources: [], secret: "leak" }) }),
       tool({ name: "t_throw", run: async () => { throw new Error("db down"); } }),
-      tool({ name: "t_slow", run: () => new Promise(() => {}) }),
+      tool({ name: "t_slow", run: async (_i: unknown, ctx: { db: { read: (t: string, c: string) => PromiseLike<unknown> } }) => { await ctx.db.read("leads", "id"); return new Promise(() => {}); } }),
     ]);
+    aborts.length = 0;
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await runHelpTools(s, { tenantId: A, role: "owner" },
       ["t_confirm", "t_safe", "t_bad", "t_throw", "t_slow"].map((name) => ({ name, input: { n: 1 } })), reg, { timeoutMs: 20 });
     err.mockRestore();
     expect(res.map((r) => r.refusal)).toEqual(["tier_not_enabled", "tier_not_enabled", "bad_output", "failed", "timeout"]);
     expect(runSpy).not.toHaveBeenCalled();
+    expect(aborts.length).toBeGreaterThan(0);
+    expect(aborts.every((sig) => sig.aborted)).toBe(true);
     expect(res.every((r) => !r.ok && r.href === null && r.sources.length === 0)).toBe(true);
   });
 
@@ -269,6 +291,10 @@ describe("the 6 R-421 tools on the registry", () => {
     for (const q of legacy.log) expect(q.filters).toContainEqual(["eq", "tenant_id", A]);
     expect(v2.find((r) => r.name === "renewals_due")?.sources[0]).toMatchObject({ table: "subscriptions", ids: ["s1"] });
     expect(v2.find((r) => r.name === "todays_followups")?.sources[0]).toMatchObject({ table: "leads", ids: ["l1"] });
+  });
+
+  it("the legacy name list is frozen to the R-421 six (new tools go on the registry path only)", () => {
+    expect([...HELP_DATA_TOOL_NAMES]).toEqual(["active_subscriptions", "renewals_due", "overdue_invoices", "todays_followups", "open_quotes", "leads_by_stage"]);
   });
 
   it("runHelpDataToolsV2 keeps the R-421 shape and the 'not allowed' wording", async () => {

@@ -6,8 +6,10 @@
  * `tenant_id = <this company>` already applied. It refuses (throws) when:
  *   - the table is not in HELP_READ_TABLES (fail-closed allowlist; compile-time: only tables
  *     with a tenant_id column can be listed), or is a credential table (HELP_NEVER_TABLES);
- *   - a column is `*`, an embedded resource, an alias or a cast, is in SECRET_COLUMNS, or its
- *     name looks like a credential (SECRET_NAME) — even when the owner's login could read it;
+ *   - a column — in the select list OR in a filter / order — is `*`, an embedded resource, an
+ *     alias or a cast, is in SECRET_COLUMNS, or its name looks like a credential (SECRET_NAME) —
+ *     even when the owner's login could read it (no filter "oracle" on a secret either);
+ *   - a not() operator is not a plain comparison operator;
  *   - the tenant id is empty.
  * The query it returns is a proxy exposing only filter / order / range / limit and awaiting —
  * no insert, update, delete, upsert, rpc, a second select or anything else, at runtime too.
@@ -29,12 +31,14 @@ export const HELP_READ_TABLES = ["subscriptions", "invoices", "quotes", "leads"]
 export type HelpReadTable = (typeof HELP_READ_TABLES)[number];
 
 /** Credential tables: never readable by a help tool, even if someone adds them to the list above. */
-export const HELP_NEVER_TABLES: readonly string[] = [
+export const HELP_NEVER_TABLES: readonly string[] = [...new Set([
   "tenant_secrets", "api_keys", "vault_passwords", "vault_access_log", "user_google_tokens",
   "personal_vault_pin", "phone_otps", "privacy_requests", "membership_invites", "team_invites",
   "email_verifications", "attendance_settings", "ad_accounts", "agent_tokens",
+  // Whole tables that hold a SECRET_COLUMNS entry (e.g. employees.pin_hash): conservative on
+  // purpose — a later card that needs one of them lifts it here with its own review.
   ...SECRET_COLUMNS.map((c) => c.split(".")[0]),
-];
+])];
 
 const COLUMN = /^[a-z_][a-z0-9_]*$/;
 
@@ -68,22 +72,28 @@ export interface HelpDb {
 /** Methods the proxy lets through (each returns the proxy again), plus awaiting. */
 const CHAIN = new Set(["eq", "neq", "in", "is", "lt", "lte", "gt", "gte", "ilike", "not", "order", "range", "limit"]);
 
-/** Every column in a select list, refused if it is not a plain, non-secret column of this table. */
+/** One column, refused if it is not a plain, non-secret column of this table. */
+export function assertReadableColumn(table: string, c: unknown): void {
+  if (typeof c !== "string" || !COLUMN.test(c)) throw new HelpReadRefused(`${table}: '${String(c)}' is not a plain column (no *, joins, aliases or casts)`);
+  if (SECRET_COLUMNS.includes(`${table}.${c}`) || SECRET_NAME.test(c)) throw new HelpReadRefused(`${table}.${c} is a secret column`);
+}
+
+/** Every column in a select list. */
 export function assertReadableColumns(table: string, columns: string): void {
   const cols = columns.split(",").map((c) => c.trim());
   if (!cols.length || cols.some((c) => !c)) throw new HelpReadRefused(`${table}: empty column in '${columns}'`);
-  for (const c of cols) {
-    if (!COLUMN.test(c)) throw new HelpReadRefused(`${table}: '${c}' is not a plain column (no *, joins, aliases or casts)`);
-    if (SECRET_COLUMNS.includes(`${table}.${c}`) || SECRET_NAME.test(c)) throw new HelpReadRefused(`${table}.${c} is a secret column`);
-  }
+  for (const c of cols) assertReadableColumn(table, c);
 }
+
+/** Operators not() may use — plain comparisons, no free-form filter text. */
+const NOT_OPERATORS = new Set(["eq", "neq", "in", "is", "lt", "lte", "gt", "gte", "like", "ilike"]);
 
 export function assertReadableTable(table: string): asserts table is HelpReadTable {
   if (HELP_NEVER_TABLES.includes(table)) throw new HelpReadRefused(`${table} is a credential table`);
   if (!(HELP_READ_TABLES as readonly string[]).includes(table)) throw new HelpReadRefused(`${table} is not a help-readable table`);
 }
 
-function restrict<Row>(builder: object): HelpQuery<Row> {
+function restrict<Row>(table: string, builder: object): HelpQuery<Row> {
   return new Proxy(builder, {
     get(target, prop) {
       if (prop === "then") {
@@ -91,7 +101,11 @@ function restrict<Row>(builder: object): HelpQuery<Row> {
         return then.bind(target);
       }
       if (typeof prop === "string" && CHAIN.has(prop)) {
-        return (...args: unknown[]) => restrict<Row>((target as Record<string, (...a: unknown[]) => object>)[prop](...args));
+        return (...args: unknown[]) => {
+          if (prop !== "range" && prop !== "limit") assertReadableColumn(table, args[0]);
+          if (prop === "not" && !NOT_OPERATORS.has(String(args[1]))) throw new HelpReadRefused(`${table}: not() operator '${String(args[1])}'`);
+          return restrict<Row>(table, (target as Record<string, (...a: unknown[]) => object>)[prop](...args));
+        };
       }
       return undefined;
     },
@@ -103,16 +117,19 @@ function restrict<Row>(builder: object): HelpQuery<Row> {
  * The tenant-scoped reader. `client` must be the person's own cookie client — callers are
  * runner.ts (HelpSession) and the legacy help-data-tools.ts only (guard test).
  */
-export function scopedReader(client: SupabaseClient<Database>, tenantId: string): HelpDb {
+export function scopedReader(client: SupabaseClient<Database>, tenantId: string, opts: { signal?: AbortSignal } = {}): HelpDb {
   if (typeof tenantId !== "string" || !tenantId.trim()) throw new HelpReadRefused("no tenant");
   return Object.freeze({
     read<Row>(table: HelpReadTable, columns: string, options?: { count?: "exact"; head?: boolean }): HelpQuery<Row> {
       assertReadableTable(table);
       assertReadableColumns(table, columns);
-      const opts = options ? { ...(options.count ? { count: "exact" as const } : {}), ...(options.head ? { head: true } : {}) } : undefined;
-      const q = (client.from(table) as unknown as { select: (c: string, o?: object) => { eq: (c: string, v: string) => object } })
-        .select(columns, opts).eq("tenant_id", tenantId);
-      return restrict<Row>(q);
+      const selectOpts = options ? { ...(options.count ? { count: "exact" as const } : {}), ...(options.head ? { head: true } : {}) } : undefined;
+      type Q = { eq: (c: string, v: string) => Q; abortSignal?: (s: AbortSignal) => Q };
+      let q = (client.from(table) as unknown as { select: (c: string, o?: object) => Q })
+        .select(columns, selectOpts).eq("tenant_id", tenantId);
+      /* Aborted when the runner's timeout fires, so a slow read does not keep paging. */
+      if (opts.signal && typeof q.abortSignal === "function") q = q.abortSignal(opts.signal);
+      return restrict<Row>(table, q);
     },
   });
 }
