@@ -83,11 +83,17 @@ export function assertReadableColumn(table: string, c: unknown): void {
   if (SECRET_COLUMNS.includes(`${table}.${c}`) || SECRET_NAME.test(c)) throw new HelpReadRefused(`${table}.${c} is a secret column`);
 }
 
-/** Every column in a select list. */
-export function assertReadableColumns(table: string, columns: string): void {
+/**
+ * Every column in a select list; returns the checked list — the ONLY string sent to select().
+ * `columns` must be a primitive string: an object with its own split() / toString() could pass
+ * the check and then send something else (rev2 #1).
+ */
+export function assertReadableColumns(table: string, columns: unknown): string {
+  if (typeof columns !== "string") throw new HelpReadRefused(`${table}: columns must be a string`);
   const cols = columns.split(",").map((c) => c.trim());
   if (!cols.length || cols.some((c) => !c)) throw new HelpReadRefused(`${table}: empty column in '${columns}'`);
   for (const c of cols) assertReadableColumn(table, c);
+  return cols.join(",");
 }
 
 /** Operators not() may use — plain comparisons, no free-form filter text. */
@@ -157,11 +163,11 @@ export function scopedReader(client: SupabaseClient<Database>, tenantId: string,
   return Object.freeze({
     read<Row>(table: HelpReadTable, columns: string, options?: { count?: "exact"; head?: boolean }): HelpQuery<Row> {
       assertReadableTable(table);
-      assertReadableColumns(table, columns);
+      const checked = assertReadableColumns(table, columns);
       const selectOpts = options ? { ...(options.count ? { count: "exact" as const } : {}), ...(options.head ? { head: true } : {}) } : undefined;
       type Q = { eq: (c: string, v: string) => Q; abortSignal?: (s: AbortSignal) => Q };
       let q = (client.from(table) as unknown as { select: (c: string, o?: object) => Q })
-        .select(columns, selectOpts).eq("tenant_id", tenantId);
+        .select(checked, selectOpts).eq("tenant_id", tenantId);
       /* Aborted when the runner's timeout fires, so a slow read does not keep paging. */
       if (opts.signal && typeof q.abortSignal === "function") q = q.abortSignal(opts.signal);
       return restrict<Row>(table, q as unknown as Builder);
