@@ -15,6 +15,8 @@
 --   G. Full credit note on the together invoice → both parts freed, each subscription moves back once (R-2749),
 --      and the note's credit sits in the shared pool ONCE
 --   D. A short payment on a together request → no invoice, nothing renews
+--   X. Two customers with the same bill_group_id → separate pools; another customer's part never billed (rev F1)
+--   W. A browser login cannot set / change bill_group_id (rev F3)
 --   Z. No group → billing_pool_subscriptions = the sub + its sale quote's subs (the old pool); grants
 
 begin;
@@ -225,6 +227,67 @@ begin
     raise exception 'FAIL O: own part not billed: %', pg_temp.st(v_a); end if;
   raise notice 'PASS O: a part outside the pool is never billed on the group''s invoice';
 end $$;
+
+-- ── X. rev-r2806 F1: a bill group never crosses customers ─────────────────────────────────────────────────
+-- Customer X has a prepaid sale quote; X's sub and customer Y's sub carry the SAME bill_group_id (by hand).
+-- Y's due part must still ask Y for money (a request), never be paid from X's money; and a together request
+-- naming Y's part on X's proforma never bills Y's part.
+do $$
+declare v_x uuid; v_y uuid; v_sx uuid; v_sy uuid; py uuid; pxx uuid; r jsonb; v_t text;
+        v_g uuid := 'b2806000-0000-0000-0000-0000000009a6';
+begin
+  v_x := pg_temp.cust(6); v_y := pg_temp.cust(7);
+  insert into public.quotes (id, tenant_id, customer_id, customer_name, status, amount, subtotal, tax_rate, line_items)
+  values ('TESTQ-R2806-XSALE', 'b2806000-0000-0000-0000-0000000000f1', v_x, 'R2806 C6', 'accepted', 59000, 50000, 18, '[]'::jsonb);
+  perform pg_temp.pay('TESTQ-R2806-XSALE', 59000, 'R2806-X-SALE');
+  v_sx := pg_temp.sub(10, v_x, 'Google Workspace Business Standard', 2, '2025-10-01', '2026-10-01', v_g);
+  update public.subscriptions set quote_id = 'TESTQ-R2806-XSALE' where id = v_sx;
+  v_sy := pg_temp.sub(11, v_y, 'Google Workspace Business Starter', 5, '2025-10-01', '2026-10-01', v_g);
+  if (select count(*) from public.billing_pool_subscriptions(v_sy)) <> 1
+     or exists (select 1 from public.billing_pool_subscriptions(v_sx) p where p.subscription_id = v_sy) then
+    raise exception 'FAIL X: pools cross customers: Y % / X %', (select array_agg(subscription_id) from public.billing_pool_subscriptions(v_sy)),
+      (select array_agg(subscription_id) from public.billing_pool_subscriptions(v_sx)); end if;
+  py := pg_temp.part(v_sy, 31, '2026-10-01', 5 * 450, '2026-10-01', '2027-10-01');
+  r := public.bill_subscription_instalment(py, false);
+  if r->>'action' <> 'request' then
+    raise exception 'FAIL X: Y''s part → % (want a request to Y, never paid from X''s money)', r; end if;
+  if pg_temp.st(v_sy) <> '2026-10-01 grace_period' then raise exception 'FAIL X: Y renewed with no payment: %', pg_temp.st(v_sy); end if;
+  raise notice 'PASS X: same bill_group_id, two customers → separate pools; Y''s part asks Y';
+
+  -- a together request on X naming Y's part (Y's own request cancelled first) never bills Y's part
+  perform set_config('app.r2519_write', 'on', true);
+  update public.quotes set status = 'rejected', subscription_billing_id = null where subscription_billing_id = py;
+  perform set_config('app.r2519_write', '', true);
+  pxx := pg_temp.part(v_sx, 32, '2026-10-01', 2 * 1585, '2026-10-01', '2027-10-01');
+  v_t := pg_temp.together('TESTQ-R2806-T4', v_x, pxx, array[pxx, py]);
+  perform pg_temp.pay(v_t, (select amount from public.quotes where id = v_t), 'R2806-X-T');
+  if (select invoice_id from public.subscription_billings where id = py) is not null or pg_temp.st(v_sy) <> '2026-10-01 grace_period' then
+    raise exception 'FAIL X: Y''s part billed on X''s invoice / Y renewed: % %', (select invoice_id from public.subscription_billings where id = py), pg_temp.st(v_sy); end if;
+  raise notice 'PASS X: a together request naming another customer''s part never bills it';
+end $$;
+
+-- ── W. rev-r2806 F3: a browser login cannot set / change bill_group_id ───────────────────────────────────
+insert into auth.users (id, email) values ('b2806000-0000-0000-0000-0000000000a1', 'owner2806@example.test');
+insert into public.users (id, tenant_id, email, full_name, role, created_at) values
+  ('b2806000-0000-0000-0000-0000000000a1', 'b2806000-0000-0000-0000-0000000000f1', 'owner2806@example.test', 'Owner 2806', 'owner', now() - interval '1 day');
+select set_config('request.jwt.claims', '{"sub":"b2806000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n int;
+begin
+  begin
+    update public.subscriptions set bill_group_id = 'b2806000-0000-0000-0000-0000000009a7'
+     where id = 'b2806000-0000-0000-0000-000000000211';
+    get diagnostics n = row_count;
+    raise exception 'FAIL W: owner login changed bill_group_id (% rows, no error)', n;
+  exception when insufficient_privilege then raise notice 'PASS W: browser login refused: %', sqlerrm; end;
+  update public.subscriptions set external_ref = 'R2806-W' where id = 'b2806000-0000-0000-0000-000000000211';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL W: an ordinary column update no longer works (% rows)', n; end if;
+  raise notice 'PASS W: other columns still editable by the owner';
+end $$;
+reset role;
+select set_config('request.jwt.claims', '', true);
 
 -- ── Z. No group = the old pool; grants ────────────────────────────────────────────────────────────────────
 do $$

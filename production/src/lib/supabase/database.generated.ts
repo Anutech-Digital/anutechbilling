@@ -12147,6 +12147,7 @@ export type Database = {
           customer_id: string | null
           customer_name: string
           domain: string | null
+          bill_group_id: string | null
           billed_externally_until: string | null
           external_ref: string | null
           external_ref_date: string | null
@@ -12200,6 +12201,7 @@ export type Database = {
           customer_id?: string | null
           customer_name: string
           domain?: string | null
+          bill_group_id?: string | null
           billed_externally_until?: string | null
           external_ref?: string | null
           external_ref_date?: string | null
@@ -12253,6 +12255,7 @@ export type Database = {
           customer_id?: string | null
           customer_name?: string
           domain?: string | null
+          bill_group_id?: string | null
           billed_externally_until?: string | null
           external_ref?: string | null
           external_ref_date?: string | null
