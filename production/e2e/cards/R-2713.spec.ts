@@ -29,9 +29,9 @@ test.describe("R-2713 Help error alert says where and when", () => {
       const title = await btn.getAttribute("title");
       expect(title ?? "").toMatch(new RegExp(`^Error on /quotes at ${STAMP.source}: `));
 
-      /* Move inside the app (same tab — the alert lives in this tab's trail). */
-      await page.evaluate(() => { window.history.pushState({}, "", "/customers"); window.dispatchEvent(new PopStateEvent("popstate")); });
-      await expect(page).toHaveURL(/\/customers/);
+      /* Move inside the app like the owner — the menu's Companies link (same tab: the alert lives in this tab's trail). */
+      await page.getByRole("complementary").getByRole("link", { name: "Companies", exact: true }).click();
+      await expect(page).toHaveURL(/\/customers/, { timeout: 120_000 });
       await expect(btn).toHaveAttribute("title", /^Error on \/quotes at /);
 
       /* The red Help button opens on "Report a problem" — the caught error there names page + time. */
