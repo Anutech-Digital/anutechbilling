@@ -53,6 +53,13 @@ select current_user                                                     as login
 
 do $$
 begin
+  -- Row security would hide other companies' rows and the run would "pass" having changed nothing.
+  if not exists (select 1 from pg_roles r
+                  where r.rolname = current_user
+                    and (r.rolsuper or r.rolbypassrls
+                         or pg_has_role(current_user, (select c.relowner from pg_class c where c.oid = 'public.invoices'::regclass), 'MEMBER'))) then
+    raise exception 'This login (%) is subject to row security on invoices / quotes — connect as the migration login (resellersos_migration). Nothing changed.', current_user;
+  end if;
   if to_regprocedure('public.r2768_repair_invoice_line_periods(boolean)') is null
      or to_regprocedure('public.r2768_repair_quote_notes(boolean)') is null
      or to_regclass('public.r2768_repair_log') is null then

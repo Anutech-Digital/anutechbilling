@@ -28,7 +28,8 @@
 -- THE FREEZE STAYS ON. tg_invoices_freeze_issued gets ONE narrow allowance: while the transaction-local
 -- setting app.r2768_repair = 'on' (set_config(..., true) by the repair function right before its
 -- UPDATE and cleared right after), a change whose ONLY changed column is line_items passes when
---   add:  no old line has service_period, every new line has it, and new minus that key = old exactly;
+--   add:  no old line has service_period, every new line has it, new minus that key = old exactly, AND
+--         r2768_repair_log holds exactly that before -> after for this invoice (the repair writes it first);
 --   undo: the reverse, and only back to the value r2768_repair_log recorded for that invoice.
 -- Any other change — another column, a line's name / rate / qty, an edit of a stored period — is
 -- refused exactly as before, flag or not. app.invoice_amend_reason (the broad override) is not used.
@@ -95,8 +96,11 @@ as $$
                      from jsonb_array_elements(p_lines) with ordinality as e(l, i)), '[]'::jsonb) end
 $$;
 
--- The freeze allowance: true only for adding service_period to every line of an unstamped invoice
--- (or, for r2768_undo, taking back exactly what r2768_repair_log recorded). Read by the freeze trigger.
+-- The freeze allowance (read by tg_invoices_freeze_issued): true only while app.r2768_repair is 'on',
+-- only when the two line arrays differ by nothing but service_period on EVERY line (added, or taken back
+-- by r2768_undo), and only for the exact before -> after that r2768_repair_log holds for this invoice
+-- (the repair writes that row first). So the flag alone lets nothing through: the value has to be the
+-- logged one, and only the owner / migration login or service_role can write the log.
 create or replace function public.r2768_freeze_allows(p_invoice_id text, p_old jsonb, p_new jsonb)
 returns boolean
 language plpgsql
@@ -114,10 +118,13 @@ begin
      or exists (select 1 from jsonb_array_elements(p_new) l where jsonb_typeof(l) <> 'object') then
     return false;
   end if;
-  -- add: old unstamped, new stamped on every line, nothing else different
+  -- add: old unstamped, new stamped on every line, nothing else different, exactly the logged value
   if not exists (select 1 from jsonb_array_elements(p_old) l where l ? 'service_period')
      and not exists (select 1 from jsonb_array_elements(p_new) l where not (l ? 'service_period'))
-     and public.r2768_lines_without(p_new, array['service_period']) = p_old then
+     and public.r2768_lines_without(p_new, array['service_period']) = p_old
+     and exists (select 1 from public.r2768_repair_log g
+                  where g.repair = 'A' and g.row_id = p_invoice_id and g.undone_at is null
+                    and g.before = p_old and g.after = p_new) then
     return true;
   end if;
   -- undo: back to exactly what the log holds for this invoice
@@ -238,34 +245,61 @@ comment on function public.tg_invoices_freeze_issued() is
   'is on (r2768_freeze_allows).';
 
 -- ── 3. updated_at stays as it was on a repaired row ─────────────────────────────
--- Runs after trg_invoices_updated_at / trg_quotes_updated_at (BEFORE UPDATE triggers fire in name order).
+-- BEFORE UPDATE triggers fire in name order: these run after trg_invoices_updated_at /
+-- trg_quotes_updated_at. The WHEN clause keeps them free on every other UPDATE.
 create or replace function public.tg_r2768_keep_updated_at()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
-  if coalesce(current_setting('app.r2768_repair', true), '') = 'on' then
-    new.updated_at := old.updated_at;
-  end if;
+  new.updated_at := old.updated_at;
   return new;
 end;
 $$;
 revoke all on function public.tg_r2768_keep_updated_at() from public, anon, authenticated;
 drop trigger if exists trg_invoices_zz_r2768_keep_updated_at on public.invoices;
 create trigger trg_invoices_zz_r2768_keep_updated_at before update on public.invoices
-  for each row execute function public.tg_r2768_keep_updated_at();
+  for each row when (current_setting('app.r2768_repair', true) = 'on')
+  execute function public.tg_r2768_keep_updated_at();
 drop trigger if exists trg_quotes_zz_r2768_keep_updated_at on public.quotes;
 create trigger trg_quotes_zz_r2768_keep_updated_at before update on public.quotes
-  for each row execute function public.tg_r2768_keep_updated_at();
+  for each row when (current_setting('app.r2768_repair', true) = 'on')
+  execute function public.tg_r2768_keep_updated_at();
 
 -- ── 4. Repair A: the plan ─────────────────────────────────────────────────────
--- One row per issued invoice made from a quote whose lines carry no service_period.
---   verdict 'stamp'                 -> after = the lines with every period stored
---           'skip_no_lines'         -> NULL / non-array / empty line_items
---           'skip_partly_stamped'   -> some lines already have the key
---           'skip_lines_differ'     -> the invoice's lines are not the quote's (cost keys ignored)
---           'skip_pdf_own_lines'    -> the PDF prints the invoice's own lines today (R-375 useQuote false)
+-- invoice_lines_with_periods for one invoice; null when it raises (the R-2744 trigger's own rule:
+-- a period helper never blocks — that invoice is skipped, not the whole run).
+create or replace function public.r2768_safe_lines_with_periods(
+  p_lines jsonb, p_quote jsonb, p_sub jsonb, p_rule_from timestamptz, p_created_at timestamptz
+)
+returns jsonb
+language plpgsql
+stable
+set search_path = ''
+as $$
+begin
+  return public.invoice_lines_with_periods(p_lines, p_quote, p_sub, p_rule_from, p_created_at);
+exception when others then
+  return null;
+end;
+$$;
+
+-- One row per issued invoice made from a quote whose lines are not all stamped yet.
+-- The quote is the one the PDF route and the invoice page load: quotes.invoice_id = the invoice
+-- (exactly one, same tenant, and it must be invoices.quote_id). The renewed subscription as the PDF
+-- route reads it (loadRenewedSubscription: tenant, renewal_subscription_id else renewal_quote_id)
+-- must give the same start / term as the invoice page (renewedSubscription over the customer's rows).
+--   verdict 'stamp'                     -> after = every line with its period
+--           'skip_no_lines'             -> NULL / non-array / empty line_items, or a non-object line
+--           'skip_partly_stamped'       -> some lines already carry the key
+--           'skip_no_screen_quote'      -> no single quote with invoice_id = this invoice (PDF / page print no period)
+--           'skip_quote_link_differs'   -> that quote is not invoices.quote_id
+--           'skip_lines_differ'         -> the invoice's lines are not the quote's (internal cost keys ignored)
+--           'skip_pdf_own_lines'        -> the PDF prints the invoice's own lines (R-375 useQuote false)
+--           'skip_sub_ambiguous'        -> two subscriptions name this quote as their renewal quote
+--           'skip_pdf_screen_differ'    -> PDF and page read different subscription facts today
+--           'skip_period_error'         -> the period helper raised for this invoice
 create or replace function public.r2768_invoice_line_period_plan()
 returns table (tenant_id uuid, invoice_id text, quote_id text, verdict text, before jsonb, after jsonb)
 language sql
@@ -276,21 +310,37 @@ as $$
     select (select r.from_at from public.app_rule_dates r where r.key = 'r2727_invoice_period_rule') as from_at
   ), inv as (
     select i.id, i.tenant_id, i.quote_id, i.line_items, i.created_at, i.amount, i.taxable_value, i.tax_amount,
-           q.line_items as q_lines, to_jsonb(q) as q,
+           (select count(*) from public.quotes q2 where q2.invoice_id = i.id) as n_screen_quotes,
+           q.id as sq_id, q.line_items as q_lines, to_jsonb(q) as q,
+           coalesce(q.is_renewal, false) or coalesce(q.is_extension, false) as needs_sub,
            -- build-props quoteAmounts (R-804 quoteDisplayTax, tolerance 1) in float8 like the JS
            -- (Math.round(x) = floor(x + 0.5))
            coalesce(q.subtotal, 0)::float8 as q_sub, coalesce(q.discount_pct, 0)::float8 as q_disc_pct,
            coalesce(q.tax_rate, 18)::float8 as q_rate, q.amount::float8 as q_amount,
-           (select jsonb_build_object('start_date', s.start_date, 'term_months', s.term_months)
-              from public.subscriptions s
-             where s.tenant_id = i.tenant_id
-               and (q.is_renewal or q.is_extension)
-               and case when q.renewal_subscription_id is not null then s.id = q.renewal_subscription_id
-                        else s.renewal_quote_id = q.id end
-             limit 1) as sub
+           -- the PDF route (tenant; renewal_subscription_id, else renewal_quote_id)
+           case when q.renewal_subscription_id is not null then
+                  (select jsonb_build_object('start_date', s.start_date, 'term_months', s.term_months)
+                     from public.subscriptions s where s.tenant_id = i.tenant_id and s.id = q.renewal_subscription_id)
+                else
+                  (select jsonb_build_object('start_date', s.start_date, 'term_months', s.term_months)
+                     from public.subscriptions s where s.tenant_id = i.tenant_id and s.renewal_quote_id = q.id limit 1)
+           end as pdf_sub,
+           -- the invoice page (the customer's subscriptions; id first, then renewal_quote_id)
+           coalesce(
+             (select jsonb_build_object('start_date', s.start_date, 'term_months', s.term_months)
+                from public.subscriptions s
+               where q.renewal_subscription_id is not null and s.tenant_id = i.tenant_id
+                 and s.customer_id = q.customer_id and s.id = q.renewal_subscription_id),
+             (select jsonb_build_object('start_date', s.start_date, 'term_months', s.term_months)
+                from public.subscriptions s
+               where s.tenant_id = i.tenant_id and s.customer_id = q.customer_id and s.renewal_quote_id = q.id
+               order by s.start_date desc limit 1)) as screen_sub,
+           (select count(*) from public.subscriptions s where s.tenant_id = i.tenant_id and s.renewal_quote_id = q.id) as n_sub_by_quote
       from public.invoices i
-      join public.quotes q on q.id = i.quote_id and q.tenant_id = i.tenant_id
-     where i.status::text in ('pending', 'paid', 'overdue')
+      left join lateral (select q1.* from public.quotes q1
+                          where q1.invoice_id = i.id and q1.tenant_id = i.tenant_id order by q1.id limit 1) q on true
+     where i.quote_id is not null
+       and i.status::text in ('pending', 'paid', 'overdue')
        and not (jsonb_typeof(i.line_items) = 'array'
                 and exists (select 1 from jsonb_array_elements(i.line_items) l
                              where jsonb_typeof(l) = 'object' and l ? 'service_period')
@@ -314,6 +364,10 @@ as $$
                then 'skip_no_lines'
              when exists (select 1 from jsonb_array_elements(a.line_items) l where l ? 'service_period')
                then 'skip_partly_stamped'
+             when a.sq_id is null or a.n_screen_quotes <> 1
+               then 'skip_no_screen_quote'
+             when a.sq_id <> a.quote_id
+               then 'skip_quote_link_differs'
              when public.r2768_lines_without(a.line_items, array['cost', 'cost_source'])
                   is distinct from public.r2768_lines_without(a.q_lines, array['cost', 'cost_source'])
                then 'skip_lines_differ'
@@ -321,17 +375,28 @@ as $$
                   and not (a.q_taxable = a.taxable_value::float8 and a.q_tax = a.tax_amount::float8
                            and coalesce(a.q_amount, a.q_taxable + a.q_tax) = a.amount::float8)
                then 'skip_pdf_own_lines'
+             when a.needs_sub and a.n_sub_by_quote > 1
+               then 'skip_sub_ambiguous'
+             when a.needs_sub and a.pdf_sub is distinct from a.screen_sub
+               then 'skip_pdf_screen_differ'
              else 'stamp'
            end as verdict
       from amt3 a
+  ), computed as (
+    select j.*, case when j.verdict = 'stamp'
+                     then public.r2768_safe_lines_with_periods(j.line_items, j.q,
+                            case when j.needs_sub then j.pdf_sub end, rule.from_at, j.created_at) end as stamped
+      from judged j cross join rule
   )
-  select j.tenant_id, j.id, j.quote_id, j.verdict, j.line_items,
-         case when j.verdict = 'stamp'
-              then public.invoice_lines_with_periods(j.line_items, j.q, j.sub, rule.from_at, j.created_at) end
-    from judged j cross join rule
+  select c.tenant_id, c.id, c.quote_id,
+         case when c.verdict = 'stamp' and c.stamped is null then 'skip_period_error' else c.verdict end,
+         c.line_items, c.stamped
+    from computed c
 $$;
 
 -- ── 5. Repair A: dry run / apply ──────────────────────────────────────────────
+-- The log row is written BEFORE the UPDATE: the freeze allowance accepts only the exact before -> after
+-- that r2768_repair_log holds for that invoice (so the flag alone lets nothing through).
 create or replace function public.r2768_repair_invoice_line_periods(p_apply boolean default false)
 returns jsonb
 language plpgsql
@@ -343,6 +408,7 @@ declare
   v_sample jsonb;
   v_done   int := 0;
   v_n      int;
+  v_log    bigint;
   r        record;
 begin
   create temp table if not exists r2768_a_plan on commit drop as
@@ -360,15 +426,18 @@ begin
   if p_apply then
     for r in select * from r2768_a_plan where verdict = 'stamp' order by tenant_id, invoice_id loop
       if r.after is null or r.after = r.before then continue; end if;
+      insert into public.r2768_repair_log (run_id, repair, tenant_id, row_id, before, after)
+        values (v_run, 'A', r.tenant_id, r.invoice_id, r.before, r.after)
+        returning id into v_log;
       perform set_config('app.r2768_repair', 'on', true);
       update public.invoices i set line_items = r.after
        where i.id = r.invoice_id and i.tenant_id = r.tenant_id and i.line_items = r.before;
       get diagnostics v_n = row_count;
       perform set_config('app.r2768_repair', '', true);
       if v_n = 1 then
-        insert into public.r2768_repair_log (run_id, repair, tenant_id, row_id, before, after)
-          values (v_run, 'A', r.tenant_id, r.invoice_id, r.before, r.after);
         v_done := v_done + 1;
+      else
+        delete from public.r2768_repair_log where id = v_log;   -- changed meanwhile: left as it is
       end if;
     end loop;
   end if;
@@ -377,12 +446,15 @@ begin
                             'applied', p_apply, 'changed', v_done, 'plan', v_counts, 'sample', v_sample);
 end;
 $$;
+revoke all on function public.r2768_safe_lines_with_periods(jsonb, jsonb, jsonb, timestamptz, timestamptz) from public, anon, authenticated;
 revoke all on function public.r2768_invoice_line_period_plan() from public, anon, authenticated;
 revoke all on function public.r2768_repair_invoice_line_periods(boolean) from public, anon, authenticated;
 
+
 -- ── 6. Repair B: SQL port of lib/quotes/customer-notes.ts + editor-notes.ts ──────
 -- Parity with the TypeScript on one case list (R2768-NOTES-CASES in supabase/tests/r2768_repair.test.sql,
--- read by src/lib/quotes/quote-notes-repair-r2768.test.ts). JS \b = \y here; JS "." = [^\n\r  ];
+-- read by src/lib/quotes/quote-notes-repair-r2768.test.ts). JS \s = [\s\u00a0…\ufeff] here (JS's Unicode
+-- whitespace, never the database locale's), JS \S its negation, JS \b = \y; JS "." = [^\n\r\u2028\u2029];
 -- a JS lazy part is matched in its own non-greedy regexp (Postgres takes greediness from the first
 -- quantifier of the whole pattern). String.trim() / the sentence split use JS's whitespace set.
 
@@ -394,7 +466,7 @@ immutable
 set search_path = ''
 as $$
   select regexp_replace(coalesce(p, ''),
-    '^[\s   -     　﻿]+|[\s   -     　﻿]+$',
+    '^[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$',
     '', 'g')
 $$;
 
@@ -410,9 +482,9 @@ as $$
       regexp_replace(
         regexp_replace(
           regexp_replace(coalesce(p_line, ''),
-            '\s*\(\s*subscription(?:\s+id)?[\s:]+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\s*\)', '', 'gi'),
-          '\s*\yfor\s+subscription(?:\s+id)?[\s:]+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '', 'gi'),
-        '\s*\ysubscription(?:\s+id)?[\s:]+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '', 'gi'),
+            '[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\([\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*subscription(?:[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+id)?[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff:]+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\)', '', 'gi'),
+          '[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\yfor[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+subscription(?:[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+id)?[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff:]+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '', 'gi'),
+        '[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\ysubscription(?:[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+id)?[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff:]+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '', 'gi'),
       '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '', 'gi'),
     '[ \t]+([.,;:])', '\1', 'g')
 $$;
@@ -428,10 +500,10 @@ as $$
     from (
       select l.i,
              (select regexp_replace(coalesce(string_agg(t.s, ' ' order by t.j), ''),
-                       '[\s   -     　﻿]+$', '')
+                       '[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$', '')
                 from regexp_split_to_table(public.r2768_strip_ids(l.line),
-                       '(?<=[.!?])[\s   -     　﻿]+') with ordinality as t(s, j)
-               where not (t.s ~* 'backdated by|\yfactor\s+[\d.]+%?|\ysubscription id\y')) as ln
+                       '(?<=[.!?])[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+') with ordinality as t(s, j)
+               where not (t.s ~* 'backdated by|\yfactor[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[\d.]+%?|\ysubscription id\y')) as ln
         from regexp_split_to_table(coalesce(p_text, ''), E'\n') with ordinality as l(line, i)
     ) x
 $$;
@@ -451,25 +523,25 @@ declare
   m0 text;
   r  text;
 begin
-  if p_with_legacy and v ~* '^\s*Add-seats pro-rata for subscription\y' then
+  if p_with_legacy and v ~* '^[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*Add-seats pro-rata for subscription\y' then
     return jsonb_build_object('kind', 'legacy', 'm0', v);
   end if;
-  m := regexp_match(v, '^(\s*(\d{1,3})-(year|month) extension for subscription [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.?)', 'i');
+  m := regexp_match(v, '^([\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(\d{1,3})-(year|month) extension for subscription [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.?)', 'i');
   if m is not null then
     r := substr(v, length(m[1]) + 1);
-    t := regexp_match(r, '^(\s*On payment the renewal date advances by [^.(]*?(?:\s*\(to ([^)]+)\))?\.)', 'i');
+    t := regexp_match(r, '^([\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*On payment the renewal date advances by [^.(]*?(?:[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(to ([^)]+)\))?\.)', 'i');
     return jsonb_build_object('kind', 'extension', 'm0', m[1] || coalesce(t[1], ''),
                               'n', m[2]::int, 'unit', lower(m[3]), 'new_end', t[2]);
   end if;
-  m := regexp_match(v, '^(\s*Domain renewal for (\S+?) \(subscription [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\))', 'i');
+  m := regexp_match(v, '^([\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*Domain renewal for ([^\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+?) \(subscription [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\))', 'i');
   if m is not null then
     m0 := m[1];
-    t := regexp_match(substr(v, length(m0) + 1), '^(,\s*?at [^\n\r  ]*?\+\s*GST)', 'i');
+    t := regexp_match(substr(v, length(m0) + 1), '^(,[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*?at [^\n\r\u2028\u2029]*?\+[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*GST)', 'i');
     m0 := m0 || coalesce(t[1], '');
     if substr(v, length(m0) + 1, 1) = '.' then m0 := m0 || '.'; end if;
     return jsonb_build_object('kind', 'domain', 'm0', m0, 'domain', m[2]);
   end if;
-  m := regexp_match(v, '^(\s*(?:Auto-generated renewal quote|Renewal quote(?: \(operator-generated\))?) for subscription [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.?)', 'i');
+  m := regexp_match(v, '^([\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:Auto-generated renewal quote|Renewal quote(?: \(operator-generated\))?) for subscription [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.?)', 'i');
   if m is not null then
     return jsonb_build_object('kind', 'renewal', 'm0', m[1]);
   end if;
@@ -511,7 +583,7 @@ begin
   if jsonb_typeof(p_lines) is distinct from 'array' or jsonb_array_length(p_lines) = 0 then return null; end if;
   for l in select e from jsonb_array_elements(p_lines) e loop
     v_name := case when jsonb_typeof(l) = 'object' then l->>'name' end;
-    v_rng := regexp_match(coalesce(v_name, ''), '(?:pro-rata from|current term)\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', 'i');
+    v_rng := regexp_match(coalesce(v_name, ''), '(?:pro-rata from|current term)[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(\d{4}-\d{2}-\d{2})[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(\d{4}-\d{2}-\d{2})', 'i');
     v_ok := false;
     if v_rng is not null then
       begin
@@ -573,7 +645,7 @@ begin
   v_vis := public.r2768_js_trim(case when v_at > 0 then left(p_notes, v_at - 1) else p_notes end);
   if v_vis = '' then return null; end if;
 
-  if not (v_vis ~* '^\s*Add-seats pro-rata for subscription\y') then
+  if not (v_vis ~* '^[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*Add-seats pro-rata for subscription\y') then
     v_lead := public.r2768_note_lead(v_vis, false);
     if v_lead is null then return nullif(public.r2768_scrub_customer_text(v_vis), ''); end if;
     v_rest := substr(v_vis, length(v_lead->>'m0') + 1);
@@ -652,9 +724,9 @@ begin
   select coalesce(array_agg(s order by i, j), '{}') into v_held
     from (select l.i, t.j, public.r2768_js_trim(t.s) as s
             from regexp_split_to_table(v_rest, E'\n') with ordinality as l(line, i),
-                 regexp_split_to_table(l.line, '(?<=[.!?])[\s   -     　﻿]+') with ordinality as t(s, j)) x
+                 regexp_split_to_table(l.line, '(?<=[.!?])[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+') with ordinality as t(s, j)) x
    where s <> '' and (s ~* '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-                      or s ~* 'backdated by|\yfactor\s+[\d.]+%?|\ysubscription id\y');
+                      or s ~* 'backdated by|\yfactor[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[\d.]+%?|\ysubscription id\y');
   v_hidden := array_to_string(array_remove(array_remove(array[v_lead] || v_held || array[v_staff], null), ''), E'\n');
   if v_hidden = '' then return null; end if;
   v_cust := public.r2768_js_trim(coalesce(public.r2768_customer_quote_notes(v_orig, p_lines, p_plan, p_ext_months), ''));
@@ -665,6 +737,9 @@ $$;
 
 -- ── 7. Repair B: the plan ─────────────────────────────────────────────────────
 --   verdict 'rewrite' | 'skip_nothing_held' | 'skip_still_has_id' | 'skip_link_changes'
+--           | 'skip_customer_text_differs' — the rewrite would change what a customer reads: the quote PDF /
+--             preview (customerQuoteNotes without ctx) or the accept page (with plan + extension_months).
+--             Those surfaces already hide the id, so such a quote is left exactly as it is.
 create or replace function public.r2768_quote_notes_plan()
 returns table (tenant_id uuid, quote_id text, status text, verdict text, before text, after text)
 language sql
@@ -672,7 +747,7 @@ stable
 set search_path = ''
 as $$
   with c as (
-    select q.tenant_id, q.id, q.status::text as status, q.notes,
+    select q.tenant_id, q.id, q.status::text as status, q.notes, q.line_items, q.plan, q.extension_months,
            public.r2768_repaired_notes(q.notes, q.line_items, q.plan, q.extension_months) as after
       from public.quotes q
      where q.status::text <> 'draft'
@@ -691,6 +766,11 @@ as $$
                 is distinct from lower((regexp_match(c.after, 'subscription ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})', 'i'))[1])
              or substring(c.notes from 'subscription ([0-9a-fA-F-]{36})') is distinct from substring(c.after from 'subscription ([0-9a-fA-F-]{36})')
              then 'skip_link_changes'
+           when public.r2768_customer_quote_notes(c.after, c.line_items, null, null)
+                is distinct from public.r2768_customer_quote_notes(c.notes, c.line_items, null, null)
+             or public.r2768_customer_quote_notes(c.after, c.line_items, c.plan, c.extension_months)
+                is distinct from public.r2768_customer_quote_notes(c.notes, c.line_items, c.plan, c.extension_months)
+             then 'skip_customer_text_differs'
            else 'rewrite'
          end,
          c.notes, c.after

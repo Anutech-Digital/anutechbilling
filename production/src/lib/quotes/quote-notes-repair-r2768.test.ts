@@ -22,6 +22,10 @@ interface NotesCase {
   plan: string | null;
   ext: number | null;
   expect: string | null;
+  /** customerQuoteNotes without ctx — the quote PDF / preview (SQL: r2768_customer_quote_notes(…, null, null)). */
+  pdf: string | null;
+  /** customerQuoteNotes with {plan, extensionMonths} — the accept page. */
+  accept: string | null;
 }
 
 function cases(): NotesCase[] {
@@ -44,14 +48,17 @@ function editorSaved(c: NotesCase): string | null {
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const SUB_IN_NOTES = /subscription ([0-9a-fA-F-]{36})/; // seat-quotes-pending.ts / tg_quotes_add_seats_take_back
 
-describe("R-2768 notes parity — SQL r2768_repaired_notes = the editor's own save, on the SQL test's cases", () => {
+describe("R-2768 notes parity — SQL r2768_repaired_notes / r2768_customer_quote_notes = the TS, on the SQL test's cases", () => {
   const list = cases();
   it("reads the shared case list", () => {
     expect(list.length).toBeGreaterThanOrEqual(30);
   });
   for (const c of list) {
     it(c.name, () => {
+      const lines = Array.isArray(c.lines) ? c.lines : [];
       expect(editorSaved(c)).toBe(c.expect);
+      expect(customerQuoteNotes(c.notes, lines) ?? null).toBe(c.pdf);
+      expect(customerQuoteNotes(c.notes, lines, { plan: c.plan, extensionMonths: c.ext }) ?? null).toBe(c.accept);
     });
   }
 });
