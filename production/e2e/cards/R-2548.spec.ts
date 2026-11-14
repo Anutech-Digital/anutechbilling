@@ -176,6 +176,7 @@ test.describe("R-2548 — end of an annual commitment billed in parts: 'Bill ren
     try {
       const row = await renewalsRow(page, A);
       await expect(row.getByTestId("stage-primary")).toHaveText(/Follow up/, { timeout: 60_000 });
+      await expect(row.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
       await expect(row.getByRole("button", { name: BUTTON })).toHaveCount(0);
       await row.getByRole("button", { name: /More renewal actions/ }).click();
       await expect(page.getByRole("menuitem", { name: /^Bill next part$/ })).toBeVisible();
@@ -211,6 +212,7 @@ test.describe("R-2548 — end of an annual commitment billed in parts: 'Bill ren
     const page = await pageAs(browser, baseURL, "owner");
     try {
       const row = await renewalsRow(page, A);
+      await expect(row.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
       await row.getByRole("button", { name: /More renewal actions/ }).click();
       await page.getByRole("menuitem", { name: /^Bill next part$/ }).click();
       const dlg = page.getByRole("dialog", { name: /— proforma$/ });

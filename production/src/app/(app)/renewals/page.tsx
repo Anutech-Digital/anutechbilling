@@ -1168,7 +1168,7 @@ export default function RenewalsPage() {
           R-2753: the reminder for ticked rows is the header's one button ("Remind N selected"). */}
       <BulkActionBar count={selectedRows.length} noun="renewal" onClear={() => setSelected(new Set())}>
         <BulkBarButton icon="mail" onClick={() => void handleSelectedQuote()} disabled={bulkSending}>
-          Send renewal quote
+          Send renewal
         </BulkBarButton>
         <BulkBarButton
           icon="user"

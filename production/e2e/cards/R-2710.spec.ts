@@ -64,6 +64,7 @@ async function row(page: Page) {
 /* R-2760 (R-2758 model): the row's one button is "Send renewal" (opens the editor — R-2710's flow
    unchanged); "Change renewal" for a sent quote is in the row's ⋯ menu. */
 async function changeRenewal(page: Page, r: Locator) {
+  await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });   // the role is read (⋯ items depend on it)
   await clickWhenReady(r.getByRole("button", { name: /More renewal actions/ }));
   await page.getByRole("menuitem", { name: /^Change renewal$/ }).click();
 }
@@ -114,6 +115,7 @@ test.describe("R-2710 card test", () => {
     await expect.poll(() => quoteRow(id), { timeout: 60_000 }).toBe("sent,36,3600");
     const r = await row(page);
     await expect(r.getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
+    await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
     await clickWhenReady(r.getByRole("button", { name: /More renewal actions/ }));
     await expect(page.getByRole("menuitem", { name: /^Change renewal$/ })).toBeVisible();
     await page.keyboard.press("Escape");
