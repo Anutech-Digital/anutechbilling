@@ -78,7 +78,7 @@ import {
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount,
 } from "./queue";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
-import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
+import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
 import { RenewalReminderDialog, type ReminderDialogState } from "./reminder-dialog";
 import { RenewalTileRow, TileViewBar } from "./tiles-card";
 import { ForecastPanel } from "./forecast-panel";
@@ -198,6 +198,8 @@ function AmountCell({ amount, frequency, className }: { amount: RenewalAmount; f
     <div className={className}>
       <p className="font-medium tabular-nums text-ink">{amount.text}</p>
       <p className="text-2xs text-ink-3">{amount.gst}</p>
+      {/* R-2751: a sent renewal quote's total incl. GST is a note, never the figure. */}
+      {amount.quoteNote && <p className="text-2xs text-ink-3">{amount.quoteNote}</p>}
       {frequency && <p className="text-2xs text-ink-2">{frequency}</p>}
     </div>
   );
@@ -477,7 +479,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                   <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-2 py-2.5 text-right">
                     <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
-                    <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.gst}>{amount.gst}</p>
+                    <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteNote ? `${amount.gst} · quote sent` : amount.gst}</p>
                   </td>
                   <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
                   <td className="min-w-0 px-2 py-2.5">
@@ -648,7 +650,7 @@ export default function RenewalsPage() {
   /* R-2225: a Won't renew subscription brings no renewal money.
      R-2431: each renewal at its term amount before GST (termAmountOf — the tiles' amount for a row
      without a renewal quote), flex parts included, one per month. */
-  const forecast = renewalForecast(
+  const forecastByDate = renewalForecast(
     enriched.map((r) => r.sub).filter(chasedRenewal),
     new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()),
   );
@@ -726,6 +728,8 @@ export default function RenewalsPage() {
     id: i.sub.id, tab: t, statusKey: i.status.key, amount: i.amount.value, renewalDate: i.sub.renewal_date,
   }] as const)));
   const tileFigures = renewalTiles([...tileRowOf.values()], monthQuotes ?? [], month);
+  /* R-2751: this month's Forecast bar = the Renewed tile's "of ₹X due in <month>" (paid + still due, before GST). */
+  const forecast = forecastWithThisMonth(forecastByDate, tileFigures.renewedMonth, month);
   const paidSubs = new Set(paidRenewalsInMonth(monthQuotes ?? [], month).map((q) => q.renewal_subscription_id ?? ""));
 
   const counts = Object.fromEntries(QUEUE_TABS.map((t) => [t, tabs[t].length])) as Record<QueueTab, number>;
@@ -768,7 +772,8 @@ export default function RenewalsPage() {
   const dueCount = fuCount({ followUpDue: true });
   const brokenCount = fuCount({ promiseBroken: true });
 
-  const activeSubs    = all.filter((s) => s.status === "active").length;
+  /* R-2751: the header counts the rows on the tabs (each row is on exactly one tab), so it equals the tabs added up. */
+  const queueCount    = allItems.length;
   const topHighRisk   = highRiskSubs[0]?.sub.customer_name ?? "a key customer";
   // Real, computed reasons for the top high-risk sub — never fabricate signals
   // (NPS/logins) we don't collect on a money screen.
@@ -820,7 +825,7 @@ export default function RenewalsPage() {
           sub.outstanding_amount,
           risk.label,
           /* R-2431: new columns at the END, so a template reading by position still lines up. */
-          amount.fromQuote ? "Renewal quote, incl. GST" : "Term amount, + GST",
+          "Term amount, + GST",   // R-2751: one basis — a renewal quote never changes the amount
           isFlexSubscription(sub) ? "Monthly (flex)" : renewalCommitment(sub) === "monthly" ? "Monthly" : "Annual",
         ];
       });
@@ -949,7 +954,7 @@ export default function RenewalsPage() {
           </p>
           <h1 className="font-serif text-3xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
-            {activeSubs} active subscription{activeSubs !== 1 ? "s" : ""}
+            {queueCount} subscription{queueCount !== 1 ? "s" : ""} to renew
             {duesLine && (
               <>
                 {" · "}
