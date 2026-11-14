@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscriptions' and column_name = 'bill_group_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_pool_subscriptions(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.instalment_credit_parts(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_part_group(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2806%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_subscription_billings_use_cn_credit()') and prosrc like '%R-2806%') and exists(select 1 from pg_trigger where tgname = 'trg_subscriptions_bill_group_guarded' and tgrelid = to_regclass('public.subscriptions'))
 -- deploy-key: r2806billgrouppool
--- 20261114103500_r2806_bill_group_pool.sql
+-- 20261114161903_r2806_bill_group_pool.sql
 --
 -- R-2806 (14 Nov 2026, p1 money) — part 1 of R-2805 "Bill together" (Pratik, report 8b70e37f: ITBUZZ
 -- Technologies, Business Standard 161 seats + Business Starter 49 seats, both "Part not billed (Oct)" — last

@@ -1,4 +1,4 @@
--- R-2806 (14 Nov 2026, p1 money) — part 1 of R-2805 "Bill together". Migration 20261114103500_r2806_bill_group_pool.
+-- R-2806 (14 Nov 2026, p1 money) — part 1 of R-2805 "Bill together". Migration 20261114161903_r2806_bill_group_pool.
 -- Self-asserting, ONE transaction, rolled back. Local DB only. RED without the migration (no bill_group_id; the
 -- second subscription's own Bill next part makes a second proforma; its pool goes below zero).
 --
