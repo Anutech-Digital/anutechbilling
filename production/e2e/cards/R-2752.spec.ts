@@ -122,13 +122,16 @@ test.describe("R-2752 card test", () => {
     await expect(r.getByText(/never paid in the app/)).toHaveCount(0);
   });
 
-  test("Step 2: ₹98 on the subscription next to a Paid invoice says where it is ('no unpaid invoice linked to it')", async ({ browser, baseURL }) => {
+  /* R-2818 (changed expectation): the ₹98 is on a quote whose invoice is Paid — the customer page's rule
+     (the invoice is the claim) owes nothing, so the row shows Paid and no previous-term debt (never both). */
+  test("Step 2: ₹98 stored on the subscription next to a Paid invoice → only Paid, no 'Previous term … unpaid'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1280, height: 900 });
     const r = await rowOf(page, "CT R2752 Balance Plan");
-    await expect(r.getByText("Previous term ₹98 still unpaid")).toBeVisible({ timeout: 60_000 });
     const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
-    await expect(docs.getByTestId("renewal-prior-due-no-invoice")).toHaveText("Balance on the subscription — no unpaid invoice linked to it");
-    await expect(docs.locator("[data-invoice-id='INV-CT2752-B']").getByTestId("renewal-last-invoice-status")).toHaveText("Paid");
+    await expect(docs.locator("[data-invoice-id='INV-CT2752-B']").getByTestId("renewal-last-invoice-status")).toHaveText("Paid", { timeout: 60_000 });
+    await expect(r.getByText(/Previous term/)).toHaveCount(0);
+    await expect(r.locator("[data-flag='priorTermUnpaid']")).toHaveCount(0);
+    await expect(docs.getByTestId("renewal-prior-due-no-invoice")).toHaveCount(0);
   });
 });

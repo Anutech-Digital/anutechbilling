@@ -10,8 +10,8 @@
  *   · A "CT R2747 Overdue Plan" — invoice INV-CT2747-A ₹40,000, ₹6,768 in, due 10 days ago →
  *     "Overdue 10d · ₹33,232 due" (the owner's T-M3-19Oct text) — must show IN FULL at 1280 and 1568;
  *   · B "CT R2747 Prior Due Plan" — ₹25,488 on subscriptions.outstanding_amount, no quote, no invoice
- *     (as SCN Kochi Hosting in scenario money-owed-archived) → "Previous term ₹25,488 still unpaid"
- *     + "Balance on the subscription — no unpaid invoice linked to it";
+ *     (as SCN Kochi Hosting in scenario money-owed-archived) → since R-2818 no previous-term debt (the
+ *     customer page's rule: a balance on no document is not owed — its page says All clear);
  *   · C "CT R2747 Cancelled Plan" — its only invoice voided → grey "Cancelled".
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -116,16 +116,17 @@ test.describe("R-2747 card test", () => {
   }
 
   for (const width of [1568, 1280]) {
-    test(`Step 3${width === 1568 ? "" : "b"}: at ${width}px a 'Previous term ₹25,488 still unpaid' row with no invoice says why`, async ({ browser, baseURL }) => {
+    /* R-2818 (changed expectation): ₹25,488 only on subscriptions.outstanding_amount — no quote, no invoice —
+       is not owed by the customer page's rule (it says All clear), so the row shows no previous-term debt. */
+    test(`Step 3${width === 1568 ? "" : "b"}: at ${width}px a balance on no quote / invoice shows no 'Previous term … still unpaid'`, async ({ browser, baseURL }) => {
       const page = await pageAs(browser, baseURL, "owner");
       await page.setViewportSize({ width, height: 900 });
       const r = await rowOf(page, "CT R2747 Prior Due Plan");
-      /* R-2760 (R-2758 model): the previous-term balance is the status chip's flag (its words are the icon's name) */
-      await expect(r.getByRole("img", { name: /^Previous term ₹25,488 / })).toBeVisible({ timeout: 60_000 });
-      const gap = await onlyOne(r.getByTestId("renewal-prior-due-no-invoice"), "no-invoice reason");
-      await expect(gap).toHaveText("Balance on the subscription — no unpaid invoice linked to it", { timeout: 60_000 });
+      await expect(r.getByTestId("stage-chip")).toBeVisible({ timeout: 60_000 });   // documents read — the stage is decided
+      await expect(r.locator("[data-flag='priorTermUnpaid']")).toHaveCount(0);
+      await expect(r.getByText(/Previous term/)).toHaveCount(0);
+      await expect(r.getByTestId("renewal-prior-due-no-invoice")).toHaveCount(0);
       await expect(r.getByTestId("renewal-last-invoice-status")).toHaveCount(0);
-      expect(await gap.evaluate((el) => el.getBoundingClientRect().right <= el.closest("td")!.getBoundingClientRect().right + 0.5)).toBe(true);
     });
   }
 

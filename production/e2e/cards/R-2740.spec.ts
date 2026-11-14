@@ -117,7 +117,9 @@ async function drawerShowsTheStory(page: Page): Promise<void> {
   await expect(drawer.getByTestId("renewal-drawer-followup")).toContainText("CT R2740 will pay on Friday");
   await expect(drawer.getByTestId("renewal-drawer-followups")).toContainText("2 reminders sent");
   const prior = drawer.locator('[data-testid="renewal-drawer-flag"][data-flag="priorTermUnpaid"]');
-  await expect(prior).toContainText("Previous term ₹98 still unpaid");
+  /* R-2818 (changed expectation): the one owed rule — the overdue billed part INV-CT2740-P (₹23,010), not the
+     stored ₹98 balance (its quote's invoice INV-CT2740-A is Paid, so the customer page does not count the ₹98) */
+  await expect(prior).toContainText("Previous term ₹23,010 still unpaid");
   await expect(prior).toContainText("collect it along with this renewal");
   /* nothing spills sideways inside the drawer */
   const spill = await drawer.evaluate((el) => el.scrollWidth - el.clientWidth);
