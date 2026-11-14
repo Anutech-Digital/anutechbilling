@@ -207,6 +207,25 @@ begin
   raise notice 'PASS D: short payment invoices nothing and renews nothing';
 end $$;
 
+-- ── O. A request line naming a part OUTSIDE the pool (another customer's group) never bills that part ────
+do $$
+declare v_c uuid; v_c2 uuid; v_a uuid; v_x uuid; pa uuid; px uuid; v_t text; r jsonb;
+begin
+  v_c := pg_temp.cust(4); v_c2 := pg_temp.cust(5);
+  v_a := pg_temp.sub(8, v_c, 'Google Workspace Business Standard', 2, '2025-10-01', '2026-10-01', 'b2806000-0000-0000-0000-0000000009a4');
+  v_x := pg_temp.sub(9, v_c2, 'Google Workspace Business Starter', 2, '2025-10-01', '2026-10-01', 'b2806000-0000-0000-0000-0000000009a5');
+  pa := pg_temp.part(v_a, 21, '2026-10-01', 2 * 1585, '2026-10-01', '2027-10-01');
+  px := pg_temp.part(v_x, 22, '2026-10-01', 2 * 450, '2026-10-01', '2027-10-01');
+  v_t := pg_temp.together('TESTQ-R2806-T3', v_c, pa, array[pa, px]);   -- broken by hand: px is another pool
+  perform pg_temp.pay(v_t, (select amount from public.quotes where id = v_t), 'R2806-O');
+  if (select invoice_id from public.subscription_billings where id = px) is not null
+     or pg_temp.st(v_x) <> '2026-10-01 grace_period' then
+    raise exception 'FAIL O: the other pool''s part was billed / renewed: % %', (select invoice_id from public.subscription_billings where id = px), pg_temp.st(v_x); end if;
+  if (select invoice_id from public.subscription_billings where id = pa) is null or pg_temp.st(v_a) <> '2027-10-01 renewed' then
+    raise exception 'FAIL O: own part not billed: %', pg_temp.st(v_a); end if;
+  raise notice 'PASS O: a part outside the pool is never billed on the group''s invoice';
+end $$;
+
 -- ── Z. No group = the old pool; grants ────────────────────────────────────────────────────────────────────
 do $$
 declare v_c uuid; v_s1 uuid; v_s2 uuid; v_s3 uuid; v_n integer;
@@ -223,6 +242,15 @@ begin
     raise exception 'FAIL Z: quote pool of s1 = % (want s1 + s2)', (select array_agg(subscription_id) from public.billing_pool_subscriptions(v_s1)); end if;
   if (select array_agg(subscription_id) from public.billing_pool_subscriptions(v_s3)) <> array[v_s3] then
     raise exception 'FAIL Z: lone sub pool %', (select array_agg(subscription_id) from public.billing_pool_subscriptions(v_s3)); end if;
+  /* closure: s1 + s2 share the sale quote; s2 + s3 a bill group → s1's pool reaches s3, and all three agree */
+  update public.subscriptions set bill_group_id = 'b2806000-0000-0000-0000-0000000009a3' where id in (v_s2, v_s3);
+  if (select count(*) from public.billing_pool_subscriptions(v_s1)) <> 3
+     or (select count(*) from public.billing_pool_subscriptions(v_s3)) <> 3
+     or exists (select subscription_id from public.billing_pool_subscriptions(v_s1)
+                except select subscription_id from public.billing_pool_subscriptions(v_s3)) then
+    raise exception 'FAIL Z: closure s1 % / s3 %', (select array_agg(subscription_id) from public.billing_pool_subscriptions(v_s1)),
+      (select array_agg(subscription_id) from public.billing_pool_subscriptions(v_s3)); end if;
+  update public.subscriptions set bill_group_id = null where id in (v_s2, v_s3);
   if has_function_privilege('authenticated', 'public.billing_pool_subscriptions(uuid)', 'execute')
      or has_function_privilege('anon', 'public.billing_pool_subscriptions(uuid)', 'execute')
      or has_function_privilege('authenticated', 'public.instalment_credit_parts(uuid)', 'execute')
