@@ -128,14 +128,22 @@ export function CustomerCell({ name, customerId, contact, more }: { name: string
   );
 }
 
-export function ProductCell({ plan, seats, vendor, term, termShort, frequency, onOpen }: {
+/** R-2755: the subscription's own domain (subscriptions.domain), trimmed; none → null (the row shows nothing, no "—"). */
+export function subscriptionDomain(sub: { domain?: string | null }): string | null {
+  const d = sub.domain?.trim();
+  return d ? d : null;
+}
+
+export function ProductCell({ plan, seats, vendor, term, termShort, frequency, domain = null, onOpen }: {
   plan: string | null; seats: number | null; vendor: string | null; term: string | null; termShort: string | null; frequency: string | null;
+  /** R-2755: the subscription's domain (subscriptionDomain) — line 2, before the period. */
+  domain?: string | null;
   /** R-2740: the product name opens the row drawer (keyboard reachable — the row press is mouse only). */
   onOpen?: () => void;
 }) {
   const vendorWord = vendor ? vendor[0].toUpperCase() + vendor.slice(1) : null;
   const line1 = [plan, seats != null ? `${seats} seats` : null, vendorWord].filter(Boolean).join(" · ");
-  /* line 2 = the period (short); the full period + how it is paid are its tooltip */
+  /* line 2 = the domain (R-2755) + the period (short); the full period + how it is paid are its tooltip */
   const title2 = [term ? `Renews for ${term}` : null, frequency].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0" data-cell="product">
@@ -147,7 +155,15 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, o
           </button>
         ) : line1}
       </p>
-      {termShort && <p className="mt-0.5 truncate text-2xs text-ink-3 tabular-nums" title={title2}>{termShort}</p>}
+      {domain ? (
+        /* R-2755: one line — the domain first (cut with its full text on hover when long); the period follows
+           where it fits and otherwise wraps out of sight (max-h one line): it stays in the tooltip, and the
+           Due column shows the date it starts. */
+        <p className="mt-0.5 flex max-h-[1lh] flex-wrap gap-x-1 overflow-hidden text-2xs" title={title2 || undefined}>
+          <span className="min-w-0 max-w-full truncate text-ink-2" title={domain} data-testid="renewal-row-domain">{domain}</span>
+          {termShort && <span className="shrink-0 whitespace-nowrap text-ink-3 tabular-nums">· {termShort}</span>}
+        </p>
+      ) : termShort && <p className="mt-0.5 truncate text-2xs text-ink-3 tabular-nums" title={title2}>{termShort}</p>}
     </div>
   );
 }

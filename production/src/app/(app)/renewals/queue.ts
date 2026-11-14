@@ -63,6 +63,17 @@ export const QUEUE_TAB_LABEL: Record<QueueTab, string> = {
   later: "Later (91+ days)",
 };
 
+/**
+ * R-2755: a search / filter emptied the open tab — the OTHER tabs that do have matches, in tab
+ * order ("1 match in 8–30"), so the empty tab offers to open them instead of a dead end.
+ */
+export function matchesElsewhere(open: QueueTab, counts: Record<QueueTab, number>): { tab: QueueTab; label: string; count: number; words: string }[] {
+  return QUEUE_TABS.filter((t) => t !== open && counts[t] > 0).map((t) => ({
+    tab: t, label: QUEUE_TAB_LABEL[t], count: counts[t],
+    words: `${counts[t]} ${counts[t] === 1 ? "match" : "matches"} in ${QUEUE_TAB_LABEL[t]}`,
+  }));
+}
+
 /** The tab for a row that is due (not overdue): by IST days to the renewal date. */
 export function windowTab(daysUntil: number): QueueTab {
   if (daysUntil < 0) return "overdue";
