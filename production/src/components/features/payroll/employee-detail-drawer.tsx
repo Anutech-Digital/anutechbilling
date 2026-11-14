@@ -26,7 +26,7 @@ import {
   type Employee, type EmployeeDocument,
 } from "@/lib/queries/payroll";
 import { rupee, formatDate } from "@/lib/utils";
-import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { employeeCtc } from "@/lib/payroll/ctc";
 import { monthNetPay } from "@/lib/payroll/net-pay";
 import { revisionsByEmployee } from "@/lib/payroll/salary-revision";
 import { istMonth } from "@/lib/dates/ist";
@@ -161,7 +161,8 @@ export function EmployeeDetailDrawer({
               /* R-1585: the employee's own structure (gross, Basic, DA, PF/ESI flags) — monthly
                  gross × 12 is not the CTC. */
               /* R-2700: the company's gratuity + CTC policy, same as the CTC register and the employee form. */
-              const ctc = ctcFromEmployee(employee, { includeGratuity: payrollPolicy.data?.gratuity ?? true, ctcIncludesEmployer: payrollPolicy.data?.ctcIncludesEmployer ?? true });
+              /* R-2770: one helper (this month's PF ceiling) — the same number as the Employees table's "CTC / month". */
+              const ctc = employeeCtc(employee, payrollPolicy.data, istMonth());
               return (
                 <div className="rounded-xl border border-hairline bg-paper p-3.5 space-y-3">
                   <div className="flex items-center justify-between pb-2 border-b border-hairline">
