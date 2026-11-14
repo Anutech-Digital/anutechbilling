@@ -25,7 +25,10 @@
 --       ₹1 more is refused and nothing changes.
 --   J   LOP + adjust_salary_lop (R-2428), then Undo → nothing left.
 --   K   books lock on the salary month → Undo and Edit refused, every row stays.
---   L   employer ESI row matched to the bank (paid_amount) → Undo refused with a plain message.
+--   L   employer ESI row marked paid (paid_amount) → Undo refused with a plain message.
+--   M   a LINKED employer row deleted on the Expenses page → refused (Undo in Payroll); trusted session may.
+--   N   employer PF row in an open payment run → Undo refused, names the run.
+--   O   an old salary whose employer rows sit on the PAY date (booked before 20260927170000) → Undo finds them.
 --
 -- Run: node scripts/test-sql.mjs --local supabase/tests/r2772_salary_undo_employer_cost.test.sql
 -- SAFETY: synthetic tenants + identities, one transaction ending in ROLLBACK.
@@ -422,14 +425,14 @@ begin
   begin
     perform public.delete_salary_payment(v_id);
   exception when others then v_msg := sqlerrm; end;
-  if v_msg is distinct from 'The employer ESI cost of this salary is matched to a bank line — un-reconcile that bank line first, then undo.' then
+  if v_msg is distinct from 'The employer ESI cost of this salary is marked paid (₹975) — undo that payment on the Expenses page first, then undo.' then
     raise exception 'FAIL L1: %', v_msg;
   end if;
   select count(*) into v_n from public.salary_payments where id = v_id;
   if v_n <> 1 or pg_temp.r2772_rows('R2772 Lata') <> 'ESI:1/975 PF:1/1800 SAL:1/30000' then
     raise exception 'FAIL L2: refused Undo changed the books: % / %', v_n, pg_temp.r2772_rows('R2772 Lata');
   end if;
-  raise notice 'PASS L: an employer row matched to the bank refuses the Undo, nothing changes';
+  raise notice 'PASS L: an employer row marked paid refuses the Undo, nothing changes';
 end $$;
 reset role;
 update public.expenses set paid_amount = 0
@@ -441,6 +444,78 @@ begin
   select id into v_id from public.salary_payments where employee_id = 'c2772000-0000-4000-8000-0000000000e5' and period = '2026-07';
   perform public.delete_salary_payment(v_id);
   if pg_temp.r2772_rows('R2772 Lata') <> '' then raise exception 'FAIL L3: %', pg_temp.r2772_rows('R2772 Lata'); end if;
+  raise notice 'PASS L3: once unpaid, the Undo goes through and leaves nothing';
+end $$;
+
+-- ── M. A linked employer row cannot be deleted on its own ───────────────────────────
+do $$
+declare v_id uuid; v_pf text; v_msg text; v_hint text; v_n int;
+begin
+  v_id := public.pay_salary('c2772000-0000-4000-8000-0000000000e5', '2026-10', '2026-10-31', 30000, 0, 0, 0, null, 0, 1800, 225, 0,
+                            'c2772000-0000-4000-8000-0000000000b1', null, 0, 975, 1800, 15000);
+  select pf_employer_expense_id into v_pf from public.salary_payments where id = v_id;
+  begin
+    delete from public.expenses where id = v_pf;
+  exception when others then
+    get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+  end;
+  if v_msg is distinct from 'This is the employer PF cost of R2772 Lata''s 2026-10 salary — it cannot be deleted on its own. Undo that salary in Payroll: the salary and this cost go together.'
+     or v_hint is distinct from '/accounting/payroll' then
+    raise exception 'FAIL M1: % (hint %)', v_msg, v_hint;
+  end if;
+  select count(*) into v_n from public.expenses where id = v_pf;
+  if v_n <> 1 then raise exception 'FAIL M2: the row was deleted'; end if;
+  perform public.delete_salary_payment(v_id);
+  if pg_temp.r2772_rows('R2772 Lata', '2026-10') <> '' then raise exception 'FAIL M3: %', pg_temp.r2772_rows('R2772 Lata', '2026-10'); end if;
+  raise notice 'PASS M: a linked employer row is refused on the Expenses page; Undo removes it';
+end $$;
+
+-- ── N. Employer PF row in an open payment run ───────────────────────────────────────
+select public.pay_salary('c2772000-0000-4000-8000-0000000000e5', '2026-11', '2026-11-30', 30000, 0, 0, 0, null, 0, 1800, 225, 0,
+                         'c2772000-0000-4000-8000-0000000000b1', null, 0, 975, 1800, 15000);
+reset role;
+insert into public.payment_runs (id, tenant_id, run_no, status, bank_account_id, created_by)
+values ('c2772000-0000-4000-8000-0000000000d1', 'c2772000-0000-0000-0000-0000000000f0', 'PR-R2772-1', 'draft',
+        'c2772000-0000-4000-8000-0000000000b1', 'c2772000-0000-0000-0000-0000000000a1');
+insert into public.payment_run_items (run_id, tenant_id, source, doc_id, vendor_name, amount)
+select 'c2772000-0000-4000-8000-0000000000d1', s.tenant_id, 'expense', s.pf_employer_expense_id, 'EPFO', 1800
+  from public.salary_payments s where s.employee_id = 'c2772000-0000-4000-8000-0000000000e5' and s.period = '2026-11';
+set local role authenticated;
+do $$
+declare v_id uuid; v_msg text; v_hint text;
+begin
+  select id into v_id from public.salary_payments where employee_id = 'c2772000-0000-4000-8000-0000000000e5' and period = '2026-11';
+  begin
+    perform public.delete_salary_payment(v_id);
+  exception when others then
+    get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+  end;
+  if v_msg is distinct from 'The employer PF cost of this salary is in payment run PR-R2772-1 — cancel that run (or take it out) first, then undo.'
+     or v_hint is distinct from '/accounting/payment-runs' then
+    raise exception 'FAIL N1: % (hint %)', v_msg, v_hint;
+  end if;
+  if pg_temp.r2772_rows('R2772 Lata', '2026-11') <> 'ESI:1/975 PF:1/1800 SAL:1/30000' then
+    raise exception 'FAIL N2: %', pg_temp.r2772_rows('R2772 Lata', '2026-11');
+  end if;
+  raise notice 'PASS N: an employer row in an open payment run refuses the Undo with the run and a link';
+end $$;
+
+-- ── O. Old salary whose employer rows sit on the pay date (before 20260927170000) ────
+select public.pay_salary('c2772000-0000-4000-8000-0000000000e3', '2026-06', '2026-07-05', 30000, 0, 0, 0, null, 0, 1800, 225, 0,
+                         'c2772000-0000-4000-8000-0000000000b1', null, 0, 975, 1800, 15000);
+reset role;
+update public.salary_payments set pf_employer_expense_id = null, esi_employer_expense_id = null
+ where employee_id = 'c2772000-0000-4000-8000-0000000000e3' and period = '2026-06';
+update public.expenses set expense_date = '2026-07-05'
+ where tenant_id = 'c2772000-0000-0000-0000-0000000000f0' and vendor_name = 'R2772 Ravi' and description like '% 2026-06 — %';
+set local role authenticated;
+do $$
+declare v_id uuid;
+begin
+  select id into v_id from public.salary_payments where employee_id = 'c2772000-0000-4000-8000-0000000000e3' and period = '2026-06';
+  perform public.delete_salary_payment(v_id);
+  if pg_temp.r2772_rows('R2772 Ravi', '2026-06') <> '' then raise exception 'FAIL O: %', pg_temp.r2772_rows('R2772 Ravi', '2026-06'); end if;
+  raise notice 'PASS O: an old salary dated on its pay date is undone completely';
   raise notice 'PASS r2772_salary_undo_employer_cost';
 end $$;
 

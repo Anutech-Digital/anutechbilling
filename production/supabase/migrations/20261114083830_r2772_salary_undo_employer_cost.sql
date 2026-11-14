@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'salary_payments' and column_name = 'pf_employer_expense_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_salary_payment(uuid)') and prosrc like '%employer % cost of this salary%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.pay_salary(uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer)') and prosrc like '%esi_employer_expense_id%') and to_regprocedure('public.edit_salary_payment(uuid,uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer,integer)') is not null
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'salary_payments' and column_name = 'pf_employer_expense_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_salary_payment(uuid)') and prosrc like '%employer % cost of this salary%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.pay_salary(uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer)') and prosrc like '%esi_employer_expense_id%') and to_regprocedure('public.edit_salary_payment(uuid,uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer,integer)') is not null and to_regprocedure('public.tg_expense_delete_guards_salary_employer()') is not null
 -- deploy-key: r2772salaryundoemployercost
 -- 20261114083830_r2772_salary_undo_employer_cost.sql
 --
@@ -30,6 +30,8 @@
 --      plain message (as a bank-linked salary already does). Books lock, bank-match and the
 --      other expense delete guards keep working through the existing triggers on expenses.
 --      The salary row is now locked (for update) while it is undone.
+--   2b. A LINKED employer row cannot be deleted on its own from the app (Expenses page) — as the
+--      Salaries row already cannot (R-1577): Undo the salary instead.
 --   3. edit_salary_payment(p_salary_id, <the pay_salary_with_arrears inputs>) — Undo + Pay in ONE
 --      transaction (production/CLAUDE.md §17b): if the new booking is refused, the old salary and
 --      all its rows are still there. Same employee and month only. SECURITY INVOKER — it only
@@ -168,6 +170,9 @@ declare
   v_pf_id  text;
   v_esi_id text;
   v_e      record;
+  v_kind   text;
+  v_href   text;
+  v_run    text;
 begin
   /* R-885: role gate (Pardeep's role table, 11 Oct 2026 — payroll group (R-717 rule): owner, manager, accountant).
      Trusted = service_role or a direct DB session with no request role (R-454 / R-714 /
@@ -178,7 +183,8 @@ begin
      and not public.current_user_has_role('owner', 'manager', 'accountant') then
     raise exception 'Only an owner, manager or accountant can undo a salary payment' using errcode = '42501';
   end if;
-  -- R-2772: hold the row while it is undone (a bank match or a second Undo waits for this one).
+  -- R-2772: hold the row while it is undone (a second Undo / Edit waits for this one and then
+  -- finds nothing).
   select * into v_sp from public.salary_payments where id = p_salary_id for update;
   if not found then raise exception 'Salary payment not found'; end if;
   if (v_tenant is null and coalesce(public.current_request_role(), '') in ('anon', 'authenticated')) or (v_tenant is not null and v_sp.tenant_id is distinct from v_tenant) then
@@ -193,47 +199,67 @@ begin
   /* R-2772: the employer PF / ESI expense rows pay_salary booked for THIS salary.
      Linked (booked since R-2772) → by id. Not linked (booked before) → the one row of this company
      that pay_salary would have written for this salary: same category, 'statutory', the salary
-     row's employer figure, the salary-month date, pay_salary's description for the month and the
-     name on this salary's own Salaries expense; never a row another salary is linked to. */
+     row's employer figure, the salary's expense date (salary month since 20260927170000, the pay
+     date before that, or the date its own Salaries expense carries), pay_salary's description for
+     the month and the name on this salary's own Salaries expense; never a row another salary is
+     linked to. The picked row is locked, so two Undos can never pick the same one. No match (the
+     row was edited or deleted by hand) → nothing else is deleted; the report script lists it. */
   v_pf_id  := v_sp.pf_employer_expense_id;
   v_esi_id := v_sp.esi_employer_expense_id;
   if (v_pf_id is null and v_sp.pf_employer > 0) or (v_esi_id is null and v_sp.esi_employer > 0) then
-    select e.vendor_name into v_name from public.expenses e
+    select e.vendor_name, e.expense_date into v_name, v_date from public.expenses e
      where e.id = v_sp.expense_id and e.tenant_id = v_sp.tenant_id;
     if v_name is null then
       select emp.name into v_name from public.employees emp where emp.id = v_sp.employee_id;
     end if;
-    v_date := public.salary_expense_date(v_sp.period, v_sp.pay_date);
     if v_pf_id is null and v_sp.pf_employer > 0 then
       select e.id into v_pf_id from public.expenses e
        where e.tenant_id = v_sp.tenant_id and e.category = 'PF — Employer' and e.payment_method = 'statutory'
-         and e.amount = v_sp.pf_employer and e.expense_date = v_date and e.vendor_name = v_name
+         and e.amount = v_sp.pf_employer and e.vendor_name = v_name
+         and e.expense_date in (public.salary_expense_date(v_sp.period, v_sp.pay_date), v_sp.pay_date, v_date)
          and e.description = 'PF employer contribution ' || v_sp.period || ' — ' || v_name
          and not exists (select 1 from public.salary_payments s where s.pf_employer_expense_id = e.id)
-       order by e.created_at desc, e.id desc limit 1;
+       order by e.created_at desc, e.id desc limit 1
+       for update;
     end if;
     if v_esi_id is null and v_sp.esi_employer > 0 then
       select e.id into v_esi_id from public.expenses e
        where e.tenant_id = v_sp.tenant_id and e.category = 'ESI — Employer' and e.payment_method = 'statutory'
-         and e.amount = v_sp.esi_employer and e.expense_date = v_date and e.vendor_name = v_name
+         and e.amount = v_sp.esi_employer and e.vendor_name = v_name
+         and e.expense_date in (public.salary_expense_date(v_sp.period, v_sp.pay_date), v_sp.pay_date, v_date)
          and e.description = 'ESI employer contribution ' || v_sp.period || ' — ' || v_name
          and not exists (select 1 from public.salary_payments s where s.esi_employer_expense_id = e.id)
-       order by e.created_at desc, e.id desc limit 1;
+       order by e.created_at desc, e.id desc limit 1
+       for update;
     end if;
   end if;
 
-  -- An employer row that is itself paid / matched to a bank line: say so, undo nothing.
+  /* An employer row that is itself matched to a bank line, in an open payment run, or marked paid:
+     say which and where (HINT = the page with the button), undo nothing. */
   for v_e in
-    select e.id from public.expenses e
+    select e.id, coalesce(e.paid_amount, 0) as paid, e.reconciled_txn_id from public.expenses e
      where e.tenant_id = v_sp.tenant_id and e.id in (v_pf_id, v_esi_id)
-       and (e.reconciled_txn_id is not null or coalesce(e.paid_amount, 0) > 0
-            or exists (select 1 from public.bank_vendor_payment_lines l where l.expense_id = e.id)
-            or exists (select 1 from public.bank_transactions t
-                        where t.tenant_id = e.tenant_id and t.matched_to_type = 'expense' and t.matched_to_id = e.id))
+     order by e.id
+     for update
   loop
-    raise exception 'The employer % cost of this salary is matched to a bank line — un-reconcile that bank line first, then undo.',
-      case when v_e.id = v_pf_id then 'PF' else 'ESI' end
-      using errcode = 'invalid_parameter_value';
+    v_kind := case when v_e.id = v_pf_id then 'PF' else 'ESI' end;
+    select b.o_href into v_href from public.matched_bank_line_blocker(v_sp.tenant_id, 'expense', v_e.id) b;
+    if v_href is not null or v_e.reconciled_txn_id is not null then
+      raise exception 'The employer % cost of this salary is matched to a bank line — un-reconcile that bank line first, then undo.', v_kind
+        using errcode = 'invalid_parameter_value', hint = coalesce(v_href, '/accounting/banking');
+    end if;
+    select pr.run_no into v_run
+      from public.payment_run_items it join public.payment_runs pr on pr.id = it.run_id
+     where it.tenant_id = v_sp.tenant_id and it.source = 'expense' and it.doc_id = v_e.id
+       and pr.status in ('draft', 'approved') limit 1;
+    if v_run is not null then
+      raise exception 'The employer % cost of this salary is in payment run % — cancel that run (or take it out) first, then undo.', v_kind, v_run
+        using errcode = 'invalid_parameter_value', hint = '/accounting/payment-runs';
+    end if;
+    if v_e.paid > 0 then
+      raise exception 'The employer % cost of this salary is marked paid (₹%) — undo that payment on the Expenses page first, then undo.', v_kind, v_e.paid
+        using errcode = 'invalid_parameter_value', hint = '/accounting/expenses';
+    end if;
   end loop;
 
   if v_sp.advance_recovered > 0 and v_sp.advance_loan_id is not null then
@@ -262,6 +288,46 @@ $function$;
 
 revoke all on function public.delete_salary_payment(uuid) from public, anon;
 grant execute on function public.delete_salary_payment(uuid) to authenticated, service_role;
+
+-- ── 2b. A linked employer row cannot be deleted on its own from the app ─────────────────────────
+-- (as the Salaries row already cannot — tg_expense_delete_guards_salary, R-1577). Otherwise the P&L
+-- loses the cost while the PF / ESI payable (read from salary_payments) keeps it. delete_salary_payment
+-- deletes the salary row first, so its own delete of the employer rows passes. Trusted sessions
+-- (service_role / migration login / company delete cascade) keep the plain foreign-key behaviour.
+create or replace function public.tg_expense_delete_guards_salary_employer()
+ returns trigger
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+declare
+  r record;
+begin
+  if coalesce(public.current_request_role(), '') in ('anon', 'authenticated') then
+    select coalesce(emp.name, 'an employee') as who, s.period,
+           case when s.pf_employer_expense_id = OLD.id then 'PF' else 'ESI' end as kind
+      into r
+      from public.salary_payments s
+      left join public.employees emp on emp.id = s.employee_id
+     where s.tenant_id = OLD.tenant_id
+       and (s.pf_employer_expense_id = OLD.id or s.esi_employer_expense_id = OLD.id)
+     limit 1;
+    if found then
+      raise exception 'This is the employer % cost of %''s % salary — it cannot be deleted on its own. Undo that salary in Payroll: the salary and this cost go together.',
+        r.kind, r.who, r.period
+        using errcode = 'invalid_parameter_value', hint = '/accounting/payroll';
+    end if;
+  end if;
+  return OLD;
+end;
+$function$;
+
+revoke all on function public.tg_expense_delete_guards_salary_employer() from public, anon, authenticated;
+
+drop trigger if exists trg_expense_delete_guards_salary_employer on public.expenses;
+create trigger trg_expense_delete_guards_salary_employer
+  before delete on public.expenses
+  for each row execute function public.tg_expense_delete_guards_salary_employer();
 
 -- ── 3. edit_salary_payment: Undo + Pay in one transaction ───────────────────────────────────────
 create or replace function public.edit_salary_payment(p_salary_id uuid, p_employee_id uuid, p_period text, p_pay_date date, p_gross integer, p_lop_days numeric, p_lop_amount integer, p_advance_recovered integer, p_advance_loan_id uuid, p_tds integer, p_pf integer, p_esi integer, p_other integer, p_bank_account_id uuid, p_notes text DEFAULT NULL::text, p_incentive integer DEFAULT 0, p_esi_employer integer DEFAULT 0, p_pf_employer integer DEFAULT 0, p_pf_wage integer DEFAULT NULL, p_arrears integer DEFAULT 0)
