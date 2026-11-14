@@ -15,6 +15,8 @@ This link is the source of truth for the public website's look. It always shows 
 
 ## How Warm is built
 - **CSS over the existing pages — no second copy of any page.** `src/site/site-warm.css` (tokens, shared site classes, Home) and one file per page group in `src/site/warm/` (`chrome`, `email`, `company`, `legal-shop`, `domains`, `hosting`, `product`, `switch`). Every selector starts with `.anutech-site[data-site-theme="warm"]` (product page: `.anutech-product[…]`), so Classic is untouched.
+- **Pages outside the website's layouts** — Workspace/Support checkouts and thank-you pages, the ad landing pages (`/lp/…`), ResellerOS `/pricing`, `/about`, `/privacy`, `/terms`, `/privacy/request`, `/unsubscribe`, and "page not found" on Anutech's own domains — are wrapped in `WarmScope` (`src/site/components/chrome/WarmScope.tsx`): one `display: contents` wrapper (so Classic lays out exactly as before) carrying the same switch. Their styles are `src/site/warm/extra-*.css`, every selector under `.w-scope[data-site-theme="warm"]`; most re-point the app's colour variables (`--paper`, `--ink`, `--amber`…) to the warm palette on the page's own root element. Designed first as the "Shop & extra pages" artboards in the canvas.
+- **Never themed:** pages shared by every reseller — `/quote/[id]/accept`, `/quote/view/[token]`, `/enquiry`, `/project-quote/[id]` — show other resellers' customers; and the logged-in app's own "not found".
 - **Guards** (`src/site/site-warm-scope.test.ts`): every selector scoped; nothing hidden except `::before`/`::after` decorations and the theme's own `.w-` controls; every warm file loaded where its pages render; components' `var(--hv-…, <classic>)` colours always keep their Classic fallback.
 - **Colours** go through `--w-*` tokens; **dark** redefines them ("Dark variant of the warm tokens") — on the visitor's choice (header switch, `localStorage anutech-theme`, `data-theme` on `<html>`) or, with no choice, the device setting.
 - **Photos** from the design are in `public/site/warm/<design id>` and only load on Warm.
@@ -22,11 +24,12 @@ This link is the source of truth for the public website's look. It always shows 
 - **Inline styles:** the server writes `margin-top:10px`, the browser rewrites to `margin-top: 10px` (and hex to `rgb()`) after a client update — a rule matching an inline style must match both spellings.
 - **Warm-only additions** (class `w-only`, hidden on Classic by `src/site/warm-only.css`): the design's badges, small labels and icons, the legal pages' "On this page" list (Privacy, Terms), slideshow progress dots, the Domains extension chips (working search buttons). Badges only where the live text says the same thing. Not added: invented figures (ResellerOS "Renewals due / MRR" card), tier names that would mislabel products ("Essentials", "Advanced"), the Customer login page (lives in DMS).
 
-## Pages (19)
+## Pages (19 + 10 extra)
 - Homepage: Home
 - Product pages: ResellerOS, Business email, Domains, Web hosting, SSL
 - Company & pricing: Why us, Support/Contact, Wholesale, Get a quote, All prices, Google Workspace pricing, Compare email editions
 - Legal, login & header: Status, Privacy, Terms, Refund, Customer login, Cart, shared site header
+- Shop & extra pages: Buy Workspace, Order thank-you, Buy support plan, Ad landing, ResellerOS pricing / about / privacy & terms, Privacy request, Unsubscribe, Page not found
 
 ## Tokens
 | Role | Light | Dark |
