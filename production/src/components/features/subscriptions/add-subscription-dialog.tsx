@@ -69,7 +69,7 @@ import { findPlanProduct, type LeadPrefill } from "@/lib/subscriptions/lead-pref
 /* The same countdown the subscriptions list and /payments render, so the hint under
    the field cannot disagree with the chip the operator sees a second later. */
 import { paymentDueState, todayIST } from "@/lib/subscriptions/payment-due";
-import { onboardingQuoteLine, onboardingRenewal, onboardingYears } from "./onboarding-line";
+import { onboardingQuoteLine, onboardingRenewal, onboardingYears, yearlyUnitProducts } from "./onboarding-line";
 import { isDomainPlan } from "@/lib/quotes/bulk";
 import { duplicateSubscriptionText, findDuplicateSubscription, type ExistingSub } from "./duplicate-subscription";
 import { findCustomerMatches } from "@/lib/customers/duplicate-match";
@@ -305,7 +305,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
      Loaded from /items. `subscriptionProducts` drops one-time items and converts
      ₹/seat/month to the ₹/seat/year this dialog charges in — once, in one place. */
   const { data: items, isLoading: catalogLoading } = useItems();
-  const products   = React.useMemo(() => subscriptionProducts(items ?? []), [items]);
+  /* R-2734: + a per-year item (domain) at its yearly price, not × 12. */
+  const products   = React.useMemo(() => yearlyUnitProducts(subscriptionProducts(items ?? []), items ?? []), [items]);
   /* Built in one place (catalog-options.ts) because it used to be built in two:
      a fallback for an empty catalogue AND a guard that appended `other`. On an empty
      catalogue both fired and this dropdown showed "Other Cloud Vendor" twice. */

@@ -106,3 +106,32 @@ describe("R-2734 onboarding line for a domain registered for N years", () => {
     expect(onboardingRenewal("", 3, "2026-05-05")).toBe("2026-05-05");
   });
 });
+
+/* R-2734: the Onboard dialog priced a PER-YEAR catalogue item (R-526 billing_unit unit_year — a
+   domain registration) as per month × 12: ₹800 a year showed ₹9,600/yr, so "catalogue price × 3
+   years" would have been ₹28,800. The dialog now takes such an item's yearly price and cost the way
+   every quote adder does (catalogYearlyPrice) — as R-2712 did in the Bulk dialog. */
+import { yearlyUnitProducts } from "./onboarding-line";
+import { subscriptionProducts } from "@/lib/subscriptions/catalog-options";
+import type { Item } from "@/lib/supabase/database.types";
+
+describe("R-2734 per-year catalogue items in the Onboard dialog", () => {
+  const domain = { id: "d", name: "Domain .in", vendor: "domain", item_type: "subscription", is_active: true,
+    msrp: 800, wholesale: 600, prices: { billing_unit: "unit_year" } } as unknown as Item;
+  const gws = { id: "g", name: "Google Workspace Business Standard", vendor: "google", item_type: "subscription", is_active: true,
+    msrp: 300, wholesale: 264, prices: { annual: { msrp: 300, wholesale: 264 } } } as unknown as Item;
+
+  it("a unit_year item is ₹800 / ₹600 a year (not × 12); its monthly figures are the year ÷ 12", () => {
+    const [p] = yearlyUnitProducts(subscriptionProducts([domain]), [domain]);
+    expect(p.annualSellPerSeat).toBe(800);
+    expect(p.annualCostPerSeat).toBe(600);
+    expect(p.annualMonthlySellPerSeat).toBe(67);
+    expect(p.annualMonthlyCostPerSeat).toBe(50);
+    expect(billingTerms("annual_yearly", p).suggestedSellPerSeat).toBe(800);
+  });
+
+  it("a per-month item (Workspace) is untouched", () => {
+    const before = subscriptionProducts([gws]);
+    expect(yearlyUnitProducts(before, [gws])).toEqual(before);
+  });
+});

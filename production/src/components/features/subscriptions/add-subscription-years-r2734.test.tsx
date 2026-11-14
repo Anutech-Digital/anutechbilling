@@ -16,8 +16,9 @@ vi.mock("@/lib/hooks/useCurrentUser", () => ({
 
 const DOMAIN_ITEM = {
   id: "dom-in", name: "Domain .in", vendor: "domain", kind: "main", item_type: "subscription",
-  is_active: true, msrp: 0, wholesale: 0,
-  prices: { annual_total: { msrp: 800, wholesale: 600 } },
+  /* R-526 per-YEAR item, as the R-2712 card test plants it: ₹800 / ₹600 a year (never × 12). */
+  is_active: true, msrp: 800, wholesale: 600,
+  prices: { billing_unit: "unit_year" },
 };
 const WORKSPACE_ITEM = {
   id: "gws-std", name: "Google Workspace Business Standard", vendor: "google", kind: "main", item_type: "subscription",
@@ -74,6 +75,8 @@ function open(onNeedsPayment: (h: unknown) => void = () => {}) {
 async function fillDomain3Years() {
   open();
   await waitFor(() => expect($("#regYears")).not.toBeNull());
+  /* The catalogue suggestion is the YEARLY price. */
+  expect($("#pricePerSeat")!.value).toBe("800");
   set("custName", "Zeus Traders");
   set("subDomain", "zeus.in");
   set("contactName", "Ravi");
@@ -89,6 +92,7 @@ async function fillDomain3Years() {
 describe("R-2734 Onboard dialog — domain 'Register for N years'", () => {
   it("shows the picker for a domain plan; Renews on follows start + N years and is locked", async () => {
     await fillDomain3Years();
+    expect(document.body.textContent).toContain("₹2,400 for 3 years");
     const renewal = $("#renewalDate")!;
     expect(renewal.value).toBe("2028-04-01");
     expect(renewal.disabled).toBe(true);

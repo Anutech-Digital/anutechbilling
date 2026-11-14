@@ -5,8 +5,10 @@
  * subscription is created by record_payment, which starts it on the line's start_date and
  * otherwise on current_date — so a back-dated start used to come out as today.
  */
-import type { QuoteLineItem } from "@/lib/supabase/database.types";
-import type { BillingChoice, BillingTerms } from "@/lib/subscriptions/catalog-options";
+import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
+import type { BillingChoice, BillingTerms, CatalogProduct } from "@/lib/subscriptions/catalog-options";
+import { billingUnitOf } from "@/lib/catalog/billing-unit";
+import { catalogYearlyPrice } from "@/lib/quotes/catalog-line";
 import { domainLineYears } from "@/lib/provisioning/products";
 import { addMonthsClamped } from "@/lib/billing/schedule";
 
@@ -31,6 +33,31 @@ export function onboardingYears(raw: unknown, ctx: { domainPlan: boolean; billin
 export function onboardingRenewal(startDate: string, years: number, typed: string): string {
   const start = startDate.trim();
   return years > 1 && isDay(start) ? addMonthsClamped(start, 12 * years) : typed;
+}
+
+/**
+ * R-2734: a PER-YEAR catalogue item (R-526 billing_unit unit_year — domain registration, yearly
+ * support) is priced once a year. subscriptionProducts reads every row's price as per month × 12, so
+ * the Onboard dialog offered ₹9,600/yr for an ₹800-a-year domain. Here such a row takes its yearly
+ * price and cost the way every quote adder does (catalogYearlyPrice — R-2712's Bulk dialog fix), and
+ * its per-month figures are that ÷ 12. Every other row is returned as it was.
+ */
+export function yearlyUnitProducts(products: CatalogProduct[], items: readonly Item[]): CatalogProduct[] {
+  const byId = new Map(items.map((it) => [it.id, it]));
+  return products.map((p) => {
+    const raw = byId.get(p.id);
+    if (!raw || billingUnitOf(raw) !== "unit_year") return p;
+    const { rate, cost } = catalogYearlyPrice(raw);
+    if (!(rate > 0)) return p;
+    const costKnown = p.annualCostPerSeat !== null;
+    return {
+      ...p,
+      annualSellPerSeat: rate,
+      annualCostPerSeat: costKnown ? cost : null,
+      annualMonthlySellPerSeat: Math.round(rate / 12),
+      annualMonthlyCostPerSeat: costKnown ? Math.round(cost / 12) : null,
+    };
+  });
 }
 
 export function onboardingQuoteLine(input: {
