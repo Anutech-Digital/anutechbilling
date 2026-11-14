@@ -26,13 +26,20 @@ vi.mock("node:fs", async (orig) => {
   return { ...real, existsSync, default: { ...real, existsSync } };
 });
 
+/* The product layout reads the website theme (Settings → Branding) and carries the Warm fonts'
+   CSS variables; neither exists in a unit test, and Classic is the switch's default. */
+vi.mock("@/lib/fonts", () => ({ siteWarmBody: { variable: "warm-body" }, siteWarmHeading: { variable: "warm-heading" } }));
+vi.mock("@/lib/website-theme.server", () => ({ getWebsiteTheme: async () => "classic" }));
+vi.mock("@/site/warm/product.css", () => ({}));
+
 import Page, { metadata } from "./page";
 import ProductLayout from "../layout";
 import { HOME, PRICING_LINE, SCREENS } from "@/site/lib/data/reselleros-home";
 
 async function render(preview?: string, demo?: string): Promise<string> {
   const el = await Page({ searchParams: Promise.resolve({ ...(preview ? { preview } : {}), ...(demo ? { demo } : {}) }) });
-  return renderToStaticMarkup(<ProductLayout>{el}</ProductLayout>);
+  // The layout is async now (it awaits the website theme); render the element it resolves to.
+  return renderToStaticMarkup(await ProductLayout({ children: el }));
 }
 
 beforeEach(() => { auth.user = null; redirect.mockClear(); disk.files.clear(); delete process.env.DEMO_ENABLED; });
