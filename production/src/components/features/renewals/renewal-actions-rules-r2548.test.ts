@@ -2,7 +2,7 @@
  * R-2548 (Pardeep, 7 Nov 2026) — an annual commitment paid half-yearly / quarterly / monthly
  * showed the same "Bill next part" mid-year AND at the end of the year. The end-of-year click is
  * the RENEWAL (part 1 of the next term at today's seats × rate), so the button now says so:
- * "Bill renewal · part 1 of next year" (… "of next term" for a non-yearly term) with the line
+ * "Send renewal · part 1 of next year" (… "of next term" for a non-yearly term) with the line
  * "Renewal for <term dates> · part 1 (<its dates>): <seats> × ₹<rate>". Mid-term parts keep "Bill next part". One rule
  * (nextPartToBill) for the Renewals page and Payment Follow-up.
  */
@@ -36,10 +36,10 @@ describe("R-2548 the next part to bill — mid-term part or the renewal", () => 
     expect(nextPartToBill(sub(), days("2026-07-01"))).toMatchObject({ label: BILL_NEXT_PART, renewal: false, note: null });
   });
 
-  it("at year end (20 Dec, every part of 2026 billed): 'Bill renewal · part 1 of next year' + 'Renewal for 1 Jan–31 Dec 2027 · part 1 (1 Jan–30 Jun 2027): 10 × ₹3,000'", () => {
+  it("at year end (20 Dec, every part of 2026 billed): 'Send renewal · part 1 of next year' + 'Renewal for 1 Jan–31 Dec 2027 · part 1 (1 Jan–30 Jun 2027): 10 × ₹3,000'", () => {
     const a = renewalActionSet(sub(), null, { ...OWNER, daysUntil: days("2026-12-20") });
     expect(a.primary).toEqual({ kind: "generate", label: BILL_RENEWAL_YEAR });
-    expect(BILL_RENEWAL_YEAR).toBe("Bill renewal · part 1 of next year");
+    expect(BILL_RENEWAL_YEAR).toBe("Send renewal · part 1 of next year");
     /* ₹60,000 a year ÷ 2 parts = ₹30,000 a half-year ÷ 10 seats = ₹3,000 a seat a part. */
     expect(a.note).toBe("Renewal for 1 Jan–31 Dec 2027 · part 1 (1 Jan–30 Jun 2027): 10 × ₹3,000");
   });
@@ -69,7 +69,7 @@ describe("R-2548 the next part to bill — mid-term part or the renewal", () => 
     const six = sub({ term_months: 6, billing_cycle: "quarterly", start_date: "2026-07-01", renewal_date: "2026-12-31", mrr: 5000 });
     const r = nextPartToBill(six, days("2026-12-20"));
     expect(r.label).toBe(BILL_RENEWAL_TERM);
-    expect(BILL_RENEWAL_TERM).toBe("Bill renewal · part 1 of next term");
+    expect(BILL_RENEWAL_TERM).toBe("Send renewal · part 1 of next term");
     expect(r.note).toBe("Renewal for 1 Jan–30 Jun 2027 · part 1 (1 Jan–31 Mar 2027): 10 × ₹1,500");
   });
 

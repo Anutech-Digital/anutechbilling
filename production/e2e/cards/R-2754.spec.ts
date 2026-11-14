@@ -7,7 +7,7 @@
  *
  * Data (local docker DB only, fixed ids, removed before and after): CT R2754 Domains Pvt Ltd with a
  * yearly "Domain Registration .com" subscription renewing in 18 days (the 8–30 tab). Its renewal
- * quote is made by the row's own "Review renewal quote" button (a DRAFT, notes = the system
+ * quote is made by the row's own "Send renewal" button (a DRAFT, notes = the system
  * sentence "Renewal quote (operator-generated) for subscription <uuid>"). The howToCheck names
  * SCN Kochi Hosting (same shape, already in E2E Test Co); the test plants its own row so a Save
  * never changes that one.
@@ -62,10 +62,10 @@ async function row(page: Page) {
   return r;
 }
 
-/** Renewals → 8–30 → the row's "Review renewal quote" → the editor, loaded. */
+/** Renewals → 8–30 → the row's "Send renewal" → the editor, loaded. */
 async function reviewFromRenewals(page: Page) {
   const r = await row(page);
-  await clickWhenReady(r.getByRole("button", { name: /^(Send renewal|Continue|Review renewal quote|Change renewal quote)$/ }));
+  await clickWhenReady(r.getByRole("button", { name: /^(Send renewal|Continue|Send renewal|Change renewal)$/ }));
   await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit\?returnTo=%2Frenewals%3Fbucket%3Dd30$/, { timeout: 120_000 });
   const box = page.locator("#qb-notes").filter({ visible: true });
   await waitForHydrated(page, box);
@@ -116,6 +116,6 @@ test.describe("R-2754 card test", () => {
     expect(notesOf(id)).toContain(`subscription ${SUB}`);       // open-renewal-quotes still finds it
     expect(notesOf(id)).toContain("Staff only (not shown to the customer):");
     const r = await row(page);
-    await expect(r.getByRole("button", { name: /^(Send renewal|Continue|Review renewal quote)$/ })).toBeVisible({ timeout: 60_000 });
+    await expect(r.getByRole("button", { name: /^(Send renewal|Continue|Send renewal)$/ })).toBeVisible({ timeout: 60_000 });
   });
 });

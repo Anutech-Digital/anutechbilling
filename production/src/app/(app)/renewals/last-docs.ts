@@ -459,6 +459,17 @@ export function quoteExpiryText(expiresDate: string | null | undefined, todayIst
   return `Expired ${plural(-d, "day")} ago`;
 }
 
+/**
+ * R-2767 (R-2742, audit P10): on the ROW a quote's validity shows only when it matters — 3 days or less
+ * left, or expired. No expiry (a part proforma never expires) or more days left → null (the drawer has it).
+ */
+export const EXPIRY_ROW_DAYS = 3;
+export function quoteExpiryNote(expiresDate: string | null | undefined, todayIst: string): string | null {
+  const left = validityDaysLeft(expiresDate, todayIst);
+  if (left == null || left - 1 > EXPIRY_ROW_DAYS) return null;
+  return quoteExpiryText(expiresDate, todayIst);
+}
+
 /** The renewal date's due words — ONE wording, used by the status chip too (queue.ts renewalRowStatus). */
 export function renewalDueText(daysUntil: number): string {
   if (daysUntil < 0) return `Overdue ${Math.abs(daysUntil)}d`;

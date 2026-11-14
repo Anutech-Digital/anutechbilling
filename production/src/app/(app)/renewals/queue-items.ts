@@ -131,7 +131,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
           : null,
         followup,
       }),
-      amount: renewalAmount(r.sub, quoteOf(r.sub)),
+      amount: renewalAmount(r.sub, quoteOf(r.sub), r.sub.quote_id ? f.quoteInfo?.get(r.sub.quote_id) : null),   // R-2767: sale quote's currency
       frequency: renewalFrequency(r.sub),
       commitment: renewalCommitment(r.sub),
       docs,

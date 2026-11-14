@@ -1,5 +1,5 @@
 /**
- * R-2710 — the shared renewal quote for "Review renewal quote": a DRAFT only when asked; the line
+ * R-2710 — the shared renewal quote for "Send renewal": a DRAFT only when asked; the line
  * carries its catalogue item and, on a whole multi-year term, its years (so the editor's
  * "Register for N years" starts right); a draft is gated / marked sent by the reminder senders.
  */

@@ -1,6 +1,6 @@
 /**
  * Card test — R-2728 "Renewals list: show the last quote and invoice sent (clickable); after
- * 'Review renewal quote' / 'Bill next part' the row stays, shown under 'Renewal quote sent' with
+ * 'Send renewal' / 'Bill next part' the row stays, shown under 'Renewal quote sent' with
  * 'expires in N days'" (Pardeep for Pratik, 13 Nov).
  *
  * One test per howToCheck step, on the LOCAL app (E2E Test Co) through the Local test login.
@@ -101,7 +101,7 @@ test.describe("R-2728 card test", () => {
     await expect(inv).toContainText("Paid");
     /* the sent quote's row: one button (Follow up) — never a second Send / Review; Change renewal is in ⋯ */
     await expect(r.getByTestId("stage-primary")).toHaveText(/Follow up/);
-    await expect(r.getByRole("button", { name: /Review renewal quote|Send renewal/ })).toHaveCount(0);
+    await expect(r.getByRole("button", { name: /Send renewal|Send renewal/ })).toHaveCount(0);
   });
 
   test("Step 2: the 'Bill next part' row shows its part proforma clickable and stays as 'Renewal quote sent' (not 'Renewed'), 'No expiry set'", async ({ browser, baseURL }) => {

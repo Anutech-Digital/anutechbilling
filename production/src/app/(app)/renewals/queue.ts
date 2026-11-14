@@ -26,7 +26,7 @@ import { partsDue } from "@/lib/renewals/split-billed-next-part";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { termAmountOf } from "@/lib/billing/subscription-schedule";
 import { nonRenewingLabel } from "@/lib/subscriptions/non-renewing";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee, formatDate, foreignAmount } from "@/lib/utils";
 import { RENEWAL_URGENT_DAYS, RENEWAL_UPCOMING_DAYS, RENEWAL_FUTURE_DAYS, RENEWAL_EXCLUDED_STATUS } from "@/lib/renewals/buckets";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { expiredGraceText, isStopped, type RenewalGroups } from "./classify";
@@ -261,6 +261,21 @@ export interface RenewalQuoteInfo {
   amount: number | null;
   status: string | null;
   payment_status?: string | null;
+  /** R-2767: the quote's customer currency and its ₹ rate (quotes.amount stays the ₹ books figure). */
+  currency?: string | null;
+  exchange_rate?: number | null;
+}
+
+/** R-2767: a foreign-currency customer's renewal is shown in their currency — the sale's (or renewal's) quote says which. */
+export const EXPORT_GST = "no GST (LUT)";
+
+function foreignOf(...quotes: (RenewalQuoteInfo | null | undefined)[]): { currency: string; rate: number } | null {
+  for (const q of quotes) {
+    const cur = (q?.currency ?? "INR").toUpperCase();
+    const rate = Number(q?.exchange_rate);
+    if (cur !== "INR" && Number.isFinite(rate) && rate > 0) return { currency: cur, rate };
+  }
+  return null;
 }
 
 const CLOSED_QUOTE = new Set(["rejected", "expired", "cancelled", "void", "invoiced"]);
@@ -300,13 +315,32 @@ const DRAFT_QUOTE = "draft";
  * amount, the tiles, the forecast and the bulk/CSV total read `value`. A sent / viewed / accepted
  * quote only adds `quoteNote` (its total incl. GST); a draft adds nothing.
  */
-export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | null }, quote: RenewalQuoteInfo | null | undefined): RenewalAmount {
+export function renewalAmount(
+  sub: AmountSub & { renewal_quote_id?: string | null },
+  quote: RenewalQuoteInfo | null | undefined,
+  /** R-2767: the subscription's own (sale) quote — its currency decides a foreign customer's figure. */
+  saleQuote?: RenewalQuoteInfo | null,
+): RenewalAmount {
   /* R-2422: how it is paid ("Annual · paid quarterly · ₹19,500 each") is frequency.ts — one wording. */
   const v = termAmountOf({ mrr: sub.mrr, term_months: sub.term_months ?? 12, term_amount: sub.term_amount ?? null });
   /* code-review: only a real draft is hidden — a quote with no status (imported) is treated as live. */
   const status = quote?.status ?? "";
   const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(status) && status !== DRAFT_QUOTE && (quote.amount ?? 0) > 0
     ? quote : null;
+  /* R-2767 (audit P11): a USD / foreign customer reads their own currency, never "₹… + GST" (exports carry no GST
+     under the LUT). value stays ₹ — sorting, tiles, forecast and CSV add up rupees. */
+  const fx = foreignOf(q ?? (quote && sub.renewal_quote_id === quote.id ? quote : null), saleQuote);
+  if (fx) {
+    const foreign = foreignAmount(fx.currency, v, fx.rate);
+    const qf = q ? foreignAmount(fx.currency, Number(q.amount ?? 0), fx.rate) : null;
+    return {
+      value: v,
+      text: `${foreign}${termSuffix(sub.term_months)}`,
+      gst: EXPORT_GST,
+      quoteNote: qf ? `Quote ${qf}` : null,
+      quoteShort: qf ? `quote ${qf}` : null,
+    };
+  }
   return {
     value: v,
     text: `${rupee(v)}${termSuffix(sub.term_months)}`,

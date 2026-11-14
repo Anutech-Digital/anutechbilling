@@ -1,5 +1,5 @@
 /**
- * Card test — R-2548 "Bill renewal · part 1 of next year" (R-2554).
+ * Card test — R-2548 "Send renewal · part 1 of next year" (R-2554).
  *
  * One test per howToCheck step, on the LOCAL app (E2E Test Co) through the Local test login.
  * Run: `node scripts/ops/card-tests.mjs R-2548`.
@@ -27,7 +27,7 @@ import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
 
-const BUTTON = "Bill renewal · part 1 of next year";
+const BUTTON = "Send renewal · part 1 of next year";
 const SCENARIO = "renewal-parts";
 const A = "SCN Part Bill Studio";
 const B = "SCN Part Bill Late Co";
@@ -136,7 +136,7 @@ async function renewalsRow(page: Page, customer: string): Promise<Locator> {
   return row.first();
 }
 
-test.describe("R-2548 — end of an annual commitment billed in parts: 'Bill renewal · part 1 of next year'", () => {
+test.describe("R-2548 — end of an annual commitment billed in parts: 'Send renewal · part 1 of next year'", () => {
   onlyInCardTests();
 
   test.beforeAll(() => {
@@ -166,7 +166,7 @@ test.describe("R-2548 — end of an annual commitment billed in parts: 'Bill ren
     }
   });
 
-  /* R-2760 (R-2738 ownerRule, 13 Nov): on Renewals the label "Bill renewal · part 1 of next year" is retired —
+  /* R-2760 (R-2738 ownerRule, 13 Nov): on Renewals the label "Send renewal · part 1 of next year" is retired —
      one verb "Bill next part", the row's button only inside the 7 days before the part starts (A renews in
      30 days → Follow up; Bill next part in ⋯). Payment Follow-up (2b) keeps the older rows. */
   test("Step 2a: Renewals — 30 days out the row's one button is Follow up; ⋯ has 'Bill next part' (no 'Bill renewal · part 1' label)", async ({ browser, baseURL }) => {
