@@ -326,3 +326,340 @@
   }
   .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > div:last-child > .btn { width: 100%; justify-content: center; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   CONTACT (/contact — artboard Contact; page app/(marketing)/contact + SupportBody.tsx). Title
+   beside the support illustration under a mint circle; the topics as a grid of white question
+   cards; the three channel notes as mint / marigold / white tiles; the aside as white rounded
+   cards with icon squares and the call booker as a forest card with marigold slots.
+   Scoped by the page's own search box (no other page has it).
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child {
+  position: relative; isolation: isolate; overflow: hidden; padding: clamp(25px, 3.2vw, 45px) 0 clamp(27px, 3.52vw, 50px);
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child::before {
+  content: ""; position: absolute; z-index: -1; width: 520px; height: 520px; border-radius: 50%; background: var(--w-mint); right: -160px; top: -220px;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); grid-template-areas: "title art" "lead art" "body body";
+  column-gap: 40px; align-items: center;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap > h1 {
+  grid-area: title; align-self: end; margin: 0 0 14px !important; font-size: clamp(2.6rem, 5vw, 3.4rem); line-height: 1.05; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap > .body-lg {
+  grid-area: lead; align-self: start; margin: 0 !important; font-size: 17px; color: var(--w-muted);
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap::after {
+  content: ""; grid-area: art; width: 100%; aspect-ratio: 4 / 3; border-radius: 24px;
+  background: url(/site/warm/6257661abb76d551611b3ed1b334829a.svg) center / cover no-repeat;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap > [data-grid] {
+  grid-area: body; margin-top: clamp(24px, 2.6vw, 36px); gap: 23px !important;
+}
+@media (min-width: 980px) {
+  .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] { grid-template-columns: minmax(0, 1fr) minmax(0, 440px) !important; }
+}
+
+/* Left: search, the heading line, the topics as a card grid, then the channel tiles. */
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 12px; align-items: stretch;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > :is(input, div) { grid-column: 1 / -1; margin: 0 !important; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) input[aria-label="Search help topics"] {
+  min-height: 52px; border-radius: 14px !important; border: 1.5px solid var(--w-line-strong) !important; background: var(--w-surface); color: var(--w-ink);
+  font-size: 16px !important; padding: 0 18px !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) input[aria-label="Search help topics"]:focus {
+  outline: none; border-color: var(--w-teal) !important; box-shadow: 0 0 0 3px rgba(14, 107, 92, 0.16);
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > .meta {
+  margin-top: 14px !important; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 22px; font-weight: 700; line-height: 1.3; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a {
+  flex-direction: column; align-items: flex-start !important; gap: 6px !important; padding: 18px 20px !important; border: 1px solid var(--w-line) !important;
+  border-radius: 16px; background: var(--w-surface); color: var(--w-ink) !important; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a:hover {
+  border-color: var(--w-teal) !important; transform: translateY(-3px); box-shadow: 0 16px 34px rgba(18, 49, 42, 0.1);
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label {
+  width: auto !important; font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 11px; font-weight: 800; letter-spacing: 0.08em;
+  color: var(--w-marigold-ink) !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > span:nth-child(2) { flex: none !important; font-weight: 600 !important; font-size: 16px !important; line-height: 1.4; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > span:last-child {
+  margin-top: auto; padding-top: 4px; font-size: 14px !important; color: var(--w-teal) !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div[style*="dashed"] {
+  border-radius: 16px !important; background: var(--w-surface); border-color: var(--w-line-strong) !important;
+}
+
+/* The three channel notes. */
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child {
+  margin-top: 14px !important; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 16px !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card {
+  padding: 22px !important; border-radius: 18px; border: 0; background: var(--w-mint); box-shadow: none;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card:nth-child(2) { background: var(--w-marigold-soft); }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card:nth-child(n+3) { background: var(--w-surface); border: 1px solid var(--w-line); }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card::before {
+  content: ""; display: block; width: 44px; height: 44px; margin-bottom: 12px; border-radius: 12px;
+  background: #FFFFFF url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5'/%3E%3C/svg%3E") center / 22px no-repeat;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card:nth-child(2)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239A6200' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 3h12v18l-3-2-3 2-3-2-3 2z M9 8h6 M9 12h6'/%3E%3C/svg%3E");
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card:nth-child(n+3)::before {
+  background-color: var(--w-mint);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 5h18v16H3z M3 10h18 M8 3v4 M16 3v4'/%3E%3C/svg%3E");
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card > div {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 17px !important; color: var(--w-ink); margin-bottom: 6px !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card > p { font-size: 15px !important; color: var(--w-ink-2); }
+
+/* Right: the contact cards. */
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card {
+  padding: 20px 22px !important; border-radius: 20px; border: 1px solid var(--w-line); background: var(--w-surface); box-shadow: none;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:hover { transform: none; box-shadow: none; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card > div:first-child {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 17px !important; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card > p { font-size: 15px !important; color: var(--w-muted); }
+/* Email support: icon square beside the title; the address as a big teal link. */
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card-highlight > div:first-child,
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(a[target="_blank"]) > div:first-child {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card-highlight > div:first-child::before,
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(a[target="_blank"]) > div:first-child::before {
+  content: ""; flex: none; width: 40px; height: 40px; border-radius: 12px;
+  background: var(--w-mint) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='3'/%3E%3Cpath d='M3.5 7l8.5 6 8.5-6'/%3E%3C/svg%3E") center / 20px no-repeat;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(a[target="_blank"]) > div:first-child::before {
+  background-color: #E3F4EA;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231E8E4E' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20.5 11.6a8.5 8.5 0 0 1-12.6 7.5L3.5 20.5l1.4-4.2A8.5 8.5 0 1 1 20.5 11.6z'/%3E%3C/svg%3E");
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card-highlight .btn {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0; background: transparent; border: 0; box-shadow: none;
+  color: var(--w-teal); font-size: 17px; font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card-highlight .btn:hover { background: transparent; color: var(--w-teal-dark); text-decoration: underline; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(a[target="_blank"]) .btn {
+  display: flex; align-items: center; justify-content: center; width: 100%; min-height: 48px; border-radius: 12px; border: 0;
+  background: var(--w-teal); color: var(--w-on-teal); font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(a[target="_blank"]) .btn:hover { background: var(--w-teal-dark); }
+
+/* The call booker: forest card, slot buttons in even rows, marigold when picked. */
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) {
+  background: var(--w-forest); border-color: var(--w-forest); color: var(--w-on-forest);
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) > div:first-child { color: #FFFFFF; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) > .meta { font-size: 15px; color: var(--w-on-forest); margin-bottom: 14px !important; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) > div:has(> button.chip) {
+  display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) > div:has(> button.chip-primary) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) button.chip {
+  justify-content: center; min-height: 44px; padding: 0 6px !important; border-radius: 10px; border: 1.5px solid #3A5A51; background: transparent;
+  color: #FFFFFF; font-size: 14px !important; font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) button.chip:hover { border-color: var(--w-marigold); }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) button.chip[aria-pressed="true"] {
+  background: var(--w-marigold); border-color: var(--w-marigold); color: var(--w-on-marigold); font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) .btn {
+  display: flex; align-items: center; justify-content: center; text-align: center; white-space: normal; min-height: 50px; padding: 8px 12px; margin-top: 4px;
+  border-radius: 12px; border: 0; background: var(--w-marigold); color: var(--w-on-marigold); font-size: 15px; font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:has(button.chip) .btn:hover { background: var(--w-marigold-hover); color: var(--w-on-marigold); }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card:last-child > a {
+  min-height: 32px; display: flex !important; align-items: center; font-size: 15px !important; color: var(--w-teal) !important; margin-bottom: 0 !important;
+}
+
+@media (max-width: 860px) {
+  .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap {
+    grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "lead" "art" "body";
+  }
+  .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap::after { max-width: 420px; margin: 23px auto 0; }
+}
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap > :is(h1, .body-lg) { text-align: center; }
+  .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > .meta { font-size: 20px; text-align: center; }
+  .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > span:last-child { min-height: 24px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   QUOTE (/quote — artboard Quote; page app/(marketing)/quote + quote/QuoteBuilder.tsx). Title
+   beside the "team reviewing figures" photo; both steps as white rounded panels with square step
+   numbers (marigold = still to do, teal = done) and a round mint chevron; every product a rounded
+   row that turns mint with a teal tick when picked; the estimate as a forest card with the
+   payable amount in marigold. The generated quotation (data-quote-doc) stays a white document.
+   Only shape and colour change here: every line, price and total is the component's own.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child { padding: clamp(22px, 2.88vw, 40px) 0 clamp(27px, 3.52vw, 50px); }
+.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child > .wrap {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); grid-template-areas: "intro photo" "builder builder"; gap: 28px 40px; align-items: center;
+}
+.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child > .wrap > div:first-child {
+  grid-area: intro; max-width: none !important; margin: 0 !important; display: flex; flex-direction: column; gap: 14px;
+}
+.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child > .wrap > div:first-child > * { margin: 0 !important; }
+.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child .h1-page { font-size: clamp(2.4rem, 5vw, 3.23rem); line-height: 1.06; color: var(--w-ink); }
+.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child .body-lg { max-width: 760px; font-size: 17px; color: var(--w-muted); }
+.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child > .wrap::after {
+  content: ""; grid-area: photo; width: 100%; height: clamp(140px, 15.4vw, 196px); border-radius: 24px;
+  background: url(/site/warm/5f257eec397cdf71c1d6123a1699738a.jpg) center / cover no-repeat; box-shadow: 0 20px 50px rgba(18, 49, 42, 0.14);
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] { grid-area: builder; gap: 28px !important; }
+@media (min-width: 980px) {
+  .anutech-site[data-site-theme="warm"] #main [data-grid="quote"] { grid-template-columns: minmax(0, 1fr) minmax(0, 420px) !important; }
+}
+
+/* The two step panels. */
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div[style*="border-radius: 12px"] {
+  border-radius: 22px !important; border-color: var(--w-line) !important; box-shadow: none !important; overflow: hidden; background: var(--w-surface) !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] {
+  min-height: 76px; padding: 16px 20px !important; gap: 14px !important; border-bottom-color: var(--w-line) !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] > span:first-child {
+  width: 30px !important; height: 30px !important; border-radius: 9px !important; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif;
+  font-size: 15px !important; font-weight: 800 !important; background: var(--w-marigold) !important; color: var(--w-on-marigold) !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] > span:first-child[style*="--success"] {
+  background: var(--w-teal) !important; color: var(--w-on-teal) !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] > span:nth-child(2) > span:first-child {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 20px !important; line-height: 1.3; color: var(--w-ink) !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] > span:nth-child(2) > span:last-child { font-size: 14px !important; color: var(--w-muted-2) !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] > span[aria-hidden] {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--w-mint); color: var(--w-teal) !important; font-size: 12px !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] + div { padding: 20px !important; }
+
+/* Step 1: category pills, search, the commitment switch, the product rows. */
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] .chip {
+  min-height: 40px; padding: 0 16px; border-radius: 999px; background: var(--w-surface); border: 1.5px solid var(--w-line-strong); color: var(--w-ink); font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] .chip:hover { border-color: var(--w-teal); }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] .chip[aria-pressed="true"] { background: var(--w-teal); border-color: var(--w-teal); color: var(--w-on-teal); }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] :is(input[aria-label="Search products"], input[aria-label="Filter extensions"], label > input, label > textarea) {
+  min-height: 50px; border-radius: 12px !important; border-color: var(--w-line-strong); background: var(--w-surface-2); color: var(--w-ink); font-size: 16px !important; padding-inline: 14px !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] label > input[aria-invalid="true"] { border-color: var(--warning) !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] :is(input:not([type="checkbox"]), textarea):focus {
+  outline: none; border-color: var(--w-teal) !important; box-shadow: 0 0 0 3px rgba(14, 107, 92, 0.15);
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] input[aria-label="Search products"] { margin-top: 4px; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] div[style*="border-radius: 999px"][style*="padding: 3px"] {
+  background: var(--w-bg) !important; border: 0 !important; border-radius: 12px !important; padding: 4px !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] div[style*="border-radius: 999px"][style*="padding: 3px"] > button { border-radius: 10px !important; padding: 0 16px !important; font-size: 14px !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] div[style*="border-radius: 999px"][style*="padding: 3px"] > button[aria-pressed="true"] { font-weight: 700 !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] div[style*="border-radius: 999px"][style*="padding: 3px"] + span {
+  border-radius: 999px; padding: 4px 12px; background: var(--w-mint); color: var(--w-teal-dark) !important;
+}
+.anutech-site[data-site-theme="warm"] #main #quote-lines { gap: 8px; }
+.anutech-site[data-site-theme="warm"] #main #quote-lines > div {
+  border: 1.5px solid var(--w-line) !important; border-radius: 14px; background: var(--w-surface); padding: 12px 16px; transition: border-color .15s ease, background-color .15s ease;
+}
+.anutech-site[data-site-theme="warm"] #main #quote-lines > div:hover { border-color: var(--w-line-strong) !important; }
+.anutech-site[data-site-theme="warm"] #main #quote-lines > div:has([role="checkbox"][aria-checked="true"]) { border-color: var(--w-teal) !important; background: var(--w-mint-soft); }
+.anutech-site[data-site-theme="warm"] #main #quote-lines > div > div:first-child { padding: 0 !important; gap: 12px 16px !important; }
+.anutech-site[data-site-theme="warm"] #main #quote-lines [role="checkbox"] {
+  width: 28px !important; height: 28px !important; border-radius: 8px !important; font-weight: 800; border-color: var(--w-line-strong) !important;
+}
+.anutech-site[data-site-theme="warm"] #main #quote-lines [role="checkbox"][aria-checked="true"] { background: var(--w-teal) !important; border-color: var(--w-teal) !important; }
+.anutech-site[data-site-theme="warm"] #main #quote-lines [role="checkbox"] + button > span:first-child { font-size: 15.5px !important; color: var(--w-ink) !important; }
+.anutech-site[data-site-theme="warm"] #main #quote-lines [role="checkbox"] + button > span:last-child { font-size: 13px !important; color: var(--w-muted-2) !important; }
+.anutech-site[data-site-theme="warm"] #main #quote-lines .mono {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 14.5px !important; font-weight: 700; color: var(--w-ink) !important;
+}
+.anutech-site[data-site-theme="warm"] #main #quote-lines span[style*="overflow: hidden"] {
+  border: 1.5px solid var(--w-line-strong) !important; border-radius: 12px !important; background: var(--w-surface);
+}
+.anutech-site[data-site-theme="warm"] #main #quote-lines span[style*="overflow: hidden"] > button {
+  min-width: 40px; min-height: 40px !important; background: var(--w-bg) !important; color: var(--w-teal) !important; font-size: 18px;
+}
+.anutech-site[data-site-theme="warm"] #main #quote-lines span[style*="overflow: hidden"] > input {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif !important; font-weight: 700; min-height: 40px !important; border-color: var(--w-line) !important; background: var(--w-surface);
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] div[style*="var(--tint)"][style*="padding: 12px"] {
+  background: var(--w-bg) !important; border: 0 !important; border-radius: 14px !important; padding: 14px !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] div[style*="var(--tint)"][style*="padding: 12px"] .mono-label {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; color: var(--w-muted-2) !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] button[aria-pressed][style*="font-family: var(--font-mono)"] { min-height: 36px; padding: 0 12px !important; }
+
+/* Step 2: the contact fields. */
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] + div[data-grid] { gap: 16px 18px !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child label { font-size: 14px !important; font-weight: 600; color: var(--w-ink-2) !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child label > :is(input, textarea) { margin-top: 6px !important; font-weight: 400; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > p.meta { font-size: 14px; color: var(--w-muted-2); }
+
+/* The estimate rail (before Generate): forest card, white figures, marigold total. */
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child {
+  border-radius: 22px !important; border-color: var(--w-line) !important; box-shadow: none !important; padding: 22px !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) {
+  background: var(--w-forest) !important; border-color: var(--w-forest) !important; color: var(--w-on-forest);
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > .mono-label {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; color: var(--w-marigold) !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) :is(.meta, .mono, span, div, p, li, label):not([data-busy-panel], [data-busy-panel] *) { color: var(--w-on-forest) !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > .mono-label { color: var(--w-marigold) !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > div[style*="space-between"] {
+  border-bottom-color: #2A4A41 !important; font-size: 15px !important; padding: 8px 0 !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > div[style*="space-between"] > span:last-child,
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > div[style*="margin-top: 10px"] > div:not([style*="border-top"]) > span:last-child {
+  color: #FFFFFF !important; font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > div[style*="margin-top: 10px"] { font-size: 15px !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > div[style*="margin-top: 10px"] > div[style*="border-top"] {
+  align-items: baseline; padding: 12px 14px !important; margin: 10px 0 8px !important; border: 0 !important; border-radius: 12px; background: rgba(255, 255, 255, 0.06);
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > div[style*="margin-top: 10px"] > div[style*="border-top"] > span:first-child { color: #FFFFFF !important; font-weight: 600 !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > div[style*="margin-top: 10px"] > div[style*="border-top"] > span:last-child {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 26px !important; font-weight: 800 !important; color: var(--w-marigold) !important;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > div[style*="margin-top: 10px"] > div:last-child { font-size: 13px !important; color: #A9C2B8 !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) [data-purpose] {
+  opacity: 1 !important; margin: 16px 0 0 !important; padding: 14px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.06);
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) [data-purpose] > p:first-child { color: #FFFFFF !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) a { color: var(--w-marigold) !important; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) [data-purpose] label { min-height: 44px; align-items: flex-start; font-size: 14px; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) [data-purpose] input[type="checkbox"] { width: 20px !important; height: 20px !important; accent-color: var(--w-marigold); }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) [role="alert"] { color: #FFD27A !important; font-weight: 600; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child .btn-primary {
+  min-height: 54px; border-radius: 14px; font-size: 16px; font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:not(:has([data-quote-doc])) > p.meta:last-child { font-size: 13px; color: #A9C2B8 !important; }
+/* After Generate: the quotation document on white, buttons in the warm shapes. */
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:has([data-quote-doc]) .btn { min-height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:has([data-quote-doc]) [role="status"],
+.anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:last-child:has([data-quote-doc]) [role="alert"] { border-radius: 14px !important; }
+
+@media (max-width: 860px) {
+  .anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child > .wrap { grid-template-columns: minmax(0, 1fr); grid-template-areas: "intro" "photo" "builder"; }
+  .anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child > .wrap::after { max-width: 440px; justify-self: center; }
+}
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child > .wrap > div:first-child { text-align: center; align-items: center; }
+  .anutech-site[data-site-theme="warm"] #main [data-grid="quote"] > div:first-child > div > button[aria-expanded] + div { padding: 16px !important; }
+  .anutech-site[data-site-theme="warm"] #main #quote-lines > div { padding: 12px; }
+  .anutech-site[data-site-theme="warm"] #main #quote-lines > div > div:first-child { flex-wrap: wrap; }
+  .anutech-site[data-site-theme="warm"] #main #quote-lines [role="checkbox"] + button { flex-basis: calc(100% - 44px) !important; }
+  .anutech-site[data-site-theme="warm"] #main #quote-lines .mono { margin-left: 40px; }
+  .anutech-site[data-site-theme="warm"] #main #quote-lines span[style*="overflow: hidden"] { margin-left: auto; }
+}
