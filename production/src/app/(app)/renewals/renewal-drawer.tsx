@@ -13,7 +13,6 @@
  */
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,29 +34,31 @@ import {
   currentTermWords, drawerSubFromSearch, withDrawerSub, drawerDocRows, drawerFlagRows, drawerFollowupRows, drawerPage, drawerPaymentRows,
   remindersWords, termLengthWords, type DrawerDocRow,
 } from "./drawer";
-import { priorDueInvoiceGap, type DocTone } from "./last-docs";
+import { priorDueInvoiceGap, type DocTone, type LastDocs } from "./last-docs";
 import { priorTermDue } from "./prior-due";
 import { nextTermWords } from "./row-cells";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
 
-/**
- * The open drawer's subscription id, kept in ?sub= so the link can be shared and Back closes it:
- * opening pushes a history entry through the app router (a hand-made pushState is not one Next
- * knows — its Back re-rendered the page and lost the focus), closing goes back over it (or drops
- * ?sub= when the page was opened from a shared link); Back / Forward re-read it.
- */
 /** What opened the drawer (the product button) — focus goes back to it on close. */
 let drawerOpener: HTMLElement | null = null;
 
+/**
+ * The open drawer's subscription id, kept in ?sub= so the link can be shared and Back closes it.
+ * Plain history.pushState / replaceState — Next 15's router keeps them in step without a server
+ * round trip (router.push re-requested the /renewals payload on every open). Opening pushes an
+ * entry; closing goes back over an entry this page pushed (also one reached again by Forward), or
+ * just drops ?sub= when the page was opened from a shared link. Back / Forward re-read it.
+ */
 export function useRenewalDrawerSub(): [string | null, (id: string) => void, () => void] {
-  const router = useRouter();
   const [id, setId] = React.useState<string | null>(null);
+  /* the ?sub= entry on screen was pushed by this page (so Close = Back) */
   const pushed = React.useRef(false);
+  const pushedAny = React.useRef(false);
   React.useEffect(() => {
     const read = () => {
       const next = drawerSubFromSearch(window.location.search);
-      if (!next) pushed.current = false;
+      pushed.current = !!next && pushedAny.current;
       setId(next);
     };
     read();
@@ -68,13 +69,14 @@ export function useRenewalDrawerSub(): [string | null, (id: string) => void, () 
     drawerOpener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     setId(next);
     pushed.current = true;
-    router.push(withDrawerSub(window.location.href, next) as never, { scroll: false });
-  }, [router]);
+    pushedAny.current = true;
+    window.history.pushState(null, "", withDrawerSub(window.location.href, next));
+  }, []);
   const close = React.useCallback(() => {
     setId(null);
-    if (pushed.current) { pushed.current = false; router.back(); }
-    else router.replace(withDrawerSub(window.location.href, null) as never, { scroll: false });
-  }, [router]);
+    if (pushed.current) { pushed.current = false; window.history.back(); }
+    else window.history.replaceState(null, "", withDrawerSub(window.location.href, null));
+  }, []);
   return [id, open, close];
 }
 
@@ -91,6 +93,8 @@ export interface DrawerItem {
   frequency: string | null;
   followup: RenewalFollowup;
   payHref: string | null;
+  /** The row's own documents (already read) — the flags' wording uses the same facts as the row's chip. */
+  docs: LastDocs | undefined;
 }
 
 const TONE: Record<DocTone, string> = {
@@ -159,7 +163,7 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   const fuRows = sub ? drawerFollowupRows(followupRows.filter((r) => r.subscription_id === sub.id), nameOf) : [];
   const flags = item?.stage && sub
     ? drawerFlagRows(item.stage.flags, {
-        priorDueGap: priorDueInvoiceGap(docs, priorTermDue(sub), todayIst),
+        priorDueGap: priorDueInvoiceGap(item.docs, priorTermDue(sub), todayIst),
         nonRenewing: isNonRenewing(sub) ? { reason: sub.non_renew_reason, saidOn: sub.non_renew_said_on } : null,
         renewedAnyway: vendorHoldState(sub as Parameters<typeof vendorHoldState>[0]) === "overridden",
       })

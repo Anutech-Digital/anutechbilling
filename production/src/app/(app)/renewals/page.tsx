@@ -454,7 +454,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
               const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
               return (
                 <tr key={sub.id} className="cursor-pointer border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row"
-                  onClick={(e) => { if (isRowOpenClick(e.target)) onOpen(sub.id); }}>
+                  onClick={(e) => { if (e.currentTarget.contains(e.target as Node) && isRowOpenClick(e.target)) onOpen(sub.id); }}>
                   <td className="px-2 py-2.5">
                     <input
                       type="checkbox"
@@ -830,6 +830,8 @@ export default function RenewalsPage() {
      offered two 8–30 customers). The dialog lists who is emailed and who is skipped with the
      reason; nobody is emailed before "Email N" (R-239), and the result stays in the dialog. */
   const visibleRows = tile ? tileShown : shown[bucketTab];
+  /* Urgent rows: the primary button is filled — the queue and the row drawer (R-2740) read the same value. */
+  const queueStrong = tile ? tile === "overdue" || tile === "due30" : bucketTab === "overdue" || bucketTab === "due7";
   /* only ticked rows still on screen — a tick hidden by a later search / filter is not reminded */
   const tickedShown = visibleRows.filter((i) => selected.has(i.sub.id));
   const scope = reminderScope(tickedShown.length, tile ? TILE_LABEL[tile] : QUEUE_TAB_LABEL[bucketTab], visibleRows.length);
@@ -1131,7 +1133,7 @@ export default function RenewalsPage() {
         <div className="border-t border-hairline">
           <RenewalQueue
             rows={tile ? tileShown : shown[bucketTab]}
-            strong={tile ? tile === "overdue" || tile === "due30" : bucketTab === "overdue" || bucketTab === "due7"}
+            strong={queueStrong}
             selected={selected}
             onSelect={onSelect}
             emptyText={tabEmpty}
@@ -1147,6 +1149,7 @@ export default function RenewalsPage() {
       {/* R-2740: the row drawer — every quote + invoice, payments, follow-ups, flags explained (read-only). */}
       {(() => {
         const drawerItem = drawerSub ? allItems.find((i) => i.sub.id === drawerSub) ?? null : null;
+        /* the same filled / outline button as the row it came from */
         return (
           <RenewalDrawer
             item={drawerItem}
@@ -1155,7 +1158,7 @@ export default function RenewalsPage() {
             names={names}
             followupRows={fuData?.rows ?? []}
             onFollowup={drawerItem?.sub.customer_id ? () => setFollowupFor(drawerItem) : undefined}
-            strong={!!drawerItem && drawerItem.daysUntil <= 7}
+            strong={queueStrong}
           />
         );
       })()}

@@ -34,10 +34,8 @@ type SubRef = LastDocsInput["subs"][number];
 /** PostgREST `in.(…)` list — quoted so a comma or dot never splits an id. */
 const inList = (ids: readonly string[]) => `(${ids.map((x) => `"${x.replace(/["\\]/g, "")}"`).join(",")})`;
 
-const QUOTE_COLS = "id, status, payment_status, created_at, created_date, expires_date, invoice_id, renewal_subscription_id, add_seats_subscription_id, subscription_billing_id, superseded_by, amount, currency, exchange_rate";
+const QUOTE_COLS = "id, status, payment_status, created_at, created_date, expires_date, invoice_id, renewal_subscription_id, add_seats_subscription_id, subscription_billing_id, superseded_by, revision_of, amount, currency, exchange_rate";
 const INVOICE_COLS = "id, quote_id, invoice_date, status, amount, paid_amount, currency, created_at, due_date, net_payable, adjusted_advances, written_off_at, fx_rate";
-/** R-2740: how far back the drawer follows a quote's revisions (R1 → R2 → … ). */
-const REVISION_STEPS = 10;
 const DETAIL_COLS = "id, line_items, is_renewal, is_extension, is_add_seats, is_one_off, extension_months, renewal_term_date, created_date";
 
 /** The read's own copy of each subscription (deduped, sorted — a stable query key). */
@@ -60,7 +58,14 @@ export function useRenewalLastDocs(subs: readonly SubRef[]) {
 }
 
 /** The batched read (see the header). `all` (R-2740 drawer): every linked quote + invoice, not only the row's. */
-export async function readRenewalDocs(rows: readonly SubRef[], opts: { all?: boolean } = {}): Promise<Map<string, LastDocs>> {
+export async function readRenewalDocs(
+  rows: readonly SubRef[],
+  opts: {
+    all?: boolean;
+    /** R-2740 drawer: more quotes for round 1 (the revisions of what it found), read with these columns. */
+    moreQuotes?: (found: readonly DocQuote[], cols: string) => Promise<DocQuote[]>;
+  } = {},
+): Promise<Map<string, LastDocs>> {
   const supabase = createClient();
   /* quotes.subscription_billing_id / subscription_billings.due_on (R-2044) are not in the generated types yet — the same untyped read as next-part-request.ts. */
   const loose = supabase as unknown as SupabaseClient;
@@ -88,24 +93,8 @@ export async function readRenewalDocs(rows: readonly SubRef[], opts: { all?: boo
       .range(from, to)),
   ]);
   const round1 = [...viaSub, ...own];
-  /* R-2740 drawer: revised-away quotes. A revision takes the subscription link off the old quote
-     (R-2368 trigger) — the old one is found by quotes.superseded_by, one step of the chain per read
-     (R1 → R2 → R3), at most REVISION_STEPS reads, only for the drawer's one subscription. */
-  if (opts.all) {
-    let step = [...new Set(round1.map((q) => q.id))];
-    const seen = new Set(step);
-    for (let i = 0; i < REVISION_STEPS && step.length; i++) {
-      const older = await fetchAllRowsIn<DocQuote, string>(step, (run, from, to) => loose
-        .from("quotes")
-        .select(QUOTE_COLS)
-        .in("superseded_by", run)
-        .order("id", { ascending: true })
-        .range(from, to));
-      const fresh = older.filter((q) => !seen.has(q.id));
-      for (const q of fresh) { seen.add(q.id); round1.push(q); }
-      step = fresh.map((q) => q.id);
-    }
-  }
+  /* R-2740 drawer: the other revisions of these quotes (drawer-data.ts readRevisions) join round 1. */
+  if (opts.moreQuotes) round1.push(...await opts.moreQuotes(round1, QUOTE_COLS));
   const quoteIds = [...new Set(round1.map((q) => q.id))];
   const invoiceIds = [...new Set([
     ...billings.map((b) => b.invoice_id),
@@ -133,7 +122,7 @@ export async function readRenewalDocs(rows: readonly SubRef[], opts: { all?: boo
       .range(from, to)),
   ]);
   const quotes = [...new Map([...round1, ...parts].map((q) => [q.id, q])).values()];
-  const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId] }, opts);
+  const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId] }, { all: opts.all });
 
   const shownInvoices = shownInvoiceIds(docs);
   let read: [DocQuoteDetail[], NoteAmountRow[], NoteAmountRow[]];

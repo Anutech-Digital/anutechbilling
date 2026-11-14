@@ -66,9 +66,24 @@ describe("R-2740 all documents of a subscription", () => {
     expect(d.quote?.id).toBe("Q-R3");
   });
 
-  it("the drawer read follows revisions only with { all } (the page's read stays as it was)", () => {
+  it("an unsent revision DRAFT (revision_of, no link yet) is listed too, and the quote it revises", () => {
+    const d = lastDocsBySubscription(input({
+      quotes: [
+        q({ id: "Q-R1", renewal_subscription_id: SUB, status: "sent", payment_status: "none", created_at: "2026-09-01T05:00:00Z" }),
+        q({ id: "Q-R1-R2", status: "draft", payment_status: "none", revision_of: "Q-R1", created_at: "2026-09-01T09:00:00Z", created_date: "2026-09-01" }),
+      ],
+    }), { all: true }).get(SUB)!;
+    expect(d.allQuotes!.map((x) => x.id)).toEqual(["Q-R1-R2", "Q-R1"]);
+    /* same day: the later revision first (created_at order kept, not the id string) */
+    expect(drawerDocRows(d, TODAY).map((r) => r.id)).toEqual(["Q-R1-R2", "Q-R1"]);
+  });
+
+  it("the drawer alone follows revisions (the page's read keeps its 9 batched reads)", () => {
     const data = readFileSync(new URL("./last-docs-data.ts", import.meta.url), "utf8");
-    expect(data).toMatch(/if \(opts\.all\) \{[\s\S]*?\.in\("superseded_by", run\)/);
+    expect(data).toMatch(/if \(opts\.moreQuotes\) round1\.push/);
+    const drawerData = readFileSync(new URL("./drawer-data.ts", import.meta.url), "utf8");
+    expect(drawerData).toMatch(/superseded_by\.in\.[\s\S]*?revision_of\.in\./);
+    expect(drawerData).toMatch(/moreQuotes: readRevisions/);
   });
 
   it("without { all } the lists are not built (the page's batched read stays as it was)", () => {
@@ -224,7 +239,7 @@ describe("R-2740 wiring", () => {
   const read = (f: string) => readFileSync(new URL(f, import.meta.url), "utf8");
   it("the drawer reads once per open, through the rows' own batched readers (no per-document calls)", () => {
     const data = read("./drawer-data.ts");
-    expect(data).toMatch(/readRenewalDocs\(\[ref!\], \{ all: true \}\)/);
+    expect(data).toMatch(/readRenewalDocs\(\[ref!\], \{ all: true, moreQuotes: readRevisions \}\)/);
     expect(data).toMatch(/readRenewalLastPaid\(\[ref!\], \{ historySize: Infinity \}\)/);
     expect(data).toMatch(/enabled: !!ref/);
     expect(data.match(/useQuery\(/g)).toHaveLength(1);
@@ -240,5 +255,9 @@ describe("R-2740 wiring", () => {
     expect(page).toMatch(/useRenewalDrawerSub\(\)/);
     expect(read("./renewal-drawer.tsx")).toMatch(/drawerSubFromSearch\(window\.location\.search\)/);
     expect(read("./row-cells.tsx")).toMatch(/data-testid="renewal-open-drawer"/);
+    /* a click inside a row's own (portalled) dialog or menu never opens the drawer */
+    expect(page).toMatch(/e\.currentTarget\.contains\(e\.target as Node\) && isRowOpenClick\(e\.target\)/);
+    /* the drawer's button looks like the row's (one value) */
+    expect(page.match(/strong=\{queueStrong\}/g)).toHaveLength(2);
   });
 });
