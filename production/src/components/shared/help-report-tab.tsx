@@ -151,7 +151,7 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const words = text.trim() || (caughtError ? `Error: ${caughtError}` : "");
+    const words = text.trim() || (caughtError ?? "");
     if (!words) {
       toast.error("Report box is empty", { description: "Write what happened and what you expected, then submit." });
       return;
@@ -238,7 +238,7 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
         {caughtError && (
           <div className="rounded-lg bg-red-50 text-red-900 text-xs px-2.5 py-2 flex items-start gap-2">
             <Icon name="alert" size={14} className="mt-0.5 shrink-0" />
-            <div className="min-w-0 break-words"><b>Error caught:</b> {caughtError} — it goes with this report.</div>
+            <div className="min-w-0 break-words">{caughtError} — it goes with this report.</div>
           </div>
         )}
         <div>

@@ -294,9 +294,10 @@ function useTrail(pathname: string) {
   const pathRef = React.useRef(pathname);
   const [unseen, setUnseen] = React.useState<TrailEvent | null>(null);
 
-  const add = React.useCallback((kind: TrailKind, text: string | null | undefined) => {
+  /* R-2713: `path` = the page the problem belongs to (a failed request: where it STARTED). */
+  const add = React.useCallback((kind: TrailKind, text: string | null | undefined, path?: string) => {
     if (!text) return;
-    const ev: TrailEvent = { kind, at: Date.now(), text: maskPII(text, 200) ?? "", path: pathRef.current };
+    const ev: TrailEvent = { kind, at: Date.now(), text: maskPII(text, 200) ?? "", path: path ?? pathRef.current };
     trail.current = pushTrail(trail.current, ev);
     if (isProblem(ev)) setUnseen(ev);
   }, []);
@@ -333,13 +334,14 @@ function useTrail(pathname: string) {
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const method = init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
+      const startPath = pathRef.current;   // R-2713: a slow request that fails after moving on belongs to the page that sent it
       try {
         const res = await original(input, init);
-        if (!url.includes("/api/ai/help") && apiFailureWorthNoting(url, res.status)) add("api_fail", apiFailText(method, url, res.status));
+        if (!url.includes("/api/ai/help") && apiFailureWorthNoting(url, res.status)) add("api_fail", apiFailText(method, url, res.status), startPath);
         return res;
       } catch (err) {
         /* R-365: a refused data:/blob: fetch (the PDF engine's inlined wasm) is not an API call. */
-        if (!(err instanceof DOMException && err.name === "AbortError") && !url.includes("/api/ai/help") && !isInPageUrl(url)) add("api_fail", apiFailText(method, url, 0));
+        if (!(err instanceof DOMException && err.name === "AbortError") && !url.includes("/api/ai/help") && !isInPageUrl(url)) add("api_fail", apiFailText(method, url, 0), startPath);
         throw err;
       }
     };
@@ -394,7 +396,9 @@ export function AiHelp() {
   const rootRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => (rootRef.current ? installHelpPanelGuard(rootRef.current) : undefined), []);
   /* R-2713: the tooltip says where and when — "Error on /quotes at 02:30 pm: …". */
-  React.useEffect(() => { setHelpUi({ alert: unseen ? `${problemWhereWhen(unseen)}: ${unseen.text}` : null }); }, [unseen]);
+  const caughtWhere = unseen ? problemWhereWhen(unseen) : null;
+  const caughtFull = unseen ? `${caughtWhere}: ${unseen.text}` : null;
+  React.useEffect(() => { setHelpUi({ alert: caughtFull }); }, [caughtFull]);
   /* R-223: panel size (desktop). Read after mount so the server render never touches storage. */
   const [size, setSize] = React.useState<PanelSize>(PANEL_NORMAL);
   const [, setVpTick] = React.useState(0);
@@ -859,7 +863,7 @@ export function AiHelp() {
             <div className="px-3 py-2 border-b border-hairline bg-red-50 text-red-900 text-xs flex items-start gap-2">
               <Icon name="alert" size={14} className="mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="font-semibold">{problemWhereWhen(unseen)}</div>
+                <div className="font-semibold">{caughtWhere}</div>
                 <div className="break-words">{unseen.text}</div>
               </div>
               <Button size="sm" variant="primary" disabled={!!busy} onClick={() => void ask("error")}>Report it</Button>
@@ -1071,7 +1075,7 @@ export function AiHelp() {
           </div>
           ) : (
             <div role="tabpanel" id="help-panel-report" aria-labelledby="help-tab-report" className="flex-1 min-h-0 flex flex-col">
-              <HelpReportTab pathname={pathname} getTrail={() => trail.current} caughtError={unseen ? `${unseen.text} (${problemWhereWhen(unseen, "on")})` : null} onCaughtErrorUsed={clearUnseen} onFiled={() => setOpen(false)} />
+              <HelpReportTab pathname={pathname} getTrail={() => trail.current} caughtError={caughtFull} onCaughtErrorUsed={clearUnseen} onFiled={() => setOpen(false)} />
             </div>
           )}
         </section>
