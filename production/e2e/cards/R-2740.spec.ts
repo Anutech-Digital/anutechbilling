@@ -105,7 +105,7 @@ async function drawerShowsTheStory(page: Page): Promise<void> {
   const doc = (id: string) => docs.filter({ has: page.getByText(id, { exact: true }) });
   await expect(docs).toHaveCount(6, { timeout: 60_000 });   // 4 quotes + 2 invoices
   await expect(doc("Q-CT2740-R1")).toContainText("Revised — replaced by Q-CT2740-R2");
-  await expect(doc("Q-CT2740-R2").getByTestId("renewal-drawer-doc-status")).toHaveText("Sent");
+  await expect(doc("Q-CT2740-R2").getByTestId("renewal-drawer-doc-status")).toHaveText(/^Sent( · expires .*)?$/);   // R-2767: + the validity while the quote is with the customer
   await expect(doc("INV-CT2740-P").getByTestId("renewal-drawer-doc-status")).toHaveText(/^Overdue 43d · ₹23,010$/);
   await expect(doc("INV-CT2740-A").getByTestId("renewal-drawer-doc-status")).toHaveText("Paid");
   await expect(doc("INV-CT2740-P")).toContainText(" · for ");   // the billed quarter's period

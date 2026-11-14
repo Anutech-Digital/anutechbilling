@@ -26,7 +26,7 @@ import { partsDue } from "@/lib/renewals/split-billed-next-part";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { termAmountOf } from "@/lib/billing/subscription-schedule";
 import { nonRenewingLabel } from "@/lib/subscriptions/non-renewing";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee, formatDate, foreignAmount } from "@/lib/utils";
 import { RENEWAL_URGENT_DAYS, RENEWAL_UPCOMING_DAYS, RENEWAL_FUTURE_DAYS, RENEWAL_EXCLUDED_STATUS } from "@/lib/renewals/buckets";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { expiredGraceText, isStopped, type RenewalGroups } from "./classify";
@@ -261,6 +261,20 @@ export interface RenewalQuoteInfo {
   amount: number | null;
   status: string | null;
   payment_status?: string | null;
+  /** R-2767: the quote's customer currency and its ₹ rate (quotes.amount stays the ₹ books figure). */
+  currency?: string | null;
+  exchange_rate?: number | null;
+}
+
+/** R-2767: a foreign-currency customer's renewal is shown in their currency — the sale's (or renewal's) quote says which. */
+export const EXPORT_GST = "no GST (LUT)";
+
+/** A quote's own foreign currency + ₹ rate; null = ₹, or no real rate (quotes.exchange_rate defaults to 1 —
+    the builder treats ≤ 1 as "rate missing" too, so ₹ is never printed with a $ sign). */
+function foreignOf(q: RenewalQuoteInfo | null | undefined): { currency: string; rate: number } | null {
+  const cur = (q?.currency ?? "").trim().toUpperCase() || "INR";
+  const rate = Number(q?.exchange_rate);
+  return cur !== "INR" && Number.isFinite(rate) && rate > 1 ? { currency: cur, rate } : null;
 }
 
 const CLOSED_QUOTE = new Set(["rejected", "expired", "cancelled", "void", "invoiced"]);
@@ -300,19 +314,38 @@ const DRAFT_QUOTE = "draft";
  * amount, the tiles, the forecast and the bulk/CSV total read `value`. A sent / viewed / accepted
  * quote only adds `quoteNote` (its total incl. GST); a draft adds nothing.
  */
-export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | null }, quote: RenewalQuoteInfo | null | undefined): RenewalAmount {
+export function renewalAmount(
+  sub: AmountSub & { renewal_quote_id?: string | null },
+  quote: RenewalQuoteInfo | null | undefined,
+  /** R-2767: the subscription's own (sale) quote — its currency decides a foreign customer's figure. */
+  saleQuote?: RenewalQuoteInfo | null,
+): RenewalAmount {
   /* R-2422: how it is paid ("Annual · paid quarterly · ₹19,500 each") is frequency.ts — one wording. */
   const v = termAmountOf({ mrr: sub.mrr, term_months: sub.term_months ?? 12, term_amount: sub.term_amount ?? null });
   /* code-review: only a real draft is hidden — a quote with no status (imported) is treated as live. */
   const status = quote?.status ?? "";
   const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(status) && status !== DRAFT_QUOTE && (quote.amount ?? 0) > 0
     ? quote : null;
+  /* R-2767 (audit P11): a USD / foreign customer reads their own currency, never "₹… + GST" (exports carry no GST
+     under the LUT). value stays ₹ — sorting, tiles, forecast and CSV add up rupees. */
+  /* The row's currency is the SALE quote's (what this customer is billed in) — a draft / closed renewal quote
+     never changes the row (R-2751). The sent quote's note is in THAT quote's own currency: a renewal quote made
+     in ₹ for a USD customer reads "Quote ₹…", the figure the customer holds. */
+  const qfx = q ? foreignOf(q) : null;
+  const qForeign = q && qfx ? foreignAmount(qfx.currency, Number(q.amount ?? 0), qfx.rate) : null;
+  const quoteNote = !q ? null : qForeign ? `Quote ${qForeign}` : `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST`;
+  const quoteShort = !q ? null : qForeign ? `quote ${qForeign}` : `quote ${rupee(Math.round(q.amount ?? 0), { compact: true })}`;
+  const fx = foreignOf(saleQuote);
+  const foreign = fx ? foreignAmount(fx.currency, v, fx.rate) : null;
+  if (foreign) {
+    return { value: v, text: `${foreign}${termSuffix(sub.term_months)}`, gst: EXPORT_GST, quoteNote, quoteShort };
+  }
   return {
     value: v,
     text: `${rupee(v)}${termSuffix(sub.term_months)}`,
     gst: "+ GST",
-    quoteNote: q ? `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST` : null,
-    quoteShort: q ? `quote ${rupee(Math.round(q.amount ?? 0), { compact: true })}` : null,
+    quoteNote,
+    quoteShort,
   };
 }
 

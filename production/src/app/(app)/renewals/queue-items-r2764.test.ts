@@ -79,6 +79,6 @@ describe("R-2761 buildQueueItems — Renewal held flag", () => {
   it("page passes holds into buildQueueItems and its useMemo deps", () => {
     const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
     expect(src).toMatch(/useRenewalHolds\(listed\.map\(\(s\) => s\.id\)\)/);
-    expect(src).toMatch(/todayIst: todayIst, holds,\n\s*\}\) : null\), \[[^\]]*\bholds\]\);/);
+    expect(src).toMatch(/todayIst: todayIst, holds,\r?\n\s*\}\) : null\), \[[^\]]*\bholds\]\);/);
   });
 });

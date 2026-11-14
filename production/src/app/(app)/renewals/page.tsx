@@ -221,8 +221,9 @@ function showsExpiry(item: { stage: RenewalStage | null; docs?: LastDocs }): boo
 /** R-2759: the table row's owner / next follow-up / promise, as the customer name's tooltip (the drawer, R-2740, will show them). */
 function followupWords(followup: RenewalFollowup, names: Map<string, UserName> | undefined): string {
   const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
+  /* R-2767: the row never says there is no owner (drawer only) — the owner is named when there is one */
   return [
-    owner ? `Owner: ${owner}` : "No owner yet",
+    owner ? `Owner: ${owner}` : null,
     followup.nextFollowUpOn ? `Next follow-up ${formatDate(followup.nextFollowUpOn)}` : null,
     followup.promisedOn && followup.promiseStatus !== "kept"
       ? `${followup.promiseBroken ? "Promise broken" : "Promised"} ${formatDate(followup.promisedOn)}${followup.promisedAmount ? ` · ${rupee(followup.promisedAmount)}` : ""}`
@@ -236,9 +237,12 @@ function FollowupLine({ followup, names }: { followup: RenewalFollowup; names: M
      due and a broken promise are the chip's flag icons. */
   return (
     <div className="mt-1.5 space-y-0.5 text-2xs">
-      <p className={cn("truncate", owner ? "text-ink-2" : "text-ink-3")} title={owner ? `Owner: ${owner}` : "No owner yet"}>
-        <Icon name="user" size={10} className="mr-0.5 inline shrink-0" />{owner ?? "No owner"}
-      </p>
+      {/* R-2767: "No owner" never on the row (drawer only) */}
+      {owner && (
+        <p className="truncate text-ink-2" title={`Owner: ${owner}`}>
+          <Icon name="user" size={10} className="mr-0.5 inline shrink-0" />{owner}
+        </p>
+      )}
       {followup.nextFollowUpOn && !followup.followUpDue && (
         <p className="tabular-nums text-ink-3">
           Next: {formatDate(followup.nextFollowUpOn)}
@@ -575,7 +579,7 @@ export default function RenewalsPage() {
     .map((s) => withRenewalQuote(s, openRenewalMap)), [subs, openRenewalMap]);
   /* R-2753: isLoading — the Remind button waits for the contacts, so a customer with no email is never counted in "Email N". */
   const { data: contacts, isLoading: contactsLoading } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
-  const { data: quoteInfo, isLoading: quoteInfoLoading } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
+  const { data: quoteInfo, isLoading: quoteInfoLoading } = useRenewalQuoteInfo(listed.flatMap((s) => [s.renewal_quote_id, s.quote_id]));   // R-2767: + the sale quote (its currency)
   /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
   const { data: fuData } = useRenewalFollowups(listed.map((s) => s.id), listed.map((s) => s.customer_id ?? ""));
   const { data: names } = useUserNames();

@@ -26,7 +26,7 @@ import { termEndInclusive } from "@/lib/billing/schedule";
 import type { RenewalStage } from "@/lib/renewals/stage";
 import { renewalTermStart } from "./stage-input";
 import {
-  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryText, quoteStateLabel,
+  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel,
   type DocTone, type LastDocs, type LastInvoice, type LastQuote,
 } from "./last-docs";
 import type { RowContact } from "./queue-data";
@@ -153,9 +153,10 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, o
 }
 
 /** R-2760 (R-2728 owner ask "expires in N days"): a sent quote's validity, short for the Due column; full words are the tooltip. */
-export function quoteExpiryShort(expiresDate: string | null | undefined, todayIst: string): { text: string; title: string } {
-  const title = quoteExpiryText(expiresDate, todayIst);
-  if (!expiresDate) return { text: "no expiry", title };
+export function quoteExpiryShort(expiresDate: string | null | undefined, todayIst: string): { text: string; title: string } | null {
+  /* R-2767: only 3 days or less left, or expired — else the Due cell keeps its "in 6d" line */
+  const title = quoteExpiryNote(expiresDate, todayIst);
+  if (!title || !expiresDate) return null;
   const d = daysBetweenIst(todayIst, expiresDate);
   return { text: d > 0 ? `exp. in ${d}d` : d === 0 ? "exp. today" : "expired", title };
 }

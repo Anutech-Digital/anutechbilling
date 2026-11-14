@@ -1,5 +1,5 @@
 /**
- * R-2710 — "Change renewal quote" on the Renewals row: which draft opens in the editor.
+ * R-2710 — "Change renewal" on the Renewals row: which draft opens in the editor.
  */
 import { describe, it, expect } from "vitest";
 import { renewalChangeStep } from "./start-revision";

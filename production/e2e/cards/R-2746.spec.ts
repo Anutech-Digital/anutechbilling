@@ -8,7 +8,7 @@
  * Data (local docker DB only, fixed ids, removed before and after):
  *   · CT R2746 Renewals Pvt Ltd (Delhi) with a yearly "Domain Registration .com" subscription
  *     (APP-made row: renewal_date = start_date + 12 months) renewing in 20 days. Its renewal quote is
- *     made by the same route the Renewals "Review renewal quote" button calls (a DRAFT).
+ *     made by the same route the Renewals "Send renewal" button calls (a DRAFT).
  */
 import { expect, test, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, E2E_TENANT_SQL, localDb, onlyInCardTests, onlyOne, openAppPage, pageAs } from "./card-steps";
@@ -73,7 +73,7 @@ test.describe("R-2746 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: Review renewal quote → the quote page's Line items say 'Renewal · <from> – <to>' with the line's own dates", async ({ browser, baseURL }) => {
+  test("Step 1: Send renewal → the quote page's Line items say 'Renewal · <from> – <to>' with the line's own dates", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = await reviewQuote(page);
     await openAppPage(page, `/quotes/${encodeURIComponent(id)}`);
