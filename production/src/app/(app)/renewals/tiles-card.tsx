@@ -48,7 +48,7 @@ export function RenewalTileRow({
   onPick: (key: TileKey) => void;
 }) {
   return (
-    <div className="mb-4 grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6" role="group" aria-label="Renewal totals — press one to list its renewals">
+    <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3 min-[1260px]:grid-cols-6" role="group" aria-label="Renewal totals — press one to list its renewals">
       {TILE_KEYS.map((key) => {
         const l = tileLines(key, tiles, month);
         return (
@@ -57,17 +57,21 @@ export function RenewalTileRow({
             type="button"
             aria-pressed={active === key}
             onClick={() => onPick(key)}
-            title={`${TILE_LABEL[key]}: ${l.full} — ${l.sub}. Press to list them.`}
+            title={`${TILE_LABEL[key]}: ${l.full} — ${l.sub} — ${l.hint}. Press to list them.`}
             className={cn(
-              "min-w-0 rounded-lg border bg-paper p-3 text-left transition-colors cursor-pointer",
+              "min-w-0 rounded-lg border bg-paper px-3 py-2 text-left transition-colors cursor-pointer",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
               active === key ? "border-amber bg-amber-soft" : "border-hairline hover:border-amber/60",
             )}
           >
             <p className="truncate text-3xs font-semibold uppercase tracking-wider text-ink-3">{TILE_LABEL[key]}</p>
-            <p className={cn("mt-0.5 font-serif text-lg font-bold tabular-nums", TONE[key])}>{l.value}</p>
-            <p className="truncate text-2xs text-ink-2">{l.sub}</p>
-            <p className="truncate text-2xs text-ink-3">{l.hint}</p>
+            {/* R-2821: ONE compact row — label, then the amount with its count beside it; the hint sits in the tooltip */}
+            <p className="flex min-w-0 items-baseline gap-1.5">
+              <span className={cn("shrink-0 font-serif text-lg font-bold tabular-nums", TONE[key])}>{l.value}</span>
+              <span className="truncate text-2xs text-ink-2">{l.sub}</span>
+            </p>
+            {/* the hint is kept for screen readers (the tooltip is the sighted way) */}
+            <span className="sr-only">{l.hint}</span>
           </button>
         );
       })}

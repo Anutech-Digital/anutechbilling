@@ -76,9 +76,10 @@ export function BillTogetherGroups({ groups, subOf, onBill, off, onToggle }: {
 }) {
   if (groups.length === 0) return null;
   return (
-    <section aria-label="Bill together" data-testid="bill-together-groups" className="border-b border-hairline bg-amber/5 px-3 py-2.5">
-      <p className="text-xs font-medium text-ink-2">Bill together — one proforma for these subscriptions of one customer</p>
-      <ul className="mt-1.5 space-y-1.5">
+    <section aria-label="Bill together" data-testid="bill-together-groups" className="border-b border-hairline bg-amber/5 px-3 py-1.5">
+      <p className="text-2xs font-medium text-ink-3">Bill together — one proforma for these subscriptions of one customer</p>
+      {/* R-2821: compact — a few groups show at once, the rest scroll inside (keyboard: Tab to the list) */}
+      <ul className="mt-1 max-h-24 space-y-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" tabIndex={0} aria-label="Subscriptions billed together">
         {groups.map((g) => {
           const on = tickedOf(g, off);
           return (

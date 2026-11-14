@@ -501,7 +501,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
           <thead>
             <tr className="border-b border-hairline bg-muted/30">
               {QUEUE_TABLE_COLS.map((c) => c.key === "select" ? (
-                <th key={c.key} className="px-2 py-2.5">
+                <th key={c.key} className="px-1.5 py-2">
                   <input
                     type="checkbox"
                     aria-label="Select all renewals on screen"
@@ -512,7 +512,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   />
                 </th>
               ) : (
-                <th key={c.key} className={cn("px-2 py-2.5 text-xs font-medium text-ink-3", c.align === "right" ? "text-right" : "text-left")}>{c.label}</th>
+                <th key={c.key} className={cn("px-1.5 py-2 text-xs font-medium text-ink-3", c.align === "right" ? "text-right" : "text-left")}>{c.label}</th>
               ))}
             </tr>
           </thead>
@@ -521,7 +521,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
               const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
               return (
                 <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
-                  <td className="px-2 py-2.5">
+                  <td className="px-1.5 py-1.5">
                     <input
                       type="checkbox"
                       aria-label={`Select ${sub.customer_name} — ${sub.plan}`}
@@ -530,20 +530,20 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                       onChange={(e) => onSelect([sub.id], e.target.checked)}
                     />
                   </td>
-                  <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
-                  <td className="min-w-0 px-2 py-2.5">
+                  <td className="min-w-0 px-1.5 py-1.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
+                  <td className="min-w-0 px-1.5 py-1.5">
                     <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null} />
                   </td>
-                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
-                  <td className="px-2 py-2.5 text-right">
+                  <td className="px-1.5 py-1.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
+                  <td className="px-1.5 py-1.5 text-right">
                     <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
                     <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteShort ? `${amount.gst} · ${amount.quoteShort}` : amount.gst}</p>
                   </td>
-                  <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
-                  <td className="min-w-0 px-2 py-2.5">
+                  <td className="min-w-0 px-1.5 py-1.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
+                  <td className="min-w-0 px-1.5 py-1.5">
                     <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} priorDue={priorTermDue(sub)} />
                   </td>
-                  <td className="min-w-0 px-2 py-2.5">
+                  <td className="min-w-0 px-1.5 py-1.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
                   </td>
                 </tr>
@@ -729,9 +729,9 @@ export default function RenewalsPage() {
   // subscriptions get created (a paid quote converts a lead into a subscription).
   if (all.length === 0) {
     return (
-      <div className="mx-auto max-w-[1800px] px-4 md:px-8 pb-20 pt-7">
+      <div className="mx-auto max-w-[1800px] px-4 2xl:px-8 pb-20 pt-4">
         <div className="mb-6">
-          <h1 className="font-serif text-2xl md:text-3xl text-ink">Renewals</h1>
+          <h1 className="font-serif text-2xl text-ink">Renewals</h1>
           <p className="text-sm text-ink-3 mt-1">Stay ahead of every subscription renewal — before service lapses.</p>
         </div>
         <Card>
@@ -988,14 +988,12 @@ export default function RenewalsPage() {
     : "No subscriptions in this window.";
 
   return (
-    <div className="mx-auto max-w-[1800px] px-4 md:px-8 pb-20 pt-7">
+    <div className="mx-auto max-w-[1800px] px-4 2xl:px-8 pb-20 pt-4">
       {/* ── Page header ── */}
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-3 flex items-start justify-between gap-4">
         <div>
-          <p className="mb-0.5 text-xs font-medium uppercase tracking-widest text-ink-3">
-            Revenue
-          </p>
-          <h1 className="font-serif text-3xl text-ink">Renewals</h1>
+          {/* R-2821: no "Revenue" eyebrow — the breadcrumb above already says Billing › Renewals (20px back for the rows) */}
+          <h1 className="font-serif text-2xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
             {queueCount} subscription{queueCount !== 1 ? "s" : ""} in the queue
             {shownCount !== queueCount && <> · {shownCount} match the search / filters</>}
@@ -1114,7 +1112,7 @@ export default function RenewalsPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search customer or domain"
               aria-label="Search renewals by customer or domain"
-              className="w-full sm:w-56"
+              wrapperClassName="w-full sm:w-56"
             />
             <select value={sort} onChange={(e) => setSort(e.target.value as QueueSort)} aria-label="Sort renewals" className={SELECT_CLS}>
               <option value="date">Sort: renewal date</option>

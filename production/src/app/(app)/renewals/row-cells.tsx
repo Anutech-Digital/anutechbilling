@@ -104,9 +104,9 @@ export function CustomerCell({ name, customerId, contact, more }: { name: string
   return (
     <div className="min-w-0" data-cell="customer">
       {customerId ? (
-        <Link href={`/customers/${customerId}` as never} className="block truncate font-semibold text-ink hover:underline" title={nameTitle}>{name}</Link>
+        <Link href={`/customers/${customerId}` as never} className="line-clamp-2 break-words font-semibold text-ink hover:underline" title={nameTitle}>{name}</Link>
       ) : (
-        <p className="truncate font-semibold text-ink" title={nameTitle}>{name}</p>
+        <p className="line-clamp-2 break-words font-semibold text-ink" title={nameTitle}>{name}</p>
       )}
       {parts.length ? (
         <p className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs text-ink-3" title={parts.join(" · ")}>
@@ -149,13 +149,13 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
   const title2 = [term ? `Renews for ${term}` : null, frequency].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0" data-cell="product">
-      <p className="truncate text-ink" title={line1}>
+      <p className="text-ink" title={line1}>
         {onOpen ? (
           <button type="button" onClick={onOpen} data-testid="renewal-open-drawer" aria-label={`${line1} — open details`}
-            className="block w-full min-w-0 truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            className="line-clamp-2 w-full min-w-0 break-words rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
             {line1}
           </button>
-        ) : line1}
+        ) : <span className="line-clamp-2 break-words">{line1}</span>}
       </p>
       {together ? (
         /* R-2808: billed together last cycle — "Bills with <other plan>" takes the period's place (the period
