@@ -54,6 +54,18 @@ insert into public.employees (id, tenant_id, name, monthly_gross, basic_monthly,
   ('c2812000-0000-4000-8000-0000000000e2', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Asha',  30000, 15000, '2025-01-01'),
   ('c2812000-0000-4000-8000-0000000000e3', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Ravi',  30000, 15000, '2025-01-01'),
   ('c2812000-0000-4000-8000-0000000000e4', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Kiran', 30000, 15000, '2025-01-01');
+-- M (merge_employees, R-2380): duplicates to merge — no PAN / same PAN / another PAN.
+insert into public.employees (id, tenant_id, name, monthly_gross, basic_monthly, joining_date, pan) values
+  ('c2812000-0000-4000-8000-0000000000e5', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Sunil Dup',  30000, 15000, '2025-01-01', null),
+  ('c2812000-0000-4000-8000-0000000000e6', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Sunil',      30000, 15000, '2025-01-01', 'ABCPS1234K'),
+  ('c2812000-0000-4000-8000-0000000000e7', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Neha Dup',   30000, 15000, '2025-01-01', 'ABCPN5678L'),
+  ('c2812000-0000-4000-8000-0000000000e8', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Neha',       30000, 15000, '2025-01-01', 'abcpn5678l'),
+  ('c2812000-0000-4000-8000-0000000000e9', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Vikas Dup',  30000, 15000, '2025-01-01', 'ABCPV1111M'),
+  ('c2812000-0000-4000-8000-0000000000ea', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Vikas',      30000, 15000, '2025-01-01', 'ABCPV2222N');
+-- N (book_bank_txn_as_incentive, R-1839): two money-out lines to book as incentive.
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit) values
+  ('c2812000-0000-4000-8000-0000000000c1', 'c2812000-0000-0000-0000-0000000000f0', 'c2812000-0000-4000-8000-0000000000b1', '2026-11-10', 'R2812 INCENTIVE OCT', 900, 0),
+  ('c2812000-0000-4000-8000-0000000000c2', 'c2812000-0000-0000-0000-0000000000f0', 'c2812000-0000-4000-8000-0000000000b1', '2026-11-11', 'R2812 INCENTIVE AUG', 500, 0);
 
 -- What the government already has (the owner's real path books these from a bank line / a tick).
 insert into public.statutory_dues_payments (id, tenant_id, kind, amount, paid_on, period, challan_no, bank_account_id) values
@@ -317,6 +329,64 @@ begin
   if (select tds from public.salary_payments where id = v_new) <> 0 then raise exception 'FAIL L2: refused edit changed the TDS'; end if;
   perform public.delete_salary_payment(v_new);
   raise notice 'PASS L: TDS-0 salary edits / undoes freely, but an edit cannot add TDS to a deposited month';
+end $$;
+
+-- ── M. merge_employees moves a salary to the kept employee (independent review, finding 1) ──
+do $$
+declare v_msg text; v_hint text; v_res jsonb;
+begin
+  -- deposited month, only the employee changes → allowed (the challan is a month total)
+  perform public.pay_salary('c2812000-0000-4000-8000-0000000000e5', '2026-10', '2026-10-31', 30000, 0, 0, 0, null, 1500, 0, 0, 0,
+                            'c2812000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null);
+  v_res := public.merge_employees('c2812000-0000-4000-8000-0000000000e6', 'c2812000-0000-4000-8000-0000000000e5');
+  if not exists (select 1 from public.salary_payments where employee_id = 'c2812000-0000-4000-8000-0000000000e6' and period = '2026-10' and tds = 1500) then
+    raise exception 'FAIL M1: merge in a deposited month did not move the salary';
+  end if;
+  -- filed quarter, same PAN (any case) → allowed
+  perform public.pay_salary('c2812000-0000-4000-8000-0000000000e7', '2026-08', '2026-08-31', 30000, 0, 0, 0, null, 1500, 0, 0, 0,
+                            'c2812000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null);
+  v_res := public.merge_employees('c2812000-0000-4000-8000-0000000000e8', 'c2812000-0000-4000-8000-0000000000e7');
+  if not exists (select 1 from public.salary_payments where employee_id = 'c2812000-0000-4000-8000-0000000000e8' and period = '2026-08') then
+    raise exception 'FAIL M2: merge with the same PAN in a filed quarter did not move the salary';
+  end if;
+  -- filed quarter, another PAN → refused with the merge message, nothing moved
+  perform public.pay_salary('c2812000-0000-4000-8000-0000000000e9', '2026-08', '2026-08-31', 30000, 0, 0, 0, null, 1500, 0, 0, 0,
+                            'c2812000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null);
+  begin
+    v_res := public.merge_employees('c2812000-0000-4000-8000-0000000000ea', 'c2812000-0000-4000-8000-0000000000e9');
+  exception when others then get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+  end;
+  if v_msg is null or v_msg not like '%Q2 FY 2026-27%is filed with R2812 Vikas Dup''s PAN (ABCPV1111M)%unmark the return on the Compliance page first, or file a revised return%' then
+    raise exception 'FAIL M3: merge across PANs in a filed quarter: %', coalesce(v_msg, 'went through');
+  end if;
+  if v_hint is distinct from '/compliance' then raise exception 'FAIL M4: hint %', v_hint; end if;
+  if not exists (select 1 from public.salary_payments where employee_id = 'c2812000-0000-4000-8000-0000000000e9' and period = '2026-08') then
+    raise exception 'FAIL M5: refused merge moved the salary';
+  end if;
+  raise notice 'PASS M: merge moves a deposited month''s salary; filed quarter only with the same PAN (or no PAN), else a merge message';
+end $$;
+
+-- ── N. Incentive booked from a bank line onto a locked month gets its own message ────
+do $$
+declare v_msg text; v_hint text;
+begin
+  begin
+    perform public.book_bank_txn_as_incentive('c2812000-0000-4000-8000-0000000000c1', 'c2812000-0000-4000-8000-0000000000e1', '2026-10', 100);
+  exception when others then get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+  end;
+  if v_msg is null or v_msg not like 'TDS for Oct 2026 is already deposited (TDS challan CH-OCT%this incentive%TDS in a later month%' then
+    raise exception 'FAIL N1: incentive with TDS onto a deposited month: %', coalesce(v_msg, 'went through');
+  end if;
+  if v_hint is distinct from '/accounting/banking/c2812000-0000-4000-8000-0000000000b1' then raise exception 'FAIL N2: hint %', v_hint; end if;
+  v_msg := null;
+  begin
+    perform public.book_bank_txn_as_incentive('c2812000-0000-4000-8000-0000000000c2', 'c2812000-0000-4000-8000-0000000000e2', '2026-08', 0);
+  exception when others then get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+  end;
+  if v_msg is null or v_msg not like '%is marked filed%this incentive%later month%' or v_hint is distinct from '/compliance' then
+    raise exception 'FAIL N3: incentive onto a filed quarter: % / %', coalesce(v_msg, 'went through'), v_hint;
+  end if;
+  raise notice 'PASS N: incentive from a bank line onto a locked month is refused with its own message + HINT';
 end $$;
 
 -- ── J. salary_tds_lock: who sees what ───────────────────────────────────────────────

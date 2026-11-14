@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.salary_tds_lock(uuid)') is not null and to_regprocedure('public.salary_tds_lock_message(text,text,text,text,integer,text)') is not null and exists(select 1 from pg_trigger where tgname = 'trg_salary_payments_tds_lock' and not tgisinternal) and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_salary_payment(uuid)') and prosrc like '%app.r2812_salary_edit%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.edit_salary_payment(uuid,uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer,integer)') and prosrc like '%salary_tds_lock_message%')
+-- deploy-peek: to_regprocedure('public.salary_tds_lock(uuid)') is not null and to_regprocedure('public.salary_tds_lock_message(text,text,text,text,integer,text)') is not null and exists(select 1 from pg_trigger where tgname = 'trg_salary_payments_tds_lock' and not tgisinternal) and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_salary_payment(uuid)') and prosrc like '%app.r2812_salary_edit%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.edit_salary_payment(uuid,uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer,integer)') and prosrc like '%salary_tds_lock_message%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_salary_payments_tds_lock()') and prosrc like '%v_src_pan%')
 -- deploy-key: r2812salarytdsdepositedlock
 -- 20261114110000_r2812_salary_tds_deposited_lock.sql
 --
@@ -34,6 +34,11 @@
 --   1c. trg_salary_payments_tds_lock — the table's own delete / update rights (RLS lets payroll
 --      roles write salary_payments straight) and other RPCs that change the row (adjust_salary_lop
 --      changes the LOP amount) meet the same lock for app sessions (code review of this card).
+--      Independent review (rev-r2812): a change of ONLY the employee (merge_employees, R-2380) is not a
+--      TDS change — allowed in a deposited month; in a filed quarter only when the duplicate has no PAN
+--      or the same PAN (else a merge message, HINT /compliance). An incentive added from a bank line
+--      (book_bank_txn_as_incentive, R-1839) onto a locked month gets its own message. A NEW salary with
+--      TDS booked into a locked month is not checked here (decision on the card, follow-up).
 --   2. delete_salary_payment = R-2772 body (20261114083830) + the lock (+ one declare).
 --   3. edit_salary_payment = R-2772 body + the TDS / 24Q checks around its Undo + Pay. Still
 --      SECURITY INVOKER.
@@ -139,14 +144,19 @@ create or replace function public.salary_tds_lock_message(p_kind text, p_what te
  security invoker
  set search_path to 'public'
 as $function$
-  select case p_kind
-    when 'filed' then
+  select case
+    -- R-2812 review: an incentive booked from a bank line onto the month (book_bank_txn_as_incentive)
+    when p_action = 'incentive' and p_kind = 'filed' then
+      format('%s and has %s''s %s salary in it — this incentive would change a filed figure. Book this incentive on a later month''s salary (or file a correction return and mark that return not filed first, on the Compliance page).', p_what, p_name, p_month)
+    when p_action = 'incentive' and p_kind = 'deposited' then
+      format('TDS for %s is already deposited (%s) — this incentive''s TDS cannot go into that month. Book this incentive with its TDS in a later month''s salary, or book it here with no TDS.', p_month, p_what)
+    when p_kind = 'filed' then
       format('%s and has %s''s %s salary in it (TDS ₹%s). ', p_what, p_name, p_month, p_tds)
       || case when p_action = 'undo'
            then 'Undoing it would make the books differ from the filed return. If this salary really was wrong: file a correction return (your CA / RPU), mark that return not filed (Compliance page, or untick it in Month close), then undo. To change only the bank account, notes or PF / ESI / other deductions, use Edit.'
            else 'Only what the return does not carry can change (bank account, notes, PF / ESI / other deductions) — the pay date, gross, LOP, incentive and TDS stay as filed. If they really were wrong: file a correction return (your CA / RPU), mark that return not filed (Compliance page, or untick it in Month close), then change it.'
          end
-    when 'deposited' then
+    when p_kind = 'deposited' then
       format('TDS for %s is already deposited (%s) and %s''s salary carries ₹%s of it. ', p_month, p_what, p_name, p_tds)
       || case when p_action = 'undo'
            then format('Undoing it would leave that challan without this TDS. To change other figures, use Edit and keep the TDS at ₹%s.', p_tds)
@@ -172,6 +182,12 @@ declare
   v_lock record;
   v_old_tds integer := coalesce(OLD.tds, 0);
   v_new_tds integer;
+  v_money   boolean;
+  v_action  text;
+  v_src_name text;
+  v_src_pan  text;
+  v_dst_name text;
+  v_dst_pan  text;
 begin
   if coalesce(public.current_request_role(), '') not in ('anon', 'authenticated') then
     return case when TG_OP = 'DELETE' then OLD else NEW end;
@@ -192,14 +208,38 @@ begin
   end if;
   v_new_tds := coalesce(NEW.tds, 0);
   if v_old_tds > 0 or v_new_tds > 0 then
-    if NEW.tds is distinct from OLD.tds or NEW.period is distinct from OLD.period
-       or NEW.employee_id is distinct from OLD.employee_id or NEW.tenant_id is distinct from OLD.tenant_id
-       or (NEW.pay_date, NEW.gross, NEW.lop_amount, NEW.incentive) is distinct from (OLD.pay_date, OLD.gross, OLD.lop_amount, OLD.incentive) then
+    v_money := NEW.tds is distinct from OLD.tds or NEW.period is distinct from OLD.period
+               or NEW.tenant_id is distinct from OLD.tenant_id
+               or (NEW.pay_date, NEW.gross, NEW.lop_amount, NEW.incentive) is distinct from (OLD.pay_date, OLD.gross, OLD.lop_amount, OLD.incentive);
+    /* R-2812 review (finding 1): ONLY the employee changes — merge_employees (R-2380) moving a
+       duplicate's salary to the kept employee. Not a TDS change: the challan is a month total, so a
+       deposited month is fine. A filed return carries the PAN, so a filed quarter allows it only
+       when the duplicate has no PAN or both PANs are the same. */
+    if not v_money and NEW.employee_id is distinct from OLD.employee_id then
+      select * into v_lock from public.salary_tds_lock(OLD.id);
+      if v_lock.o_kind = 'filed' then
+        select e.name, nullif(upper(trim(e.pan)), '') into v_src_name, v_src_pan from public.employees e where e.id = OLD.employee_id;
+        select e.name, nullif(upper(trim(e.pan)), '') into v_dst_name, v_dst_pan from public.employees e where e.id = NEW.employee_id;
+        if v_src_pan is not null and v_src_pan is distinct from v_dst_pan then
+          raise exception '% and has %''s % salary in it (TDS ₹%). That return is filed with %''s PAN (%); merging would move the salary to % (PAN %) — unmark the return on the Compliance page first, or file a revised return, then merge.',
+            v_lock.o_what, coalesce(v_src_name, 'this employee'), v_lock.o_month, v_old_tds, coalesce(v_src_name, 'this employee'), v_src_pan,
+            coalesce(v_dst_name, 'the other employee'), coalesce(v_dst_pan, 'none')
+            using errcode = 'check_violation', hint = v_lock.o_href;
+        end if;
+      end if;
+      return NEW;
+    end if;
+    if v_money or NEW.employee_id is distinct from OLD.employee_id then
       select * into v_lock from public.salary_tds_lock(OLD.id);
       if v_lock.o_kind = 'filed'
          or (v_lock.o_kind = 'deposited' and (NEW.tds is distinct from OLD.tds or NEW.period is distinct from OLD.period
-                                              or NEW.employee_id is distinct from OLD.employee_id or NEW.tenant_id is distinct from OLD.tenant_id)) then
-        raise exception '%', public.salary_tds_lock_message(v_lock.o_kind, v_lock.o_what, v_lock.o_name, v_lock.o_month, v_old_tds, 'change')
+                                              or NEW.tenant_id is distinct from OLD.tenant_id)) then
+        -- an incentive added onto the month (book_bank_txn_as_incentive, R-1839) gets its own text
+        v_action := case when coalesce(NEW.incentive, 0) > coalesce(OLD.incentive, 0) and NEW.period is not distinct from OLD.period
+                               and NEW.tenant_id is not distinct from OLD.tenant_id
+                               and (NEW.pay_date, NEW.gross, NEW.lop_amount) is not distinct from (OLD.pay_date, OLD.gross, OLD.lop_amount)
+                         then 'incentive' else 'change' end;
+        raise exception '%', public.salary_tds_lock_message(v_lock.o_kind, v_lock.o_what, v_lock.o_name, v_lock.o_month, v_old_tds, v_action)
           using errcode = 'check_violation', hint = v_lock.o_href;
       end if;
     end if;

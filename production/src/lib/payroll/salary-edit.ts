@@ -81,7 +81,7 @@ export function salaryRowActionState(
       edit: false, undo: false, adjustLop: false, editNote: null,
       lockReason: l.kind === "filed"
         ? `${l.what} — Undo / Edit would change a filed return`
-        : `TDS already deposited (${l.what}) — Undo / Edit would leave the challan without this TDS`,
+        : `TDS already deposited (${l.what}) — Undo / Edit would leave the challan without this TDS. A wrong TDS: put the difference into a later month's TDS`,
       lockHref: l.href,
       lockLinkLabel: l.kind === "filed" ? "Open Compliance →" : "Open challan bank line →",
     };
