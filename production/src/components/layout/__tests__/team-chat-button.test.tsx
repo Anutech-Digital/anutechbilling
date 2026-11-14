@@ -98,6 +98,6 @@ describe("topbar wiring (R-2300)", () => {
   });
 
   it("the Help tooltip reads 'Help & AI' so it is not taken for chat", () => {
-    expect(help).toMatch(/title=\{alert \? `Error caught: \$\{alert\}` : "Help & AI/);
+    expect(help).toMatch(/title=\{alert \?\? "Help & AI/);
   });
 });

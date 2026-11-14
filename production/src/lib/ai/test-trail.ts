@@ -21,6 +21,8 @@
  * hides in it (R-158 rule, kept).
  */
 
+import { formatIstTime } from "@/lib/dates/ist";
+
 /** input_needed (R-176): the app asked the user to fill or choose something — not a bug. */
 export type TrailKind = "page" | "click" | "error" | "api_fail" | "toast_error" | "input_needed";
 
@@ -46,6 +48,13 @@ export function pushTrail(trail: readonly TrailEvent[], ev: TrailEvent): TrailEv
 }
 
 export const isProblem = (e: TrailEvent) => e.kind === "error" || e.kind === "api_fail" || e.kind === "toast_error";
+
+/** R-2713 (Pratik): "Error on /quotes/new at 02:30 pm" — the page and IST time a caught error came
+ *  from, so an error from an earlier page is not taken for this page's. No time when it is unknown. */
+export function problemWhereWhen(e: TrailEvent, lead = "Error on"): string {
+  const time = Number.isFinite(e.at) ? formatIstTime(e.at) : "";
+  return time ? `${lead} ${e.path} at ${time}` : `${lead} ${e.path}`;
+}
 
 /** The class a toast carries when it only asks the user to fill something in (R-176). */
 export const NEEDS_INPUT_CLASS = "toast-needs-input";
