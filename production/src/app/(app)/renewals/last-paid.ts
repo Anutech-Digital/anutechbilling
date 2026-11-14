@@ -108,8 +108,12 @@ export function linkedDocs(input: Pick<LastPaidInput, "subs" | "linkedQuotes" | 
 const newestFirst = (a: PaidLine, b: PaidLine) =>
   b.receivedAt.localeCompare(a.receivedAt) || b.paymentId.localeCompare(a.paymentId);
 
-/** subscription id → its last captured payment + the last 3; a subscription with none is absent. */
-export function lastPaidBySubscription(input: LastPaidInput): Map<string, LastPaid> {
+/**
+ * subscription id → its last captured payment + the last 3; a subscription with none is absent.
+ * R-2740: the row drawer passes `historySize: Infinity` — every payment, the same links and rules.
+ */
+export function lastPaidBySubscription(input: LastPaidInput, opts: { historySize?: number } = {}): Map<string, LastPaid> {
+  const size = opts.historySize ?? HISTORY_SIZE;
   const { quoteSubs, invoiceSubs, invoiceOfQuote } = linkedDocs(input);
   const bySub = new Map<string, PaidLine[]>();
   const seen = new Set<string>();
@@ -135,7 +139,8 @@ export function lastPaidBySubscription(input: LastPaidInput): Map<string, LastPa
   }
   const out = new Map<string, LastPaid>();
   for (const [sid, xs] of bySub) {
-    const history = xs.sort(newestFirst).slice(0, HISTORY_SIZE);
+    const sorted = xs.sort(newestFirst);
+    const history = Number.isFinite(size) ? sorted.slice(0, size) : sorted;
     out.set(sid, { last: history[0], history });
   }
   return out;

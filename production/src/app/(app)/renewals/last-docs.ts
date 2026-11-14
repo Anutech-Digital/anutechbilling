@@ -35,6 +35,11 @@
  * payment status show hone chahiye". `invoices` = up to TWO linked invoices, newest first: the
  * R-2737 pick (`invoice` — never a void hiding money owed) and the newest other one; each carries
  * the quote it came from (`sourceQuote`). Tested in last-docs-r2748.test.ts.
+ *
+ * R-2740 (row drawer): `{ all: true }` also returns EVERY linked quote — drafts, cancelled and
+ * revised-away ones too, marked, never hidden — and every issued linked invoice (void too), newest
+ * first, as `allQuotes` / `allInvoices`; same links, words and periods as the row. Tested in
+ * drawer-r2740.test.ts.
  */
 import { rupee } from "@/lib/utils";
 import { shownQuoteStatus, validityDaysLeft } from "@/lib/quotes/quote-expiry";
@@ -57,6 +62,10 @@ export interface DocQuote {
   add_seats_subscription_id: string | null;
   subscription_billing_id: string | null;
   superseded_by: string | null;
+  /** R-2740: the quote's value in ₹ incl. GST (the books' figure) and how it is shown to the customer. */
+  amount?: number | null;
+  currency?: string | null;
+  exchange_rate?: number | null;
 }
 
 export interface DocBilling {
@@ -176,6 +185,16 @@ export interface SourceQuote {
   invoice_id: string | null;
 }
 
+/** R-2740: any linked quote, for the drawer's full list. */
+export interface DrawerQuote extends LastQuote {
+  /** The newer revision that replaced it (quotes.superseded_by); null = current. */
+  supersededBy: string | null;
+  /** ₹ incl. GST as stored; null = not read. */
+  amount: number | null;
+  currency: string | null;
+  fxRate: number | null;
+}
+
 export interface LastDocs {
   quote: LastQuote | null;
   invoice: LastInvoice | null;
@@ -184,6 +203,10 @@ export interface LastDocs {
   sent: SentRenewal | null;
   /** R-2747: the newest linked invoice with money still to collect (may be older than `invoice`); null = none. */
   owedInvoiceId?: string | null;
+  /** R-2740 (`{ all: true }` only): every linked quote, newest first. */
+  allQuotes?: DrawerQuote[];
+  /** R-2740 (`{ all: true }` only): every issued linked invoice (void ones too), newest first. */
+  allInvoices?: LastInvoice[];
 }
 
 /** Never sent to the customer, or taken back. */
@@ -205,7 +228,7 @@ function add<K, V>(m: Map<K, Set<V>>, k: K, v: V) {
 
 const newer = (a: { at: string; id: string }, b: { at: string; id: string }) => a.at > b.at || (a.at === b.at && a.id > b.id);
 
-export function lastDocsBySubscription(input: LastDocsInput): Map<string, LastDocs> {
+export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boolean } = {}): Map<string, LastDocs> {
   const subIds = new Set(input.subs.map((s) => s.id));
   const billingById = new Map(input.billings.map((b) => [b.id, b]));
   /* quote id → the listed subscriptions it belongs to */
@@ -328,6 +351,35 @@ export function lastDocsBySubscription(input: LastDocsInput): Map<string, LastDo
     d.invoice = d.invoices.find((x) => x.id === i.id)!;
   }
 
+  /* R-2740: the drawer's full lists — the same links as above, nothing left out (a draft, a revised-away
+     or a cancelled quote is listed with its own status, so the history has no gaps). */
+  if (opts.all) {
+    const byAt = (a: { at: string; id: string }, b: { at: string; id: string }) => (newer(a, b) ? -1 : newer(b, a) ? 1 : 0);
+    const quotesOfSub = new Map<string, DocQuote[]>();
+    for (const q of quoteById.values()) for (const sid of quoteSubs.get(q.id) ?? []) {
+      const list = quotesOfSub.get(sid);
+      if (list) list.push(q); else quotesOfSub.set(sid, [q]);
+    }
+    for (const s of input.subs) {
+      const d = out.get(s.id)!;
+      d.allQuotes = (quotesOfSub.get(s.id) ?? [])
+        .sort((a, b) => byAt({ at: a.created_at, id: a.id }, { at: b.created_at, id: b.id }))
+        .map((q): DrawerQuote => {
+          const fx = Number(q.exchange_rate);
+          return {
+            id: q.id, date: (q.created_date ?? q.created_at).slice(0, 10), status: q.status,
+            payment_status: q.payment_status, expires_date: q.expires_date, invoice_id: q.invoice_id,
+            part: partOf(q.subscription_billing_id), period: null,
+            supersededBy: q.superseded_by ?? null,
+            amount: q.amount == null ? null : Number(q.amount),
+            currency: q.currency ?? null,
+            fxRate: Number.isFinite(fx) && fx > 0 ? fx : null,
+          };
+        });
+      d.allInvoices = [...(allOfSub.get(s.id) ?? [])].sort((a, b) => byAt(atOf(a), atOf(b))).map((x) => toLast(x, s.id));
+    }
+  }
+
   /* The newest term each subscription has billing rows for — its renewal part lives there — and that
      term's FIRST part (period_index restarts each term: 1 on today's rows, 0 on a few older ones). */
   const newestTerm = new Map<string, string>();
@@ -411,8 +463,8 @@ export function quoteStateLabel(
 
 export type DocTone = "ok" | "warn" | "danger" | "muted";
 
-/** ₹ as the books hold it; a foreign-currency invoice in its own currency (₹ ÷ fx_rate, lib/currency.ts). */
-function invoiceMoney(i: LastInvoice, inr: number): string {
+/** ₹ as the books hold it; a foreign-currency document in its own currency (₹ ÷ fx_rate, lib/currency.ts). */
+export function docMoney(i: { currency: string | null; fxRate: number | null }, inr: number): string {
   const cur = (i.currency ?? "INR").trim().toUpperCase();
   if (!isForeignCurrency(cur)) return rupee(Math.round(inr));
   if (!i.fxRate) return `${rupee(Math.round(inr))} (${cur})`;
@@ -422,7 +474,7 @@ function invoiceMoney(i: LastInvoice, inr: number): string {
 
 /** R-2748: the invoice's whole value (incl. GST) in its own currency — "₹40,000" / "$1,200". */
 export function invoiceTotalWords(i: LastInvoice): string {
-  return invoiceMoney(i, i.amount);
+  return docMoney(i, i.amount);
 }
 
 /**
@@ -461,8 +513,8 @@ export function invoiceStatusWords(i: LastInvoice, todayIst: string): { text: st
   };
   const due = invoiceAmountDue(row);
   /* nothing left to collect but not marked paid: advances adjusted at issue covered it (/invoices: "Partial") */
-  if (due <= 0) return state === "partial" ? { text: "Covered by advance", tone: "ok" } : { text: `Unpaid · ${invoiceMoney(i, 0)}`, tone: "warn" };
-  const money = invoiceMoney(i, due);
+  if (due <= 0) return state === "partial" ? { text: "Covered by advance", tone: "ok" } : { text: `Unpaid · ${docMoney(i, 0)}`, tone: "warn" };
+  const money = docMoney(i, due);
   if (invoiceIsOverdue(row, todayIst)) {
     const d = invoiceOverdueDays(row, todayIst);
     return { text: `Overdue${d > 0 ? ` ${d}d` : ""} · ${money}${state === "partial" ? " due" : ""}`, tone: "danger" };
@@ -640,6 +692,8 @@ export function attachDocDetails(
       ...d,
       quote: d.quote ? { ...d.quote, period: periodOf(d.quote.part, d.quote.id, sid) } : null,
       ...oneCopy((d.invoices ?? []).map((i) => withDetails(i, sid)), d.invoice),
+      ...(d.allQuotes ? { allQuotes: d.allQuotes.map((q) => ({ ...q, period: periodOf(q.part, q.id, sid) })) } : {}),
+      ...(d.allInvoices ? { allInvoices: d.allInvoices.map((i) => withDetails(i, sid)) } : {}),
     });
   }
   return out;
@@ -650,12 +704,13 @@ export function detailQuoteIds(docs: Map<string, LastDocs>): string[] {
   const ids = new Set<string>();
   for (const d of docs.values()) {
     if (d.quote && !d.quote.part) ids.add(d.quote.id);
-    for (const i of d.invoices ?? []) if (!i.part && i.sourceQuoteId) ids.add(i.sourceQuoteId);
+    for (const i of [...(d.invoices ?? []), ...(d.allInvoices ?? [])]) if (!i.part && i.sourceQuoteId) ids.add(i.sourceQuoteId);
+    for (const q of d.allQuotes ?? []) if (!q.part) ids.add(q.id);   // R-2740
   }
   return [...ids].sort();
 }
 
 /** R-2737: the invoices whose credit / debit notes the status needs. */
 export function shownInvoiceIds(docs: Map<string, LastDocs>): string[] {
-  return [...new Set([...docs.values()].flatMap((d) => (d.invoices ?? []).map((i) => i.id)).filter((x): x is string => !!x))].sort();
+  return [...new Set([...docs.values()].flatMap((d) => [...(d.invoices ?? []), ...(d.allInvoices ?? [])].map((i) => i.id)).filter((x): x is string => !!x))].sort();
 }
