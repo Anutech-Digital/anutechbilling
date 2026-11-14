@@ -57,7 +57,7 @@ describe("salaryRowActionState — which actions a booked month offers", () => {
       tdsLock: { kind: "deposited", what: "TDS challan CH-OCT of ₹2000 paid on 06 Nov 2026 for Oct 2026", href: "/accounting/banking/acct-hdfc" },
     });
     expect(s).toMatchObject({ edit: false, undo: false, adjustLop: false, editNote: null, lockHref: "/accounting/banking/acct-hdfc" });
-    expect(s.lockReason).toBe("TDS already deposited (TDS challan CH-OCT of ₹2000 paid on 06 Nov 2026 for Oct 2026) — Undo / Edit would leave the challan without this TDS");
+    expect(s.lockReason).toBe("TDS already deposited (TDS challan CH-OCT of ₹2000 paid on 06 Nov 2026 for Oct 2026) — Undo / Edit would leave the challan without this TDS. A wrong TDS: put the difference into a later month's TDS");
     expect(s.lockLinkLabel).toBe("Open challan bank line →");
   });
   it("24Q of the quarter marked filed: no Edit / Undo, says so, links to Compliance", () => {
