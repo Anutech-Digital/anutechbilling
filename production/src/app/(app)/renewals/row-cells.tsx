@@ -142,7 +142,7 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, o
       <p className="truncate text-ink" title={line1}>
         {onOpen ? (
           <button type="button" onClick={onOpen} data-testid="renewal-open-drawer" aria-label={`${line1} — open details`}
-            className="inline-block max-w-full truncate rounded-sm text-left align-top underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            className="block w-full min-w-0 truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
             {line1}
           </button>
         ) : line1}
