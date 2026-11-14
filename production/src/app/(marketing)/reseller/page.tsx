@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ArrowDown, BarChart3, Check, IndianRupee, MessageCircle, Receipt, type LucideIcon } from "lucide-react";
 import Link from "@/site/components/ui/SiteLink";
 import { MarginCalculator } from "@/site/components/reseller/MarginCalculator";
 import { SectionHead, Reveal } from "@/site/components/ui/bits";
@@ -9,6 +10,21 @@ export const metadata: Metadata = {
   description:
     "Wholesale rates you can read before you join. No advance deposit, no volume slabs, no USD surprise at renewal.",
 };
+
+/* Warm theme only (class w-only — hidden on every other theme): the design's icon tile per
+   reason, keyed by the reason's own line so a reworded one simply shows no icon. */
+const WARM_REASON_ICONS: Record<string, LucideIcon> = {
+  "Rate card published, ₹0 to join": Receipt,
+  "One rate at every volume": BarChart3,
+  "Billed in ₹, GST invoice every time": IndianRupee,
+  "WhatsApp, and someone who knows your account": MessageCircle,
+};
+
+function ReasonTile({ us }: { us: string }) {
+  const Icon = WARM_REASON_ICONS[us];
+  if (!Icon) return null;
+  return <span className="w-only rs-tile" aria-hidden="true"><Icon size={24} strokeWidth={1.9} /></span>;
+}
 
 export default function ResellerPage() {
   return (
@@ -23,14 +39,28 @@ export default function ResellerPage() {
               No advance deposit, no volume slabs, no USD surprise at renewal. The rate card is
               published, and the price you read today is the price on order one.
             </p>
+            {/* Warm theme only: the design's hero buttons (both lead to places on the site) and the
+                progress dots of the hero's photo slideshow (company.css). */}
+            <div className="w-only rs-hero-ctas">
+              <a href="#margin" className="rs-cta-primary">Work out your margin ↓</a>
+              <Link href="/rates" className="rs-cta-ghost">See the full rate card</Link>
+            </div>
+            <div className="w-only rs-hdots" aria-hidden="true"><span /><span /><span /><span /></div>
           </div>
 
           {/* THEM vs us — 2×2 bordered grid, never naming the competitor. */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, background: "var(--border)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }} data-grid>
             {SWITCH_REASONS.map((r) => (
               <div key={r.them} style={{ background: "#fff", padding: 24 }}>
-                <div className="mono-label" style={{ color: "var(--danger)", marginBottom: 10 }}>{r.them}</div>
-                <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 6 }}>{r.us}</div>
+                <div className="mono-label" style={{ color: "var(--danger)", marginBottom: 10 }}>
+                  {r.them}
+                  <span className="w-only rs-down" aria-hidden="true"><ArrowDown size={14} strokeWidth={2.6} /></span>
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 6 }}>
+                  <ReasonTile us={r.us} />
+                  <span className="w-only rs-with"><Check aria-hidden="true" size={14} strokeWidth={2.8} />WITH ANUTECH</span>
+                  {r.us}
+                </div>
                 <p className="body" style={{ margin: 0, fontSize: 14 }}>{r.body}</p>
               </div>
             ))}

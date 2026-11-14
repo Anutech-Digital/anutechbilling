@@ -17,8 +17,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
-  Award, BadgeCheck, CalendarCheck, ChartColumn, FileText, IndianRupee, LifeBuoy, MessageCircle,
-  MonitorPlay, Phone, ReceiptIndianRupee, Rocket, Sparkles, Target, Users,
+  Award, BadgeCheck, CalendarCheck, ChartColumn, Check, FileText, Globe, IndianRupee, LifeBuoy, Mail, MessageCircle,
+  MonitorPlay, Phone, ReceiptIndianRupee, Rocket, Server, ShieldCheck, Sparkles, Target, Users,
 } from "lucide-react";
 import Link from "@/site/components/ui/SiteLink";
 import { useTurnstile } from "@/components/shared/turnstile";
@@ -30,6 +30,10 @@ import { teaserCardPrice, type DomainTeaser } from "@/site/lib/data/domain-tease
 import { ProductPeek } from "@/site/components/home/ProductPeek";
 import { formConsent } from "@/lib/consent/data-notice";
 import { DataNotice } from "@/site/components/legal/DataNotice";
+
+/** Warm theme only (class w-only, hidden on Classic): the small icon chip each IT card shows
+ *  in the design (artboard Main), by the card's own icon kind. Decorative. */
+const IT_ICON: Record<string, LucideIcon> = { mail: Mail, globe: Globe, server: Server, lock: ShieldCheck, tag: BadgeCheck };
 
 const WA = (text: string) => `${WHATSAPP_URL}?text=${encodeURIComponent(text)}`;
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
@@ -84,14 +88,16 @@ export function HomeCompany({ emailFrom, domainTeaser }: { emailFrom?: number; d
             approvals, staff and reports — the work your team does by hand in Excel and WhatsApp today.
           </p>
           <ul className="hc-ticks">
-            <li>Fixed quote before we start</li>
-            <li>Working demo at every milestone</li>
-            <li>GST invoice · {COMPANY.city}</li>
+            <li><span className="w-only hc-w-tick" aria-hidden="true"><Check size={13} strokeWidth={2.6} /></span>Fixed quote before we start</li>
+            <li><span className="w-only hc-w-tick" aria-hidden="true"><Check size={13} strokeWidth={2.6} /></span>Working demo at every milestone</li>
+            <li><span className="w-only hc-w-tick" aria-hidden="true"><Check size={13} strokeWidth={2.6} /></span>GST invoice · {COMPANY.city}</li>
           </ul>
           <div className="hc-actions">
             <a className="hc-btn hc-btn-primary" href="#start">Tell us what to automate →</a>
-            {WHATSAPP_READY && <a className="hc-btn hc-btn-wa" href={WA("Hi Anutech — we want to automate some office work. Can we talk?")} target="_blank" rel="noopener">WhatsApp us</a>}
+            {WHATSAPP_READY && <a className="hc-btn hc-btn-wa" href={WA("Hi Anutech — we want to automate some office work. Can we talk?")} target="_blank" rel="noopener"><svg className="w-only hc-w-wa-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.5 11.6a8.5 8.5 0 0 1-12.6 7.5L3.5 20.5l1.4-4.2A8.5 8.5 0 1 1 20.5 11.6z" /><path d="M9 9.2c.3 2.6 2.3 4.7 5 5.3l1-1.2 1.8.8-.4 1.6c-3.6.2-7.6-3.6-7.6-7.4l1.6-.4.8 1.8z" /></svg>WhatsApp us</a>}
           </div>
+          {/* Warm theme only: progress dots for the hero photo slideshow (site-warm.css, 4 slides, 28s). */}
+          <div className="w-only hc-w-dots" aria-hidden="true"><span /><span /><span /><span /></div>
         </div>
         {/* R-464: a wrapper that outlives the form→thanks swap, so the floating AI launcher
             (phone only) stays aside while this box is on screen. */}
@@ -173,6 +179,7 @@ export function HomeCompany({ emailFrom, domainTeaser }: { emailFrom?: number; d
                 {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
                 {c.img ? <img src={c.img} alt="" loading="lazy" /> : <CatScene kind={c.icon} />}
               </span>
+              {(() => { const Ico = IT_ICON[c.icon]; return Ico ? <span className="w-only hc-w-card-ico" aria-hidden="true"><Ico size={24} strokeWidth={1.9} /></span> : null; })()}
               <b className="hc-card-name">{c.name}</b>
               <span className="hc-card-price"><span>{c.from}</span><small>{c.unit}</small></span>
               <small className="hc-card-gst">{c.gst}</small>

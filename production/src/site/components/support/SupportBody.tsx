@@ -70,7 +70,7 @@ export function SupportBody() {
         ) : (
           topics.map((a) => (
             <a key={a.title} href={mail(a.title)} style={{ display: "flex", gap: 14, alignItems: "baseline", padding: "13px 0", borderBottom: "1px solid var(--border-hairline)", color: "inherit", textDecoration: "none" }}>
-              <span className="mono-label" style={{ color: "var(--text-muted)", flex: "none", width: 76 }}>{a.cat}</span>
+              <span className="mono-label" data-cat={a.cat.toLowerCase()} style={{ color: "var(--text-muted)", flex: "none", width: 76 }}>{a.cat}</span>
               <span style={{ fontSize: 15, fontWeight: 500, flex: 1 }}>{a.title}</span>
               <span style={{ fontSize: 13, fontWeight: 600, color: "var(--primary)", flex: "none" }}>Ask us →</span>
             </a>

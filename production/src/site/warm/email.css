@@ -334,7 +334,7 @@
 .anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 .card .mono-label {
   font-family: var(--font-site-body), "Inter", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: var(--w-marigold-ink) !important;
 }
-.anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 .card > div:nth-child(2) {
+.anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 .card > div:nth-of-type(2) {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 20px !important; font-weight: 800 !important; color: var(--w-ink) !important;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 .card .body { font-size: 15px !important; color: var(--w-muted); }
@@ -342,7 +342,7 @@
 .anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 > :nth-child(2) .card .mono-label { color: var(--w-teal-dark) !important; }
 .anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 > :nth-child(6) .card { background: var(--w-forest); }
 .anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 > :nth-child(6) .card .mono-label { color: var(--w-marigold) !important; }
-.anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 > :nth-child(6) .card > div:nth-child(2) { color: #FFFFFF !important; }
+.anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 > :nth-child(6) .card > div:nth-of-type(2) { color: #FFFFFF !important; }
 .anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 > :nth-child(6) .card .body { color: var(--w-on-forest) !important; }
 .anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 + div { flex-wrap: wrap; }
 .anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 + div .btn { min-height: 50px; border-radius: var(--w-radius-btn); }
@@ -539,4 +539,43 @@
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer { border-color: var(--w-line-strong); color: var(--w-marigold-ink); }
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer.on { border-color: var(--w-line-strong); }
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq details[open] { box-shadow: 0 10px 24px rgba(0,0,0,0.3); }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   Warm-only extras (artboards Email, Compare): elements the components add with class `w-only`
+   (hidden on Classic by src/site/warm-only.css). All decorative (aria-hidden), no words; colours
+   through var(--w-…) so the dark variant follows without extra rules.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+/* /email hero — slideshow progress dots: one bar per photo, filled in marigold while it shows.
+   Same 21s cycle as em-warm-slides above (3 photos, 7s each, starting at 0s). */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > .w-em-dots { display: flex; gap: 8px; margin: -12px 0 26px; }
+.anutech-site[data-site-theme="warm"] .w-em-dots span {
+  position: relative; overflow: hidden; width: 28px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.3);
+}
+.anutech-site[data-site-theme="warm"] .w-em-dots span::after {
+  content: ""; position: absolute; inset: 0; background: var(--w-marigold); transform: scaleX(0); transform-origin: left;
+  animation: em-warm-dot 21s infinite linear;
+}
+.anutech-site[data-site-theme="warm"] .w-em-dots span:nth-child(2)::after { animation-delay: 7s; }
+.anutech-site[data-site-theme="warm"] .w-em-dots span:nth-child(3)::after { animation-delay: 14s; }
+@keyframes em-warm-dot { 0% { transform: scaleX(0); } 33.33% { transform: scaleX(1); } 33.34%, 100% { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] .w-em-dots span::after { animation: none; }
+  .anutech-site[data-site-theme="warm"] .w-em-dots span:first-child::after { transform: none; }
+}
+/* /email edition cards — the icon chip above the edition name (teal on mint, marigold on cream). */
+.anutech-site[data-site-theme="warm"] section#products .w-plan-ico {
+  display: flex; align-items: center; justify-content: center; flex: none; align-self: flex-start;
+  width: 42px; height: 42px; border-radius: 12px; margin-bottom: 12px; background: var(--w-mint); color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] section#products .w-plan-ico[data-tone="marigold"] { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+/* /email/compare-editions — the icon chip under each situation's label. */
+.anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 .card .w-guide-ico {
+  display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; margin: 2px 0 12px;
+  background: var(--w-mint); color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 > :nth-child(even) .card .w-guide-ico { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+.anutech-site[data-site-theme="warm"] #main > section.section.rise:has(.chip[aria-pressed]):has(table.rates) + section.section .grid-3 > :nth-child(6) .card .w-guide-ico { background: var(--w-marigold); color: var(--w-on-marigold); }
+@media (max-width: 639px) {
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > .w-em-dots { justify-content: center; }
 }

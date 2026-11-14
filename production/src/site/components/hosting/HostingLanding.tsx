@@ -21,6 +21,10 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  CircleCheck, Database, EyeOff, FileText, IndianRupee, List, Lock, MessageCircle, ShieldCheck, Tag, User, Wrench, Zap,
+  type LucideIcon,
+} from "lucide-react";
 import { hostingSans as manrope, hostingSerif as serif, hostingMono as mono } from "@/lib/fonts";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { isTrialPlan, TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
@@ -57,6 +61,21 @@ const C = {
 };
 const MONO = "var(--hf-mono), 'JetBrains Mono', monospace";
 const SERIF = "var(--hf-serif), 'Instrument Serif', serif";
+
+/* Warm theme only (class w-only — hidden on every other theme): the design's decorative icon
+   tiles, keyed by each card's own heading so a reworded card simply shows no icon. */
+const WARM_WORRY_ICONS: Record<string, LucideIcon> = {
+  "Will my site go down during the move?": CircleCheck, "Will it actually be faster?": Zap,
+  "What if support disappears after I pay?": MessageCircle, "What if I lose data?": Database,
+  "Will the price jump at renewal?": IndianRupee, "Am I locked in?": Lock,
+};
+const WARM_CHANNEL_ICONS: Record<string, LucideIcon> = {
+  WhatsApp: MessageCircle, "Written quote": FileText, Support: User, "All prices": Tag,
+};
+/* A decorative icon tile; the callers alternate mint / marigold-soft tiles as the design does. */
+function WarmTile({ icon: Icon, tone }: { icon: LucideIcon; tone: "mint" | "gold" | "marigold" }) {
+  return <span className={`w-only hlp-tile hlp-tile--${tone}`} aria-hidden="true"><Icon size={22} strokeWidth={1.9} /></span>;
+}
 
 /* R-1465: whole rupees through one site formatter (99.98 / 374.40 rupees read as
    auto-calculated). Billed and pay-today figures come from hostingCardPrices — the numbers
@@ -188,7 +207,7 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
             <div style={{ display: "inline-flex", alignItems: "center", gap: 9, background: C.accSurf, border: `1px solid ${C.accBorder}`, color: C.accentDark, padding: "7px 13px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, fontFamily: MONO }}>{TRIAL_DAYS}-DAY FREE TRIAL ON {TRIAL_PLAN_NAME.toUpperCase()} · NO CARD NEEDED</div>
             <h1 style={{ marginTop: 20, fontSize: "clamp(34px,4.4vw,56px)", lineHeight: 1.07, letterSpacing: "-.035em", fontWeight: 800 }}>
               Launch Your<br />Business Website<br />
-              <span style={{ fontFamily: SERIF, fontWeight: 400, fontStyle: "italic", color: C.accent }}>FREE for {TRIAL_DAYS} Days.</span>
+              <span style={{ fontFamily: SERIF, fontWeight: 400, fontStyle: "italic", color: C.accent }}><span className="hlp-free">FREE</span> for {TRIAL_DAYS} Days.</span>
             </h1>
             <p style={{ marginTop: 18, fontSize: 18, lineHeight: 1.55, color: C.ink2, maxWidth: "min(100%,560px)", textWrap: "pretty" } as React.CSSProperties}>
               {HOSTING_DESCRIPTION} Free SSL, daily backups, free migration and support from real people — and the trial needs no credit card, so your old host stays live until you approve the move.
@@ -202,6 +221,8 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
                 <li key={t} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14.5, fontWeight: 600, color: C.ink2 }}><span style={{ color: C.success, fontWeight: 800 }}>✓</span>{t}</li>
               ))}
             </ul>
+            {/* Warm theme only: progress dots for the hero's photo slideshow (hosting.css). */}
+            <div className="w-only hlp-hdots" aria-hidden="true"><span /><span /><span /><span /></div>
           </div>
 
           {/* Honest numbers card */}
@@ -410,6 +431,7 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
           <h2 style={{ ...h2, maxWidth: 720 }}>Free migration means we do it, not that we send you a guide.</h2>
           <div data-grid-phone style={{ marginTop: 30, display: "grid", gridTemplateColumns: twoCol, gap: 20 }}>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: 26 }}>
+              <WarmTile icon={List} tone="mint" />
               <div style={{ fontSize: 18, fontWeight: 800 }}>What we need from you</div>
               <ul style={{ marginTop: 14, display: "grid", gap: 11, listStyle: "none", padding: 0 }}>
                 {MIGRATION_NEED.map((n) => <li key={n.n} style={{ display: "flex", gap: 10, fontSize: 15, lineHeight: 1.5, color: C.ink2 }}><span style={{ fontFamily: MONO, color: C.accent, fontWeight: 700 }}>{n.n}</span>{n.t}</li>)}
@@ -417,6 +439,7 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
               <p style={{ marginTop: 14, fontSize: 14, color: C.muted, lineHeight: 1.5 }}>That&apos;s the whole ask. No exports, no zip files, no downtime window to schedule.</p>
             </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: 26 }}>
+              <WarmTile icon={Wrench} tone="gold" />
               <div style={{ fontSize: 18, fontWeight: 800 }}>What we do</div>
               <ul style={{ marginTop: 14, display: "grid", gap: 11, listStyle: "none", padding: 0 }}>
                 {MIGRATION_WEDO.map((t) => <li key={t} style={{ display: "flex", gap: 10, fontSize: 15, lineHeight: 1.5, color: C.ink2 }}><span style={{ color: C.success, fontWeight: 800 }}>✓</span>{t}</li>)}
@@ -424,6 +447,7 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
             </div>
           </div>
           <div style={{ marginTop: 20, background: C.accSurf, border: `1px solid ${C.accBorder}`, borderRadius: 16, padding: 24, display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <WarmTile icon={ShieldCheck} tone="marigold" />
             <div style={{ flex: "1 1 320px", minWidth: 0 }}>
               <div style={{ fontSize: 18, fontWeight: 800, color: C.accentDark }}>If the copy isn&apos;t right, nothing switches</div>
               <p style={{ marginTop: 7, fontSize: 15, lineHeight: 1.55, color: C.ink2 }}>We only change DNS after you have checked the migrated site. Until then your live website keeps serving from your current host, exactly as it does today.</p>
@@ -439,8 +463,9 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
           <div style={eyebrow()}>STEP 4 — WHAT IF</div>
           <h2 style={{ ...h2, maxWidth: 720 }}>The six worries people actually have before switching host.</h2>
           <div data-grid-phone style={{ marginTop: 30, display: "grid", gridTemplateColumns: threeCol, gap: 16 }}>
-            {HOSTING_WORRIES.map((wr) => (
+            {HOSTING_WORRIES.map((wr, i) => (
               <div key={wr.q} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22 }}>
+                {WARM_WORRY_ICONS[wr.q] && <WarmTile icon={WARM_WORRY_ICONS[wr.q]} tone={i % 2 ? "gold" : "mint"} />}
                 <div style={{ fontSize: 16.5, fontWeight: 800, letterSpacing: "-.02em", color: C.ink }}>{wr.q}</div>
                 <p style={{ marginTop: 8, fontSize: 14.5, lineHeight: 1.55, color: C.ink2 }}>{wr.a}</p>
               </div>
@@ -475,12 +500,14 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
           <h2 style={{ ...h2, marginTop: 0 }}>We&apos;d rather you know before you pay.</h2>
           <div data-grid-phone style={{ marginTop: 28, display: "grid", gridTemplateColumns: twoCol, gap: 20 }}>
             <div style={{ background: C.successSurf, border: `1px solid ${C.successBorder}`, borderRadius: 16, padding: 26 }}>
+              <WarmTile icon={CircleCheck} tone="gold" />
               <div style={{ fontSize: 18, fontWeight: 800, color: C.success }}>A good fit if you are</div>
               <ul style={{ marginTop: 14, display: "grid", gap: 10, listStyle: "none", padding: 0 }}>
                 {HOSTING_GOOD_FIT.map((g) => <li key={g} style={{ display: "flex", gap: 10, fontSize: 15, lineHeight: 1.5 }}><span style={{ color: C.success, fontWeight: 800 }}>✓</span>{g}</li>)}
               </ul>
             </div>
             <div style={{ background: C.tint, border: `1px solid ${C.line}`, borderRadius: 16, padding: 26 }}>
+              <WarmTile icon={EyeOff} tone="mint" />
               <div style={{ fontSize: 18, fontWeight: 800, color: C.muted }}>Not the right product if</div>
               <ul style={{ marginTop: 14, display: "grid", gap: 10, listStyle: "none", padding: 0 }}>
                 {HOSTING_BAD_FIT.map((b) => <li key={b} style={{ display: "flex", gap: 10, fontSize: 15, lineHeight: 1.5, color: C.ink2 }}><span style={{ color: C.faint, fontWeight: 800 }}>—</span>{b}</li>)}
@@ -495,8 +522,9 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
         <div style={wrap}>
           <h2 style={{ ...h2, marginTop: 0 }}>Talk to a person first. That&apos;s normal here.</h2>
           <div data-grid-phone style={quadGrid}>
-            {HOSTING_CHANNELS.map((ch) => (
+            {HOSTING_CHANNELS.map((ch, i) => (
               <div key={ch.t} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22, display: "flex", flexDirection: "column", gap: 8 }}>
+                {WARM_CHANNEL_ICONS[ch.t] && <WarmTile icon={WARM_CHANNEL_ICONS[ch.t]} tone={i % 2 ? "mint" : "gold"} />}
                 <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-.02em" }}>{ch.t}</div>
                 <p style={{ fontSize: 14.5, lineHeight: 1.5, color: C.ink2 }}>{ch.d}</p>
                 <a href={ch.href} style={{ marginTop: "auto", fontSize: 14.5, fontWeight: 700 }}>{ch.a} →</a>

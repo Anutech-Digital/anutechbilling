@@ -582,3 +582,47 @@
     color-scheme: dark;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   HOME — Warm-only extras (artboard Main). Elements HomeCompany adds with class `w-only`
+   (hidden on Classic by src/site/warm-only.css): the hero tick icons, the WhatsApp icon, the
+   slideshow progress dots and the IT cards' icon chips. All decorative (aria-hidden), no words.
+   Colours through var(--w-…) so the dark variant follows.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+/* Hero ticks: a mint disc with a teal check replaces the "✓ " glyph. */
+.anutech-site[data-site-theme="warm"] .hc .hc-ticks li { display: inline-flex; align-items: center; gap: 8px; }
+.anutech-site[data-site-theme="warm"] .hc .hc-ticks li::before { content: none; }
+.anutech-site[data-site-theme="warm"] .hc .hc-w-tick {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--w-mint); color: var(--w-teal);
+}
+/* WhatsApp button icon, in the design's light green. */
+.anutech-site[data-site-theme="warm"] .hc .hc-w-wa-ico { flex: none; color: #7FE0A6; }
+/* Slideshow progress dots: one bar per photo, filled in marigold while that photo shows.
+   Same 28s cycle as hc-warm-slides above (4 photos, 7s each, starting at 0s). */
+.anutech-site[data-site-theme="warm"] .hc .hc-w-dots { display: flex; gap: 8px; margin-top: -4px; }
+.anutech-site[data-site-theme="warm"] .hc .hc-w-dots span {
+  position: relative; overflow: hidden; width: 28px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.3);
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-w-dots span::after {
+  content: ""; position: absolute; inset: 0; background: var(--w-marigold); transform: scaleX(0); transform-origin: left;
+  animation: hc-warm-dot 28s infinite linear;
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-w-dots span:nth-child(2)::after { animation-delay: 7s; }
+.anutech-site[data-site-theme="warm"] .hc .hc-w-dots span:nth-child(3)::after { animation-delay: 14s; }
+.anutech-site[data-site-theme="warm"] .hc .hc-w-dots span:nth-child(4)::after { animation-delay: 21s; }
+@keyframes hc-warm-dot { 0% { transform: scaleX(0); } 25% { transform: scaleX(1); } 25.01%, 100% { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  /* The photos stay on the first one; the first bar shows full, static. */
+  .anutech-site[data-site-theme="warm"] .hc .hc-w-dots span::after { animation: none; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-w-dots span:first-child::after { transform: none; }
+}
+/* IT cards: an icon chip under the photo — mint/teal and marigold, alternating as drawn. */
+.anutech-site[data-site-theme="warm"] .hc .hc-w-card-ico {
+  display: flex; align-items: center; justify-content: center; flex: none; width: 48px; height: 48px; border-radius: 14px;
+  margin: 4px 0 12px; background: var(--w-mint); color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-card:nth-child(even) .hc-w-card-ico { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] .hc .hc-w-dots { justify-content: center; }
+}

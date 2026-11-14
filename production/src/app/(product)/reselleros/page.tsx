@@ -25,6 +25,7 @@ import { HOME, PRICING_LINE, SCREENS } from "@/site/lib/data/reselleros-home";
 import { demoEnabled } from "@/lib/demo/demo-account";
 import { PRODUCT_ORIGIN, COMPANY_ORIGIN } from "@/site/lib/site-split";
 import { CUSTOMER_LOGIN_URL } from "@/site/components/product/ProductChrome";
+import { BarChart3, CreditCard, Layers, Link2, List, Mail, Receipt, Server, CalendarDays, type LucideIcon } from "lucide-react";
 
 export const metadata: Metadata = {
   title: { absolute: HOME.title },
@@ -44,6 +45,32 @@ const primaryBtn =
   "inline-flex min-h-11 items-center justify-center rounded-md bg-amber px-5 py-2.5 text-base font-medium text-white shadow-sm hover:bg-amber/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber";
 const quietBtn =
   "inline-flex min-h-11 items-center justify-center rounded-md border border-hairline bg-paper px-5 py-2.5 text-base font-medium text-ink hover:bg-paper-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber";
+
+/* Warm theme only (class w-only — hidden on Classic, src/site/warm-only.css): the artboard's
+   decorative icons, keyed by the card's own title; a title not listed simply has no icon. */
+const WHO_ICON: Record<string, LucideIcon> = {
+  "Google Workspace and Microsoft 365 resellers": Mail,
+  "Zoho resellers": Layers,
+  "Hosting and domain resellers": Server,
+};
+const FEATURE_ICON: Record<string, LucideIcon> = {
+  Subscriptions: List,
+  "GST quotes": Link2,
+  "GST invoices": Receipt,
+  Renewals: CalendarDays,
+  Payments: CreditCard,
+  Reports: BarChart3,
+};
+const HERO_SLIDES = 5;
+
+function WarmIcon({ icon: Icon, className }: { icon: LucideIcon | undefined; className: string }) {
+  if (!Icon) return null;
+  return (
+    <span className={`w-only ${className}`} aria-hidden="true">
+      <Icon width={24} height={24} strokeWidth={1.9} />
+    </span>
+  );
+}
 
 /** Screenshot slots whose image is really there (R-524) — a missing file is not shown. */
 function screensOnDisk(): Array<(typeof SCREENS)[number]> {
@@ -97,8 +124,11 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
           <Link href="/login" className={quietBtn}>{HOME.ctaLogin}</Link>
         </div>
         <p className="mt-3 text-sm text-ink-3" data-testid="pricing-line">
-          {PRICING_LINE}{showDemo && <> · {HOME.demoNote}</>}
+          <span className="w-only ros-beta">Beta</span>{PRICING_LINE}{showDemo && <> · {HOME.demoNote}</>}
         </p>
+        <div className="w-only ros-dots" aria-hidden="true">
+          {Array.from({ length: HERO_SLIDES }, (_, i) => <span key={i} />)}
+        </div>
         {demoMessage && (
           <p role="status" className="mt-3 max-w-2xl rounded-md border border-amber bg-amber-soft px-3 py-2 text-sm text-amber-ink" data-testid="demo-message">
             {demoMessage}
@@ -107,15 +137,20 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
         <p className="mt-6 text-sm">
           <a href="#features" className="text-ink-2 underline underline-offset-4 hover:text-ink">{HOME.ctaFeatures} ↓</a>
         </p>
+        <div className="w-only ros-slides" aria-hidden="true">
+          {Array.from({ length: HERO_SLIDES }, (_, i) => <span key={i} />)}
+        </div>
       </section>
 
       {/* Who it is for — id="who": the header menu's "Who it is for" lands here (R-1505) */}
       <section id="who" className="scroll-mt-20 border-t border-hairline bg-paper-2/50">
         <div className="mx-auto max-w-5xl px-4 py-12 sm:px-5">
+          <p className="w-only ros-kicker">For Indian resellers</p>
           <h2 className="font-serif text-2xl text-ink sm:text-3xl">{HOME.whoTitle}</h2>
           <ul className="mt-6 grid gap-4 md:grid-cols-3">
             {HOME.who.map((w) => (
               <li key={w.title} className="rounded-lg border border-hairline bg-paper p-5">
+                <WarmIcon icon={WHO_ICON[w.title]} className="ros-who-icon" />
                 <h3 className="text-base font-semibold text-ink">{w.title}</h3>
                 <p className="mt-1 text-sm leading-relaxed text-ink-2">{w.body}</p>
               </li>
@@ -127,10 +162,12 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
       {/* Features */}
       <section id="features" className="scroll-mt-20">
         <div className="mx-auto max-w-5xl px-4 py-12 sm:px-5">
+          <p className="w-only ros-kicker">Modules</p>
           <h2 className="font-serif text-2xl text-ink sm:text-3xl">{HOME.featuresTitle}</h2>
           <ul className="mt-6 grid gap-x-8 gap-y-6 sm:grid-cols-2 md:grid-cols-3">
             {HOME.features.map((f) => (
               <li key={f.title} className="border-l-2 border-amber pl-4">
+                <WarmIcon icon={FEATURE_ICON[f.title]} className="ros-feature-icon" />
                 <h3 className="text-base font-semibold text-ink">{f.title}</h3>
                 <p className="mt-1 text-sm leading-relaxed text-ink-2">{f.body}</p>
               </li>
@@ -168,6 +205,7 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
               <li key={s.title} className="flex gap-4 rounded-lg border border-hairline bg-paper p-5">
                 <span className="font-serif text-2xl leading-none text-amber" aria-hidden>{i + 1}</span>
                 <div>
+                  <p className="w-only ros-step">Step {i + 1}</p>
                   <h3 className="text-base font-semibold text-ink">{s.title}</h3>
                   <p className="mt-1 text-sm leading-relaxed text-ink-2">{s.body}</p>
                 </div>

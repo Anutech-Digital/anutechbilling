@@ -184,11 +184,13 @@
   font-size: clamp(2.4rem, 5vw, 3.31rem) !important; line-height: 1.16 !important; letter-spacing: -0.03em !important;
   color: #FFFFFF; text-shadow: 0 2px 24px rgba(0,0,0,0.25);
 }
-/* "FREE for N Days." — the design's marigold highlight. */
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) h1 span {
+/* "FREE for N Days." — white like the rest of the heading; the design's marigold highlight sits on
+   the word FREE alone (the component wraps it in .hlp-free). */
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) h1 > span { color: #FFFFFF !important; }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) h1 .hlp-free {
+  display: inline-block; margin: 0 0.03em; line-height: 1;
   color: var(--w-on-marigold) !important; background: var(--w-marigold); border-radius: 0.22em;
-  padding: 0.02em 0.2em 0.1em; -webkit-box-decoration-break: clone; box-decoration-break: clone; text-shadow: none;
-  line-height: 1.5;
+  padding: 0.02em 0.2em 0.1em; text-shadow: none;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) > div > div:first-child > p {
   color: var(--w-on-forest) !important; font-size: 16.5px !important;
@@ -356,7 +358,7 @@
 }
 .anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(3) > div:first-child { background: var(--w-marigold-soft) !important; }
 .anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(3) > div:nth-child(2) { background: var(--w-mint) !important; }
-.anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(3) > div > div:first-child { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 20px !important; font-weight: 700 !important; }
+.anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(3) > div > div:first-of-type { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 20px !important; font-weight: 700 !important; }
 .anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(3) li { color: var(--w-ink) !important; }
 .anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(3) > div:first-child li > span { color: var(--w-marigold-ink) !important; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-weight: 800 !important; }
 .anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(3) > div > p { color: var(--w-muted) !important; font-size: 15px !important; }
@@ -449,6 +451,35 @@
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(12) .hlp-outline:hover { background: var(--w-mint-soft) !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(12) > div > div:last-child {
   color: var(--w-teal-dark) !important; font-size: 12px !important; font-weight: 700; letter-spacing: 0.08em !important;
+}
+
+/* ── Extras (warm-only elements the component adds with class w-only): icon tiles, slideshow dots ── */
+.anutech-site[data-site-theme="warm"] .hlp .hlp-tile {
+  flex: none; align-self: flex-start; display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 12px; background: var(--w-mint); color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] .hlp .hlp-tile--gold { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+.anutech-site[data-site-theme="warm"] .hlp .hlp-tile--marigold { background: var(--w-marigold); color: var(--w-on-marigold); }
+/* Cards that are plain blocks: space under the tile. (#move's three cards and the channel cards are flex.) */
+.anutech-site[data-site-theme="warm"] .hlp #move > div > div:nth-child(3) > div > .hlp-tile,
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(9) > div > div > div > .hlp-tile { margin-bottom: 14px; }
+.anutech-site[data-site-theme="warm"] .hlp #worries > div > div:nth-of-type(2) > div > .hlp-tile { margin-bottom: 10px; }
+/* Hero slideshow progress dots: one per photo, filled in step with hlp-warm-slides (28s, 4 photos). */
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) .hlp-hdots { display: flex; gap: 8px; margin-top: 22px; }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) .hlp-hdots > span {
+  position: relative; overflow: hidden; width: 28px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.3);
+}
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) .hlp-hdots > span::after {
+  content: ""; position: absolute; inset: 0; background: var(--w-marigold); transform: scaleX(0); transform-origin: left;
+  animation: hlp-warm-dot 28s infinite linear;
+}
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) .hlp-hdots > span:nth-child(2)::after { animation-delay: 7s; }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) .hlp-hdots > span:nth-child(3)::after { animation-delay: 14s; }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) .hlp-hdots > span:nth-child(4)::after { animation-delay: 21s; }
+@keyframes hlp-warm-dot { 0% { transform: scaleX(0); } 25% { transform: scaleX(1); } 25.01%, 100% { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) .hlp-hdots > span::after { animation: none; }
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) .hlp-hdots > span:first-child::after { transform: scaleX(1); }
 }
 
 /* ── Phone (the component switches to one column under 760px) ─────────────────────────────── */

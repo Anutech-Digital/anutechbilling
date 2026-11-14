@@ -61,20 +61,33 @@
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]) > div[id] a {
   display: inline-flex; align-items: center; min-height: 44px; color: var(--w-teal) !important; font-weight: 700 !important; text-decoration: underline; text-underline-offset: 3px;
 }
-/* "Also read": the design's contents list, in the left column, sticky beside the text. */
-.anutech-site[data-site-theme="warm"] #main > section.section > div > nav[aria-label="Related documents"] {
+/* "On this page" (LegalDoc's w-only nav, Privacy / Terms): the design's contents list in the
+   left column, sticky beside the text. */
+.anutech-site[data-site-theme="warm"] #main > section.section > div > nav.legal-toc {
   grid-column: 1; grid-row: 4 / span 40; align-self: start; position: sticky; top: 96px;
-  border-top: 0 !important; padding-top: 24px !important; margin-top: 12px;
-  flex-direction: column; flex-wrap: nowrap !important; gap: 2px !important;
+  display: flex; flex-direction: column; gap: 2px; padding-top: 24px; margin-top: 12px;
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > div > nav.legal-toc > .legal-toc-label {
+  padding: 0 12px 8px; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--w-muted-2);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > div > nav.legal-toc > a {
+  display: flex; align-items: center; min-height: 44px; padding: 8px 12px; border-radius: 10px;
+  color: var(--w-ink-2); font-size: 15px; line-height: 1.35; text-decoration: none;
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > div > nav.legal-toc > a:hover { background: var(--w-mint); color: var(--w-teal-dark); }
+/* "Also read": under the text, a row of links. */
+.anutech-site[data-site-theme="warm"] #main > section.section > div > nav[aria-label="Related documents"] {
+  grid-column: 2; border-top: 0 !important; padding-top: 18px !important; margin-top: 4px;
+  align-items: center; gap: 4px 8px !important;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section > div > nav[aria-label="Related documents"] > .mono-label {
-  align-self: flex-start !important; padding: 0 12px 8px;
+  align-self: center !important; padding: 0 12px 0 0;
   font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 800;
   letter-spacing: 0.08em; text-transform: uppercase; color: var(--w-muted-2) !important;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section > div > nav[aria-label="Related documents"] > a {
   display: flex; align-items: center; min-height: 44px; padding: 8px 12px; border-radius: 10px;
-  color: var(--w-ink-2) !important; font-weight: 500 !important; font-size: 15px !important; line-height: 1.35;
+  color: var(--w-teal) !important; font-weight: 600 !important; font-size: 15px !important; line-height: 1.35;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section > div > nav[aria-label="Related documents"] > a:hover {
   background: var(--w-mint); color: var(--w-teal-dark) !important;
@@ -93,15 +106,21 @@
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id] > :is(h2, p) { margin: 0 !important; }
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id] > h2 { font-size: 20px !important; }
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id] > p:first-of-type { font-size: 16px !important; line-height: 1.65 !important; }
-/* The design's 44px icon tile, top-left of each product card (decorative). */
-.anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id]:not(#how-to-claim, #timelines)::before {
-  content: ""; width: 44px; height: 44px; border-radius: 12px; margin-bottom: 4px;
-  background: var(--w-mint) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z M8.5 12l2.5 2.5 4.5-5'/%3E%3C/svg%3E") center / 22px no-repeat;
+/* The design's top row of each product card: a 44px icon tile (LegalDoc's w-only row) and the badge. */
+.anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 4px;
 }
-.anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id]:is(#licences, #certificates)::before {
-  background-color: var(--w-marigold-soft);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%239A6200' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3h7l5 5v13H7z M14 3v5h5 M10 13h6 M10 17h6'/%3E%3C/svg%3E");
+.anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-icon {
+  flex: none; width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+  background: var(--w-mint); color: var(--w-teal);
 }
+.anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-icon[data-tone="marigold"] { background: var(--w-marigold-soft); color: #9A6200; }
+.anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-badge {
+  align-self: flex-start; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase;
+  background: var(--w-mint); color: var(--w-teal-dark);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-badge[data-tone="marigold"] { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+.anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-badge[data-tone="red"] { background: #FDE8E4; color: #7A1F10; }
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > :is(#certificates, #free-trial, #how-to-claim, #timelines) { grid-column: span 3; }
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > #how-to-claim {
   margin-top: 8px !important; background: var(--w-forest); border-color: var(--w-forest) !important; border-radius: 22px;
@@ -132,6 +151,9 @@
   .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > :is(#licences, #domains) { margin-top: 0 !important; }
   .anutech-site[data-site-theme="warm"] #main > section.section > div > nav[aria-label="Related documents"] {
     grid-column: 1 / -1; grid-row: auto; position: static; margin-top: 8px;
+  }
+  .anutech-site[data-site-theme="warm"] #main > section.section > div > nav.legal-toc {
+    grid-column: 1 / -1; grid-row: auto; position: static; margin: 0 0 8px; padding-top: 18px;
   }
 }
 
@@ -496,9 +518,8 @@
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > h1.h1-narrow + div:has(> .btn-primary)::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 24 24' fill='none' stroke='%235ED0B3' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3Cpath d='M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6.2'/%3E%3C/svg%3E");
 }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id]:not(#how-to-claim, #timelines)::before {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%235ED0B3' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z M8.5 12l2.5 2.5 4.5-5'/%3E%3C/svg%3E");
-}
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-icon[data-tone="marigold"] { color: #F4C766; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-badge[data-tone="red"] { background: #3B2224; color: #FCA5A5; }
 @media (prefers-color-scheme: dark) {
   /* Shop pages (cart, checkout, done, trial): white boxes the components paint inline → the dark card. */
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(#cart-coupon, [data-grid] > div > h1.h1-narrow + p.meta, > .wrap > header > h1.h1-narrow, [data-grid="trial"]) :is([style*="background:#fff"], [style*="background: rgb(255, 255, 255)"]) { background: var(--w-surface) !important; }
@@ -547,8 +568,7 @@
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > h1.h1-narrow + div:has(> .btn-primary)::before {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 24 24' fill='none' stroke='%235ED0B3' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3Cpath d='M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6.2'/%3E%3C/svg%3E");
   }
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id]:not(#how-to-claim, #timelines)::before {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%235ED0B3' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z M8.5 12l2.5 2.5 4.5-5'/%3E%3C/svg%3E");
-  }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-icon[data-tone="marigold"] { color: #F4C766; }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > div > div[id] > .legal-card-top > .legal-card-badge[data-tone="red"] { background: #3B2224; color: #FCA5A5; }
 }
 

@@ -42,6 +42,25 @@ import { MAIL_OPTIONS } from "@/site/lib/data/copy";
 import { MAIL_RATES } from "@/site/lib/data/catalog";
 import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 
+/* Warm theme only (class w-only, hidden on Classic by warm-only.css): the icon chip at the top of
+   each edition card in the design (artboard Email) — mail, folder, shield, by card position.
+   Decorative: aria-hidden, no words. Styled in src/site/warm/email.css. */
+const W_PLAN_ICON_PATHS: readonly (readonly string[])[] = [
+  ["M6 5h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3z", "M3.5 7l8.5 6 8.5-6"],
+  ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M12 11v5M9.5 13.5h5"],
+  ["M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z", "M8.5 12l2.5 2.5 4.5-5"],
+];
+function WPlanIcon({ i }: { i: number }) {
+  const paths = W_PLAN_ICON_PATHS[Math.min(i, W_PLAN_ICON_PATHS.length - 1)];
+  return (
+    <span className="w-only w-plan-ico" data-tone={i % 2 ? "marigold" : "teal"} aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        {paths.map((d) => <path key={d} d={d} />)}
+      </svg>
+    </span>
+  );
+}
+
 /* Design tokens — the handoff's exact palette. */
 /* Website theme (Settings → Branding, docs/WEBSITE-THEME.md): each colour is a CSS variable whose
    fallback is the classic value, so the Classic site renders exactly as before; site-warm.css sets
@@ -230,6 +249,8 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
         <p style={{ fontSize: 13.5, fontWeight: 600, color: C.green, margin: "0 auto 20px" }}>
           Annual billing saves up to {maxSavePct}% · GST invoice in ₹, input-credit eligible.
         </p>
+        {/* Warm theme only: progress dots for the hero photo slideshow (warm/email.css, 3 slides, 21s). */}
+        <div className="w-only w-em-dots" aria-hidden="true"><span /><span /><span /></div>
 
         <div data-grid style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 12, maxWidth: 860, margin: "0 auto 14px", textAlign: "left" }}>
           {VENDORS.map((v) => {
@@ -335,6 +356,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                   {pop && (
                     <span style={{ position: "absolute", top: -10, left: 20, fontFamily: MONO, fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "#fff", background: C.green, padding: "3px 8px", borderRadius: 999 }}>Most teams pick this</span>
                   )}
+                  <WPlanIcon i={i} />
                   <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em", color: C.ink }}>{LABEL[e.name] ?? e.name}</div>
                   <p style={{ fontSize: 12.5, lineHeight: 1.45, color: C.sec, margin: "4px 0 14px", minHeight: 36 }}>{DESC[e.name] ?? e.note}</p>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
@@ -384,6 +406,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
               const quoteHref = `/quote?ed=${encodeURIComponent(PLUS_EDITION)}&seats=${seats}&term=${annual ? "annual" : "monthly"}`;
               return (
                 <div style={{ position: "relative", display: "flex", flexDirection: "column", padding: 20, border: `1px solid ${C.border}`, borderRadius: 12, background: C.surf, boxShadow: SH_CARD }}>
+                  <WPlanIcon i={2} />
                   <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em", color: C.ink }}>{LABEL[PLUS_EDITION]}</div>
                   <p style={{ fontSize: 12.5, lineHeight: 1.45, color: C.sec, margin: "4px 0 14px", minHeight: 36 }}>{DESC[PLUS_EDITION]}</p>
                   <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em", color: C.ink, lineHeight: 1.2 }}>{CONTACT_FOR_PRICING}</div>

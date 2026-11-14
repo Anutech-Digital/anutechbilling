@@ -37,6 +37,10 @@
  * default-on hosting selection legitimate.
  */
 import { useEffect, useMemo, useState } from "react";
+import {
+  ArrowRight, EyeOff, Forward, Globe, Layers, Link2, Lock, Mail, Receipt, RefreshCw, Scale, Search, Server,
+  ShieldCheck, Signpost, Wrench, Zap, type LucideIcon,
+} from "lucide-react";
 import { domainSans as manrope, domainSerif as serif, domainMono as mono } from "@/lib/fonts";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { searchDomains, normaliseName, domainHelpLinks, TEST_PRICE_LABEL, type DomainResult } from "@/site/lib/domain-search";
@@ -73,6 +77,27 @@ const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const RENEWAL_UNLISTED = "renewal price on request — ask us before you buy";
 type Term = "yearly" | "monthly";
 type Tab = "register" | "transfer" | "bulk";
+
+/* Warm theme only (class w-only — hidden on every other theme): the design's extension chips
+   under the search box, each a real button that picks that extension (and searches it when a
+   name is typed). Only extensions the live rate card carries are shown. */
+const WARM_EXT_CHIPS = [".in", ".com", ".co.in", ".org", ".net", ".store", ".shop", ".company", ".agency", ".dev", ".io", ".ai", ".cloud", ".app"];
+/* Warm theme only: the design's decorative icon tiles, keyed by the card's own heading. */
+const WARM_NEED_ICONS: Record<string, { icon: LucideIcon; tone: "mint" | "gold" }> = {
+  "The name": { icon: Signpost, tone: "mint" },
+  "A place to serve pages from": { icon: Server, tone: "gold" },
+  "Mail routing": { icon: Mail, tone: "mint" },
+};
+const WARM_DONT_ADD: Record<string, { icon: LucideIcon; best: string }> = {
+  "You already pay a host": { icon: Server, best: "Best move: Transfer in later — free" },
+  "It's a defensive registration": { icon: ShieldCheck, best: "Best move: Buy the name only" },
+  "You need a VPS or dedicated server": { icon: Zap, best: "Best move: Ask us first" },
+  "Your site lives on Shopify, Wix or Webflow": { icon: Link2, best: "Best move: Free DNS setup" },
+};
+const WARM_INCLUDED_ICONS: Record<string, LucideIcon> = {
+  "Anycast DNS": Globe, "WHOIS privacy": EyeOff, "Theft protection": Lock, "Auto-renew, your call": RefreshCw,
+  "Free email forwards": Forward, "Bulk operations": Layers, "DNS set up for you": Wrench, "GST invoice": Receipt,
+};
 
 const RATE_FILTERS: { key: string; label: string; groups: SiteTld["group"][] }[] = [
   { key: "popular", label: "Popular", groups: ["Popular"] },
@@ -236,6 +261,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
                     controls themselves (boxShadow:none) so it doesn't stack a hard ring
                     inside this soft one. */}
                 <div style={{ flex: 1, minWidth: 260, display: "flex", alignItems: "center", border: `1.5px solid ${fieldFocus ? C.accent : C.line}`, borderRadius: 10, background: C.paper, padding: "0 4px 0 16px", boxShadow: fieldFocus ? "0 0 0 3px rgba(194,65,12,0.14)" : "none", transition: "border-color .15s, box-shadow .15s" }}>
+                  <Search className="w-only dm-search-icon" aria-hidden="true" size={22} strokeWidth={2} />
                   <input value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setFieldFocus(true)} onBlur={() => setFieldFocus(false)} placeholder="your business name" aria-label="Domain name to search"
                     style={{ flex: 1, border: "none", outline: "none", boxShadow: "none", background: "transparent", padding: "16px 0", fontSize: 19, letterSpacing: "-0.01em", fontFamily: "inherit", color: C.ink, minWidth: 0 }} />
                   <select value={tld} onChange={(e) => setTld(e.target.value)} onFocus={() => setFieldFocus(true)} onBlur={() => setFieldFocus(false)} aria-label="Extension"
@@ -247,6 +273,14 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
                   Check availability
                 </button>
               </form>
+              {/* Warm theme only: the design's extension chips — each picks that extension. */}
+              <ul className="w-only dm-ext-chips" aria-label="Pick an extension">
+                {WARM_EXT_CHIPS.filter((ext) => tldByExt.has(ext)).map((ext) => (
+                  <li key={ext}>
+                    <button type="button" aria-pressed={tld === ext} onClick={() => { setTld(ext); if (normaliseName(q)) void runSearch(); }}>{ext}</button>
+                  </li>
+                ))}
+              </ul>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginTop: 14, fontSize: 13.5, color: C.muted }}>
                 <span>Try:{" "}
                   <button onClick={() => void runSearch("kalpanaexports")} style={{ appearance: "none", cursor: "pointer", background: C.lineSoft, border: `1px solid ${C.line}`, borderRadius: 20, padding: "5px 13px", fontSize: 13.5, color: C.ink2, fontFamily: "inherit" }}>kalpanaexports</button>
@@ -344,6 +378,8 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
             </div>
           )}
         </div>
+        {/* Warm theme only: progress dots for the band's photo slideshow (domains.css). */}
+        <span className="w-only dm-hdots" aria-hidden="true"><span /><span /><span /></span>
       </section>
 
       {/* ── 1 · HERO + ARITHMETIC ─────────────────────────────────────────── */}
@@ -415,6 +451,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
           {DOMAIN_NEEDS.map((r, i) => (
             <div key={r.n} style={{ display: "grid", gridTemplateColumns: "26px 1fr", gap: 12, padding: "14px 0", borderTop: `1px solid ${C.line}`, borderBottom: i === DOMAIN_NEEDS.length - 1 ? `1px solid ${C.line}` : "none" }}>
               <span style={{ fontFamily: MONO, fontSize: 12, color: i === 0 ? C.faint : C.accent }}>{r.n}</span>
+              {WARM_NEED_ICONS[r.t] && <WarmTile icon={WARM_NEED_ICONS[r.t].icon} className={`w-only dm-tile dm-tile--${WARM_NEED_ICONS[r.t].tone}`} />}
               <div>
                 <div style={{ fontSize: 15.5, fontWeight: 600, color: C.ink }}>{r.t}</div>
                 <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.55, margin: "4px 0 0" }}>{r.b}</p>
@@ -428,14 +465,29 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
       <section style={wrap({ paddingTop: mob ? 48 : 60 })}>
         <div data-grid-phone style={{ background: C.darkCard, color: "#EDE6DE", borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 24 : 44 }}>
           <div>
+            <WarmTile icon={Scale} size={28} className="w-only dm-tile dm-tile--big" />
             <div style={{ ...eyebrow, color: "#FFB388" }}>The honest counter-argument</div>
             <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: mob ? 26 : 32, color: "#fff", margin: "10px 0 0" }}>Don&apos;t add hosting if any of these is you.</h3>
             <p style={{ fontSize: 15, color: "#B9AEA4", lineHeight: 1.6, marginTop: 12 }}>The box is on by default because most people searching a name also need somewhere for the site to live. When you don&apos;t, the name alone is the right buy — and we&apos;ll say so.</p>
+            {/* Warm theme only: the design's "not sure" line and its way on. */}
+            <div className="w-only dm-unsure">
+              <span>Not sure which you are?</span>
+              <a href="/contact">Talk to a person →</a>
+            </div>
           </div>
           <div>
             {DONT_ADD_HOSTING.map((r, i) => (
               <div key={r.lead} style={{ padding: "12px 0", borderTop: `1px solid ${C.darkBorder}`, borderBottom: i === DONT_ADD_HOSTING.length - 1 ? `1px solid ${C.darkBorder}` : "none", fontSize: 14.5, color: "#CFC5BB", lineHeight: 1.55 }}>
+                {WARM_DONT_ADD[r.lead] && (
+                  <span className="w-only dm-dah-head" aria-hidden="true">
+                    <WarmTile icon={WARM_DONT_ADD[r.lead].icon} className="dm-tile dm-tile--gold" />
+                    <span className="dm-dah-num">{String(i + 1).padStart(2, "0")}</span>
+                  </span>
+                )}
                 <strong style={{ color: "#fff", fontWeight: 600 }}>{r.lead}</strong> {r.rest}
+                {WARM_DONT_ADD[r.lead] && (
+                  <span className="w-only dm-best"><ArrowRight aria-hidden="true" size={14} strokeWidth={2.4} />{WARM_DONT_ADD[r.lead].best}</span>
+                )}
               </div>
             ))}
           </div>
@@ -513,6 +565,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
         <div data-grid-phone style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : mid ? "1fr 1fr" : "repeat(4, 1fr)", gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
           {DOMAIN_INCLUDED.map((f) => (
             <div key={f.t} style={{ background: C.card, padding: "20px 22px" }}>
+              {WARM_INCLUDED_ICONS[f.t] && <WarmTile icon={WARM_INCLUDED_ICONS[f.t]} className="w-only dm-tile" />}
               <div style={{ fontSize: 15.5, fontWeight: 600, color: C.ink }}>{f.t}</div>
               <p style={{ fontSize: 14, color: C.muted, lineHeight: 1.55, margin: "6px 0 0" }}>{f.b}</p>
             </div>
@@ -746,6 +799,11 @@ function TestPriceNote({ C, MONO }: { C: typeof C_TYPE; MONO: string }) {
       This computer has no live domain registry, so these prices and results come from a fixed test list. The live site never shows them.
     </p>
   );
+}
+
+/* Warm theme only: a decorative icon tile (the caller passes the w-only class). */
+function WarmTile({ icon: Icon, className, size = 22 }: { icon: LucideIcon; className: string; size?: number }) {
+  return <span className={className} aria-hidden="true"><Icon size={size} strokeWidth={1.9} /></span>;
 }
 
 function Dot({ on, color, disabled, small }: { on: boolean; color: string; disabled: string; small?: boolean }) {

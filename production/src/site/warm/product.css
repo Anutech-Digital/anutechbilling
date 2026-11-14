@@ -82,8 +82,7 @@
 .anutech-product[data-site-theme="warm"] main > section:first-of-type::before {
   content: ""; position: absolute; inset: 0; z-index: -1;
   background:
-    linear-gradient(90deg, rgba(18, 49, 42, 0.95) 0%, rgba(18, 49, 42, 0.86) 42%, rgba(18, 49, 42, 0.45) 100%),
-    url(/site/warm/435a469341d96c370a08ee8449e6766c.jpg) 70% center / cover no-repeat;
+    linear-gradient(90deg, rgba(18, 49, 42, 0.95) 0%, rgba(18, 49, 42, 0.86) 42%, rgba(18, 49, 42, 0.45) 100%);
 }
 .anutech-product[data-site-theme="warm"] main > section:first-of-type > p:first-child {
   display: inline-flex; align-items: center; gap: 8px; margin-bottom: 22px;
@@ -98,12 +97,12 @@
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.3); max-width: 680px;
 }
 .anutech-product[data-site-theme="warm"] main > section:first-of-type h1 + p { font-size: 17px; color: var(--w-on-forest); max-width: 620px; margin-top: 22px; }
-.anutech-product[data-site-theme="warm"] main > section:first-of-type > div { flex-wrap: wrap; gap: 12px; margin-top: 26px; }
-.anutech-product[data-site-theme="warm"] main > section:first-of-type > div :is(a, button) {
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > div:not(.w-only) { flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > div:not(.w-only) :is(a, button) {
   min-height: 52px; padding: 0 26px; border-radius: var(--w-radius-btn); font-weight: 600;
   background: rgba(255, 255, 255, 0.1); border: 1.5px solid rgba(255, 255, 255, 0.4); color: #FFFFFF;
 }
-.anutech-product[data-site-theme="warm"] main > section:first-of-type > div :is(a, button):hover { background: rgba(255, 255, 255, 0.18); }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > div:not(.w-only) :is(a, button):hover { background: rgba(255, 255, 255, 0.18); }
 .anutech-product[data-site-theme="warm"] main > section:first-of-type > div a[href="/signup"] {
   background: var(--w-marigold); border-color: var(--w-marigold); color: var(--w-on-marigold); font-weight: 700;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
@@ -111,7 +110,7 @@
 .anutech-product[data-site-theme="warm"] main > section:first-of-type > div a[href="/signup"]:hover { background: var(--w-marigold-hover); }
 .anutech-product[data-site-theme="warm"] main > section:first-of-type [data-testid="pricing-line"] { color: var(--w-on-forest); font-size: 14px; margin-top: 18px; }
 .anutech-product[data-site-theme="warm"] main > section:first-of-type [data-testid="demo-message"] { background: var(--w-marigold-soft); border-color: var(--w-marigold); color: var(--w-marigold-ink); }
-.anutech-product[data-site-theme="warm"] main > section:first-of-type > p:last-child { margin-top: 14px; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > p:has(> a[href="#features"]) { margin-top: 14px; }
 .anutech-product[data-site-theme="warm"] main > section:first-of-type a[href="#features"] {
   color: var(--w-marigold); font-weight: 600; display: inline-flex; align-items: center; min-height: 44px;
 }
@@ -139,11 +138,12 @@
   background: linear-gradient(180deg, rgba(18, 49, 42, 0.05) 0%, rgba(18, 49, 42, 0.35) 45%, rgba(18, 49, 42, 0.8) 100%),
     url(/site/warm/5003c2886648bad975dd68952968a5ce.jpg) center 50% / cover no-repeat var(--w-forest);
 }
-.anutech-product[data-site-theme="warm"] #who li::after {
-  content: ""; position: absolute; left: 22px; top: 136px; width: 56px; height: 56px; border-radius: 16px;
-  background: var(--w-teal); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+.anutech-product[data-site-theme="warm"] #who li > .ros-who-icon {
+  position: absolute; left: 22px; top: 136px; width: 56px; height: 56px; border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  background: #0E6B5C; color: #FFFFFF; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
 }
-.anutech-product[data-site-theme="warm"] #who li:nth-child(n+2)::after { background: var(--w-marigold); }
+.anutech-product[data-site-theme="warm"] #who li:nth-child(n+2) > .ros-who-icon { background: #F4B740; color: #17241F; }
 .anutech-product[data-site-theme="warm"] #who li h3 { font-size: 20px; font-weight: 700; line-height: 1.3; }
 .anutech-product[data-site-theme="warm"] #who li p { font-size: 15px; margin-top: 10px; color: var(--w-muted); }
 @media (hover: hover) { .anutech-product[data-site-theme="warm"] #who li:hover::before { transform: scale(1.04); } }
@@ -160,9 +160,7 @@
   background: linear-gradient(180deg, rgba(7, 22, 48, 0), rgba(7, 22, 48, 0.55));
 }
 .anutech-product[data-site-theme="warm"] #features h2 { color: #FFFFFF; display: flex; flex-direction: column; gap: 12px; }
-.anutech-product[data-site-theme="warm"] #features h2::before {
-  content: ""; width: 28px; height: 3px; border-radius: 2px; background: var(--w-marigold);
-}
+.anutech-product[data-site-theme="warm"] #features h2 { margin-top: 10px; }
 .anutech-product[data-site-theme="warm"] #features ul {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 32px;
 }
@@ -172,22 +170,19 @@
   box-shadow: 0 24px 60px rgba(4, 14, 34, 0.35);
   transition: transform .35s cubic-bezier(.2, .8, .2, 1), box-shadow .35s ease;
 }
-.anutech-product[data-site-theme="warm"] #features li::before {
-  content: ""; position: absolute; left: 24px; top: 24px; width: 44px; height: 44px; border-radius: 12px;
-  background: var(--w-mint) radial-gradient(circle at center, var(--w-teal) 0 6px, transparent 7px);
+.anutech-product[data-site-theme="warm"] #features li > .ros-feature-icon {
+  position: absolute; left: 24px; top: 24px; width: 44px; height: 44px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; background: var(--w-mint); color: var(--w-teal);
 }
-.anutech-product[data-site-theme="warm"] #features li:nth-child(even)::before {
-  background: var(--w-marigold-soft) radial-gradient(circle at center, #C98A12 0 6px, transparent 7px);
-}
+.anutech-product[data-site-theme="warm"] #features li > .ros-feature-icon > svg { width: 22px; height: 22px; }
+.anutech-product[data-site-theme="warm"] #features li:nth-child(even) > .ros-feature-icon { background: var(--w-marigold-soft); color: #9A6200; }
 .anutech-product[data-site-theme="warm"] #features li:first-child { grid-column: span 2; }
 .anutech-product[data-site-theme="warm"] #features li:last-child {
   grid-column: 1 / -1; color: #FFFFFF; border-color: rgba(255, 255, 255, 0.14);
   background: linear-gradient(135deg, rgba(18, 49, 42, 0.92), rgba(10, 35, 70, 0.9));
   box-shadow: 0 24px 60px rgba(4, 14, 34, 0.4);
 }
-.anutech-product[data-site-theme="warm"] #features li:last-child::before {
-  background: var(--w-marigold) radial-gradient(circle at center, var(--w-forest) 0 6px, transparent 7px);
-}
+.anutech-product[data-site-theme="warm"] #features li:last-child > .ros-feature-icon { background: #F4B740; color: #17241F; }
 .anutech-product[data-site-theme="warm"] #features li h3 { font-size: 20px; font-weight: 700; color: var(--w-ink); }
 .anutech-product[data-site-theme="warm"] #features li p { font-size: 15px; margin-top: 8px; color: var(--w-muted); max-width: 520px; }
 .anutech-product[data-site-theme="warm"] #features li:last-child h3 { color: #FFFFFF; }
@@ -280,19 +275,77 @@
 @media (max-width: 720px) {
   .anutech-product[data-site-theme="warm"] main > section:first-of-type { padding-top: 150px; min-height: 0; }
   .anutech-product[data-site-theme="warm"] main > section:first-of-type::before {
-    background: linear-gradient(180deg, rgba(18, 49, 42, 0.3) 0, rgba(18, 49, 42, 0.6) 150px, #12312A 340px),
-      url(/site/warm/435a469341d96c370a08ee8449e6766c.jpg) 70% top / auto 340px no-repeat, var(--w-forest);
+    background: linear-gradient(180deg, rgba(18, 49, 42, 0.3) 0, rgba(18, 49, 42, 0.6) 150px, #12312A 340px);
   }
-  .anutech-product[data-site-theme="warm"] main > section:first-of-type > div { width: 100%; }
-  .anutech-product[data-site-theme="warm"] main > section:first-of-type > div > * { flex: 1 1 100%; }
+  .anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides { bottom: auto; height: 340px; }
+  .anutech-product[data-site-theme="warm"] main > section:first-of-type > div:not(.w-only) { width: 100%; }
+  .anutech-product[data-site-theme="warm"] main > section:first-of-type > div:not(.w-only) > * { flex: 1 1 100%; }
 }
 @media (max-width: 640px) {
   .anutech-product[data-site-theme="warm"] main > section:first-of-type { align-items: center; text-align: center; }
   .anutech-product[data-site-theme="warm"] main > section:first-of-type > p { margin-left: auto; margin-right: auto; }
   .anutech-product[data-site-theme="warm"] :is(#who, #features, #pricing) h2 { text-align: center; align-items: center; }
   .anutech-product[data-site-theme="warm"] #who li { text-align: center; }
-  .anutech-product[data-site-theme="warm"] #who li::after { left: calc(50% - 28px); }
+  .anutech-product[data-site-theme="warm"] #who li > .ros-who-icon { left: calc(50% - 28px); }
   .anutech-product[data-site-theme="warm"] #pricing > div > p:last-child { text-align: center; }
+}
+
+
+/* ── Warm-only extras (w-only elements in reselleros/page.tsx; hidden on Classic) ── */
+/* Hero photo slideshow: five photos crossfading behind the shade, 35s loop (artboard .ros5). */
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides { position: absolute; inset: 0; z-index: -2; overflow: hidden; pointer-events: none; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides > span {
+  position: absolute; inset: 0; background: 70% center / cover no-repeat;
+  animation: ros-slide 35s infinite both;
+}
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides > span:nth-child(1) { background-image: url(/site/warm/435a469341d96c370a08ee8449e6766c.jpg); animation-delay: -1s; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides > span:nth-child(2) { background-image: url(/site/warm/5b472897fed04b783ad9f9a5ace81025.jpg); animation-delay: 6s; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides > span:nth-child(3) { background-image: url(/site/warm/d3bc12428356c6c074e6788f9a0269de.jpg); animation-delay: 13s; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides > span:nth-child(4) { background-image: url(/site/warm/a965a212f13a5719d81329a1529fd670.jpg); animation-delay: 20s; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides > span:nth-child(5) { background-image: url(/site/warm/1ecfdc38218b688cf12509eac50a21db.jpg); animation-delay: 27s; }
+@keyframes ros-slide {
+  0% { opacity: 0; transform: scale(1.08); } 3% { opacity: 1; } 20% { opacity: 1; }
+  23% { opacity: 0; transform: scale(1); } 100% { opacity: 0; transform: scale(1); }
+}
+/* Progress dots: one bar per photo, filling in step with the slideshow (same 35s and delays). */
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots { display: flex; gap: 8px; margin-top: 14px; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots > span { position: relative; overflow: hidden; width: 28px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.3); }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots > span::after {
+  content: ""; position: absolute; inset: 0; background: var(--w-marigold); transform: scaleX(0); transform-origin: left;
+  animation: ros-dot 35s infinite linear both;
+}
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots > span:nth-child(1)::after { animation-delay: -1s; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots > span:nth-child(2)::after { animation-delay: 6s; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots > span:nth-child(3)::after { animation-delay: 13s; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots > span:nth-child(4)::after { animation-delay: 20s; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots > span:nth-child(5)::after { animation-delay: 27s; }
+@keyframes ros-dot { 0% { transform: scaleX(0); } 20% { transform: scaleX(1); } 20.01%, 100% { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides > span { animation: none; }
+  .anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-slides > span:not(:first-child) { background-image: none; }
+  .anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots > span::after { animation: none; }
+}
+/* The BETA pill before "Free during beta · no card needed". */
+.anutech-product[data-site-theme="warm"] main > section:first-of-type [data-testid="pricing-line"] { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.anutech-product[data-site-theme="warm"] main > section:first-of-type [data-testid="pricing-line"] > .ros-beta {
+  border-radius: 999px; padding: 2px 10px; background: var(--w-marigold); color: var(--w-on-marigold);
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
+}
+/* Kickers above the section headings. */
+.anutech-product[data-site-theme="warm"] main > section .ros-kicker {
+  margin: 0 0 10px; font-size: 14px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--w-teal);
+}
+.anutech-product[data-site-theme="warm"] #features .ros-kicker {
+  display: flex; align-items: center; gap: 10px; margin: 0; font-size: 13px; font-weight: 800; letter-spacing: 0.12em; color: var(--w-marigold);
+}
+.anutech-product[data-site-theme="warm"] #features .ros-kicker::before { content: ""; width: 28px; height: 2px; border-radius: 2px; background: var(--w-marigold); }
+/* "Step N" over each step's title. */
+.anutech-product[data-site-theme="warm"] #steps .ros-step {
+  margin: 0 0 6px; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--w-teal);
+}
+@media (max-width: 640px) {
+  .anutech-product[data-site-theme="warm"] main > section:first-of-type > .ros-dots, .anutech-product[data-site-theme="warm"] main > section:first-of-type [data-testid="pricing-line"] { justify-content: center; }
+  .anutech-product[data-site-theme="warm"] :is(#who, #features) .ros-kicker { text-align: center; justify-content: center; }
 }
 
 /* ── Dark (the Warm dark variant). The product layout does not load site-warm.css, so the dark
@@ -325,6 +378,7 @@
 :root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #who li { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3); }
 :root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #features li:not(:last-child) { background: rgba(42, 52, 48, 0.94); border-color: rgba(255, 255, 255, 0.12); }
 :root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #steps li > div { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3); }
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #features li:nth-child(even):not(:last-child) > .ros-feature-icon { color: #F4C766; }
 :root[data-theme="dark"] .anutech-product[data-site-theme="warm"] #pricing > div {
   background: linear-gradient(90deg, rgba(10, 26, 46, 0.94) 0%, rgba(10, 26, 46, 0.88) 38%, rgba(10, 26, 46, 0.6) 60%, rgba(10, 26, 46, 0.5) 100%),
     url(/site/warm/eda12d2f6a4ca7f5b5423077c01332d7.jpg) right center / cover no-repeat #10243C;
@@ -366,6 +420,7 @@
   :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #who li { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3); }
   :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #features li:not(:last-child) { background: rgba(42, 52, 48, 0.94); border-color: rgba(255, 255, 255, 0.12); }
   :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #steps li > div { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3); }
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #features li:nth-child(even):not(:last-child) > .ros-feature-icon { color: #F4C766; }
   :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] #pricing > div {
     background: linear-gradient(90deg, rgba(10, 26, 46, 0.94) 0%, rgba(10, 26, 46, 0.88) 38%, rgba(10, 26, 46, 0.6) 60%, rgba(10, 26, 46, 0.5) 100%),
       url(/site/warm/eda12d2f6a4ca7f5b5423077c01332d7.jpg) right center / cover no-repeat #10243C;

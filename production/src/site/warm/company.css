@@ -93,6 +93,22 @@
   .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:first-child { grid-column: 1 / -1; padding: 0 0 2px; }
 }
 
+/* Column names over each answer (why-us/page.tsx's w-only labels): phones only, as the artboard;
+   the head row then moves off-screen (still read by screen readers — the labels are aria-hidden). */
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td > .w-col-label { display: none; }
+@media (max-width: 680px) {
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates thead {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody tr { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 18px 18px 14px; }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td > .w-col-label {
+    display: block; margin-bottom: 2px; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; color: var(--w-muted-2);
+  }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:nth-child(2) { position: relative; padding-left: 34px; }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:nth-child(2) > .w-col-label { margin-left: -22px; color: var(--w-teal); }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:nth-child(2)::before { position: absolute; left: 14px; top: 33px; margin: 0; }
+}
+
 /* ════════════════════════════════════════════════════════════════════════════════════════════
    RESELLER (/reseller — artboard Reseller). Dark forest hero with the photo slideshow behind the
    heading, the four "elsewhere vs with Anutech" cards apart, the margin calculator on white
@@ -160,6 +176,55 @@
 }
 .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > p {
   padding: 0 22px 22px 86px; font-size: 15px !important; color: var(--w-muted); min-height: 46px;
+}
+
+/* Extras (warm-only elements the page adds with class w-only): hero buttons, slideshow dots,
+   the real icon tile, the "WITH ANUTECH" label and the down-arrow between the two halves. */
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px !important; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hero-ctas > a {
+  display: inline-flex; align-items: center; min-height: 50px; padding: 0 24px; border-radius: 14px; text-decoration: none;
+  transition: background-color .18s ease, border-color .18s ease, transform .18s ease;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hero-ctas > a.rs-cta-primary { background: var(--w-marigold); color: var(--w-on-marigold); font-weight: 700; box-shadow: 0 6px 18px rgba(0,0,0,0.25); }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hero-ctas > a.rs-cta-primary:hover { background: var(--w-marigold-hover); transform: translateY(-1px); }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hero-ctas > a.rs-cta-ghost { padding: 0 22px; background: rgba(255,255,255,0.1); border: 1.5px solid rgba(255,255,255,0.4); color: #FFFFFF; font-weight: 600; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hero-ctas > a.rs-cta-ghost:hover { border-color: #FFFFFF; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hero-ctas > a:focus-visible { outline: 3px solid var(--w-marigold); outline-offset: 3px; }
+/* Slideshow progress dots: one per photo, filled in step with co-reseller-slides (28s, 4 photos). */
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hdots { display: flex; gap: 8px; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hdots > span { position: relative; overflow: hidden; width: 28px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.3); }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hdots > span::after {
+  content: ""; position: absolute; inset: 0; background: var(--w-marigold); transform: scaleX(0); transform-origin: left;
+  animation: co-reseller-dot 28s infinite linear;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hdots > span:nth-child(2)::after { animation-delay: 7s; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hdots > span:nth-child(3)::after { animation-delay: 14s; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hdots > span:nth-child(4)::after { animation-delay: 21s; }
+@keyframes co-reseller-dot { 0% { transform: scaleX(0); } 25% { transform: scaleX(1); } 25.01%, 100% { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hdots > span::after { animation: none; }
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hdots > span:first-child::after { transform: scaleX(1); }
+}
+/* The reason cards: a real icon replaces the drawn tile and tick. */
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > .mono-label { position: relative; padding-bottom: 22px; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > .mono-label > .rs-down {
+  position: absolute; left: 22px; bottom: -14px; z-index: 1; display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 50%; background: var(--w-surface); border: 1px solid var(--w-line); color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div:not(.mono-label):has(> .rs-tile) { padding-top: 26px; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div:not(.mono-label):has(> .rs-tile)::before,
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div:not(.mono-label):has(> .rs-tile)::after { content: none; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div:not(.mono-label) > .rs-tile {
+  position: absolute; left: 22px; top: 26px; display: flex; align-items: center; justify-content: center;
+  width: 48px; height: 48px; border-radius: 14px; background: var(--w-mint); color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div:nth-child(even) > div:not(.mono-label) > .rs-tile { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div:not(.mono-label) > .rs-with {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; line-height: 1.4; color: var(--w-teal);
+}
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .rs-hero-ctas { justify-content: center; }
 }
 
 /* Margin calculator: a white band; slider tiles on the left, the margin in a forest card. */
@@ -395,6 +460,13 @@
 .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div[style*="dashed"] {
   border-radius: 16px !important; background: var(--w-surface); border-color: var(--w-line-strong) !important;
 }
+
+/* Each topic's category in its own colour (the artboard's labels; data-cat from SupportBody). */
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="domains"] { color: #9A6200 !important; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="email"] { color: var(--w-teal) !important; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="hosting"] { color: #1E4B8F !important; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="reseller"] { color: #4A3A8C !important; }
+.anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="billing"] { color: #8A3B12 !important; }
 
 /* The three channel notes. */
 .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child {
@@ -757,6 +829,11 @@
     linear-gradient(-45deg, transparent 43%, #F09A84 43%, #F09A84 57%, transparent 57%) center / 10px 10px no-repeat,
     color-mix(in srgb, #B4472F 30%, var(--w-surface));
 }
+/* /contact — topic categories: lighter tints of the same hues on the dark card. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="domains"] { color: #F4C766 !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="hosting"] { color: #9DBFF2 !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="reseller"] { color: #C2B5F2 !important; }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="billing"] { color: #F2A985 !important; }
 /* /contact — icon chips keep a light ground so their dark strokes stay visible. */
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card:nth-child(n+3)::before,
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card-highlight > div:first-child::before { background-color: #DCEFE8; }
@@ -778,6 +855,11 @@
     linear-gradient(-45deg, transparent 43%, #F09A84 43%, #F09A84 57%, transparent 57%) center / 10px 10px no-repeat,
     color-mix(in srgb, #B4472F 30%, var(--w-surface));
 }
+/* /contact — topic categories: lighter tints of the same hues on the dark card. */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="domains"] { color: #F4C766 !important; }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="hosting"] { color: #9DBFF2 !important; }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="reseller"] { color: #C2B5F2 !important; }
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > a > .mono-label[data-cat="billing"] { color: #F2A985 !important; }
 /* /contact — icon chips keep a light ground so their dark strokes stay visible. */
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > div:first-child > div:last-child > .card:nth-child(n+3)::before,
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] > aside > .card-highlight > div:first-child::before { background-color: #DCEFE8; }

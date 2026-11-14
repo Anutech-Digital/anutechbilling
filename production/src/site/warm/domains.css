@@ -172,11 +172,11 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form button[type="submit"]:hover { background: var(--w-marigold-hover) !important; transform: translateY(-1px); }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form button[type="submit"]:focus-visible { outline: 3px solid var(--w-marigold); outline-offset: 3px; }
 /* The "Try:" line — light text on the band, centred like the design. */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form + div {
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search :is(form + div, form + .dm-ext-chips + div) {
   justify-content: center !important; text-align: center; margin-top: 18px !important;
   font-size: 14px !important; color: var(--w-on-forest) !important; text-shadow: 0 1px 8px rgba(0,0,0,0.5);
 }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form + div button {
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search :is(form + div, form + .dm-ext-chips + div) button {
   background: rgba(255,255,255,0.12) !important; border: 1px solid rgba(255,255,255,0.28) !important;
   color: #FFFFFF !important; font-weight: 600; min-height: 36px; padding: 0 14px !important; text-shadow: none;
 }
@@ -272,7 +272,7 @@
   display: flex !important; flex-direction: column; gap: 10px !important; border: 0 !important;
   background: var(--w-bg); border-radius: 20px; padding: 22px !important;
 }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(3) > div:last-child > div > span {
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(3) > div:last-child > div > span:not(.dm-tile) {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif !important; font-size: 14px !important;
   font-weight: 800; color: var(--w-marigold-ink) !important;
 }
@@ -293,7 +293,7 @@
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:first-child { display: flex; flex-direction: column; gap: 16px; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:first-child > * { margin: 0 !important; }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:first-child > div { font-size: 13px !important; color: var(--w-marigold-ink) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:first-child > div:not(.dm-unsure) { font-size: 13px !important; color: var(--w-marigold-ink) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) h3 { font-size: clamp(1.6rem, 2.6vw, 2.1rem) !important; line-height: 1.15; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:first-child > p { font-size: 16px !important; line-height: 1.65 !important; color: var(--w-muted) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child {
@@ -432,10 +432,82 @@
   .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#faq > div:first-child { align-items: center; text-align: center; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(2) > div:first-child > div:last-child { align-self: center; text-align: left; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates > div:nth-child(2) { justify-content: center; }
-  .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form + div button { min-height: 44px; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search :is(form + div, form + .dm-ext-chips + div) button { min-height: 44px; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form input { font-size: 18px !important; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:last-of-type > div > div:last-child > a { flex: 1 1 100%; justify-content: center; }
 }
+
+/* ── Extras (warm-only elements the component adds with class w-only): icon tiles, the search
+      icon, extension chips, the counter-argument's big icon, "best move" badges, slideshow dots ── */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) .dm-tile {
+  flex: none; align-self: flex-start; display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 12px; background: var(--w-mint); color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) .dm-tile--gold { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) .dm-tile--big {
+  width: 60px; height: 60px; border-radius: 18px; background: var(--w-marigold); color: var(--w-on-marigold);
+  box-shadow: 0 10px 24px rgba(244, 183, 64, 0.35);
+}
+/* Search field: the magnifier before the input. */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form .dm-search-icon { flex: none; margin-right: 12px; color: var(--w-muted-2); }
+/* Extension chips under the search card: real buttons (pick that extension). */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search .dm-ext-chips {
+  list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search .dm-ext-chips button {
+  min-height: 36px; padding: 0 13px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.1); color: #FFFFFF; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background-color .15s, border-color .15s;
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search .dm-ext-chips button:hover { background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.4); }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search .dm-ext-chips button[aria-pressed="true"] { background: var(--w-marigold); border-color: var(--w-marigold); color: var(--w-on-marigold); }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search .dm-ext-chips button:focus-visible { outline: 3px solid var(--w-marigold); outline-offset: 2px; }
+/* Slideshow progress dots: one per photo, filled in step with dm-warm-slides (21s, 3 photos). */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search > .dm-hdots { display: flex; gap: 8px; justify-content: center; margin-top: 22px; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search > .dm-hdots > span {
+  position: relative; overflow: hidden; width: 28px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.3);
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search > .dm-hdots > span::after {
+  content: ""; position: absolute; inset: 0; background: var(--w-marigold); transform: scaleX(0); transform-origin: left;
+  animation: dm-warm-dot 21s infinite linear;
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search > .dm-hdots > span:nth-child(2)::after { animation-delay: 7s; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search > .dm-hdots > span:nth-child(3)::after { animation-delay: 14s; }
+@keyframes dm-warm-dot { 0% { transform: scaleX(0); } 33.3% { transform: scaleX(1); } 33.31%, 100% { transform: scaleX(0); } }
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search .dm-ext-chips button { min-height: 44px; padding: 0 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search > .dm-hdots > span::after { animation: none; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search > .dm-hdots > span:first-child::after { transform: scaleX(1); }
+}
+/* Counter-argument: the "not sure" line and its button. */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure {
+  display: flex; flex-direction: column; gap: 10px; border-top: 1px solid #EAD3A0; padding-top: 16px;
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure > span { font-size: 14px; font-weight: 600; color: var(--w-marigold-ink); }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure > a {
+  align-self: flex-start; display: inline-flex; align-items: center; min-height: 48px; padding: 0 20px; border-radius: 14px;
+  background: var(--w-forest); color: #FFFFFF; text-decoration: none; font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure > a:hover { background: var(--w-teal-dark); }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure > a:focus-visible { outline: 3px solid var(--w-teal); outline-offset: 2px; }
+/* Counter-argument cards: icon + number on top, the "best move" badge at the foot. */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child > div { display: flex; flex-direction: column; gap: 10px; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child > div > strong { margin-bottom: 0 !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-dah-head { display: flex; align-items: center; justify-content: space-between; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-dah-num {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 13px; font-weight: 800; letter-spacing: 0.06em; color: #C9A45A;
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-best {
+  margin-top: auto; align-self: flex-start; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 700; line-height: 1.4; color: var(--w-teal-dark); background: var(--w-mint); border-radius: 999px; padding: 5px 12px;
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-best > svg { flex: none; }
+/* Included: tiles alternate marigold-soft / mint; the GST card's tile is marigold on forest. */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#included > div:last-child > div > .dm-tile { margin-bottom: 12px; background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#included > div:last-child > div:nth-child(even) > .dm-tile { background: var(--w-mint); color: var(--w-teal); }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#included > div:last-child > div:last-child > .dm-tile { background: var(--w-marigold); color: var(--w-on-marigold); }
 
 /* ════════════════════════════════════════════════════════════════════════════════════════════
    DARK — /domains (search, result, rate card, cards)
@@ -452,6 +524,8 @@
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates tbody tr { border-bottom-color: var(--w-line) !important; }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates tbody tr:hover { background: rgba(94, 208, 179, 0.06); }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div::before { border-color: rgba(244, 183, 64, 0.14); }
+/* Extras: the "not sure" rule on the dark marigold card. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure { border-top-color: rgba(244, 183, 64, 0.22); }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child > div { border-color: rgba(244, 183, 64, 0.22) !important; box-shadow: none; }
 /* Teal fills (the classic dark/orange buttons and badges) carry the dark text that reads on the light teal. */
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :is([style*="background:#C2410C"], [style*="background: rgb(194, 65, 12)"], [style*="background:#17120F"], [style*="background: rgb(23, 18, 15)"]) { color: var(--w-on-teal) !important; }
@@ -466,6 +540,8 @@
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates tbody tr { border-bottom-color: var(--w-line) !important; }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates tbody tr:hover { background: rgba(94, 208, 179, 0.06); }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div::before { border-color: rgba(244, 183, 64, 0.14); }
+  /* Extras: the "not sure" rule on the dark marigold card. */
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure { border-top-color: rgba(244, 183, 64, 0.22); }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child > div { border-color: rgba(244, 183, 64, 0.22) !important; box-shadow: none; }
   /* Teal fills (the classic dark/orange buttons and badges) carry the dark text that reads on the light teal. */
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :is([style*="background:#C2410C"], [style*="background: rgb(194, 65, 12)"], [style*="background:#17120F"], [style*="background: rgb(23, 18, 15)"]) { color: var(--w-on-teal) !important; }

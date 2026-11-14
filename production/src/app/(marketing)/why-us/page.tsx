@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { COMPARE_ROWS } from "@/site/lib/data/copy";
 
+/* Column heads — also repeated over each answer on phones under Warm (w-only labels, as the WhyUs artboard). */
+const US = "ANUTECH DIGITAL";
+const THEM = "TYPICAL PLATFORM";
+
 export const metadata: Metadata = {
   title: "Why us",
   description: "Ten differences between Anutech Digital and the usual way, stated flatly. No competitor named.",
@@ -28,16 +32,16 @@ export default function WhyUsPage() {
             <thead>
               <tr>
                 <th></th>
-                <th style={{ color: "var(--primary-on-dark)" }}>ANUTECH DIGITAL</th>
-                <th style={{ color: "#5C6672" }}>TYPICAL PLATFORM</th>
+                <th style={{ color: "var(--primary-on-dark)" }}>{US}</th>
+                <th style={{ color: "#5C6672" }}>{THEM}</th>
               </tr>
             </thead>
             <tbody>
               {COMPARE_ROWS.map((r) => (
                 <tr key={r.label}>
                   <td style={{ fontWeight: 600 }}>{r.label}</td>
-                  <td style={{ color: "var(--success)", fontWeight: 600 }}>{r.us}</td>
-                  <td style={{ color: "var(--text-muted)" }}>{r.them}</td>
+                  <td style={{ color: "var(--success)", fontWeight: 600 }}><span className="w-only w-col-label" aria-hidden="true">{US}</span>{r.us}</td>
+                  <td style={{ color: "var(--text-muted)" }}><span className="w-only w-col-label" aria-hidden="true">{THEM}</span>{r.them}</td>
                 </tr>
               ))}
             </tbody>

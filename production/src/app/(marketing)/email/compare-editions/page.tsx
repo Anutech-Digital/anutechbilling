@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { FileText, IndianRupee, Layers, ShieldCheck, Users, Video, type LucideIcon } from "lucide-react";
 import Link from "@/site/components/ui/SiteLink";
 import { SLA } from "@/site/lib/config";
 import { EditionTabs } from "@/site/components/email/EditionTabs";
@@ -11,6 +12,11 @@ export const metadata: Metadata = {
   description:
     "Google Workspace, Microsoft 365 and Zoho side by side, with a plain recommendation for six common situations.",
 };
+
+/* Warm theme only (class w-only, hidden on Classic by warm-only.css): the icon chip on each
+   situation card in the design (artboard Compare), in PICK_GUIDES order — team, calls, compliance,
+   office files, budget, mixed. Decorative: aria-hidden, no words. Styled in src/site/warm/email.css. */
+const W_GUIDE_ICONS: readonly LucideIcon[] = [Users, Video, ShieldCheck, FileText, IndianRupee, Layers];
 
 /* Live prices, re-read every 10 minutes — the same figures /email and checkout use. */
 export const revalidate = 600;
@@ -43,15 +49,19 @@ export default async function CompareEditionsPage() {
             body={`If none of these is you, send a headcount and we answer ${SLA.quote}.`}
           />
           <div className="grid-3">
-            {PICK_GUIDES.map((g) => (
-              <Reveal key={g.when}>
-                <div className="card" style={{ height: "100%" }}>
-                  <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 10 }}>{g.when.toUpperCase()}</div>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: "var(--primary)", marginBottom: 8 }}>{g.pick}</div>
-                  <p className="body" style={{ margin: 0, fontSize: 14 }}>{g.why}</p>
-                </div>
-              </Reveal>
-            ))}
+            {PICK_GUIDES.map((g, i) => {
+              const WIcon = W_GUIDE_ICONS[i % W_GUIDE_ICONS.length];
+              return (
+                <Reveal key={g.when}>
+                  <div className="card" style={{ height: "100%" }}>
+                    <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 10 }}>{g.when.toUpperCase()}</div>
+                    <span className="w-only w-guide-ico" aria-hidden="true"><WIcon size={22} strokeWidth={1.9} /></span>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: "var(--primary)", marginBottom: 8 }}>{g.pick}</div>
+                    <p className="body" style={{ margin: 0, fontSize: 14 }}>{g.why}</p>
+                  </div>
+                </Reveal>
+              );
+            })}
           </div>
           <div style={{ display: "flex", gap: 12, marginTop: 30 }}>
             <Link href="/email#products" className="btn btn-primary">Price it in the calculator</Link>
