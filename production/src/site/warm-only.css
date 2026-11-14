@@ -5,4 +5,4 @@
  * as it did before they were added. Under Warm no rule here applies; the warm files style them.
  * Loaded by the (marketing) and (product) layouts. Guarded by src/site/site-warm-scope.test.ts.
  */
-:is(.anutech-site, .anutech-product):not([data-site-theme="warm"]) .w-only { display: none !important; }
+.w-scope:not([data-site-theme="warm"]) .w-only, :is(.anutech-site, .anutech-product):not([data-site-theme="warm"]) .w-only { display: none !important; }

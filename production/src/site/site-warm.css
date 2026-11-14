@@ -479,7 +479,8 @@
 /* ── Shared warm tokens for the per-page files in src/site/warm/ ────────────────────────────
    Page files colour through these (var(--w-…)) so the dark variant can redefine them in one
    place. Same values on the ResellerOS product site's wrapper. */
-.anutech-site[data-site-theme="warm"] {
+.anutech-site[data-site-theme="warm"],
+.w-scope[data-site-theme="warm"] {
   --w-bg: #F5F7F4;
   --w-surface: #FFFFFF;
   --w-surface-2: #FAFBF9;
@@ -529,7 +530,8 @@
    or when their device is dark and they have not chosen light. Page files colour through
    var(--w-…), so most of the site follows from this block alone. */
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"],
-:root[data-theme="dark"] .anutech-product[data-site-theme="warm"] {
+:root[data-theme="dark"] .anutech-product[data-site-theme="warm"],
+:root[data-theme="dark"] .w-scope[data-site-theme="warm"] {
   --w-bg: #1E2623;
   --w-surface: #2A3430;
   --w-surface-2: #252E2A;
@@ -556,7 +558,8 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"],
-  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"] {
+  :root:not([data-theme="light"]) .anutech-product[data-site-theme="warm"],
+  :root:not([data-theme="light"]) .w-scope[data-site-theme="warm"] {
     --w-bg: #1E2623;
     --w-surface: #2A3430;
     --w-surface-2: #252E2A;

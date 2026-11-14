@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { archivoSans as archivo } from "@/lib/fonts";
+import { WarmScope } from "@/site/components/chrome/WarmScope";
 
 /**
  * Ad landing pages (R-139, 4 Oct 2026). Deliberately NOT the marketing layout: an ad visitor
@@ -13,5 +14,9 @@ export const metadata: Metadata = {
 };
 
 export default function LandingLayout({ children }: { children: React.ReactNode }) {
-  return <div className={archivo.variable}>{children}</div>;
+  return (
+    <WarmScope kind="site">
+      <div className={archivo.variable}>{children}</div>
+    </WarmScope>
+  );
 }

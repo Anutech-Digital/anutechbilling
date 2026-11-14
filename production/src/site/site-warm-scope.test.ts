@@ -20,7 +20,7 @@ const layout = readFileSync(path.join(root, "src/app/(marketing)/layout.tsx"), "
 
 /** The company site's wrapper, or the ResellerOS product site's ((product)/layout.tsx); a dark
  *  variant may put the root's data-theme in front. Nothing else can match a warm rule. */
-const SCOPES = ['.anutech-site[data-site-theme="warm"]', '.anutech-product[data-site-theme="warm"]'];
+const SCOPES = ['.anutech-site[data-site-theme="warm"]', '.anutech-product[data-site-theme="warm"]', '.w-scope[data-site-theme="warm"]'];
 const inScope = (sel: string) =>
   SCOPES.some((sc) =>
     sel.startsWith(sc) ||
@@ -144,7 +144,7 @@ describe("site-warm.css never hides page content", () => {
 describe("every warm stylesheet is loaded where its pages render", () => {
   const product = readFileSync(path.join(root, "src/app/(product)/layout.tsx"), "utf8");
   it("the company site's layout imports each page-group file except product.css", () => {
-    for (const f of warmFiles.filter((f) => f.startsWith("src/site/warm/") && !f.endsWith("product.css"))) {
+    for (const f of warmFiles.filter((f) => f.startsWith("src/site/warm/") && !f.endsWith("product.css") && !f.endsWith("extra-pages.css"))) {
       expect(layout).toContain(`import "@/${f.replace(/^src\//, "")}";`);
     }
   });
@@ -159,10 +159,22 @@ describe("Warm-only elements (class w-only) never show on Classic", () => {
   const gate = readFileSync(path.join(root, "src/site/warm-only.css"), "utf8");
   const product = readFileSync(path.join(root, "src/app/(product)/layout.tsx"), "utf8");
   it("the gate hides .w-only on any site wrapper that is not on Warm", () => {
-    expect(gate).toContain(':is(.anutech-site, .anutech-product):not([data-site-theme="warm"]) .w-only { display: none !important; }');
+    expect(gate).toContain('.w-scope:not([data-site-theme="warm"]) .w-only, :is(.anutech-site, .anutech-product):not([data-site-theme="warm"]) .w-only { display: none !important; }');
   });
   it("both layouts load the gate", () => {
     expect(layout).toContain('import "@/site/warm-only.css";');
     expect(product).toContain('import "@/site/warm-only.css";');
+  });
+});
+
+describe("WarmScope (pages outside the website layouts)", () => {
+  const scope = readFileSync(path.join(root, "src/site/components/chrome/WarmScope.tsx"), "utf8");
+  it("never creates a box, so Classic lays out exactly as before", () => {
+    expect(scope).toMatch(/style=\{\{ display: "contents" \}\}/);
+  });
+  it("reads the same switch and loads the gate and the extra pages' styles", () => {
+    expect(scope).toMatch(/getWebsiteTheme\(websiteTenantId\(\)\)/);
+    expect(scope).toContain('import "@/site/warm-only.css";');
+    expect(scope).toContain('import "@/site/warm/extra-pages.css";');
   });
 });
