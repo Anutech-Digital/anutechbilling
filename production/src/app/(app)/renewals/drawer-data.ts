@@ -26,7 +26,7 @@ export interface DrawerData {
 /** How far the drawer follows a quote's revisions (R1 → R2 → …). */
 const REVISION_STEPS = 10;
 /** PostgREST `in.(…)` list — quoted so a comma or dot never splits an id. */
-const inList = (ids: readonly string[]) => `(${ids.map((x) => `"${x.replace(/["\]/g, "")}"`).join(",")})`;
+const inList = (ids: readonly string[]) => `(${ids.map((x) => `"${x.replace(/["\\]/g, "")}"`).join(",")})`;
 
 /**
  * The other revisions of the quotes found. A revision takes the subscription link off the old quote
