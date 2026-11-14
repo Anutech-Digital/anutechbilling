@@ -766,7 +766,9 @@ export default function RenewalsPage() {
   /* R-2756: Top risk / the Renewal AI pick = the most overdue CHASED at-risk row (never a Won't renew,
      stopped, paused or expired one), and its day count is the row chip's own (stage.days), naming
      the date it counts from. Real, computed reasons only — never fabricated signals (NPS/logins). */
-  const topRisk       = topRiskPick(allItems);
+  /* no pick while the stages are still being read — the name never flips after load (as the row chip, R-2758) */
+  const stagesRead    = !lastDocsQ.isLoading && !quoteInfoLoading && !openRenewalsLoading;
+  const topRisk       = stagesRead ? topRiskPick(allItems) : null;
   const topHighRisk   = topRisk?.sub.customer_name ?? "a key customer";
   const topReasons    = topRisk ? topRiskReasons(topRisk, todayIst) : [];
 

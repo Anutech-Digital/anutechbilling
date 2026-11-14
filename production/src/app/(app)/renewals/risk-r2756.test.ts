@@ -36,6 +36,11 @@ describe("R-2756: one day count, naming what it counts from", () => {
     expect(stageOverdueWords(st, TODAY)).toBe("Renewal date passed 14d ago (31 Oct 2026)");
   });
 
+  it("a sent part quote (no bill raised) is 'Part due', a whole-term invoice is 'Invoice overdue'", () => {
+    expect(stageOverdueWords({ key: "sent", days: -44, renewalDays: -14 }, TODAY)).toBe("Part due 44d ago (1 Oct 2026)");
+    expect(stageOverdueWords({ key: "invoiced", days: -14, renewalDays: -14 }, TODAY)).toBe("Invoice overdue 14d (due 31 Oct 2026)");
+  });
+
   it("no stage yet (documents loading) / not overdue / Won't renew → no words, never a guessed number", () => {
     expect(stageOverdueWords(null, TODAY)).toBeNull();
     expect(stageOverdueWords({ key: "due", days: 5, renewalDays: 5 }, TODAY)).toBeNull();

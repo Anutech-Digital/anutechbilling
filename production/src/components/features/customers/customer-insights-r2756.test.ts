@@ -28,11 +28,24 @@ describe("R-2756: customer page next best action for a Won't renew subscription"
     expect(ins.nearestRenewal).toBe("2026-11-20");
   });
 
-  it("the Won't renew one ends first → its words, even with a later renewal", () => {
+  it("a renewal due this month is the action even when the Won't renew one ends first", () => {
     at();
     const ins = deriveCustomerInsights(customer, [sub("k", "2026-11-18", false), sub("r", "2026-12-05", true)] as never, []);
-    expect(ins.nba.title).toBe("Won't renew · ends 18 Nov 2026");
+    expect(ins.nba.cta?.label).toBe("Send renewal quote");
     expect(ins.nearestRenewal).toBe("2026-12-05");
+  });
+
+  it("a later renewal (31+ days) → the Won't renew words", () => {
+    at();
+    const ins = deriveCustomerInsights(customer, [sub("k", "2026-11-18", false), sub("r", "2027-03-05", true)] as never, []);
+    expect(ins.nba.title).toBe("Won't renew · ends 18 Nov 2026");
+  });
+
+  it("a Won't renew date already passed is not 'ends <past date>' and not Send renewal quote", () => {
+    at();
+    const ins = deriveCustomerInsights(customer, [sub("k", "2026-10-04", false)] as never, []);
+    expect(ins.nba.title).not.toMatch(/Won't renew/);
+    expect(ins.nba.cta?.label).not.toBe("Send renewal quote");
   });
 
   it("money owed still comes first", () => {

@@ -15,6 +15,7 @@
  */
 import { formatDate, rupee } from "@/lib/utils";
 import { addDaysISO } from "@/lib/dates/ist";
+import { chasedRenewal } from "./classify";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { subscriptionDue } from "@/lib/accounting/receivables-due";
 
@@ -98,7 +99,7 @@ const STOPPED_STATUS: ReadonlySet<string> = new Set(["cancelled", "paused", "exp
 
 /** A renewal somebody should chase: not Won't renew, not stopped / cancelled / paused / expired. */
 export function riskChased(sub: { auto_renew?: boolean | null; status?: string | null; renewal_state?: string | null }): boolean {
-  if (sub.auto_renew === false) return false;
+  if (!chasedRenewal(sub)) return false;   // R-2225 Won't renew (classify.ts — one rule)
   if (STOPPED_STATUS.has(sub.status ?? "")) return false;
   return sub.renewal_state !== "suspended";
 }
@@ -108,8 +109,12 @@ export interface StageDays { key: string; days: number | null; renewalDays: numb
 
 /**
  * The overdue words for a row, from its stage's own day count (the number on the chip), naming
- * what it counts from: "Part bill overdue 44d (due 1 Oct 2026)" when the chip counts from the
- * part's due date, "Renewal date passed 14d ago (31 Oct 2026)" when it counts from renewal_date.
+ * what it counts from (the stage counts from a part's own due date when it differs, else from
+ * renewal_date — stage.ts docWhen / invoiced):
+ *   invoiced, part date  "Part bill overdue 44d (due 1 Oct 2026)"
+ *   invoiced             "Invoice overdue 14d (due 31 Oct 2026)"
+ *   other, part date     "Part due 44d ago (1 Oct 2026)"   (sent / draft part quote — no bill raised yet)
+ *   other                "Renewal date passed 14d ago (31 Oct 2026)"
  * null = not overdue, no stage yet (documents still loading — never a guessed number), or a row
  * that is not chased.
  */
@@ -117,9 +122,9 @@ export function stageOverdueWords(stage: StageDays | null | undefined, todayIst:
   if (!stage || stage.days == null || stage.days >= 0 || NOT_CHASED_STAGES.has(stage.key)) return null;
   const late = -stage.days;
   const from = formatDate(addDaysISO(todayIst, stage.days));
-  return stage.renewalDays !== stage.days
-    ? `Part bill overdue ${late}d (due ${from})`
-    : `Renewal date passed ${late}d ago (${from})`;
+  const partDate = stage.renewalDays !== stage.days;
+  if (stage.key === "invoiced") return partDate ? `Part bill overdue ${late}d (due ${from})` : `Invoice overdue ${late}d (due ${from})`;
+  return partDate ? `Part due ${late}d ago (${from})` : `Renewal date passed ${late}d ago (${from})`;
 }
 
 export interface TopRiskRow {

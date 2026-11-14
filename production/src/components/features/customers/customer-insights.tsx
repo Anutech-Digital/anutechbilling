@@ -191,17 +191,7 @@ function computeNBA(args: {
     };
   }
 
-  // 2a. R-2756: the nearest thing ending is a Won't renew subscription — say so, never "Send renewal quote".
-  if (ending && ending.days <= 30 && (renewalDays == null || ending.days <= renewalDays)) {
-    return {
-      tone: "info",
-      icon: "clock",
-      title: `Won't renew · ends ${formatDate(ending.on)}`,
-      body: "The customer said they won't renew — no renewal quote or reminder goes out. Parts still due are billed. If they change their mind, use Undo Won't renew on the subscription.",
-    };
-  }
-
-  // 2. Renewal coming up.
+  // 2. Renewal coming up (renewing subscriptions only — R-2756).
   if (renewalDays != null && renewalDays <= 30) {
     return {
       tone: "warning",
@@ -209,6 +199,17 @@ function computeNBA(args: {
       title: renewalDays < 0 ? `Renewal ${-renewalDays} day(s) overdue` : `Renewal due in ${renewalDays} day(s)`,
       body: "Review the renewal quote and send it before service lapses.",
       cta: { label: "Send renewal quote", kind: "quote" },
+    };
+  }
+
+  // 2b. R-2756: nothing to renew this month, but a Won't renew subscription ends within 30 days — say so,
+  //     never "Send renewal quote". Only while it still runs (a passed date has ended, not "ends").
+  if (ending && ending.days >= 0 && ending.days <= 30) {
+    return {
+      tone: "info",
+      icon: "clock",
+      title: `Won't renew · ends ${formatDate(ending.on)}`,
+      body: "The customer said they won't renew — no renewal quote or reminder goes out. Parts still due are billed. If they change their mind, use Undo Won't renew on the subscription.",
     };
   }
 
@@ -599,9 +600,12 @@ export function SubscriptionList({ subs }: { subs: Subscription[] }) {
                 ) : s.renewal_date ? (
                   <span>Renews {formatDate(s.renewal_date)}</span>
                 ) : null}
-                {renewalDays != null && renewalDays <= 30 && (
+                {/* R-2756: a Won't renew subscription ends — it does not renew. */}
+                {renewalDays != null && renewalDays >= 0 && renewalDays <= 30 && isNonRenewing(s) ? (
+                  <span className="text-ink-2 font-medium">Won&apos;t renew · ends in {renewalDays}d</span>
+                ) : renewalDays != null && renewalDays <= 30 && !isNonRenewing(s) ? (
                   <span className="text-amber-ink font-medium">renews in {renewalDays}d</span>
-                )}
+                ) : null}
               </div>
             </div>
             <div className="text-right flex-shrink-0">
