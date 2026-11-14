@@ -39,11 +39,33 @@ export class HelpSessionRefused extends Error {
   constructor(why: string) { super(`help session refused: ${why}`); this.name = "HelpSessionRefused"; }
 }
 
-/** Throws when the client carries a key that skips RLS. */
+const ADMIN_ROLES = new Set(["service_role", "secret", "supabase_admin"]);
+
+/** A fixed Authorization header on the client (supabase-js keeps it on .headers / .rest.headers). */
+function fixedBearers(client: unknown): unknown[] {
+  const c = client as { headers?: Record<string, unknown>; rest?: { headers?: Record<string, unknown> } } | null;
+  const out: unknown[] = [];
+  for (const h of [c?.headers, c?.rest?.headers]) {
+    if (!h || typeof h !== "object") continue;
+    for (const k of ["Authorization", "authorization"]) {
+      const v = h[k];
+      if (typeof v === "string") out.push(v.replace(/^Bearer\s+/i, ""));
+    }
+  }
+  return out;
+}
+
+/**
+ * Throws when the client carries a key or a fixed bearer that skips RLS. Defence in depth: the
+ * real lock is that openHelpSession builds the client itself with createClient (guard test).
+ * A per-request accessToken callback cannot be read here — createClient's is the person's own.
+ */
 export function assertNotServiceRole(client: unknown): void {
   const key = (client as { supabaseKey?: unknown } | null)?.supabaseKey;
-  const role = keyRole(key);
-  if (role === "service_role" || role === "secret" || role === "supabase_admin") throw new HelpSessionRefused("service-role key");
+  for (const k of [key, ...fixedBearers(client)]) {
+    const role = keyRole(k);
+    if (role && ADMIN_ROLES.has(role)) throw new HelpSessionRefused("service-role key");
+  }
 }
 
 /** The signed-in person's session for Help AI tools. Call inside a request (cookies). */

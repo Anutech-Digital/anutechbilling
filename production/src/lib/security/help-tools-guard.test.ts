@@ -13,7 +13,7 @@
  *      and there only `createClient` (the cookie client);
  *   3. a help-tools file other than reader.ts touches tables (`.from("…")`), or any of them calls
  *      `.rpc(`, `.storage` or `.auth.`, or reads process.env (registry.ts may read HELP_AI_V2 only);
- *   4. scopedReader / sessionClient are called from anywhere but runner.ts and the legacy
+ *   4. scopedReader / sessionClient / runOneTool are called from anywhere but runner.ts and the legacy
  *      help-data-tools.ts (so no one wraps another client into a tool's reader);
  *   5. the readable-table allowlist names a credential table or a table holding a SECRET_COLUMNS
  *      entry (the list is shared with secret-columns.test.ts).
@@ -25,6 +25,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { readSource } from "@/lib/testing/source-cache";
+import { listSourceFiles } from "@/lib/testing/walk-source";
 import { SECRET_COLUMNS } from "./secret-columns";
 import { HELP_READ_TABLES, HELP_NEVER_TABLES } from "@/lib/ai/help-tools/reader";
 
@@ -133,18 +134,14 @@ describe("R-2774 Help AI tools never reach the service role", () => {
     expect(bad).toEqual([]);
   });
 
-  it("scopedReader / sessionClient are called only by the runner and the legacy path", () => {
+  it("scopedReader / sessionClient / runOneTool are called only by the runner and the legacy path", () => {
     const callers: string[] = [];
-    const walk = (dir: string) => {
-      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, e.name);
-        if (e.isDirectory()) { if (e.name !== "node_modules") walk(full); continue; }
-        if (!/\.tsx?$/.test(e.name) || isTest(e.name)) continue;
-        const f = rel(full);
-        if (/\b(scopedReader|sessionClient)\s*\(/.test(code(readSource(f)))) callers.push(f);
-      }
-    };
-    walk(SRC);
+    for (const full of listSourceFiles(SRC, (name) => /\.tsx?$/.test(name) && !isTest(name))) {
+      const f = rel(full);
+      const src = readSource(f);
+      if (!/scopedReader|sessionClient|runOneTool/.test(src)) continue;
+      if (/\b(scopedReader|sessionClient|runOneTool)\s*\(/.test(code(src))) callers.push(f);
+    }
     const ok = new Set([`${HELP_DIR}/runner.ts`, `${HELP_DIR}/reader.ts`, `${HELP_DIR}/session.ts`, LEGACY]);
     expect(callers.filter((f) => !ok.has(f))).toEqual([]);
   });
