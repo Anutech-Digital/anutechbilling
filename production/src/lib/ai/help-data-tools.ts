@@ -23,14 +23,11 @@ import type { Database } from "@/lib/supabase/database.types";
 import type { HelpAction, HelpAnswer } from "@/lib/ai/app-help";
 import { isUserRole } from "@/lib/auth/roles";
 import { canOpenRoute } from "@/lib/nav";
-import { drillHref } from "@/lib/navigation/drilldown";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
-import { istToday } from "@/lib/dates/ist";
-import { subscriptionSummary } from "@/lib/company/summary";
-import { folderOf, daysToRenewal } from "@/lib/subscriptions/folders";
-import { invoiceIsOverdue } from "@/lib/invoices/overdue";
-import { invoiceBalance } from "@/lib/invoices/kpis";
-import { rupee, num, formatDate } from "@/lib/utils";
+import { DATA_TOOLS } from "@/lib/ai/help-tools/data-tools";
+import { scopedReader } from "@/lib/ai/help-tools/reader";
+import { runHelpTools } from "@/lib/ai/help-tools/runner";
+import type { HelpSession } from "@/lib/ai/help-tools/session";
+import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
 
 type Client = SupabaseClient<Database>;
 type OpenAction = Extract<HelpAction, { kind: "open" }>;
@@ -58,126 +55,16 @@ export interface HelpToolResult {
   /** The page that lists exactly these rows — becomes the answer's link button. */
   href: string | null;
   label: string | null;
+  /** R-2774: where the facts came from (HELP_AI_V2 path only; H-04 shows them). */
+  sources?: HelpSourceRef[];
 }
 
-interface ToolCtx { tenantId: string; now: Date }
-
-interface ToolDef {
-  /** What the model reads in the tool list. */
-  describe: string;
-  /** The page this number belongs to: the role must be able to open it, and the link goes here. */
-  href: string;
-  label: string;
-  run: (c: Client, ctx: ToolCtx) => Promise<string>;
-}
-
-/** Lead stages that are still being worked (lead_stage enum minus won/lost). */
-const LEAD_STAGES = ["new", "contact", "demo", "trial", "quote", "won", "lost"] as const;
-/** Quote statuses that still wait on the customer (quote_status enum). */
-const OPEN_QUOTE_STATUSES = ["draft", "sent", "viewed"] as const;
-
-function plural(n: number, one: string, many: string): string {
-  return `${num(n)} ${n === 1 ? one : many}`;
-}
-
-const TOOLS: Record<HelpDataToolName, ToolDef> = {
-  active_subscriptions: {
-    describe: "active subscriptions right now: count and MRR (monthly recurring revenue, ₹)",
-    href: drillHref("subsActive"),
-    label: "Open active subscriptions",
-    async run(c, { tenantId, now }) {
-      const rows = await fetchAllRows<{ status: string | null; renewal_date: string | null; mrr: number | null; plan: string | null; term_months: number | null }>((from, to) =>
-        c.from("subscriptions").select("status, renewal_date, mrr, plan, term_months").eq("tenant_id", tenantId)
-          .order("id", { ascending: true }).range(from, to));
-      const s = subscriptionSummary(rows, now);
-      return `Active subscriptions: ${num(s.activeCount)}. MRR: ${rupee(s.mrr)} a month.`;
-    },
-  },
-  renewals_due: {
-    describe: "renewals due in the next 30 days (incl. ones already past their date and not renewed): count and the next 5",
-    href: drillHref("subsExpiring"),
-    label: "Open renewals due",
-    async run(c, { tenantId, now }) {
-      const today = istToday(now);
-      const rows = await fetchAllRows<{ customer_name: string | null; plan: string | null; status: string | null; renewal_date: string | null }>((from, to) =>
-        c.from("subscriptions").select("customer_name, plan, status, renewal_date").eq("tenant_id", tenantId)
-          .order("renewal_date", { ascending: true }).order("id", { ascending: true }).range(from, to));
-      const due = rows.filter((r) => folderOf(r, today) === "expiring");
-      const lapsed = due.filter((r) => (daysToRenewal(r.renewal_date, today) ?? 0) < 0).length;
-      const lines = [`Renewals due in the next 30 days: ${num(due.length)}${lapsed ? ` (${num(lapsed)} already past the renewal date)` : ""}.`];
-      for (const r of due.slice(0, 5)) {
-        const d = daysToRenewal(r.renewal_date, today) ?? 0;
-        const when = d < 0 ? `${-d} days late` : d === 0 ? "today" : `in ${d} days`;
-        lines.push(`- ${r.customer_name || "Unnamed customer"} — ${r.plan || "plan not set"} — ${formatDate(r.renewal_date)} (${when})`);
-      }
-      return lines.join("\n");
-    },
-  },
-  overdue_invoices: {
-    describe: "overdue invoices: count and total still owed (₹)",
-    href: drillHref("invoicesOverdue"),
-    label: "Open overdue invoices",
-    async run(c, { tenantId, now }) {
-      const today = istToday(now);
-      const rows = await fetchAllRows<{ status: string; due_date: string | null; amount: number; net_payable: number | null; paid_amount: number | null }>((from, to) =>
-        c.from("invoices").select("status, due_date, amount, net_payable, paid_amount").eq("tenant_id", tenantId)
-          .in("status", ["pending", "overdue"]).is("written_off_at", null).order("id", { ascending: true }).range(from, to));
-      const overdue = rows.filter((r) => invoiceIsOverdue(r, today));
-      const owed = overdue.reduce((s, r) => s + invoiceBalance(r), 0);
-      return `Overdue invoices: ${num(overdue.length)}. Still owed on them: ${rupee(owed)}.`;
-    },
-  },
-  todays_followups: {
-    describe: "lead follow-ups due today (and how many are already overdue), with the first 5 company names",
-    href: drillHref("leadsToday"),
-    label: "Open today's follow-ups",
-    async run(c, { tenantId, now }) {
-      const today = istToday(now);
-      const open = () => c.from("leads").select("id", { count: "exact", head: true })
-        .eq("tenant_id", tenantId).eq("is_junk", false).not("stage", "in", "(won,lost)");
-      const [due, late, top] = await Promise.all([
-        open().eq("follow_up_date", today),
-        open().lt("follow_up_date", today),
-        c.from("leads").select("company").eq("tenant_id", tenantId).eq("is_junk", false)
-          .not("stage", "in", "(won,lost)").eq("follow_up_date", today)
-          .order("value", { ascending: false, nullsFirst: false }).limit(5),
-      ]);
-      for (const r of [due, late, top]) if (r.error) throw r.error;
-      const lines = [`Follow-ups due today: ${num(due.count ?? 0)}. Already overdue (earlier dates): ${num(late.count ?? 0)}.`];
-      for (const l of (top.data ?? []) as { company: string | null }[]) lines.push(`- ${l.company || "Unnamed lead"}`);
-      return lines.join("\n");
-    },
-  },
-  open_quotes: {
-    describe: "open quotes (draft, sent or viewed, not yet invoiced): count and total value (₹)",
-    href: "/quotes",
-    label: "Open Quotes",
-    async run(c, { tenantId }) {
-      const rows = await fetchAllRows<{ status: string; amount: number | null }>((from, to) =>
-        c.from("quotes").select("status, amount").eq("tenant_id", tenantId)
-          .in("status", [...OPEN_QUOTE_STATUSES]).is("invoice_id", null)
-          .order("id", { ascending: true }).range(from, to));
-      const value = rows.reduce((s, r) => s + (r.amount ?? 0), 0);
-      const byStatus = OPEN_QUOTE_STATUSES.map((st) => `${st} ${num(rows.filter((r) => r.status === st).length)}`).join(", ");
-      return `Open quotes: ${num(rows.length)} (${byStatus}). Total value: ${rupee(value)}.`;
-    },
-  },
-  leads_by_stage: {
-    describe: "leads by pipeline stage (new, contact, demo, trial, quote, won, lost), junk left out",
-    href: drillHref("leadsActive"),
-    label: "Open Sales & Pipeline",
-    async run(c, { tenantId }) {
-      const counts = await Promise.all(LEAD_STAGES.map(async (stage) => {
-        const r = await c.from("leads").select("id", { count: "exact", head: true })
-          .eq("tenant_id", tenantId).eq("is_junk", false).eq("stage", stage);
-        if (r.error) throw r.error;
-        return [stage, r.count ?? 0] as const;
-      }));
-      const open = counts.filter(([s]) => s !== "won" && s !== "lost").reduce((n, [, k]) => n + k, 0);
-      return `Open leads: ${plural(open, "lead", "leads")}. By stage: ${counts.map(([s, k]) => `${s} ${num(k)}`).join(", ")}.`;
-    },
-  },
-};
+/**
+ * R-2774: the six tools now live in lib/ai/help-tools (registry contract: tenant-scoped reader,
+ * no secret columns, typed output). This path keeps its R-421 role rule (any role that may open
+ * the page) and its text, unchanged.
+ */
+const TOOLS = Object.fromEntries(DATA_TOOLS.map((t) => [t.name, t])) as Record<HelpDataToolName, (typeof DATA_TOOLS)[number]>;
 
 /**
  * May this role read this tool? The same answer as "may this role open the page the number is
@@ -185,7 +72,7 @@ const TOOLS: Record<HelpDataToolName, ToolDef> = {
  */
 export function helpToolAllowed(role: string | null | undefined, tool: HelpDataToolName): boolean {
   if (!isUserRole(role)) return false;
-  return canOpenRoute(role, TOOLS[tool].href);
+  return canOpenRoute(role, TOOLS[tool].page);
 }
 
 /** The model's tool request: known names only, no repeats, at most HELP_TOOLS_MAX. */
@@ -215,11 +102,36 @@ export async function runHelpDataTools(
     const def = TOOLS[tool];
     if (!helpToolAllowed(ctx.role, tool)) return { tool, ok: false, text: `${tool}: ${NOT_ALLOWED}.`, href: null, label: null };
     try {
-      return { tool, ok: true, text: await def.run(client, { tenantId: ctx.tenantId, now }), href: def.href, label: def.label };
+      const db = scopedReader(client, ctx.tenantId);
+      const role = ctx.role as Parameters<typeof def.run>[1]["role"];
+      const out = await def.run({}, { db, tenantId: ctx.tenantId, role, now });
+      return { tool, ok: true, text: out.text, href: def.page, label: def.label };
     } catch (err) {
       console.error(`[ai/help] tool ${tool} failed:`, (err as Error)?.message);
       return { tool, ok: false, text: `${tool}: could not be read just now — try again in a minute.`, href: null, label: null };
     }
+  }));
+}
+
+/**
+ * R-2774 — HELP_AI_V2 (owner): the same tools through the registry runner — only the person's own
+ * session (openHelpSession), registry role/tier/input/output rules, source refs on each result.
+ * Same result shape as runHelpDataTools, so the R-421 prompt and links work unchanged.
+ */
+export async function runHelpDataToolsV2(
+  session: HelpSession,
+  ctx: { tenantId: string; role: string | null | undefined; now?: Date },
+  names: readonly HelpDataToolName[],
+): Promise<HelpToolResult[]> {
+  const list = names.slice(0, HELP_TOOLS_MAX);
+  const res = await runHelpTools(session, ctx, list.map((name) => ({ name, input: {} })));
+  return res.map((r, i) => ({
+    tool: list[i],
+    ok: r.ok,
+    text: r.refusal === "not_allowed" ? `${list[i]}: ${NOT_ALLOWED}.` : r.text,
+    href: r.href,
+    label: r.label,
+    sources: r.sources,
   }));
 }
 

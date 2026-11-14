@@ -19,6 +19,10 @@
  * In chat the model may ask for read-only data tools (lib/ai/help-data-tools.ts) — they read
  * with the person's own client (RLS), gated by role — and is asked again with the results;
  * the answer carries a link button to the page each number came from.
+ *
+ * R-2774 (14 Nov 2026): with HELP_AI_V2 on, the owner's tool calls go through the Help AI tool
+ * registry (lib/ai/help-tools) — own session only, never the service role — and the reply also
+ * carries `sources` (table + ids + page). Flag off: unchanged.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -32,7 +36,10 @@ import { helpFacts } from "@/lib/ai/help-facts";
 import { loadLastPageTestRun, testHistoryForPrompt } from "@/lib/ai/page-test-runs";
 import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES, type HelpAnswer } from "@/lib/ai/app-help";
 import { HELP_MAX_IMAGES } from "@/lib/ai/help-images";
-import { helpDataToolsPrompt, HELP_TOOL_RESULTS_RULE, parseToolRequest, runHelpDataTools, toolResultsForPrompt, toolFallbackAnswer, withToolLinks } from "@/lib/ai/help-data-tools";
+import { helpDataToolsPrompt, HELP_TOOL_RESULTS_RULE, parseToolRequest, runHelpDataTools, runHelpDataToolsV2, toolResultsForPrompt, toolFallbackAnswer, withToolLinks, type HelpToolResult } from "@/lib/ai/help-data-tools";
+import { helpAiV2Enabled } from "@/lib/ai/help-tools/registry";
+import { openHelpSession } from "@/lib/ai/help-tools/session";
+import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
 
 const imageSchema = z.object({
@@ -151,8 +158,15 @@ ${what}` };
   const raw = await ask(offerTools ? helpDataToolsPrompt() : null, null);
   const wanted = offerTools ? parseToolRequest(raw) : [];
   let answer: HelpAnswer | null;
+  let sources: HelpSourceRef[] | undefined;
   if (wanted.length && tenantId) {
-    const results = await runHelpDataTools(supabase, { tenantId, role: me?.role ?? null }, wanted);
+    /* R-2774: HELP_AI_V2 + owner → the registry runner (own session only, typed in/out, source
+       refs). Flag off or any other role → the R-421 path exactly as before. */
+    const v2 = helpAiV2Enabled(me?.role);
+    const results: HelpToolResult[] = v2
+      ? await runHelpDataToolsV2(openHelpSession(), { tenantId, role: me?.role ?? null }, wanted)
+      : await runHelpDataTools(supabase, { tenantId, role: me?.role ?? null }, wanted);
+    if (v2) sources = results.flatMap((r) => r.sources ?? []);
     const second = await ask(HELP_TOOL_RESULTS_RULE, toolResultsForPrompt(results));
     /* A second call that fails still answers with the numbers — they were read already. */
     answer = withToolLinks(parseHelpAnswer(second, facts?.customerIds) ?? toolFallbackAnswer(results), results);
@@ -180,5 +194,5 @@ ${what}` };
       .slice(0, 3)
       .map((r) => ({ id: r.id, title: r.title }));
   }
-  return NextResponse.json({ ...answer, similar, ai: true });
+  return NextResponse.json({ ...answer, similar, ai: true, ...(sources ? { sources } : {}) });
 }
