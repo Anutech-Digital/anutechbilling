@@ -3,4 +3,563 @@
  * heading, sentence, price and link stays the component's own. Every selector starts with
  * .anutech-site[data-site-theme="warm"] (or .anutech-product[...] for the product site), so the
  * Classic site never matches a rule here — src/site/site-warm-scope.test.ts enforces it.
+ *
+ * The SHARED chrome on every page (artboards SiteHeader + the top bar / CTA / footer of Main,
+ * Email, Compare…): UtilityBar, Header (menus, Cart, Customer login, phone menu), CtaBand,
+ * Footer (components/chrome/Chrome.tsx), ConsentBanner, the AgentChat launcher and CartDrawer.
+ * Most of these are inline-styled, so overrides carry !important (inside the warm scope only).
+ * Inline style attributes are matched both as the server writes them ("a:b") and as the browser
+ * re-serialises them after React touches them ("a: b").
  */
+
+/* ── Top utility bar (UtilityBar — the div right before <header>) ───────────────────────────── */
+.anutech-site[data-site-theme="warm"] > div:has(+ header) {
+  background: var(--w-forest) !important;
+  color: var(--w-on-forest) !important;
+  font-size: 13px !important;
+  padding: 8px 0 !important;
+  line-height: 1.5;
+}
+.anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap {
+  max-width: 1320px;
+  padding-left: clamp(16px, 2.5vw, 32px);
+  padding-right: clamp(16px, 2.5vw, 32px);
+  align-items: center;
+}
+/* /domains offer line: the design's marigold highlight instead of the classic peach. */
+.anutech-site[data-site-theme="warm"] > div:has(+ header) span[style*="FFC9A8"] {
+  color: var(--w-marigold) !important;
+  font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] > div:has(+ header) .hide-mobile { gap: 20px !important; }
+.anutech-site[data-site-theme="warm"] > div:has(+ header) a {
+  color: var(--w-on-forest);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  transition: color .15s ease;
+}
+.anutech-site[data-site-theme="warm"] > div:has(+ header) a:hover {
+  color: #FFFFFF;
+  text-decoration: underline;
+}
+
+/* ── Header bar ─────────────────────────────────────────────────────────────────────────────── */
+.anutech-site[data-site-theme="warm"] header {
+  background: var(--w-surface) !important;
+  border-bottom: 1px solid var(--w-line) !important;
+  color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] header .hdr-row {
+  height: 66px !important;
+}
+@media (min-width: 1400px) {
+  .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
+  .anutech-site[data-site-theme="warm"] header .hdr-row {
+    max-width: 1320px;
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+}
+
+/* Main nav: centred 44px pills, teal hover, mint when open or on that section's page. */
+.anutech-site[data-site-theme="warm"] header nav[aria-label="Main"] {
+  gap: 2px !important;
+  align-items: center;
+  justify-content: center;
+}
+.anutech-site[data-site-theme="warm"] header .nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border-radius: 10px;
+  color: var(--w-ink-2) !important;
+  box-shadow: none !important;
+  text-decoration: none;
+  transition: background-color .15s ease, color .15s ease;
+}
+.anutech-site[data-site-theme="warm"] header .nav-item:hover {
+  background: var(--w-mint-soft);
+  color: var(--w-teal) !important;
+}
+.anutech-site[data-site-theme="warm"] header .nav-item:is([aria-expanded="true"], [style*="font-weight:600"], [style*="font-weight: 600"]) {
+  background: var(--w-mint);
+  color: var(--w-teal-dark) !important;
+}
+.anutech-site[data-site-theme="warm"] header .nav-item > span[aria-hidden] {
+  display: inline-block;
+  color: currentColor !important;
+  opacity: .7;
+  transition: transform .25s cubic-bezier(.2, .8, .2, 1);
+}
+.anutech-site[data-site-theme="warm"] header .nav-item[aria-expanded="true"] > span[aria-hidden] { transform: rotate(180deg); }
+.anutech-site[data-site-theme="warm"] header .nav-item:focus-visible { outline-offset: 0; }
+
+/* Cart: borderless 44px target with a cart glyph and a mint count pill (design). */
+.anutech-site[data-site-theme="warm"] header a[href="/cart"] {
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  gap: 6px !important;
+  padding: 0 10px !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  color: var(--w-ink) !important;
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  position: relative;
+  transition: background-color .15s ease;
+}
+.anutech-site[data-site-theme="warm"] header a[href="/cart"]::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  flex: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2317241F' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3Cpath d='M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6.2'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* The design's thin divider between the menus and the right-hand actions. */
+@media (min-width: 980px) {
+  .anutech-site[data-site-theme="warm"] header a[href="/cart"]::after {
+    content: "";
+    position: absolute;
+    left: -14px;
+    top: 50%;
+    width: 1px;
+    height: 28px;
+    transform: translateY(-50%);
+    background: var(--w-line);
+  }
+}
+.anutech-site[data-site-theme="warm"] header a[href="/cart"]:hover { background: var(--w-mint-soft); }
+.anutech-site[data-site-theme="warm"] header a[href="/cart"] > .mono {
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+  font-weight: 600;
+  padding: 0 8px !important;
+  line-height: 20px;
+  background: var(--w-mint) !important;
+  color: var(--w-teal-dark) !important;
+}
+.anutech-site[data-site-theme="warm"] header a[href="/cart"] > .mono:not([style*="border-hairline"]) {
+  background: var(--w-teal) !important;
+  color: var(--w-on-teal) !important;
+}
+
+/* Customer login: the design's outlined-teal button, fills teal on hover. */
+.anutech-site[data-site-theme="warm"] header .hdr-row > a.btn {
+  min-height: 44px;
+  padding: 0 18px !important;
+  border-radius: 12px !important;
+  border: 1.5px solid var(--w-teal) !important;
+  background: transparent !important;
+  color: var(--w-teal) !important;
+  font-size: 15px !important;
+  font-weight: 600;
+  box-shadow: none;
+}
+.anutech-site[data-site-theme="warm"] header .hdr-row > a.btn:hover {
+  background: var(--w-teal) !important;
+  color: var(--w-on-teal) !important;
+  transform: none;
+}
+
+/* Phone menu button: 44×44, rounded 12; teal outline + mint while the menu is open. */
+.anutech-site[data-site-theme="warm"] header .hdr-row > button.only-mobile {
+  width: 44px;
+  height: 44px;
+  padding: 0 !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--w-line) !important;
+  background: var(--w-surface) !important;
+  color: var(--w-ink) !important;
+  font-size: 18px !important;
+  line-height: 1;
+}
+.anutech-site[data-site-theme="warm"] header .hdr-row > button.only-mobile[aria-expanded="true"] {
+  border: 1.5px solid var(--w-teal) !important;
+  background: var(--w-mint) !important;
+  color: var(--w-teal-dark) !important;
+}
+
+/* ── Desktop menu panel: a floating rounded card (radius 16, soft shadow) under the bar ────── */
+.anutech-site[data-site-theme="warm"] header > div[style*="position:absolute"],
+.anutech-site[data-site-theme="warm"] header > div[style*="position: absolute"] {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 8px clamp(16px, 2.5vw, 32px) 0;
+  animation: w-chrome-menu .22s cubic-bezier(.2, .8, .2, 1) both !important;
+}
+.anutech-site[data-site-theme="warm"] header > div[style*="position:absolute"] > .wrap,
+.anutech-site[data-site-theme="warm"] header > div[style*="position: absolute"] > .wrap {
+  max-width: 1120px;
+  background: var(--w-surface);
+  border: 1px solid var(--w-line);
+  border-radius: 16px;
+  box-shadow: 0 20px 48px rgba(18, 49, 42, 0.16);
+  padding: 16px 16px 16px 20px !important;
+  gap: 24px !important;
+  align-items: start;
+}
+.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap a:not(.btn) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 14px !important;
+  border-radius: 10px !important;
+  color: var(--w-ink);
+  transition: background-color .15s ease, color .15s ease, padding-left .15s ease;
+}
+.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap a:not(.btn):hover {
+  background: var(--w-mint-soft) !important;
+  color: var(--w-teal);
+  padding-left: 18px !important;
+}
+.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap a:not(.btn) > div:first-child {
+  font-weight: 600 !important;
+}
+/* Promo card inside the panel. */
+.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child {
+  background: var(--w-mint-soft) !important;
+  border: 1px solid var(--w-mint) !important;
+  border-radius: 14px !important;
+}
+.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child > div:nth-child(2) {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
+  font-weight: 800 !important;
+  color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child .mono-label {
+  color: var(--w-teal) !important;
+  font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child a:not(.btn) {
+  display: inline;
+  min-height: 0;
+  padding: 0 !important;
+  color: var(--w-teal) !important;
+}
+.anutech-site[data-site-theme="warm"] header > div[style*="position"] > .wrap > div:last-child a:not(.btn):hover {
+  background: none !important;
+  padding: 0 !important;
+  text-decoration: underline;
+}
+@keyframes w-chrome-menu {
+  from { opacity: 0; transform: translateY(-6px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── Phone menu (the drawer under the bar) ──────────────────────────────────────────────────── */
+.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] {
+  border-top: 1px solid var(--w-line) !important;
+  background: var(--w-surface) !important;
+  box-shadow: 0 24px 48px rgba(18, 49, 42, 0.14);
+  padding: 4px 16px 20px;
+  max-height: calc(100vh - 110px) !important;
+  animation: w-chrome-menu .26s cubic-bezier(.2, .8, .2, 1) both !important;
+}
+.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child) {
+  display: flex !important;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 56px;
+  padding: 10px 4px !important;
+  border-bottom: 1px solid #EEF2EE !important;
+  color: var(--w-ink) !important;
+}
+.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child) > span:first-child {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
+  font-size: 17px !important;
+  font-weight: 700 !important;
+}
+.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child) > span:last-child {
+  color: var(--w-muted-2) !important;
+  margin-top: 2px;
+}
+.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child):is([style*="color:var(--primary)"], [style*="color: var(--primary)"]) > span:first-child {
+  color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:not(:last-child):active { background: var(--w-mint-soft); }
+/* Customer login: the design's full-width outlined-teal button at the foot of the menu. */
+.anutech-site[data-site-theme="warm"] header > nav[aria-label="Mobile"] > a:last-child {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 50px;
+  margin-top: 16px;
+  padding: 12px 16px !important;
+  border-radius: 14px;
+  border: 1.5px solid var(--w-teal);
+  background: transparent !important;
+  color: var(--w-teal) !important;
+  font-weight: 600 !important;
+}
+
+/* ── CTA band above the footer: the design's rounded teal "wave" card ───────────────────────── */
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) {
+  background: transparent !important;
+  padding: clamp(25px, 3.2vw, 45px) clamp(16px, 4vw, 24px) !important;
+  color: #FFFFFF;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) > .wrap {
+  max-width: 1240px;
+  background: var(--w-teal) url(/site/warm/6cdcd82171e8c4cbac2b9ef955fa097a.jpg) center / cover no-repeat;
+  border-radius: 28px;
+  box-shadow: 0 24px 60px rgba(14, 107, 92, 0.22);
+  padding: clamp(23px, 2.97vw, 42px) clamp(20px, 2.29vw, 32px) !important;
+  flex-direction: column;
+  align-items: center !important;
+  text-align: center;
+  gap: 16px !important;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) > .wrap > div:first-child {
+  flex: none !important;
+  max-width: 760px;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) h2 {
+  color: #FFFFFF;
+  font-size: clamp(1.8rem, 3.4vw, 2.26rem) !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em !important;
+  line-height: 1.15;
+  margin-bottom: 16px !important;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) p {
+  color: var(--w-mint) !important;
+  font-size: 18px !important;
+  line-height: 1.5;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) > .wrap > div:last-child {
+  justify-content: center;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) .btn {
+  min-height: 54px;
+  padding: 0 28px;
+  border-radius: 14px;
+  font-size: 16px;
+}
+/* Design: WhatsApp is the marigold button, Get a quote the white outline beside it. When
+   WhatsApp is not configured, Get a quote is alone and stays the marigold main action. */
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) .btn-outline {
+  background: var(--w-marigold) !important;
+  color: var(--w-on-marigold) !important;
+  border: 1.5px solid var(--w-marigold) !important;
+  font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) .btn-outline:hover {
+  background: var(--w-marigold-hover) !important;
+  border-color: var(--w-marigold-hover) !important;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) .btn-primary:not(:only-child) {
+  background: transparent;
+  color: #FFFFFF;
+  border: 1.5px solid #FFFFFF;
+}
+.anutech-site[data-site-theme="warm"] > section:has(+ footer) .btn-primary:not(:only-child):hover {
+  background: #FFFFFF;
+  color: var(--w-teal-dark);
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────────────────────────── */
+.anutech-site[data-site-theme="warm"] > footer {
+  background: var(--w-surface) !important;
+  border-top: 1px solid var(--w-line) !important;
+  padding: clamp(28px, 3.2vw, 44px) 0 0 !important;
+  color: var(--w-muted);
+  overflow-x: clip;
+}
+.anutech-site[data-site-theme="warm"] > footer > .wrap {
+  max-width: 1240px;
+  padding-left: clamp(16px, 4vw, 24px);
+  padding-right: clamp(16px, 4vw, 24px);
+}
+.anutech-site[data-site-theme="warm"] > footer .footer-grid {
+  grid-template-columns: minmax(260px, 1.6fr) repeat(5, minmax(0, 1fr));
+  gap: 40px 32px;
+}
+@media (max-width: 1100px) {
+  .anutech-site[data-site-theme="warm"] > footer .footer-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .anutech-site[data-site-theme="warm"] > footer .footer-grid > div:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] > footer .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px 20px; }
+}
+/* Brand column */
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 320px;
+}
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > div:first-child > * { margin-bottom: 0 !important; }
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > div:first-child p {
+  color: var(--w-muted) !important;
+  line-height: 1.6 !important;
+  max-width: none !important;
+}
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > div:first-child .mono-label {
+  font-family: var(--font-sans) !important;
+  background: var(--w-bg);
+  border: 1px solid var(--w-line) !important;
+  border-radius: 6px !important;
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--w-ink-2) !important;
+}
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > div:first-child > div:last-child { gap: 6px !important; }
+/* Link columns */
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > nav > .mono-label {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 700;
+  letter-spacing: 0.08em !important;
+  color: var(--w-ink) !important;
+  margin-bottom: 8px !important;
+}
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > nav > a {
+  color: var(--w-muted) !important;
+  padding: 4px 0 !important;
+  line-height: 1.45;
+  text-underline-offset: 3px;
+  transition: color .15s ease;
+}
+.anutech-site[data-site-theme="warm"] > footer .footer-grid > nav > a:hover {
+  color: var(--w-teal) !important;
+  text-decoration: underline;
+}
+/* Bottom strip: full-bleed light band (design), cookie settings in teal. */
+.anutech-site[data-site-theme="warm"] > footer > .wrap > div:last-child {
+  position: relative;
+  isolation: isolate;
+  margin-top: clamp(28px, 3vw, 40px) !important;
+  padding: 18px 0 !important;
+  border-top: 0 !important;
+  font-size: 13px !important;
+  color: var(--w-muted-2) !important;
+  gap: 8px 24px !important;
+  align-items: center;
+}
+.anutech-site[data-site-theme="warm"] > footer > .wrap > div:last-child::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(50% - 50vw);
+  right: calc(50% - 50vw);
+  z-index: -1;
+  background: var(--w-bg);
+  border-top: 1px solid var(--w-line);
+}
+.anutech-site[data-site-theme="warm"] > footer > .wrap > div:last-child > button {
+  order: 3;
+  min-height: 32px;
+  color: var(--w-teal) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  text-underline-offset: 3px;
+}
+.anutech-site[data-site-theme="warm"] > footer > .wrap > div:last-child > button:hover {
+  color: var(--w-teal-dark) !important;
+  text-decoration-thickness: 2px;
+}
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] > footer > .wrap > div:last-child {
+    justify-content: center !important;
+    text-align: center;
+  }
+}
+
+/* ── Cookie consent banner ──────────────────────────────────────────────────────────────────── */
+.anutech-site[data-site-theme="warm"] .consent-banner {
+  background: var(--w-surface) !important;
+  color: var(--w-ink-2) !important;
+  border: 1px solid var(--w-line) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 20px 48px rgba(18, 49, 42, 0.18) !important;
+}
+.anutech-site[data-site-theme="warm"] .consent-banner .consent-title {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
+  font-weight: 800 !important;
+  color: var(--w-ink) !important;
+}
+.anutech-site[data-site-theme="warm"] .consent-banner :is(a, .consent-short button) {
+  color: var(--w-teal) !important;
+}
+.anutech-site[data-site-theme="warm"] .consent-banner p[style*="475467"] { color: var(--w-muted) !important; }
+/* Both choices keep equal weight (DPDP) — the same outlined-teal button. */
+.anutech-site[data-site-theme="warm"] .consent-banner .consent-btn {
+  border-radius: 12px !important;
+  border: 1.5px solid var(--w-teal) !important;
+  background: var(--w-surface) !important;
+  color: var(--w-teal) !important;
+  transition: background-color .15s ease, color .15s ease;
+}
+.anutech-site[data-site-theme="warm"] .consent-banner .consent-btn:hover {
+  background: var(--w-teal) !important;
+  color: var(--w-on-teal) !important;
+}
+
+/* ── Floating "Talk to us" launcher + its menu ──────────────────────────────────────────────── */
+.anutech-site[data-site-theme="warm"] .agent-launcher {
+  background: var(--w-teal) !important;
+  color: var(--w-on-teal) !important;
+  box-shadow: 0 12px 28px rgba(18, 49, 42, 0.28) !important;
+  font-weight: 700 !important;
+  transition: background-color .2s ease, transform .2s ease;
+}
+.anutech-site[data-site-theme="warm"] .agent-launcher:hover {
+  background: var(--w-teal-dark) !important;
+  transform: translateY(-2px);
+}
+.anutech-site[data-site-theme="warm"] .agent-launcher .agent-launcher-dot { background: var(--w-marigold) !important; }
+@media (min-width: 980px) {
+  .anutech-site[data-site-theme="warm"] .agent-launcher { min-height: 48px; padding: 12px 20px; }
+}
+@media (max-width: 979px) {
+  .anutech-site[data-site-theme="warm"] .agent-launcher { width: 52px; height: 52px; }
+}
+.anutech-site[data-site-theme="warm"] .agent-launcher-menu {
+  background: var(--w-surface) !important;
+  border: 1px solid var(--w-line) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 20px 48px rgba(18, 49, 42, 0.16) !important;
+  padding: 8px !important;
+}
+.anutech-site[data-site-theme="warm"] .agent-launcher-menu .agent-menu-item { border-radius: 10px; color: var(--w-ink); }
+.anutech-site[data-site-theme="warm"] .agent-launcher-menu .agent-menu-item:hover { background: var(--w-mint-soft); color: var(--w-teal); }
+/* Chat window: rounded like the design's cards, forest header. */
+.anutech-site[data-site-theme="warm"] div[role="dialog"][aria-label="AI sales agent chat"] {
+  border-radius: 20px !important;
+  border-color: var(--w-line) !important;
+  box-shadow: 0 24px 60px rgba(18, 49, 42, 0.22) !important;
+}
+.anutech-site[data-site-theme="warm"] div[role="dialog"][aria-label="AI sales agent chat"] > div:first-child {
+  background: var(--w-forest) !important;
+}
+
+/* ── Cart drawer (light touch): warm panel edge and rounded corners on the left ─────────────── */
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12,17,22"],
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12, 17, 22"] {
+  background: rgba(18, 49, 42, 0.38) !important;
+}
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12,17,22"] + div,
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12, 17, 22"] + div {
+  border-radius: 20px 0 0 20px;
+  overflow: hidden;
+}
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12,17,22"] + div > div:first-child > div:first-child > div:last-child,
+.anutech-site[data-site-theme="warm"] div[style*="rgba(12, 17, 22"] + div > div:first-child > div:first-child > div:last-child {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
+  font-weight: 800 !important;
+}

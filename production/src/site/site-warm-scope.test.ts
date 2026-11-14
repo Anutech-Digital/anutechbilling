@@ -114,7 +114,10 @@ describe("site-warm.css never hides page content", () => {
     const offenders = rules
       .filter((r) => HIDES.test(r.body + ";"))
       .flatMap((r) => r.sel.split(/,(?![^(]*\))/).map((s) => s.trim()))
-      .filter((s) => !/::(before|after)\s*$/.test(s));
+      .filter((s) => !/::(before|after)\s*$/.test(s))
+      // The theme's OWN controls (class prefix .w-, e.g. .w-to-top's "hidden until you scroll")
+      // are not page content; anything else hidden is.
+      .filter((s) => !/\.w-[a-z0-9-]+(\[[^\]]*\])*\s*$/.test(s));
     expect(offenders).toEqual([]);
   });
 });

@@ -4,3 +4,324 @@
  * .anutech-site[data-site-theme="warm"] (or .anutech-product[...] for the product site), so the
  * Classic site never matches a rule here — src/site/site-warm-scope.test.ts enforces it.
  */
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   SHARED — SectionHead (src/site/components/ui/bits.tsx), used by /rates, /reseller, /ssl and
+   others: the design's section label (Inter 14px bold, teal) above an 800-weight heading.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+.anutech-site[data-site-theme="warm"] div:has(> .eyebrow + h2.h2-section) > .eyebrow {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif;
+  font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: var(--w-teal) !important;
+}
+.anutech-site[data-site-theme="warm"] div:has(> .eyebrow + h2.h2-section) > h2.h2-section {
+  font-size: clamp(2rem, 3.6vw, 2.44rem); font-weight: 800; line-height: 1.12; letter-spacing: -0.02em; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] div:has(> .eyebrow + h2.h2-section) > .body-lg { font-size: 16.5px; color: var(--w-muted); }
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   WHY US (/why-us — artboard WhyUs). The page's one section: a centred intro under a marigold
+   circle with the "us vs them" picture, then the ten rows in a white rounded table whose
+   Anutech column is a teal-headed mint column.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates) {
+  position: relative; isolation: isolate; overflow: hidden; padding: clamp(27px, 3.52vw, 50px) 0 clamp(30px, 3.84vw, 54px);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates)::before {
+  content: ""; position: absolute; z-index: -1; width: 560px; height: 560px; border-radius: 50%;
+  background: var(--w-marigold-soft); right: -180px; top: -240px;
+}
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates) > .wrap > div:first-child {
+  max-width: 720px !important; margin: 0 auto 38px !important; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+}
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates) > .wrap > div:first-child > * { margin: 0 !important; }
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates) .h1-page {
+  font-size: clamp(2.6rem, 5.4vw, 3.57rem); line-height: 1.05; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates) .body-lg { font-size: 17px; color: var(--w-muted); }
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates) > .wrap > div:first-child::after {
+  content: ""; display: block; width: 100%; max-width: 480px; aspect-ratio: 16 / 9; margin-top: 8px; border-radius: 24px;
+  background: url(/site/warm/bc78e63b8ff6d7367574cbee156c5dfe.jpg) center / cover no-repeat; box-shadow: 0 20px 50px rgba(18, 49, 42, 0.14);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap:has(> table.rates) {
+  max-width: 1100px; margin: 0 auto; background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 24px;
+  box-shadow: 0 24px 60px rgba(18, 49, 42, 0.08);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates :is(th, td) {
+  padding: 18px 22px; text-align: left; vertical-align: top; border-bottom: 1px solid #EEF2EE;
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates thead th {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.08em;
+  background: var(--w-surface); color: var(--w-muted-2) !important;
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates thead th:nth-child(1) { width: 26%; }
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates thead th:nth-child(2) {
+  background: var(--w-teal); color: var(--w-on-teal) !important; border-bottom-color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates thead th:nth-child(3) { background: var(--w-bg); }
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:nth-child(1) {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 16px; font-weight: 700 !important; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:nth-child(2) {
+  background: var(--w-mint-soft); color: var(--w-ink) !important; font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:nth-child(2)::before {
+  content: ""; display: inline-block; width: 6px; height: 11px; margin: 0 10px 2px 2px; vertical-align: middle;
+  border: solid var(--w-teal); border-width: 0 2.5px 2.5px 0; transform: rotate(45deg);
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:nth-child(3) {
+  background: var(--w-surface-2); color: var(--w-muted-2) !important;
+}
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody tr:last-child td { border-bottom: 0; }
+.anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody tr:hover { background: transparent; }
+
+/* Phone: each row becomes a card — topic on top, the two answers side by side under the two
+   column heads (the heads stay visible as a two-column strip). */
+@media (max-width: 680px) {
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates { min-width: 0 !important; }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates :is(thead, tbody, tr, th, td) { display: block; width: auto !important; }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tr {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 16px 14px; border-bottom: 1px solid var(--w-line);
+  }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody tr:last-child { border-bottom: 0; }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates thead tr { padding: 12px 14px; gap: 8px; }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates thead th:first-child { grid-column: 1 / -1; padding: 0; border: 0; }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates thead th:not(:first-child) {
+    padding: 8px 10px; border: 0; border-radius: 10px; font-size: 11px;
+  }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td { padding: 10px 12px; border: 0; border-radius: 10px; font-size: 14px; }
+  .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates tbody td:first-child { grid-column: 1 / -1; padding: 0 0 2px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   RESELLER (/reseller — artboard Reseller). Dark forest hero with the photo slideshow behind the
+   heading, the four "elsewhere vs with Anutech" cards apart, the margin calculator on white
+   (slider tiles, then a forest card with the margin), and ResellerOS as a mint rounded card.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child { padding-top: 0; padding-bottom: clamp(27px, 3.52vw, 50px); }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child {
+  position: relative; isolation: isolate; max-width: none !important; margin-bottom: clamp(32px, 3.84vw, 56px) !important;
+  padding: clamp(36px, 4.4vw, 64px) 0 clamp(36px, 4.2vw, 60px); display: flex; flex-direction: column; gap: 18px;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child::before {
+  content: ""; position: absolute; z-index: -2; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw);
+  background: var(--w-forest) url(/site/warm/a01befd8b168b723a5e4bf050335021f.jpg) 70% center / cover no-repeat;
+  animation: co-reseller-slides 28s infinite;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child::after {
+  content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw);
+  background: linear-gradient(90deg, rgba(18,49,42,0.95) 0%, rgba(18,49,42,0.86) 42%, rgba(18,49,42,0.5) 100%);
+}
+@keyframes co-reseller-slides {
+  0%, 22%   { background-image: url(/site/warm/a01befd8b168b723a5e4bf050335021f.jpg); }
+  25%, 47%  { background-image: url(/site/warm/1cc66171dddd9bad0bff32b2e8f88cb9.jpg); }
+  50%, 72%  { background-image: url(/site/warm/cd521faa21388ef25dcb024417e59104.jpg); }
+  75%, 97%  { background-image: url(/site/warm/49aef5efa6eb3ef05b52f15eeec5ec89.jpg); }
+  100%      { background-image: url(/site/warm/a01befd8b168b723a5e4bf050335021f.jpg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child::before { animation: none; }
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child > * { margin: 0 !important; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .h1-page {
+  max-width: 860px; font-size: clamp(2.4rem, 5vw, 3.31rem); line-height: 1.1; color: #FFFFFF; text-shadow: 0 2px 24px rgba(0,0,0,0.3);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child .body-lg { max-width: 680px; font-size: 17px; color: var(--w-on-forest); }
+
+/* The four reasons: separate white cards; the "elsewhere" line is a warm-grey strip on top. */
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] {
+  gap: 18px !important; background: transparent !important; border: 0 !important; border-radius: 0 !important; overflow: visible !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div {
+  background: var(--w-surface) !important; border: 1px solid var(--w-line); border-radius: 22px; overflow: hidden; padding: 0 !important;
+  box-shadow: 0 10px 28px rgba(18, 49, 42, 0.05); display: flex; flex-direction: column;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > .mono-label {
+  display: flex; align-items: center; gap: 12px; margin: 0 !important; padding: 16px 22px 18px; background: #F7F4F3;
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; color: #8A6A63 !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > .mono-label::before {
+  content: ""; flex: none; width: 26px; height: 26px; border-radius: 50%;
+  background: #FDE8E4 linear-gradient(45deg, transparent 46%, #C0533F 46%, #C0533F 54%, transparent 54%) center / 10px 10px no-repeat;
+  box-shadow: inset 0 0 0 9px #FDE8E4;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div {
+  position: relative; margin: 0 !important; padding: 24px 22px 6px 86px;
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 19px !important; font-weight: 700 !important; line-height: 1.3; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div::before {
+  content: ""; position: absolute; left: 22px; top: 24px; width: 48px; height: 48px; border-radius: 14px; background: var(--w-mint);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div:nth-child(4n+2) > div::before,
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div:nth-child(4n+3) > div::before { background: var(--w-marigold-soft); }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div::after {
+  content: ""; position: absolute; left: 41px; top: 39px; width: 8px; height: 14px; border: solid var(--w-teal); border-width: 0 3px 3px 0; transform: rotate(45deg);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > p {
+  padding: 0 22px 22px 86px; font-size: 15px !important; color: var(--w-muted); min-height: 46px;
+}
+
+/* Margin calculator: a white band; slider tiles on the left, the margin in a forest card. */
+.anutech-site[data-site-theme="warm"] #main > #margin { background: var(--w-surface) !important; padding-block: clamp(27px, 3.52vw, 50px); }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner { gap: 24px !important; align-items: stretch !important; }
+@media (min-width: 980px) {
+  .anutech-site[data-site-theme="warm"] #margin .wrap-inner { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) !important; }
+}
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card { box-shadow: none; }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:hover { transform: none; box-shadow: none; }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:first-child {
+  background: transparent; border: 0; padding: 0; display: flex; flex-direction: column; gap: 12px;
+}
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:first-child > div {
+  margin: 0 !important; background: var(--w-bg); border-radius: 16px; padding: 18px 20px 14px; flex: 1;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:first-child label {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; color: var(--w-muted-2) !important;
+}
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:first-child input[type="range"] { min-height: 32px; accent-color: var(--w-teal) !important; cursor: pointer; }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child {
+  background: var(--w-forest); border: 0; border-radius: 22px; padding: 26px; color: var(--w-on-forest);
+}
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child > div[style*="space-between"] {
+  border-bottom-color: rgba(255, 255, 255, 0.14) !important; font-size: 15px !important; padding: 12px 0 !important;
+}
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child > div[style*="space-between"] > span:first-child { color: #FFFFFF; }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child .meta { color: var(--w-on-forest); }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child > div[style*="space-between"] > span:last-child { color: var(--w-marigold) !important; font-weight: 700 !important; }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child > div:last-child { margin-top: 22px !important; display: flex; flex-direction: column; gap: 10px; }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child > div:last-child > * { margin: 0 !important; }
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child .mono-label {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; color: var(--w-marigold) !important;
+}
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child div[style*="font-size: 42px"] {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: clamp(44px, 4vw, 56px) !important; line-height: 1; font-weight: 800 !important;
+  letter-spacing: -0.02em !important; color: #FFFFFF;
+}
+.anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child .btn {
+  margin-top: 8px !important; display: flex; align-items: center; justify-content: center; min-height: 50px; border-radius: 14px; font-weight: 700;
+}
+
+/* ResellerOS: a mint rounded card with a teal button. */
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) .card.card-highlight-os {
+  background: var(--w-mint); border: 0; border-radius: 28px; box-shadow: none; padding: clamp(23px, 2.97vw, 42px); gap: 24px 35px !important;
+  justify-content: space-between;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) .card.card-highlight-os:hover { transform: none; box-shadow: none; }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) .card.card-highlight-os .mono-label {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: var(--w-teal-dark) !important;
+  margin-bottom: 12px !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) .card.card-highlight-os .h2-sub {
+  font-size: clamp(1.8rem, 3.2vw, 2.17rem); line-height: 1.15; letter-spacing: -0.02em; font-weight: 800; color: var(--w-ink); margin-bottom: 12px !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) .card.card-highlight-os .body { font-size: 17px; color: var(--w-ink-2); }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) .card.card-highlight-os .btn-os {
+  background: var(--w-teal); color: var(--w-on-teal); min-height: 54px; padding: 0 28px; border-radius: 14px; display: inline-flex; align-items: center; font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) .card.card-highlight-os .btn-os:hover { background: var(--w-teal-dark); }
+
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child { text-align: center; align-items: center; }
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child::after { background: rgba(18, 49, 42, 0.88); }
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > div { padding-left: 80px; font-size: 18px !important; }
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child [data-grid] > div > p { padding-left: 22px; padding-top: 10px; min-height: 0; }
+  .anutech-site[data-site-theme="warm"] #margin .wrap-inner > .card:last-child > div[style*="space-between"] { flex-wrap: wrap; }
+  .anutech-site[data-site-theme="warm"] #main:has(> #margin) .card.card-highlight-os .btn-os { width: 100%; justify-content: center; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   RATES (/rates — artboard Rates). Intro beside a server-room photo under a marigold circle,
+   jump pills; then every table on the page ground with its heading + unit on one line and the
+   product button top-right; the software-pricing line as a mint note.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child {
+  position: relative; isolation: isolate; overflow: hidden; padding: clamp(25px, 3.2vw, 45px) 0 clamp(20px, 2.29vw, 32px);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child::before {
+  content: ""; position: absolute; z-index: -1; width: 520px; height: 520px; border-radius: 50%; background: var(--w-marigold-soft); right: -160px; top: -220px;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child > .wrap {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 460px); grid-template-areas: "text photo" "nav photo"; gap: 16px 40px; align-items: center;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child > .wrap > div {
+  grid-area: text; margin: 0 !important; display: flex; flex-direction: column; gap: 16px;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child > .wrap > div > * { margin: 0 !important; }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child .eyebrow {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: var(--w-teal) !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child .h1-page {
+  font-size: clamp(2.6rem, 5vw, 3.4rem); line-height: 1.05; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child .body-lg { font-size: 17px; color: var(--w-muted); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child > .wrap::after {
+  content: ""; grid-area: photo; width: 100%; height: clamp(140px, 15.4vw, 210px); border-radius: 24px;
+  background: url(/site/warm/fc837755801d54ac08f6a3cb8aeaf9cd.jpg) 40% center / cover no-repeat; box-shadow: 0 20px 50px rgba(18, 49, 42, 0.16);
+}
+.anutech-site[data-site-theme="warm"] nav[aria-label="Jump to"] { grid-area: nav; margin-top: 4px; }
+.anutech-site[data-site-theme="warm"] nav[aria-label="Jump to"] > .chip {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; border-radius: 999px; background: var(--w-surface);
+  border: 1.5px solid var(--w-line-strong); color: var(--w-ink); font-weight: 600; text-decoration: none;
+}
+.anutech-site[data-site-theme="warm"] nav[aria-label="Jump to"] > .chip:hover { border-color: var(--w-teal); color: var(--w-teal); }
+
+/* One block per product, all on the page ground. */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] {
+  background: transparent !important; padding: 18px 0;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head cta" "table table"; gap: 14px 16px; align-items: end;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > div:first-child {
+  grid-area: head; margin: 0 !important; max-width: none !important;
+  display: flex; flex-direction: row-reverse; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > div:first-child > .eyebrow {
+  margin: 0 !important; font-size: 15px; font-weight: 500; letter-spacing: 0; text-transform: lowercase; color: var(--w-muted-2) !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > div:first-child > h2.h2-section {
+  font-size: 28px; font-weight: 800; letter-spacing: -0.01em;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > .tablewrap {
+  grid-area: table; background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 18px;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > div:last-child { grid-area: cta; margin: 0 !important; }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > div:last-child > .btn {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; border-radius: 12px; border: 0;
+  background: var(--w-teal); color: var(--w-on-teal); font-size: 15px; font-weight: 600;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > div:last-child > .btn:hover { background: var(--w-teal-dark); color: var(--w-on-teal); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table thead tr { border-bottom: 1px solid var(--w-line) !important; }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table thead th {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--w-muted-2); background: var(--w-surface-2);
+  padding-top: 14px !important; padding-bottom: 14px !important;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody tr { border-bottom-color: #EEF2EE !important; }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody tr:last-child { border-bottom: 0 !important; }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody :is(th, td) { padding-top: 14px !important; padding-bottom: 14px !important; color: var(--w-ink); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody th > span:first-child {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody th .meta { color: var(--w-muted-2); font-size: 13px; }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody tr:hover { background: var(--w-mint-soft); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section-tight { padding: 18px 0 clamp(27px, 3.52vw, 50px); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section-tight .meta {
+  padding: 18px 22px; background: var(--w-mint); border-radius: 16px; color: var(--w-teal-dark); font-size: 15px;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section-tight .meta a { color: var(--w-teal-dark); font-weight: 700; }
+
+@media (max-width: 860px) {
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child > .wrap {
+    grid-template-columns: minmax(0, 1fr); grid-template-areas: "text" "nav" "photo";
+  }
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child > .wrap::after { max-width: 460px; margin-top: 8px; }
+}
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child > .wrap > div { text-align: center; align-items: center; }
+  .anutech-site[data-site-theme="warm"] nav[aria-label="Jump to"] { justify-content: center; }
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap {
+    grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "table" "cta";
+  }
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] > .wrap > div:last-child > .btn { width: 100%; justify-content: center; }
+}

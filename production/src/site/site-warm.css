@@ -378,3 +378,21 @@
   --w-radius-card: 20px;
   --w-radius-btn: 14px;
 }
+
+/* ── Back to top (BackToTop.tsx — rendered only on Warm, desktop only) ─────────────────────── */
+.anutech-site[data-site-theme="warm"] .w-to-top {
+  position: fixed; right: 22px; bottom: 84px; z-index: 90; width: 56px; height: 56px; padding: 0; border: 0;
+  border-radius: 50%; background: var(--w-teal); color: #FFFFFF; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: 0 12px 28px rgba(18, 49, 42, 0.28);
+  transition: opacity .3s ease, transform .35s cubic-bezier(.2,.8,.2,1), visibility .3s, background-color .2s ease;
+}
+.anutech-site[data-site-theme="warm"] .w-to-top[data-shown="false"] { opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(16px) scale(0.9); }
+.anutech-site[data-site-theme="warm"] .w-to-top:hover { background: var(--w-teal-dark); transform: translateY(-3px); }
+.anutech-site[data-site-theme="warm"] .w-to-top:focus-visible { outline: 3px solid var(--w-marigold); outline-offset: 3px; }
+.anutech-site[data-site-theme="warm"] .w-to-top-ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+.anutech-site[data-site-theme="warm"] .w-to-top-ring circle:last-child { transition: stroke-dashoffset .15s linear; }
+.anutech-site[data-site-theme="warm"] .w-to-top-arrow { position: relative; }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] .w-to-top { transition: none; }
+}
+@media print { .anutech-site[data-site-theme="warm"] .w-to-top { visibility: hidden; } }

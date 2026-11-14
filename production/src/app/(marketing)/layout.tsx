@@ -53,6 +53,7 @@ import { Header } from "@/site/components/chrome/Header";
 import { UtilityBar, CtaBand, Footer, ConsentBanner } from "@/site/components/chrome/Chrome";
 import { AgentChat } from "@/site/components/agent/AgentChat";
 import { SitePreviewBar } from "@/site/components/chrome/SitePreviewBar";
+import { BackToTop } from "@/site/components/chrome/BackToTop";
 import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 import { bookMailboxMonthly } from "@/lib/catalog/catalog-prices";
 import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
@@ -92,6 +93,8 @@ export default async function MarketingLayout({ children }: { children: React.Re
         <Footer />
         {/* R-1498: the ONE floating launcher — its menu offers the AI chat and WhatsApp. */}
         <AgentChat />
+        {/* Warm theme only: back-to-top with a progress ring (desktop; see BackToTop.tsx). */}
+        {theme === "warm" && <BackToTop />}
         <ConsentBanner />
         {/* R-1979: Meta Pixel — nothing without a pixel id or without "Accept all". */}
         <MetaPixel pixelId={pixelId} />
