@@ -24,6 +24,11 @@
 --       lock: direct delete, TDS change on a deposited month, LOP change in a filed quarter refused;
 --       notes / bank account still change.
 --   L   TDS-0 salary in a deposited month: Edit / Undo work; an Edit that ADDS TDS is refused.
+--   M   merge_employees / employee-only move: deposited month OK; filed quarter only when both employees
+--       have the same PAN (P7 no PAN on the duplicate, P10 PAN blanked first, P12 kept record without
+--       PAN -> refused, each with its own way out); never to another company's employee, whose name /
+--       PAN is never shown (P11 deposited, P13 filed).
+--   N   incentive from a bank line onto a locked month: refused with its own message + HINT.
 --
 -- Run (needs 20261114083830_r2772 + this migration on the DB):
 --   node scripts/test-sql.mjs --local supabase/tests/r2812_salary_tds_deposited_lock.test.sql
@@ -61,7 +66,10 @@ insert into public.employees (id, tenant_id, name, monthly_gross, basic_monthly,
   ('c2812000-0000-4000-8000-0000000000e7', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Neha Dup',   30000, 15000, '2025-01-01', 'ABCPN5678L'),
   ('c2812000-0000-4000-8000-0000000000e8', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Neha',       30000, 15000, '2025-01-01', 'abcpn5678l'),
   ('c2812000-0000-4000-8000-0000000000e9', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Vikas Dup',  30000, 15000, '2025-01-01', 'ABCPV1111M'),
-  ('c2812000-0000-4000-8000-0000000000ea', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Vikas',      30000, 15000, '2025-01-01', 'ABCPV2222N');
+  ('c2812000-0000-4000-8000-0000000000ea', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Vikas',      30000, 15000, '2025-01-01', 'ABCPV2222N'),
+  ('c2812000-0000-4000-8000-0000000000ec', 'c2812000-0000-0000-0000-0000000000f0', 'R2812 Rekha Dup',  30000, 15000, '2025-01-01', null),
+  -- another company's employee (re-review: a move there must be refused, its name / PAN never shown)
+  ('c2812000-0000-4000-8000-0000000000eb', 'c2812000-0000-0000-0000-0000000000f1', 'R2812 OtherCo Emp', 30000, 15000, '2025-01-01', 'ZZZPZ9999Z');
 -- N (book_bank_txn_as_incentive, R-1839): two money-out lines to book as incentive.
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit) values
   ('c2812000-0000-4000-8000-0000000000c1', 'c2812000-0000-0000-0000-0000000000f0', 'c2812000-0000-4000-8000-0000000000b1', '2026-11-10', 'R2812 INCENTIVE OCT', 900, 0),
@@ -363,7 +371,59 @@ begin
   if not exists (select 1 from public.salary_payments where employee_id = 'c2812000-0000-4000-8000-0000000000e9' and period = '2026-08') then
     raise exception 'FAIL M5: refused merge moved the salary';
   end if;
-  raise notice 'PASS M: merge moves a deposited month''s salary; filed quarter only with the same PAN (or no PAN), else a merge message';
+  -- re-review: a move to ANOTHER company's employee is refused (deposited AND filed) without its name / PAN
+  v_msg := null;
+  begin
+    update public.salary_payments set employee_id = 'c2812000-0000-4000-8000-0000000000eb'
+     where employee_id = 'c2812000-0000-4000-8000-0000000000e6' and period = '2026-10';
+  exception when others then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg like '%OtherCo%' or v_msg like '%ZZZPZ9999Z%' or v_msg not like '%employee of this company%' then
+    raise exception 'FAIL M6: move to another company''s employee (deposited): %', coalesce(v_msg, 'went through');
+  end if;
+  v_msg := null;
+  begin
+    update public.salary_payments set employee_id = 'c2812000-0000-4000-8000-0000000000eb'
+     where employee_id = 'c2812000-0000-4000-8000-0000000000e9' and period = '2026-08';
+  exception when others then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg like '%OtherCo%' or v_msg like '%ZZZPZ9999Z%' or v_msg not like '%employee of this company%' then
+    raise exception 'FAIL M7: move to another company''s employee (filed): %', coalesce(v_msg, 'went through');
+  end if;
+  -- filed quarter, duplicate has a PAN, kept record has none → refused, and told to add the PAN there first
+  update public.employees set pan = null where id = 'c2812000-0000-4000-8000-0000000000ea';
+  v_msg := null;
+  begin
+    v_res := public.merge_employees('c2812000-0000-4000-8000-0000000000ea', 'c2812000-0000-4000-8000-0000000000e9');
+  exception when others then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg not like '%Add the PAN to the kept employee first: put ABCPV1111M as R2812 Vikas''s PAN (Employees)%'
+     or v_msg like '%unmark the return%' then
+    raise exception 'FAIL M8 (P12): kept record without PAN: %', coalesce(v_msg, 'went through');
+  end if;
+  -- rev2 decision: filed quarter needs a PAN on BOTH sides. Duplicate without PAN (P7) → refused.
+  perform public.pay_salary('c2812000-0000-4000-8000-0000000000ec', '2026-08', '2026-08-31', 30000, 0, 0, 0, null, 1500, 0, 0, 0,
+                            'c2812000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null);
+  v_msg := null;
+  begin
+    v_res := public.merge_employees('c2812000-0000-4000-8000-0000000000e6', 'c2812000-0000-4000-8000-0000000000ec');
+  exception when others then get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+  end;
+  if v_msg is null or v_msg not like 'Add the same PAN to both employees first (The TDS return (24Q / 26Q) for Q2 FY 2026-27%' then
+    raise exception 'FAIL M9 (P7): duplicate without PAN in a filed quarter: %', coalesce(v_msg, 'went through');
+  end if;
+  -- P10: blank the duplicate's PAN, then move straight on the table → refused the same way
+  update public.employees set pan = null where id = 'c2812000-0000-4000-8000-0000000000e9';
+  v_msg := null;
+  begin
+    update public.salary_payments set employee_id = 'c2812000-0000-4000-8000-0000000000e6'
+     where employee_id = 'c2812000-0000-4000-8000-0000000000e9' and period = '2026-08';
+  exception when others then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg not like 'Add the same PAN to both employees first%' then
+    raise exception 'FAIL M10 (P10): blanked PAN then move: %', coalesce(v_msg, 'went through');
+  end if;
+  raise notice 'PASS M: merge moves a deposited month''s salary; filed quarter only with the same PAN (or no PAN), else a merge message; never to another company''s employee';
 end $$;
 
 -- ── N. Incentive booked from a bank line onto a locked month gets its own message ────
