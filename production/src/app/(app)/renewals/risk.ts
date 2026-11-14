@@ -31,7 +31,13 @@ export interface RiskResult {
 type RiskFields = Pick<Subscription, "used" | "seats" | "outstanding_amount" | "plan" | "used_synced_at">
   & Partial<Pick<Subscription, "written_off_at">>;
 
-export function renewalRisk(sub: RiskFields): RiskResult {
+/**
+ * R-2818 (review rev-r2818 #2): `owed` = what the subscription's documents still owe by the ONE owed
+ * rule (lib/renewals/owed.ts — the customer page's), so the "Unpaid balance" reason never says SCN
+ * Kochi owes ₹25.5K while its customer page says All clear. null = documents not read yet → no
+ * unpaid signal (never a guess). Left out (undefined) → the stored balance, as before.
+ */
+export function renewalRisk(sub: RiskFields, opts: { owed?: number | null } = {}): RiskResult {
   let score = 0;
   const reasons: string[] = [];
 
@@ -53,7 +59,7 @@ export function renewalRisk(sub: RiskFields): RiskResult {
   // payment is far more likely to lapse at renewal.
   /* R-1473: the same due the dashboard Collections card and Companies add up — a
      written-off balance is no longer "unpaid" here either (lib/accounting/receivables-due). */
-  const due = subscriptionDue({
+  const due = opts.owed !== undefined ? Math.max(0, opts.owed ?? 0) : subscriptionDue({
     customer_id: null, outstanding_amount: sub.outstanding_amount, written_off_at: sub.written_off_at,
   });
   if (due > 0) {
@@ -161,10 +167,11 @@ export function topRiskPick<T extends TopRiskRow>(rows: readonly T[]): T | null 
 }
 
 /** The AI box's reasons for its pick: the row's own overdue words, then the real risk signals. */
-export function topRiskReasons(row: TopRiskRow & { sub: RiskFields }, todayIst: string): string[] {
+export function topRiskReasons(row: TopRiskRow & { sub: RiskFields; owed?: { total: number } | null }, todayIst: string): string[] {
   const when = stageOverdueWords(row.stage, todayIst);
   return [
     ...(when ? [when] : []),
-    ...renewalRisk(row.sub).reasons.filter((x) => x !== "Seat usage not checked"),
+    /* R-2818: the row's own owed figure (QueueItem.owed), never the stored balance */
+    ...renewalRisk(row.sub, { owed: row.owed?.total ?? null }).reasons.filter((x) => x !== "Seat usage not checked"),
   ];
 }

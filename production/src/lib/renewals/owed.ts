@@ -15,7 +15,10 @@
  * raised). This file is that rule for one subscription's linked documents:
  *
  *   owed = Σ issued linked invoices   invoiceAmountDue (net payable − money in; 0 when paid, void,
- *                                     written off) − credit notes + debit notes, never below 0
+ *                                     written off). Notes are ALREADY in net_payable: the credit /
+ *                                     debit note RPCs move it (and a debit note re-opens a Paid
+ *                                     invoice) — migration r2717 — so they are never applied again
+ *                                     (review rev-r2818 #1: that counted every note twice)
  *        + the balance not invoiced   uninvoicedSubscriptionDue — the customer page calls the same
  *                                     function for its Statement
  *
@@ -33,9 +36,6 @@ export interface OwedInvoice {
   net_payable?: number | null;
   paid_amount?: number | null;
   written_off_at?: string | null;
-  /** Credit / debit notes against it (₹, positive); null / undefined = none known. */
-  credit?: number | null;
-  debit?: number | null;
   /** The quote it was raised from. */
   sourceQuoteId?: string | null;
 }
@@ -45,12 +45,11 @@ const NOT_ISSUED = new Set(["draft", "void", "cancelled"]);
 
 const paise = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) : 0);
 
-/** What one issued invoice still asks for, after its credit / debit notes. 0 = nothing. */
+/** What one issued invoice still asks for (its notes are already in net_payable). 0 = nothing. */
 export function invoiceOwed(inv: OwedInvoice): number {
   if (NOT_ISSUED.has((inv.status ?? "").toLowerCase())) return 0;
-  const base = invoiceAmountDue(inv);
-  if (!(base > 0)) return 0;
-  return Math.max(0, paise(base) - paise(inv.credit) + paise(inv.debit)) / 100;
+  const due = invoiceAmountDue(inv);
+  return due > 0 ? paise(due) / 100 : 0;
 }
 
 /**
@@ -102,8 +101,11 @@ export function subscriptionOwed(
  * the open renewal quote or the renewal's billed part) is this renewal's money, not "previous term".
  * Under ₹1 is paise rounding (R-2752), never "still unpaid".
  */
-export function priorTermOwed(owed: SubscriptionOwed, renewalQuoteIds: ReadonlySet<string>): SubscriptionOwed {
-  const invoices = owed.invoices.filter((i) => !(i.sourceQuoteId && renewalQuoteIds.has(i.sourceQuoteId)));
+export function priorTermOwed(
+  owed: SubscriptionOwed, renewalQuoteIds: ReadonlySet<string>, renewalInvoiceIds: ReadonlySet<string> = new Set(),
+): SubscriptionOwed {
+  /* review rev-r2818 #3: also the invoices of the renewal term's own billed parts (Bill next part) */
+  const invoices = owed.invoices.filter((i) => !renewalInvoiceIds.has(i.id) && !(i.sourceQuoteId && renewalQuoteIds.has(i.sourceQuoteId)));
   const notInvoiced = owed.notInvoiced && !renewalQuoteIds.has(owed.notInvoiced.quoteId) ? owed.notInvoiced : null;
   const total = (invoices.reduce((s, i) => s + paise(i.due), 0) + paise(notInvoiced?.due)) / 100;
   return total >= 1 ? { total, invoices, notInvoiced } : { total: 0, invoices: [], notInvoiced: null };

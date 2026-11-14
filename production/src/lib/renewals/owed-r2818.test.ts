@@ -8,6 +8,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { invoiceOwed, priorTermOwed, subscriptionOwed, uninvoicedSubscriptionDue } from "./owed";
+import { subscriptionReceivable } from "@/lib/payments/receivables";
+import { renewalRisk, topRiskReasons } from "@/app/(app)/renewals/risk";
 import { lastDocsBySubscription, attachDocDetails, priorDueInvoiceGap, shownInvoiceIds, type DocInvoice, type DocQuote, type LastDocsInput } from "@/app/(app)/renewals/last-docs";
 import { priorTermOwedOf, priorTermOwedText, subscriptionOwedOf } from "@/app/(app)/renewals/prior-due";
 import { lastPaidBySubscription } from "@/app/(app)/renewals/last-paid";
@@ -30,11 +32,47 @@ const docsOf = (sub: Sub, over: Partial<LastDocsInput>, opts: { all?: boolean } 
 };
 
 describe("R-2818 the owed rule (pure)", () => {
-  it("an issued invoice owes net payable less money in; credit notes lower it, debit notes raise it, never below 0", () => {
+  it("an issued invoice owes net payable less money in", () => {
     expect(invoiceOwed({ id: "I", status: "pending", amount: 100800, paid_amount: 42000 })).toBe(58800);
-    expect(invoiceOwed({ id: "I", status: "pending", amount: 11800, paid_amount: 0, credit: 1180 })).toBe(10620);
-    expect(invoiceOwed({ id: "I", status: "overdue", amount: 11800, paid_amount: 0, debit: 590 })).toBe(12390);
-    expect(invoiceOwed({ id: "I", status: "pending", amount: 11800, paid_amount: 0, credit: 20000 })).toBe(0);
+  });
+
+  /* review rev-r2818 #1 (HIGH): the credit / debit note RPCs already move invoices.net_payable (and a
+     debit note re-opens a Paid invoice with paid_amount = the old net) — migration r2717 :269-270,
+     :382-405. Fixtures in that REAL shape; the notes must never be applied a second time. */
+  it("notes are already inside net_payable (the RPCs move it) — never counted twice", () => {
+    /* unpaid ₹10,000 + ₹2,000 credit note → net_payable 8,000 → owes 8,000 (not 6,000) */
+    expect(invoiceOwed({ id: "I", status: "pending", amount: 10000, net_payable: 8000, paid_amount: 0 })).toBe(8000);
+    /* paid ₹10,000 + ₹1,000 debit note → Pending, net 11,000, paid_amount 10,000 → owes 1,000 (not 2,000) */
+    expect(invoiceOwed({ id: "I", status: "pending", amount: 10000, net_payable: 11000, paid_amount: 10000 })).toBe(1000);
+    /* credit note for more than is left → net 0 → nothing */
+    expect(invoiceOwed({ id: "I", status: "pending", amount: 10000, net_payable: 0, paid_amount: 0 })).toBe(0);
+    /* the same through the row's documents (notes read for the status words) */
+    const sub: Sub = { id: "S", quote_id: "Q-A", renewal_quote_id: null, start_date: null, outstanding_amount: 0 };
+    const m = lastDocsBySubscription({ subs: [sub], quotes: [q({ id: "Q-A", invoice_id: "INV-A" })], billings: [], invoices: [
+      inv({ id: "INV-A", quote_id: "Q-A", amount: 10000, net_payable: 8000, paid_amount: 0 }),
+    ] });
+    const docs = attachDocDetails(m, { quotes: [], notes: new Map([["INV-A", { credit: 2000, debit: 0 }]]) }).get("S");
+    expect(subscriptionOwedOf(sub, docs)?.total).toBe(8000);
+    const m2 = lastDocsBySubscription({ subs: [sub], quotes: [q({ id: "Q-A", invoice_id: "INV-A" })], billings: [], invoices: [
+      inv({ id: "INV-A", quote_id: "Q-A", status: "pending", amount: 10000, net_payable: 11000, paid_amount: 10000 }),
+    ] });
+    const docs2 = attachDocDetails(m2, { quotes: [], notes: new Map([["INV-A", { credit: 0, debit: 1000 }]]) }).get("S");
+    expect(subscriptionOwedOf(sub, docs2)?.total).toBe(1000);
+  });
+
+  it("the customer page's not-invoiced step gives the same number as before for every shape (only routed through the shared function)", () => {
+    const before = (s: { quote_id: string | null; outstanding_amount: number | null; written_off_at?: string | null }, ids: ReadonlySet<string>) => {
+      const due = subscriptionReceivable(s, ids);
+      return due > 0 && s.quote_id ? due : 0;
+    };
+    const quoteIds = [null, "Q-1"];
+    const amounts = [null, -50, 0, 0.4, 1, 98, 25488, 28232.6];
+    const offs = [null, "2026-11-01"];
+    const sets = [new Set<string>(), new Set(["Q-1"]), new Set(["Q-2"])];
+    for (const quote_id of quoteIds) for (const outstanding_amount of amounts) for (const written_off_at of offs) for (const ids of sets) {
+      const s = { quote_id, outstanding_amount, written_off_at };
+      expect(uninvoicedSubscriptionDue(s, ids), JSON.stringify({ s, ids: [...ids] })).toBe(before(s, ids));
+    }
   });
 
   it("paid, void, draft, cancelled and written-off invoices owe nothing", () => {
@@ -117,11 +155,44 @@ describe("R-2818 the audit's three rows, through the real Renewals path", () => 
     expect(priorTermOwedText(sub, undefined)).toBeNull();
   });
 
-  it("a credit note read for an owed invoice lowers the amount", () => {
-    const sub: Sub = { id: "S", quote_id: "Q-A", renewal_quote_id: null, start_date: null, outstanding_amount: 0 };
-    const m = lastDocsBySubscription({ subs: [sub], quotes: [q({ id: "Q-A", invoice_id: "INV-A" })], billings: [], invoices: [inv({ id: "INV-A", quote_id: "Q-A" })] });
-    const docs = attachDocDetails(m, { quotes: [], notes: new Map([["INV-A", { credit: 1800, debit: 0 }]]) }).get("S");
-    expect(subscriptionOwedOf(sub, docs)?.total).toBe(10000);
+  /* review rev-r2818 #3: after "Bill next part" the renewal's own part proforma is invoiced — that unpaid
+     part invoice is this renewal's money, not "Previous term"; a part of the FIRST term (the original
+     sale, R-2740's shape) still is. Still owed in total (follow-up "Still owes"). */
+  it("the newest (renewal) term's billed part invoices are not 'previous term'; the first term's parts are", () => {
+    const bill = (over: Record<string, unknown>) => ({ subscription_id: "S", invoice_id: null, term_start: "2025-12-01", period_index: 1, period_start: null, period_end: null, ...over });
+    const sub: Sub = { id: "S", quote_id: "Q-A", renewal_quote_id: null, start_date: "2025-12-01", outstanding_amount: 0 };
+    const docs = docsOf(sub, {
+      quotes: [
+        q({ id: "Q-A", invoice_id: "INV-A" }),
+        q({ id: "PI-OLD", subscription_billing_id: "B-OLD", invoice_id: "INV-OLD" }),
+        q({ id: "PI-NEW", subscription_billing_id: "B-NEW", invoice_id: "INV-NEW", created_at: "2026-11-30T05:00:00Z", created_date: "2026-11-30" }),
+      ],
+      billings: [
+        bill({ id: "B-OLD", term_start: "2025-12-01", period_index: 3, invoice_id: "INV-OLD" }),
+        bill({ id: "B-NEW", term_start: "2026-12-01", period_index: 1, invoice_id: "INV-NEW" }),
+      ] as never,
+      invoices: [
+        inv({ id: "INV-A", quote_id: "Q-A", status: "paid", paid_amount: 11800 }),
+        inv({ id: "INV-OLD", quote_id: "PI-OLD", amount: 3000 }),
+        inv({ id: "INV-NEW", quote_id: "PI-NEW", amount: 3540, invoice_date: "2026-11-30", created_at: "2026-11-30T05:00:00Z" }),
+      ],
+    });
+    expect(docs?.renewalPartInvoiceIds).toEqual(["INV-NEW"]);
+    expect(subscriptionOwedOf(sub, docs)?.total).toBe(6540);
+    const prior = priorTermOwedOf(sub, docs);
+    expect(prior?.total).toBe(3000);
+    expect(prior?.invoices.map((i) => i.id)).toEqual(["INV-OLD"]);
+  });
+
+  /* review rev-r2818 #2: the at-risk "Unpaid balance" reason reads the same owed rule */
+  it("at-risk 'Unpaid balance' reads the owed rule (Kochi shape: none), the stored balance only when no owed figure is given", () => {
+    const sub = { used: 0, seats: 20, outstanding_amount: 25488, plan: "Google Workspace Business Standard", used_synced_at: null, written_off_at: null };
+    expect(renewalRisk(sub, { owed: 0 }).reasons.some((r) => r.startsWith("Unpaid balance"))).toBe(false);
+    expect(renewalRisk(sub, { owed: null }).reasons.some((r) => r.startsWith("Unpaid balance"))).toBe(false);   // documents not read: no guess
+    expect(renewalRisk(sub, { owed: 28232 }).reasons).toContain("Unpaid balance (₹28.2K)");
+    expect(renewalRisk(sub, { owed: 28232 }).score).toBe(35);
+    const row = { sub: { ...sub, auto_renew: true, status: "active", renewal_state: "notice_sent" }, stage: null, daysUntil: 12, atRisk: true, owed: null };
+    expect(topRiskReasons(row, TODAY).some((r) => r.startsWith("Unpaid balance"))).toBe(false);
   });
 
   it("USD Plan: invoice part paid $500 (₹42,000) with no receipt row → the drawer lists that payment, never 'No payment recorded'", () => {
@@ -166,6 +237,12 @@ describe("R-2818 wiring: every screen reads the one rule", () => {
     const drawer = read("src/app/(app)/renewals/renewal-drawer.tsx");
     expect(drawer).toMatch(/drawerPaymentRows\(q\.data\?\.paid, docs\)/);
     expect(drawer).not.toMatch(/priorTermDue\(/);
+    /* review #2: the at-risk reason and the CSV's "Outstanding (₹)" read it too — never sub.outstanding_amount */
+    expect(items).toMatch(/renewalRisk\(r\.sub, \{ owed: owedOf\(r\.sub\) \}\)/);
+    expect(items).not.toMatch(/renewalRisk\(r\.sub\)/);
+    expect(page).not.toMatch(/renewalRisk\(sub\)/);
+    expect(page).not.toMatch(/^\s*sub\.outstanding_amount,\s*$/m);
+    expect(page).toMatch(/owedById\.get\(sub\.id\)/);
     const profile = read("src/components/features/customers/customer-profile.tsx");
     expect(profile).toMatch(/uninvoicedSubscriptionDue\(s, invoicedQuoteIds\)/);
   });

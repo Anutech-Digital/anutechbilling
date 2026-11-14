@@ -28,7 +28,7 @@ type OwedSub = { quote_id: string | null; outstanding_amount: number | null; wri
 
 const owedInvoice = (i: LastInvoice): OwedInvoice => ({
   id: i.id, status: i.status, amount: i.amount, net_payable: i.netPayable, paid_amount: i.paidAmount,
-  written_off_at: i.writtenOffAt, credit: i.notes?.credit ?? null, debit: i.notes?.debit ?? null, sourceQuoteId: i.sourceQuoteId,
+  written_off_at: i.writtenOffAt, sourceQuoteId: i.sourceQuoteId,   // notes are already in net_payable (review rev-r2818 #1)
 });
 
 /** Everything the subscription still owes on its documents — the follow-up dialog's "Still owes". */
@@ -42,7 +42,7 @@ export function priorTermOwedOf(sub: OwedSub, docs: LastDocs | undefined): Subsc
   const all = subscriptionOwedOf(sub, docs);
   if (!all) return null;
   const renewal = new Set([sub.renewal_quote_id, docs?.sent?.quoteId].filter((x): x is string => !!x));
-  return priorTermOwed(all, renewal);
+  return priorTermOwed(all, renewal, new Set(docs?.renewalPartInvoiceIds ?? []));
 }
 
 /** The row / drawer flag text, or null when the previous term owes nothing (or is not read yet). */

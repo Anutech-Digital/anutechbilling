@@ -214,6 +214,8 @@ export interface LastDocs {
   owedInvoices?: LastInvoice[];
   /** R-2818: the quotes any linked invoice was raised from (void / draft ones too, as on the customer page). */
   invoicedQuoteIds?: string[];
+  /** R-2818 (review #3): invoices of the renewal term's own billed parts (newest term, not the first) — this renewal's money, not "previous term". */
+  renewalPartInvoiceIds?: string[];
 }
 
 /** Never sent to the customer, or taken back. */
@@ -434,6 +436,13 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
   }
   for (const s of input.subs) {
     const d = out.get(s.id)!;
+    /* R-2818 (review #3): the renewal term's own billed parts — the newest term, when it is not the first
+       (the original sale) — once invoiced are this renewal's money, never "previous term" */
+    const renTerm = newestTerm.get(s.id);
+    if (renTerm && !(s.start_date && renTerm <= s.start_date.slice(0, 10))) {
+      const ids = input.billings.filter((b) => b.subscription_id === s.id && b.term_start === renTerm && b.invoice_id).map((b) => b.invoice_id as string);
+      if (ids.length) d.renewalPartInvoiceIds = [...new Set(ids)].sort();
+    }
     const ren = s.renewal_quote_id ? quoteById.get(s.renewal_quote_id) : undefined;
     if (ren && isOpenUnpaid(ren)) {
       d.sent = { quoteId: ren.id, kind: "renewal", expiresDate: ren.expires_date, status: ren.status };
@@ -741,7 +750,6 @@ export function attachDocDetails(
       ...oneCopy((d.invoices ?? []).map((i) => withDetails(i, sid)), d.invoice),
       ...(d.allQuotes ? { allQuotes: d.allQuotes.map((q) => ({ ...q, period: periodOf(q.part, q.id, sid) })) } : {}),
       ...(d.allInvoices ? { allInvoices: d.allInvoices.map((i) => withDetails(i, sid)) } : {}),
-      ...(d.owedInvoices ? { owedInvoices: d.owedInvoices.map((i) => withDetails(i, sid)) } : {}),   // R-2818: notes for the owed rule
     });
   }
   return out;
@@ -760,5 +768,5 @@ export function detailQuoteIds(docs: Map<string, LastDocs>): string[] {
 
 /** R-2737: the invoices whose credit / debit notes the status needs. */
 export function shownInvoiceIds(docs: Map<string, LastDocs>): string[] {
-  return [...new Set([...docs.values()].flatMap((d) => [...(d.invoices ?? []), ...(d.allInvoices ?? []), ...(d.owedInvoices ?? [])].map((i) => i.id)).filter((x): x is string => !!x))].sort();
+  return [...new Set([...docs.values()].flatMap((d) => [...(d.invoices ?? []), ...(d.allInvoices ?? [])].map((i) => i.id)).filter((x): x is string => !!x))].sort();
 }
