@@ -42,18 +42,6 @@ const ITEM = {
   msrp: 1080, wholesale: 864, prices: {}, is_active: true, billing_unit: "per_seat_month",
 };
 
-function quoteWith(line: Record<string, unknown>) {
-  return {
-    id: "Q-1", status: "draft", customer_id: null, customer_name: "Acme Pvt Ltd", lead_id: null,
-    line_items: [{
-      id: "l1", item_id: ITEM.id, name: ITEM.name, vendor: "google", qty: 10,
-      commitment: "annual_yearly", cost: 10368, ...line,
-    }],
-    subtotal: 106270, total_cost: 103680, discount_pct: 0, tax_rate: 18, amount: 125399,
-    currency: "INR", exchange_rate: 1, billing_cycle: "yearly", approval_status: "pending",
-    prospect_state_code: "07", prospect_country: "India",
-  };
-}
 
 const SUB = "c2458000-0000-4000-8000-000000000311";
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
