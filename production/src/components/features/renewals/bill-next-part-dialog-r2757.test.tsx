@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 /* R-2757 — Bill next part names an earlier unpaid part (Greentin Check 2095: Oct Q-F588-27-0059),
-   the button says "Bill Nov anyway" and still bills; "Periods" reads "Months to bill". */
+   the button says "Bill Nov anyway" and still bills; "Periods" reads "Months to bill".
+   R-2827: the button stays off until R-2808's together check answers (a money guard) — the
+   test answers that check on purpose (404 = Bill together not on this server yet) and waits
+   for the button to come on; clicking at once raced the check and reddened CI. */
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import * as React from "react";
-import { render, cleanup, screen, fireEvent } from "@testing-library/react";
+import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BillNextPartDialog } from "./bill-next-part-dialog";
 import type { BillNextPreview } from "@/lib/billing/proforma";
@@ -20,8 +23,13 @@ const fetchMock = vi.fn();
 beforeEach(() => { fetchMock.mockReset(); vi.stubGlobal("fetch", fetchMock); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function show(preview: BillNextPreview, onConfirm = vi.fn()) {
-  fetchMock.mockImplementation(async () => new Response(JSON.stringify({ preview }), { status: 200 }));
+/** The part preview answers; R-2808's /api/renewals/bill-together check answers 404 (not on this
+    server) unless `together` is given — a promise the test settles itself to hold the check open. */
+function show(preview: BillNextPreview, onConfirm = vi.fn(), together?: Promise<Response>) {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url).startsWith("/api/renewals/bill-together")) return together ?? new Response("{}", { status: 404 });
+    return new Response(JSON.stringify({ preview }), { status: 200 });
+  });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
@@ -41,6 +49,21 @@ describe("R-2757 BillNextPartDialog", () => {
     expect(screen.getByRole("link", { name: "Record payment" }).getAttribute("href")).toBe("/quotes/Q-F588-27-0059?pay=1");
     expect(screen.getByLabelText(/Months to bill/)).toBeTruthy();
     const btn = screen.getByRole("button", { name: "Bill Nov anyway" });
+    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(btn);
+    expect(onConfirm).toHaveBeenCalledWith({ periods: 1, seats: null, seatRate: null });
+  });
+
+  it("R-2827: the button stays off while the together check has not answered; bills once it says 'not here'", async () => {
+    let answer!: (r: Response) => void;
+    const onConfirm = show(PREVIEW, vi.fn(), new Promise<Response>((r) => { answer = r; }));
+    await screen.findByTestId("bill-next-unpaid-earlier");
+    const btn = screen.getByRole("button", { name: "Bill Nov anyway" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(onConfirm).not.toHaveBeenCalled();
+    answer(new Response("{}", { status: 404 }));
+    await waitFor(() => expect(btn.disabled).toBe(false));
     fireEvent.click(btn);
     expect(onConfirm).toHaveBeenCalledWith({ periods: 1, seats: null, seatRate: null });
   });
