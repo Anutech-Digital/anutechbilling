@@ -15,6 +15,8 @@
  *      'refunded'; refunded_at is checked again in last-paid.ts) — together.
  * Read on the signed-in browser session: RLS keeps every row to this company (and to customers
  * this person may see). Keyed under ["payments"] so recording a payment refreshes the rows.
+ * R-2740: readRenewalLastPaid is the same read as a plain function — the row drawer runs it for
+ * ONE subscription with { historySize: Infinity } (every payment) inside its own single query.
  */
 import { useQuery } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -42,82 +44,85 @@ export function useRenewalLastPaid(subs: readonly SubRef[]) {
     queryKey: ["payments", "renewal-last-paid", key],
     enabled: rows.length > 0,
     staleTime: 60_000,
-    queryFn: async (): Promise<Map<string, LastPaid>> => {
-      const supabase = createClient();
-      const subIds = rows.map((s) => s.id);
-      const ownQuoteIds = rows.flatMap((s) => [s.quote_id, s.renewal_quote_id]).filter((x): x is string => !!x);
-
-      const [viaSub, own, billings] = await Promise.all([
-        fetchAllRowsIn<QuoteRow, string>(subIds, (run, from, to) => supabase
-          .from("quotes")
-          .select(QUOTE_COLS)
-          .or(`renewal_subscription_id.in.${inList(run)},add_seats_subscription_id.in.${inList(run)}`)
-          .order("id", { ascending: true })
-          .range(from, to), { chunkSize: 100 }),   // the id list is in the URL twice
-        fetchAllRowsIn<QuoteRow, string>(ownQuoteIds, (run, from, to) => supabase
-          .from("quotes")
-          .select(QUOTE_COLS)
-          .in("id", run)
-          .order("id", { ascending: true })
-          .range(from, to)),
-        fetchAllRowsIn<{ id: string; subscription_id: string; invoice_id: string | null }, string>(subIds, (run, from, to) => supabase
-          .from("subscription_billings")
-          .select("id, subscription_id, invoice_id")
-          .in("subscription_id", run)
-          .order("id", { ascending: true })
-          .range(from, to)),
-      ]);
-      /* Own quotes are read only for their invoice_id; their sub links come from `rows`. */
-      const baseQuoteIds = [...new Set([...ownQuoteIds, ...viaSub.map((q) => q.id)])];
-
-      const [invoices, quoteSiblings, parts] = await Promise.all([
-        fetchAllRowsIn<{ id: string; quote_id: string | null }, string>(baseQuoteIds, (run, from, to) => supabase
-          .from("invoices")
-          .select("id, quote_id")
-          .in("quote_id", run)
-          .neq("status", "void")
-          .order("id", { ascending: true })
-          .range(from, to)),
-        fetchAllRowsIn<{ id: string; quote_id: string | null }, string>(baseQuoteIds, (run, from, to) => supabase
-          .from("subscriptions")
-          .select("id, quote_id")
-          .in("quote_id", run)
-          .order("id", { ascending: true })
-          .range(from, to)),
-        /* R-2752: the billed parts' proformas — a payment recorded on one is this subscription's
-           (their invoices come in through subscription_billings.invoice_id) */
-        fetchAllRowsIn<{ id: string; invoice_id: string | null; subscription_billing_id: string | null }, string>(billings.map((b) => b.id), (run, from, to) => (supabase as unknown as SupabaseClient)
-          .from("quotes")
-          .select(PART_COLS)
-          .in("subscription_billing_id", run)
-          .order("id", { ascending: true })
-          .range(from, to)),
-      ]);
-      const linkedQuotes = [
-        ...viaSub,
-        ...own.map((q) => ({ ...q, renewal_subscription_id: null, add_seats_subscription_id: null })),
-        ...parts.map((q) => ({ ...q, renewal_subscription_id: null, add_seats_subscription_id: null })),
-      ];
-      const quoteIds = [...new Set([...baseQuoteIds, ...parts.map((q) => q.id)])];
-      const { invoiceSubs } = linkedDocs({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices });
-
-      const [byQuote, byInvoice] = await Promise.all([
-        fetchAllRowsIn<PaymentRow, string>(quoteIds, (run, from, to) => supabase
-          .from("payments")
-          .select(PAYMENT_COLS)
-          .in("quote_id", run)
-          .eq("status", "received")
-          .order("id", { ascending: true })
-          .range(from, to)),
-        fetchAllRowsIn<PaymentRow, string>([...invoiceSubs.keys()], (run, from, to) => supabase
-          .from("payments")
-          .select(PAYMENT_COLS)
-          .in("invoice_id", run)
-          .eq("status", "received")
-          .order("id", { ascending: true })
-          .range(from, to)),
-      ]);
-      return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments: [...byQuote, ...byInvoice] });
-    },
+    queryFn: () => readRenewalLastPaid(rows),
   });
+}
+
+/** The batched read (see the header). `historySize` (R-2740 drawer): how many payments per subscription (default 3). */
+export async function readRenewalLastPaid(rows: readonly SubRef[], opts: { historySize?: number } = {}): Promise<Map<string, LastPaid>> {
+  const supabase = createClient();
+  const subIds = rows.map((s) => s.id);
+  const ownQuoteIds = rows.flatMap((s) => [s.quote_id, s.renewal_quote_id]).filter((x): x is string => !!x);
+
+  const [viaSub, own, billings] = await Promise.all([
+    fetchAllRowsIn<QuoteRow, string>(subIds, (run, from, to) => supabase
+      .from("quotes")
+      .select(QUOTE_COLS)
+      .or(`renewal_subscription_id.in.${inList(run)},add_seats_subscription_id.in.${inList(run)}`)
+      .order("id", { ascending: true })
+      .range(from, to), { chunkSize: 100 }),   // the id list is in the URL twice
+    fetchAllRowsIn<QuoteRow, string>(ownQuoteIds, (run, from, to) => supabase
+      .from("quotes")
+      .select(QUOTE_COLS)
+      .in("id", run)
+      .order("id", { ascending: true })
+      .range(from, to)),
+    fetchAllRowsIn<{ id: string; subscription_id: string; invoice_id: string | null }, string>(subIds, (run, from, to) => supabase
+      .from("subscription_billings")
+      .select("id, subscription_id, invoice_id")
+      .in("subscription_id", run)
+      .order("id", { ascending: true })
+      .range(from, to)),
+  ]);
+  /* Own quotes are read only for their invoice_id; their sub links come from `rows`. */
+  const baseQuoteIds = [...new Set([...ownQuoteIds, ...viaSub.map((q) => q.id)])];
+
+  const [invoices, quoteSiblings, parts] = await Promise.all([
+    fetchAllRowsIn<{ id: string; quote_id: string | null }, string>(baseQuoteIds, (run, from, to) => supabase
+      .from("invoices")
+      .select("id, quote_id")
+      .in("quote_id", run)
+      .neq("status", "void")
+      .order("id", { ascending: true })
+      .range(from, to)),
+    fetchAllRowsIn<{ id: string; quote_id: string | null }, string>(baseQuoteIds, (run, from, to) => supabase
+      .from("subscriptions")
+      .select("id, quote_id")
+      .in("quote_id", run)
+      .order("id", { ascending: true })
+      .range(from, to)),
+    /* R-2752: the billed parts' proformas — a payment recorded on one is this subscription's
+       (their invoices come in through subscription_billings.invoice_id) */
+    fetchAllRowsIn<{ id: string; invoice_id: string | null; subscription_billing_id: string | null }, string>(billings.map((b) => b.id), (run, from, to) => (supabase as unknown as SupabaseClient)
+      .from("quotes")
+      .select(PART_COLS)
+      .in("subscription_billing_id", run)
+      .order("id", { ascending: true })
+      .range(from, to)),
+  ]);
+  const linkedQuotes = [
+    ...viaSub,
+    ...own.map((q) => ({ ...q, renewal_subscription_id: null, add_seats_subscription_id: null })),
+    ...parts.map((q) => ({ ...q, renewal_subscription_id: null, add_seats_subscription_id: null })),
+  ];
+  const quoteIds = [...new Set([...baseQuoteIds, ...parts.map((q) => q.id)])];
+  const { invoiceSubs } = linkedDocs({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices });
+
+  const [byQuote, byInvoice] = await Promise.all([
+    fetchAllRowsIn<PaymentRow, string>(quoteIds, (run, from, to) => supabase
+      .from("payments")
+      .select(PAYMENT_COLS)
+      .in("quote_id", run)
+      .eq("status", "received")
+      .order("id", { ascending: true })
+      .range(from, to)),
+    fetchAllRowsIn<PaymentRow, string>([...invoiceSubs.keys()], (run, from, to) => supabase
+      .from("payments")
+      .select(PAYMENT_COLS)
+      .in("invoice_id", run)
+      .eq("status", "received")
+      .order("id", { ascending: true })
+      .range(from, to)),
+  ]);
+  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments: [...byQuote, ...byInvoice] }, opts);
 }
