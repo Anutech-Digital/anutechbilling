@@ -16,7 +16,8 @@
 --      and the note's credit sits in the shared pool ONCE
 --   D. A short payment on a together request → no invoice, nothing renews
 --   X. Two customers with the same bill_group_id → separate pools; another customer's part never billed (rev F1)
---   W. A browser login cannot set / change bill_group_id (rev F3)
+--   X2. Subscriptions with no customer (Zoho imports) never pool through a bill group (rev2 1)
+--   W. A browser login cannot set / change bill_group_id (rev F3); nor move a grouped sub to another customer (rev2 2)
 --   Z. No group → billing_pool_subscriptions = the sub + its sale quote's subs (the old pool); grants
 
 begin;
@@ -266,6 +267,30 @@ begin
   raise notice 'PASS X: a together request naming another customer''s part never bills it';
 end $$;
 
+-- ── X2. rev2 1: subscriptions with NO customer (Zoho imports) never pool through a bill group ─────────────
+-- NULL customer_id never matches (NULL = NULL is not "the same customer"): each pool is only the sub itself.
+do $$
+declare v_g uuid := 'b2806000-0000-0000-0000-0000000009a8';
+begin
+  insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, billing_cycle,
+                                    term_months, start_date, renewal_date, renewal_state, reminder_count, status, bill_group_id)
+  values ('b2806000-0000-0000-0000-000000000212', 'b2806000-0000-0000-0000-0000000000f1', null, 'Zoho import A', 'Plan X2a',
+          'google'::vendor, 1, 1000, 'monthly'::billing_cycle, 12, '2025-10-01', '2026-10-01', 'grace_period', 0, 'active', v_g),
+         ('b2806000-0000-0000-0000-000000000213', 'b2806000-0000-0000-0000-0000000000f1', null, 'Zoho import B', 'Plan X2b',
+          'google'::vendor, 1, 1000, 'monthly'::billing_cycle, 12, '2025-10-01', '2026-10-01', 'grace_period', 0, 'active', v_g),
+         ('b2806000-0000-0000-0000-000000000214', 'b2806000-0000-0000-0000-0000000000f1', null, 'Zoho import C', 'Plan X2c',
+          'google'::vendor, 1, 1000, 'monthly'::billing_cycle, 12, '2025-10-01', '2026-10-01', 'grace_period', 0, 'active', null);
+  if (select array_agg(subscription_id) from public.billing_pool_subscriptions('b2806000-0000-0000-0000-000000000212'))
+       is distinct from array['b2806000-0000-0000-0000-000000000212'::uuid]
+     or (select array_agg(subscription_id) from public.billing_pool_subscriptions('b2806000-0000-0000-0000-000000000213'))
+       is distinct from array['b2806000-0000-0000-0000-000000000213'::uuid] then
+    raise exception 'FAIL X2: two subs with no customer pooled by bill_group_id: % / %',
+      (select array_agg(subscription_id) from public.billing_pool_subscriptions('b2806000-0000-0000-0000-000000000212')),
+      (select array_agg(subscription_id) from public.billing_pool_subscriptions('b2806000-0000-0000-0000-000000000213'));
+  end if;
+  raise notice 'PASS X2: subs with no customer never share a bill-group pool';
+end $$;
+
 -- ── W. rev-r2806 F3: a browser login cannot set / change bill_group_id ───────────────────────────────────
 insert into auth.users (id, email) values ('b2806000-0000-0000-0000-0000000000a1', 'owner2806@example.test');
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
@@ -296,6 +321,22 @@ begin
     if sqlerrm not like '%Bill together%' then raise exception 'FAIL W: insert refused for another reason: %', sqlerrm; end if;
     raise notice 'PASS W: a new subscription with a bill_group_id refused';
   end;
+  -- rev2 2: a grouped subscription cannot be moved to another customer by hand (it would carry the group across)
+  begin
+    update public.subscriptions set customer_id = 'b2806000-0000-0000-0000-000000000106'
+     where id = 'b2806000-0000-0000-0000-000000000211';
+    get diagnostics n = row_count;
+    raise exception 'FAIL W: owner login moved a grouped subscription to another customer (% rows, no error)', n;
+  exception when insufficient_privilege then
+    if sqlerrm not like '%another customer%' then raise exception 'FAIL W: customer move refused for another reason: %', sqlerrm; end if;
+    raise notice 'PASS W: grouped subscription cannot change customer: %', sqlerrm;
+  end;
+  -- … an ungrouped one still can (the guard only covers grouped rows)
+  update public.subscriptions set customer_id = 'b2806000-0000-0000-0000-000000000106'
+   where id = 'b2806000-0000-0000-0000-000000000214';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL W: an ungrouped subscription can no longer change customer (% rows)', n; end if;
+  raise notice 'PASS W: an ungrouped subscription still changes customer';
   update public.subscriptions set external_ref = 'R2806-W' where id = 'b2806000-0000-0000-0000-000000000211';
   get diagnostics n = row_count;
   if n <> 1 then raise exception 'FAIL W: an ordinary column update no longer works (% rows)', n; end if;
