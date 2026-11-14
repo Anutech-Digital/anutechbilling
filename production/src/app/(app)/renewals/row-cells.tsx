@@ -17,6 +17,7 @@
  * The full document list (R-2748: last two invoices + the quote each came from) stays on the
  * card layout and in the row drawer (R-2740). Pure helpers tested in row-cells-r2759.test.ts.
  */
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { cn, formatDate } from "@/lib/utils";
 import { Icon } from "@/components/ui/icon";
@@ -175,16 +176,26 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
   if (loading) return <p className="text-2xs text-ink-3">…</p>;
   if (failed) return <p className="text-2xs text-ink-3" title="Last invoice couldn't load — reload the page">Couldn&apos;t load</p>;
   const { invoice, earlier } = lastInvoiceOf(docs);
-  /* R-2747 (R-2760: kept in the table): money owed on the subscription with no unpaid invoice — say why */
-  const gap = !invoice ? priorDueInvoiceGap(docs, priorDue, todayIst) : null;
-  if (gap) return <p className="line-clamp-2 break-words text-2xs text-ink-3" title={gap} data-cell="invoice" data-testid="renewal-prior-due-no-invoice">{gap}</p>;
-  if (!invoice) return <QuoteInstead quote={docs?.quote ?? null} canQuotes={canQuotes} todayIst={todayIst} />;
+  /* R-2747 / R-2752 (R-2760: kept in the table): money owed on the subscription with no unpaid invoice
+     linked — say why, also next to a Paid / Cancelled invoice (line 2) */
+  const gap = priorDueInvoiceGap(docs, priorDue, todayIst);
+  const gapSpan = gap ? <span title={gap} data-testid="renewal-prior-due-no-invoice"> · {gap}</span> : null;
+  if (!invoice && gap && !docs?.quote) {
+    return (
+      <div className="min-w-0 text-2xs" data-cell="invoice" title={gap}>
+        <p className="text-ink-2">No unpaid invoice</p>
+        <p className="mt-0.5 truncate text-ink-3" data-testid="renewal-prior-due-no-invoice">{gap}</p>
+      </div>
+    );
+  }
+  if (!invoice) return <QuoteInstead quote={docs?.quote ?? null} canQuotes={canQuotes} todayIst={todayIst} gapLine={gapSpan} />;
   const state = invoiceStatusWords(invoice, todayIst);
   const total = invoiceTotalWords(invoice);
   const more = earlier.length ? ` · +${earlier.length} earlier` : "";
   const title = [
     `Last invoice ${invoice.id}${invoice.date ? ` · dated ${formatDate(invoice.date)}` : ""} · ${total} · ${state.text}${invoice.period ? ` · for ${invoice.period}` : ""}`,
     ...earlier.map((e) => `Earlier invoice ${e.id} · ${invoiceTotalWords(e)} · ${invoiceStatusWords(e, todayIst).text}${e.period ? ` · for ${e.period}` : ""}`),
+    ...(gap ? [gap] : []),
   ].join("\n");
   return (
     <div className="min-w-0 text-2xs" data-cell="invoice" data-testid="renewal-last-invoice-cell" title={title}>
@@ -193,13 +204,13 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
         {canInvoices
           ? <Link href={invoiceHref(invoice.id) as never} className="font-mono underline underline-offset-2 hover:text-ink">{invoice.id}</Link>
           : <span className="font-mono">{invoice.id}</span>}
-        {invoice.period ? ` · ${invoice.period}` : ""}{more}
+        {gapSpan ?? <>{invoice.period ? ` · ${invoice.period}` : ""}{more}</>}
       </p>
     </div>
   );
 }
 
-function QuoteInstead({ quote, canQuotes, todayIst }: { quote: LastQuote | null; canQuotes: boolean; todayIst: string }) {
+function QuoteInstead({ quote, canQuotes, todayIst, gapLine }: { quote: LastQuote | null; canQuotes: boolean; todayIst: string; gapLine?: ReactNode }) {
   if (!quote) return <p className="text-2xs text-ink-3" data-cell="invoice">No invoice yet</p>;
   const state = quoteStateLabel(quote, todayIst);
   return (
@@ -209,7 +220,7 @@ function QuoteInstead({ quote, canQuotes, todayIst }: { quote: LastQuote | null;
         {canQuotes
           ? <Link href={`/quotes/${encodeURIComponent(quote.id)}` as never} className="font-mono underline underline-offset-2 hover:text-ink">{quote.id}</Link>
           : <span className="font-mono">{quote.id}</span>}
-        {quote.period ? ` · ${quote.period}` : ""}
+        {gapLine ?? (quote.period ? ` · ${quote.period}` : "")}
       </p>
     </div>
   );
