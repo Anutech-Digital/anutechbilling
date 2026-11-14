@@ -82,15 +82,23 @@ export function drawerInvoiceRow(i: LastInvoice, todayIst: string): DrawerDocRow
   return { kind: "invoice", id: i.id, date: i.date, period: i.period, amount: invoiceTotalWords(i), status: s.text, tone: s.tone, replacedBy: null };
 }
 
-/** Every quote + invoice, newest first (an invoice before the quote it came from on the same day). */
+/**
+ * Every quote + invoice, newest first. Each list comes already in its own exact order (last-docs.ts:
+ * quotes by created_at, invoices by invoice date + created_at — two revisions of one day stay in the
+ * order they were made); the two are merged by day, an invoice before a quote on the same day.
+ */
 export function drawerDocRows(docs: LastDocs | undefined, todayIst: string): DrawerDocRow[] {
   if (!docs) return [];
-  const rows = [
-    ...(docs.allInvoices ?? docs.invoices ?? []).map((i) => drawerInvoiceRow(i, todayIst)),
-    ...(docs.allQuotes ?? []).map((q) => drawerQuoteRow(q, todayIst)),
-  ];
-  const at = (r: DrawerDocRow) => r.date ?? "";
-  return rows.sort((a, b) => at(b).localeCompare(at(a)) || (a.kind === b.kind ? b.id.localeCompare(a.id) : a.kind === "invoice" ? -1 : 1));
+  const inv = (docs.allInvoices ?? docs.invoices ?? []).map((i) => drawerInvoiceRow(i, todayIst));
+  const quo = (docs.allQuotes ?? []).map((q) => drawerQuoteRow(q, todayIst));
+  const out: DrawerDocRow[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < inv.length || j < quo.length) {
+    if (j >= quo.length || (i < inv.length && (inv[i].date ?? "") >= (quo[j].date ?? ""))) out.push(inv[i++]);
+    else out.push(quo[j++]);
+  }
+  return out;
 }
 
 /** The rows to show: the first DRAWER_PAGE until "Show all" is pressed. */

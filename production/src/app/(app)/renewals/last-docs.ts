@@ -62,6 +62,8 @@ export interface DocQuote {
   add_seats_subscription_id: string | null;
   subscription_billing_id: string | null;
   superseded_by: string | null;
+  /** R-2740: the quote this one revises (quotes.revision_of); absent = not read. */
+  revision_of?: string | null;
   /** R-2740: the quote's value in ₹ incl. GST (the books' figure) and how it is shown to the customer. */
   amount?: number | null;
   currency?: string | null;
@@ -242,14 +244,21 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
       if (sid && subIds.has(sid)) add(quoteSubs, q.id, sid);
     }
   }
-  /* R-2740 (`all`): a revised-away quote lost its subscription link to its revision (R-2368) — it
-     belongs to the subscriptions of the quote that replaced it, down the chain. */
+  /* R-2740 (`all`): a revised-away quote lost its subscription link to its revision (R-2368), and an
+     unsent revision draft has none yet — each belongs to the subscriptions of the quote it is a
+     revision of / was replaced by, down the chain. */
   if (opts.all) {
     for (let changed = true, guard = 0; changed && guard < input.quotes.length + 1; guard++) {
       changed = false;
       for (const q of input.quotes) {
-        for (const sid of (q.superseded_by ? quoteSubs.get(q.superseded_by) : undefined) ?? []) {
-          if (!quoteSubs.get(q.id)?.has(sid)) { add(quoteSubs, q.id, sid); changed = true; }
+        for (const other of [q.superseded_by, q.revision_of]) {
+          for (const sid of (other ? quoteSubs.get(other) : undefined) ?? []) {
+            if (!quoteSubs.get(q.id)?.has(sid)) { add(quoteSubs, q.id, sid); changed = true; }
+          }
+        }
+        /* and the quote it revises belongs to this one's subscriptions */
+        if (q.revision_of) for (const sid of quoteSubs.get(q.id) ?? []) {
+          if (!quoteSubs.get(q.revision_of)?.has(sid)) { add(quoteSubs, q.revision_of, sid); changed = true; }
         }
       }
     }
