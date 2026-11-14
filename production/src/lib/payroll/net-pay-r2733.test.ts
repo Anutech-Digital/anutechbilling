@@ -179,7 +179,9 @@ describe("R-2733 review fixes (owner: PT does not apply; LOW 2-4)", () => {
     // remembered BEFORE the "no gross yet" early return
     expect(fn.indexOf("setBasicPctOfGross(pct)")).toBeGreaterThan(-1);
     expect(fn.indexOf("setBasicPctOfGross(pct)")).toBeLessThan(fn.indexOf("if (b === null) return"));
-    expect(screens).toContain("if (basicPctOfGross !== null) setBasicFromPct(basicPctOfGross, e.target.value)");
+    // R-2773: the gross box goes through basicForTypedGross, whose first rule is the picked %.
+    expect(screens).toContain("setGross(e.target.value); basicForTypedGross(e.target.value);");
+    expect(screens).toContain("if (basicPctOfGross !== null) { setBasicFromPct(basicPctOfGross, grossText); return; }");
     // the rule it applies: 40% of a gross typed later
     expect(basicFromPct(0.4, 20_000, 0)).toBe(8_000);
   });

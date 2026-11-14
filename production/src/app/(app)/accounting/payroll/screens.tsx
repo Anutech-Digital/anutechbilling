@@ -1042,7 +1042,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                               if (typed && customBasic.trim() === "") setBasicBeforeCustom(basicMonthly);
                               setBasicMonthly(typed ? e.target.value : (basicBeforeCustom ?? ctcBase.basic));
                               if (!typed) setBasicBeforeCustom(null);
-                              setBasicByHand(typed); setBasicTouched(typed); // R-2773: a typed Basic is kept when the gross changes
+                              setBasicByHand(typed); if (typed) setBasicTouched(true); // R-2773: a typed Basic is kept when the gross changes
                             }
                           }}
                           placeholder={`Auto (${rupee(ctcBreakdown?.basicMonthly ?? 0)})`}
