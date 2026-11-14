@@ -252,9 +252,11 @@ export function EmployeesTab() {
      Register CTC tab (lib/payroll/ctc.ts employeeCtc, company payroll policy, this month's PF
      ceiling). "…" until the policy has loaded — never a ₹0 or a default-policy guess. */
   const ctcPolicyQ = usePayrollPolicy();
-  const ctcHeaderTitle = (ctcPolicyQ.data?.ctcIncludesEmployer === false
+  const ctcHeaderTitle = (!ctcPolicyQ.data
+    ? "Monthly CTC by the company payroll policy."
+    : ctcPolicyQ.data.ctcIncludesEmployer === false
     ? "Monthly CTC = monthly gross (company payroll policy: employer PF / ESI / gratuity are paid on top)."
-    : `Monthly CTC = gross + employer PF + employer ESI${ctcPolicyQ.data?.gratuity === false ? "" : " + gratuity"} (company payroll policy).`)
+    : `Monthly CTC = gross + employer PF + employer ESI${ctcPolicyQ.data.gratuity ? " + gratuity" : ""} (company payroll policy).`)
     + " Same figure as the employee's profile and the Salary Register CTC tab.";
   const ctcCell = (e: Employee) => {
     if (!e.is_active) return <span className="text-ink-3" title="Not on payroll.">—</span>;
@@ -430,7 +432,7 @@ export function EmployeesTab() {
                         <div className="shrink-0 text-right">
                           <div className="font-serif text-xl leading-none text-ink">{rupee(e.monthly_gross)}</div>
                           <div className="text-xs text-ink-3 mt-1">gross · in-hand {inHandCell(e)}</div>
-                          <div className="text-xs text-ink-3">CTC {ctcCell(e)}/month</div>
+                          <div className="text-xs text-ink-3">CTC / month {ctcCell(e)}</div>
                         </div>
                       ) : (
                         <Badge kind="warning" size="sm">Salary pending</Badge>

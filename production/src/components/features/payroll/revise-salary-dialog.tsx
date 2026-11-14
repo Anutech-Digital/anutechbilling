@@ -56,7 +56,8 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
   /* R-2770: the company payroll policy (gratuity on/off, CTC includes the employer's PF / ESI /
      gratuity or not) — without it this CTC differed from the profile's for a "CTC = gross" company. */
   const policyQ = usePayrollPolicy();
-  const policyReady = policyQ.isSuccess || policyQ.isError; // a failed read falls back to the defaults
+  /* No default-policy guess (code review): the CTC / gross boxes and Save wait for the policy. */
+  const policyReady = policyQ.isSuccess;
   const ctcOpts = employeeCtcOptions(policyQ.data, asOf);
   const currentCtc = ctcFromEmployee({ ...current, ...switches }, ctcOpts).annualCtc;
   const [gross, setGross] = React.useState(String(employee.monthly_gross || ""));
@@ -115,7 +116,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
      booked before salary revisions are named — their old salary is inferred, check it. */
   const bookedNote = revisionBookedNote(bookedFrom, periodLabel);
 
-  const valid = Boolean(month) && grossN > 0 && !same && !splitTooBig && !tooEarly && !cutIntoPaid;
+  const valid = policyReady && Boolean(month) && grossN > 0 && !same && !splitTooBig && !tooEarly && !cutIntoPaid;
 
   async function submit() {
     if (!valid) return;
@@ -155,7 +156,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
             </div>
             <div>
               <label htmlFor="revise-gross" className={label}>New monthly gross (₹)</label>
-              <Input id="revise-gross" type="number" min={0} value={gross} onChange={(e) => onGross(e.target.value)} />
+              <Input id="revise-gross" type="number" min={0} value={gross} disabled={!policyReady} onChange={(e) => onGross(e.target.value)} />
             </div>
             <div>
               <label htmlFor="revise-basic" className={label}>Basic (₹/month)</label>
@@ -166,6 +167,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
               <Input id="revise-da" type="number" min={0} value={da} onChange={(e) => { setSplitTyped(true); setDa(e.target.value); }} />
             </div>
           </div>
+          {policyQ.isError && <p className="text-xs text-rose">The payroll policy did not load, so the CTC can&apos;t be worked out — close this and try again.</p>}
           {splitTooBig && <p className="text-xs text-rose">Basic + DA can&apos;t be more than the monthly gross.</p>}
 
           {grossN > 0 && (

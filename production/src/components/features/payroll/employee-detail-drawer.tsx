@@ -161,8 +161,16 @@ export function EmployeeDetailDrawer({
               /* R-1585: the employee's own structure (gross, Basic, DA, PF/ESI flags) — monthly
                  gross × 12 is not the CTC. */
               /* R-2700: the company's gratuity + CTC policy, same as the CTC register and the employee form. */
-              /* R-2770: one helper (this month's PF ceiling) — the same number as the Employees table's "CTC / month". */
-              const ctc = employeeCtc(employee, payrollPolicy.data, istMonth());
+              /* R-2770: one helper (this month's PF ceiling) — the same number as the Employees table's
+                 "CTC / month"; like the table, no default-policy guess while the policy loads / failed. */
+              if (!payrollPolicy.isSuccess) {
+                return (
+                  <div className="rounded-xl border border-hairline bg-paper p-3.5 text-sm text-ink-3" data-testid="drawer-ctc-pending">
+                    {payrollPolicy.isError ? "Monthly CTC: — (the payroll policy did not load)" : <span aria-label="Loading">Monthly CTC: …</span>}
+                  </div>
+                );
+              }
+              const ctc = employeeCtc(employee, payrollPolicy.data, netPeriod);
               return (
                 <div className="rounded-xl border border-hairline bg-paper p-3.5 space-y-3">
                   <div className="flex items-center justify-between pb-2 border-b border-hairline">
