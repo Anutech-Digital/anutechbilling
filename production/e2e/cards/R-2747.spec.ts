@@ -81,7 +81,7 @@ async function fitsUncut(docs: Locator) {
   return docs.evaluate((el) => {
     const td = el.closest("td")!;
     const cell = td.getBoundingClientRect();
-    const ps = [...el.querySelectorAll("p")];
+    const ps = el.matches("p") ? [el] : [...el.querySelectorAll("p")];   // R-2760: the state line itself
     return {
       lines: ps.length > 0,
       insideCell: ps.every((p) => p.getBoundingClientRect().right <= cell.right + 0.5),
@@ -104,13 +104,14 @@ test.describe("R-2747 card test", () => {
       const page = await pageAs(browser, baseURL, "owner");
       await page.setViewportSize({ width, height: 900 });
       const r = await rowOf(page, "CT R2747 Overdue Plan");
-      const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
+      /* R-2760 (R-2759 table): the Last invoice column — its state line is never cut (the id line may truncate, tooltip) */
+      const docs = await onlyOne(r.getByTestId("renewal-last-invoice-cell"), "last invoice cell");
       await expect(await onlyOne(docs.getByRole("link", { name: "INV-CT2747-A" }), "invoice link")).toBeVisible({ timeout: 60_000 });
       const status = docs.getByTestId("renewal-last-invoice-status");
       await expect(status).toHaveText("Overdue 10d · ₹33,232 due");
       await expect(status).toBeVisible();
-      await expect(docs.getByTestId("renewal-last-invoice-period")).toHaveText(/^dated \d{1,2} [A-Z][a-z]{2} \d{4}$/);
-      expect(await fitsUncut(docs)).toEqual({ lines: true, insideCell: true, noEllipsis: true, nothingHidden: true, pageFits: true });
+      await expect(docs).toHaveAttribute("title", /dated \d{1,2} [A-Z][a-z]{2} \d{4}/);
+      expect(await fitsUncut(status)).toEqual({ lines: true, insideCell: true, noEllipsis: true, nothingHidden: true, pageFits: true });
     });
   }
 
@@ -119,11 +120,12 @@ test.describe("R-2747 card test", () => {
       const page = await pageAs(browser, baseURL, "owner");
       await page.setViewportSize({ width, height: 900 });
       const r = await rowOf(page, "CT R2747 Prior Due Plan");
-      await expect(r.getByText("Previous term ₹25,488 still unpaid")).toBeVisible({ timeout: 60_000 });
-      const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
-      await expect(docs.getByTestId("renewal-prior-due-no-invoice")).toHaveText("Balance on the subscription — no unpaid invoice linked to it", { timeout: 60_000 });
-      await expect(docs.getByTestId("renewal-last-invoice-status")).toHaveCount(0);
-      expect(await fitsUncut(docs)).toEqual({ lines: true, insideCell: true, noEllipsis: true, nothingHidden: true, pageFits: true });
+      /* R-2760 (R-2758 model): the previous-term balance is the status chip's flag (its words are the icon's name) */
+      await expect(r.getByRole("img", { name: /^Previous term ₹25,488 / })).toBeVisible({ timeout: 60_000 });
+      const gap = await onlyOne(r.getByTestId("renewal-prior-due-no-invoice"), "no-invoice reason");
+      await expect(gap).toHaveText("Balance on the subscription — no unpaid invoice linked to it", { timeout: 60_000 });
+      await expect(r.getByTestId("renewal-last-invoice-status")).toHaveCount(0);
+      expect(await gap.evaluate((el) => el.getBoundingClientRect().right <= el.closest("td")!.getBoundingClientRect().right + 0.5)).toBe(true);
     });
   }
 
@@ -131,7 +133,7 @@ test.describe("R-2747 card test", () => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1280, height: 900 });
     const r = await rowOf(page, "CT R2747 Cancelled Plan");
-    const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
+    const docs = await onlyOne(r.getByTestId("renewal-last-invoice-cell"), "last invoice cell");
     await expect(await onlyOne(docs.getByRole("link", { name: "INV-CT2747-C" }), "void invoice link")).toBeVisible({ timeout: 60_000 });
     const status = docs.getByTestId("renewal-last-invoice-status");
     await expect(status).toHaveText("Cancelled");

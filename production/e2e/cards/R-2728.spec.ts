@@ -87,47 +87,47 @@ test.describe("R-2728 card test", () => {
   test("Step 1: a row whose renewal quote was sent stays (Overdue tab): status 'Renewal quote sent', 'Overdue 5d', 'Expires in 10 days', quote number clickable, last invoice clickable", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await rowOf(page, "overdue", "CT R2728 Workspace");
-    await expect(r.getByText("Renewal quote sent", { exact: true })).toBeVisible({ timeout: 60_000 });
-    const due = await onlyOne(r.getByTestId("renewal-sent-due"), "sent due cell");
-    await expect(due).toContainText("Overdue 5d");
-    await expect(due).toContainText("Expires in 10 days");
-    const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
-    await expect(docs).toContainText("Sent");
-    await expect(await onlyOne(docs.getByRole("link", { name: "Q-CT2728-REN" }), "quote link")).toHaveAttribute("href", "/quotes/Q-CT2728-REN");
-    await expect(await onlyOne(docs.getByRole("link", { name: "INV-CT2728-1" }), "invoice link")).toHaveAttribute("href", "/invoices/INV-CT2728-1");
-    await expect(docs).toContainText("Paid");
-    /* the sent quote's row: the one main button is Change renewal quote (R-2710), never a second Review */
-    await expect(r.getByRole("button", { name: /Change renewal quote/ })).toBeVisible({ timeout: 60_000 });
-    await expect(r.getByRole("button", { name: /Review renewal quote/ })).toHaveCount(0);
+    /* R-2760 (R-2758/R-2759 table): ONE chip "Quote sent" that opens the quote; its day count under it; the
+       quote's validity in the Due column; the last invoice in its own column */
+    const chip = r.getByTestId("stage-chip");
+    await expect(chip).toContainText("Quote sent", { timeout: 60_000 });
+    await expect(r.getByTestId("stage-line2")).toContainText("Overdue 5d");
+    await expect(r.getByTestId("stage-chip-quote")).toHaveAttribute("href", "/quotes/Q-CT2728-REN");
+    await expect(r.getByTestId("due-quote-expiry")).toHaveText("exp. in 10d");
+    await expect(r.getByTestId("due-quote-expiry")).toHaveAttribute("title", "Expires in 10 days");
+    const inv = await onlyOne(r.getByTestId("renewal-last-invoice-cell"), "last invoice cell");
+    await expect(await onlyOne(inv.getByRole("link", { name: "INV-CT2728-1" }), "invoice link")).toHaveAttribute("href", "/invoices/INV-CT2728-1");
+    await expect(inv).toContainText("Paid");
+    /* the sent quote's row: one button (Follow up) — never a second Send / Review; Change renewal is in ⋯ */
+    await expect(r.getByTestId("stage-primary")).toHaveText(/Follow up/);
+    await expect(r.getByRole("button", { name: /Review renewal quote|Send renewal/ })).toHaveCount(0);
   });
 
   test("Step 2: the 'Bill next part' row shows its part proforma clickable and stays as 'Renewal quote sent' (not 'Renewed'), 'No expiry set'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await rowOf(page, "later", "CT R2728 Parts Plan");
-    await expect(r.getByText("Renewal quote sent", { exact: true })).toBeVisible({ timeout: 60_000 });
+    await expect(r.getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
     await expect(r.getByText("Renewed", { exact: true })).toHaveCount(0);
-    const due = await onlyOne(r.getByTestId("renewal-sent-due"), "sent due cell");
-    await expect(due).toContainText("No expiry set");
-    /* due on the part's own date (5 days ago), not the rolled renewal date a year out */
-    await expect(due).toContainText("Part bill overdue 5d");
-    const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
-    await expect(await onlyOne(docs.getByRole("link", { name: "PI-CT2728-1" }), "part proforma link")).toHaveAttribute("href", "/quotes/PI-CT2728-1");
+    await expect(r.getByTestId("due-quote-expiry")).toHaveText("no expiry");
+    /* due on the part's own date (5 days ago), not the renewal date a year out */
+    await expect(r.getByTestId("stage-line2")).toContainText("Overdue 5d");
+    await expect(r.getByTestId("stage-chip-quote")).toHaveAttribute("href", "/quotes/PI-CT2728-1");
   });
 
-  test("Step 3: status filter 'Renewal quote sent (N)' lists exactly those rows; the unsent overdue row is not in it", async ({ browser, baseURL }) => {
+  test("Step 3: status filter 'Quote sent (N)' (R-2760: the stage) lists exactly those rows; the unsent overdue row is not in it", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await rowOf(page, "overdue", "CT R2728 Unsent Plan");
     const filter = page.getByRole("combobox", { name: "Filter by status" });
-    const option = filter.locator("option", { hasText: /^Renewal quote sent \(\d+\)$/ });
+    const option = filter.locator("option", { hasText: /^Quote sent \(\d+\)$/ });
     await expect(option).toHaveCount(1, { timeout: 60_000 });
-    await filter.selectOption("quote-sent");
+    await filter.selectOption("sent");
     const table = page.locator("table").filter({ visible: true });
     await expect(table.locator("tr", { hasText: "CT R2728 Workspace" })).toHaveCount(1, { timeout: 30_000 });
     await expect(table.locator("tr", { hasText: "CT R2728 Unsent Plan" })).toHaveCount(0);
     /* every row the filter shows says the same status */
     const rows = table.locator("tbody tr");
     const n = await rows.count();
-    for (let i = 0; i < n; i++) await expect(rows.nth(i)).toContainText("Renewal quote sent");
+    for (let i = 0; i < n; i++) await expect(rows.nth(i).getByTestId("stage-chip")).toContainText("Quote sent");
   });
 
   test("Step 4: counts still add up — the Overdue tile counts the sent row once, and the sent row is on one tab only", async ({ browser, baseURL }) => {
@@ -159,7 +159,7 @@ test.describe("R-2728 card test", () => {
       if (!(await item.isVisible())) await more.click();
       await expect(item).toBeVisible({ timeout: 5_000 });
     }).toPass({ timeout: 60_000 });
-    await expect(page.getByRole("menuitem", { name: /Resend renewal quote/ })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: /^Resend$/ })).toBeVisible();
     await item.click();
     await expect(page).toHaveURL(/\/quotes\/Q-CT2728-REN(\?pay=1)?$/, { timeout: 120_000 });
   });

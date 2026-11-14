@@ -61,6 +61,13 @@ async function row(page: Page) {
   return r;
 }
 
+/* R-2760 (R-2758 model): the row's one button is "Send renewal" (opens the editor — R-2710's flow
+   unchanged); "Change renewal" for a sent quote is in the row's ⋯ menu. */
+async function changeRenewal(page: Page, r: Locator) {
+  await clickWhenReady(r.getByRole("button", { name: /More renewal actions/ }));
+  await page.getByRole("menuitem", { name: /^Change renewal$/ }).click();
+}
+
 test.describe("R-2710 card test", () => {
   onlyInCardTests();
   test.describe.configure({ mode: "serial" });
@@ -68,17 +75,17 @@ test.describe("R-2710 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: Renewals → 8–30 tab: the row's one button is 'Review renewal quote' (nothing sent yet)", async ({ browser, baseURL }) => {
+  test("Step 1: Renewals → 8–30 tab: the row's one button is 'Send renewal' (nothing sent yet)", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await row(page);
-    await expect(await onlyOne(r.getByRole("button", { name: /Review renewal quote/ }), "Review renewal quote")).toBeVisible();
-    await expect(r.getByRole("button", { name: /Send renewal quote/ })).toHaveCount(0);
+    await expect(await onlyOne(r.getByTestId("stage-primary"), "Send renewal")).toHaveText(/Send renewal/);
+    await expect(r.getByRole("button", { name: /Send renewal quote|Review renewal quote/ })).toHaveCount(0);
   });
 
   test("Step 2: click it → /quotes/Q-…/edit opens with the line filled in, a DRAFT linked to the subscription; nothing emailed", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await row(page);
-    await clickWhenReady(r.getByRole("button", { name: /Review renewal quote/ }));
+    await clickWhenReady(r.getByTestId("stage-primary"));
     await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit$/, { timeout: 120_000 });   // a cold dev server compiles the route + the editor
     const id = linked();
     expect(id).not.toBe("");
@@ -89,7 +96,7 @@ test.describe("R-2710 card test", () => {
     await expect(page.locator("[data-renewal-send]").filter({ visible: true })).toBeVisible({ timeout: 60_000 });
   });
 
-  test("Step 3: change the term to 3 years → the footer's next step is 'Save & send to customer'; sent (▾ Save & mark sent — local customer messages are off) → extension 36 months, ₹3,600; row reads 'Change renewal quote'", async ({ browser, baseURL }) => {
+  test("Step 3: change the term to 3 years → the footer's next step is 'Save & send to customer'; sent (▾ Save & mark sent — local customer messages are off) → extension 36 months, ₹3,600; row reads 'Quote sent', ⋯ has 'Change renewal'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = linked();
     /* The local company has no catalogue row for this plan, so the line has no vendor cost and the
@@ -106,18 +113,21 @@ test.describe("R-2710 card test", () => {
     await page.getByRole("menuitem", { name: /Save & mark sent/ }).click();
     await expect.poll(() => quoteRow(id), { timeout: 60_000 }).toBe("sent,36,3600");
     const r = await row(page);
-    await expect(r.getByRole("button", { name: /Change renewal quote/ })).toBeVisible({ timeout: 60_000 });
+    await expect(r.getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
+    await clickWhenReady(r.getByRole("button", { name: /More renewal actions/ }));
+    await expect(page.getByRole("menuitem", { name: /^Change renewal$/ })).toBeVisible();
+    await page.keyboard.press("Escape");
   });
 
-  test("Step 4: Change renewal quote → the R2 draft opens in the editor; a second click re-opens the same R2 (no R3)", async ({ browser, baseURL }) => {
+  test("Step 4: ⋯ Change renewal → the R2 draft opens in the editor; a second click re-opens the same R2 (no R3)", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = linked();
     let r = await row(page);
-    await clickWhenReady(r.getByRole("button", { name: /Change renewal quote/ }));
+    await changeRenewal(page, r);
     await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 120_000 });
     expect(quoteRow(`${id}-R2`)).toBe("draft,36,3600");
     r = await row(page);
-    await clickWhenReady(r.getByRole("button", { name: /Change renewal quote/ }));
+    await changeRenewal(page, r);
     await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 120_000 });
     expect(db().one(`select count(*) from public.quotes where revision_of = '${id}'`)).toBe("1");
   });
