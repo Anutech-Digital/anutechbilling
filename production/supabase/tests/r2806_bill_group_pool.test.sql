@@ -280,7 +280,22 @@ begin
      where id = 'b2806000-0000-0000-0000-000000000211';
     get diagnostics n = row_count;
     raise exception 'FAIL W: owner login changed bill_group_id (% rows, no error)', n;
-  exception when insufficient_privilege then raise notice 'PASS W: browser login refused: %', sqlerrm; end;
+  exception when insufficient_privilege then
+    if sqlerrm not like '%Bill together%' then raise exception 'FAIL W: refused for another reason: %', sqlerrm; end if;
+    raise notice 'PASS W: browser login refused: %', sqlerrm;
+  end;
+  -- a NEW subscription carrying a bill_group_id is refused too (BEFORE INSERT arm), by the guard's own message
+  begin
+    insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, billing_cycle,
+                                      term_months, start_date, renewal_date, renewal_state, reminder_count, status, bill_group_id)
+    select 'b2806000-0000-0000-0000-0000000002f9', s.tenant_id, s.customer_id, s.customer_name, s.plan, s.vendor, 1, 1000,
+           s.billing_cycle, 12, s.start_date, s.renewal_date, s.renewal_state, 0, 'active', 'b2806000-0000-0000-0000-0000000009a7'
+      from public.subscriptions s where s.id = 'b2806000-0000-0000-0000-000000000211';
+    raise exception 'FAIL W: owner login inserted a subscription with a bill_group_id';
+  exception when insufficient_privilege then
+    if sqlerrm not like '%Bill together%' then raise exception 'FAIL W: insert refused for another reason: %', sqlerrm; end if;
+    raise notice 'PASS W: a new subscription with a bill_group_id refused';
+  end;
   update public.subscriptions set external_ref = 'R2806-W' where id = 'b2806000-0000-0000-0000-000000000211';
   get diagnostics n = row_count;
   if n <> 1 then raise exception 'FAIL W: an ordinary column update no longer works (% rows)', n; end if;
