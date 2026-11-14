@@ -36,6 +36,8 @@ type SubRef = LastDocsInput["subs"][number];
 const inList = (ids: readonly string[]) => `(${ids.map((x) => `"${x.replace(/["\\]/g, "")}"`).join(",")})`;
 
 const QUOTE_COLS = "id, status, payment_status, created_at, created_date, expires_date, invoice_id, renewal_subscription_id, add_seats_subscription_id, subscription_billing_id, superseded_by, revision_of, amount, currency, exchange_rate";
+/** R-2830: the part proformas also carry their lines — a together proforma names every member's part there (same query, no read per row). */
+const PART_COLS = `${QUOTE_COLS}, line_items`;
 const INVOICE_COLS = "id, quote_id, invoice_date, status, amount, paid_amount, currency, created_at, due_date, net_payable, adjusted_advances, written_off_at, fx_rate";
 const DETAIL_COLS = "id, line_items, is_renewal, is_extension, is_add_seats, is_one_off, extension_months, renewal_term_date, created_date";
 
@@ -159,7 +161,7 @@ export async function readRenewalDocRows(
   const [parts, byQuote, byId] = await Promise.all([
     fetchAllRowsIn<DocQuote, string>(billings.map((b) => b.id), (run, from, to) => loose
       .from("quotes")
-      .select(QUOTE_COLS)
+      .select(PART_COLS)
       .in("subscription_billing_id", run)
       .order("id", { ascending: true })
       .range(from, to), c),

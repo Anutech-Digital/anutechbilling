@@ -70,6 +70,22 @@ export interface DocQuote {
   amount?: number | null;
   currency?: string | null;
   exchange_rate?: number | null;
+  /**
+   * R-2830: only on the part proformas read (last-docs-data.ts PART_COLS). "Bill together" makes ONE proforma
+   * for several subscriptions: subscription_billing_id is the LEAD part, each line's billing_id names its part.
+   */
+  line_items?: unknown;
+}
+
+/** R-2830: the part ids a proforma names on its lines (line_items[].billing_id), in line order; [] = none / not read. */
+export function lineBillingIds(q: Pick<DocQuote, "line_items">): string[] {
+  if (!Array.isArray(q.line_items)) return [];
+  const out: string[] = [];
+  for (const l of q.line_items) {
+    const id = l && typeof l === "object" ? (l as { billing_id?: unknown }).billing_id : null;
+    if (typeof id === "string" && id && !out.includes(id)) out.push(id);
+  }
+  return out;
 }
 
 export interface DocBilling {
@@ -254,9 +270,19 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     if (s.quote_id) add(quoteSubs, s.quote_id, s.id);
     if (s.renewal_quote_id) add(quoteSubs, s.renewal_quote_id, s.id);
   }
+  /* R-2830: quote id → subscription id → the part of that subscription the quote bills (lead part + each line's part) */
+  const quotePart = new Map<string, Map<string, string>>();
   for (const q of input.quotes) {
     for (const sid of [q.renewal_subscription_id, q.add_seats_subscription_id, billingById.get(q.subscription_billing_id ?? "")?.subscription_id]) {
       if (sid && subIds.has(sid)) add(quoteSubs, q.id, sid);
+    }
+    for (const bid of [q.subscription_billing_id, ...lineBillingIds(q)]) {
+      const b = bid ? billingById.get(bid) : undefined;
+      if (!b || !subIds.has(b.subscription_id)) continue;
+      add(quoteSubs, q.id, b.subscription_id);
+      const m = quotePart.get(q.id) ?? new Map<string, string>();
+      if (!m.has(b.subscription_id)) m.set(b.subscription_id, b.id);
+      quotePart.set(q.id, m);
     }
   }
   /* R-2740 (`all`): a revised-away quote lost its subscription link to its revision (R-2368), and an
@@ -300,11 +326,13 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     const b = billingId ? billingById.get(billingId) : undefined;
     return b ? { start: b.period_start ?? null, endExclusive: b.period_end ?? null } : null;
   };
+  /** R-2830: the quote's part for THIS subscription (a together proforma has one per member). */
+  const partFor = (q: DocQuote, sid: string) => partOf(quotePart.get(q.id)?.get(sid) ?? q.subscription_billing_id);
   for (const [sid, q] of bestQuote) {
     out.get(sid)!.quote = {
       id: q.id, date: (q.created_date ?? q.created_at).slice(0, 10), status: q.status,
       payment_status: q.payment_status, expires_date: q.expires_date, invoice_id: q.invoice_id,
-      part: partOf(q.subscription_billing_id), period: null,
+      part: partFor(q, sid), period: null,
     };
   }
 
@@ -416,7 +444,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
           return {
             id: q.id, date: (q.created_date ?? q.created_at).slice(0, 10), status: q.status,
             payment_status: q.payment_status, expires_date: q.expires_date, invoice_id: q.invoice_id,
-            part: partOf(q.subscription_billing_id), period: null,
+            part: partFor(q, s.id), period: null,
             supersededBy: q.superseded_by ?? null,
             amount: q.amount == null ? null : Number(q.amount),
             currency: q.currency ?? null,
@@ -461,7 +489,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     let part: DocQuote | null = null;
     let partBill: DocBilling | null = null;
     for (const q of input.quotes) {
-      const b = billingById.get(q.subscription_billing_id ?? "");
+      const b = billingById.get(quotePart.get(q.id)?.get(s.id) ?? q.subscription_billing_id ?? "");
       if (!b || b.subscription_id !== s.id || b.term_start !== term || (b.period_index ?? 0) !== firstIndex.get(s.id) || !isOpenUnpaid(q)) continue;
       if (!part || newer({ at: q.created_at, id: q.id }, { at: part.created_at, id: part.id })) { part = q; partBill = b; }
     }

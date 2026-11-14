@@ -36,7 +36,7 @@ const API = "/api/renewals/bill-together";
 function clean(): void {
   const parts = `(select b.id from public.subscription_billings b where b.subscription_id in ${SUBS})`;
   const reqs = `(select q.id from public.quotes q where q.subscription_billing_id in ${parts} or q.cancelled_part_billing_id in ${parts}
-                  or exists (select 1 from jsonb_array_elements(coalesce(q.line_items, '[]'::jsonb)) l where l->>'subscription_id' in ('${SUB_A}', '${SUB_B}')))`;
+                  or exists (select 1 from jsonb_array_elements(coalesce(q.line_items, '[]'::jsonb)) l where l->>'billing_id' in (select b.id::text from public.subscription_billings b where b.subscription_id in ${SUBS})))`;
   const invoiceIds = db().psql(`select distinct b.invoice_id from public.subscription_billings b where b.subscription_id in ${SUBS} and b.invoice_id is not null`);
   localCleanupDeleteIssuedInvoice(db(), "R-2808", {
     invoiceIds: [...new Set([...invoiceIds, PREV_INV])],
@@ -82,8 +82,8 @@ function subState(id: string): { date: string; state: string; old: boolean } {
 function liveTogether(): Array<{ id: string; amount: number; lines: number }> {
   return db().psql(
     `select q.id || '|' || q.amount || '|' || jsonb_array_length(q.line_items) from public.quotes q
-      where q.tenant_id = ${T} and q.cancelled_at is null and q.status not in ('cancelled', 'void')
-        and exists (select 1 from jsonb_array_elements(coalesce(q.line_items, '[]'::jsonb)) l where l->>'subscription_id' in ('${SUB_A}', '${SUB_B}'))
+      where q.tenant_id = ${T} and q.cancelled_at is null and q.status::text not in ('cancelled', 'void')
+        and exists (select 1 from jsonb_array_elements(coalesce(q.line_items, '[]'::jsonb)) l where l->>'billing_id' in (select b.id::text from public.subscription_billings b where b.subscription_id in ${SUBS}))
       order by q.created_at desc`,
   ).map((r) => { const [id, amount, lines] = r.split("|"); return { id, amount: Number(amount), lines: Number(lines) }; });
 }
@@ -99,9 +99,12 @@ async function needsBackend(page: Page): Promise<void> {
   test.skip(probe.status() === 404, "R-2807 /api/renewals/bill-together not landed yet — runs once R-2807 + R-2810 are merged");
 }
 
+/** The table row of one plan, found by its product button (a row's "Bills with <other plan>" hint also contains that plan's name). */
+const rowOf = (page: Page, plan: string) => page.locator("tr").filter({ has: page.getByTestId("renewal-open-drawer").filter({ hasText: plan }) });
+
 async function openOverdue(page: Page): Promise<void> {
   await openAppPage(page, "/renewals?bucket=overdue", /Renewals/);
-  await expect(page.locator("tr", { hasText: PLAN_A }).filter({ visible: true })).toHaveCount(1, { timeout: 60_000 });
+  await expect(rowOf(page, PLAN_A).filter({ visible: true })).toHaveCount(1, { timeout: 60_000 });
 }
 
 test.describe("R-2808 card test", () => {
@@ -122,8 +125,8 @@ test.describe("R-2808 card test", () => {
     await expect(group.getByTestId("bill-together-why")).toHaveText("Billed together last time");
     await expect(group.getByRole("checkbox", { name: new RegExp(PLAN_A) })).toBeChecked();
     await expect(group.getByRole("checkbox", { name: new RegExp(PLAN_B) })).toBeChecked();
-    await expect(page.locator("tr", { hasText: PLAN_A }).getByTestId("renewal-bills-with")).toHaveText(`Bills with ${PLAN_B}`);
-    await expect(page.locator("tr", { hasText: PLAN_B }).getByTestId("renewal-bills-with")).toHaveText(`Bills with ${PLAN_A}`);
+    await expect(rowOf(page, PLAN_A).getByTestId("renewal-bills-with")).toHaveText(`Bills with ${PLAN_B}`);
+    await expect(rowOf(page, PLAN_B).getByTestId("renewal-bills-with")).toHaveText(`Bills with ${PLAN_A}`);
     /* still fits 1280 / 1276 (R-2759) */
     for (const w of [1280, 1276]) {
       await page.setViewportSize({ width: w, height: 800 });
@@ -164,13 +167,13 @@ test.describe("R-2808 card test", () => {
     const pi = liveTogether()[0];
     await openOverdue(page);
     for (const plan of [PLAN_A, PLAN_B]) {
-      await expect(page.locator("tr", { hasText: plan }).getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
+      await expect(rowOf(page, plan).getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
     }
     const resp = await page.request.get(`${API}?ids=${SUB_B}`);
     const body = await resp.json();
     expect(body.subs[0].onTogetherBill?.quoteId).toBe(pi.id);
     /* the owner's path: B's ⋯ → Bill next part → the dialog names the together proforma, links it, no Create */
-    const rowB = page.locator("tr", { hasText: PLAN_B }).filter({ visible: true });
+    const rowB = rowOf(page, PLAN_B).filter({ visible: true });
     const dlg = page.getByRole("dialog");
     await expect(async () => {
       if (!(await page.getByRole("menuitem", { name: /Bill next part/ }).isVisible())) await rowB.getByTestId("stage-more").click({ timeout: 5_000 });
