@@ -6,6 +6,7 @@
  *
  *   header      customer (link) · plan · seats · vendor · the stage chip + note · the button
  *   Terms       this term · next term · amount · how it is billed · term length
+ *               (R-2819: owner / manager — Customer pays · Our cost · Margin, or "Cost missing — add in catalogue")
  *   Documents   every quote + invoice (id link · date · period · amount · status), newest first
  *   Payments    date · amount · method · the invoice it paid
  *   Follow-ups  owner / next date / promise · each logged follow-up · reminders sent
@@ -30,6 +31,8 @@ import type { UserName } from "@/lib/hooks/useUserNames";
 import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { useRenewalDrawerData } from "./drawer-data";
+import { useRenewalDrawerCatalog } from "./drawer-cost-data";
+import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, mayShowRenewalCost, renewalCostForSub, type DrawerMoney } from "./drawer-money";
 import {
   currentTermWords, drawerSubFromSearch, withDrawerSub, drawerDocRows, drawerFlagRows, drawerFollowupRows, drawerPage, drawerPaymentRows,
   remindersWords, termLengthWords, type DrawerDocRow,
@@ -127,6 +130,37 @@ function DocId({ row, canQuotes, canInvoices }: { row: DrawerDocRow; canQuotes: 
     : <span className="font-mono">{row.id}</span>;
 }
 
+/** R-2819: Our cost + Margin (owner / manager only), or the way to the catalogue when the cost is missing. */
+function CostFacts({ money }: { money: DrawerMoney }) {
+  if (money.kind === "loading") return <Fact label="Our cost"><Skeleton className="h-4 w-28" aria-label="Loading our cost" /></Fact>;
+  if (money.kind === "unread") {
+    return <Fact label="Our cost"><span className="text-ink-3" data-testid="renewal-drawer-cost">Couldn&apos;t read the catalogue — close and open again.</span></Fact>;
+  }
+  if (money.kind === "costMissing") {
+    return (
+      <>
+        <Fact label="Our cost">
+          <span data-testid="renewal-drawer-cost">
+            <Link href={CATALOGUE_HREF as never} className="font-medium text-amber-ink underline underline-offset-2 hover:text-ink">Cost missing — add in catalogue</Link>
+            <span className="block text-xs text-ink-3">{money.reason[0].toUpperCase() + money.reason.slice(1)}.</span>
+          </span>
+        </Fact>
+        <Fact label="Margin"><span className="text-ink-3" data-testid="renewal-drawer-margin">Unknown — no cost</span></Fact>
+      </>
+    );
+  }
+  return (
+    <>
+      <Fact label="Our cost"><span className="tabular-nums" data-testid="renewal-drawer-cost">{money.cost}</span> <span className="text-ink-3">from catalogue</span></Fact>
+      <Fact label="Margin">
+        {money.kind === "noAmount"
+          ? <span className="text-ink-3" data-testid="renewal-drawer-margin">Unknown — no renewal amount set</span>
+          : <span className={cn("tabular-nums", money.loss ? "font-medium text-rose-600" : "text-ink")} data-testid="renewal-drawer-margin">{money.margin} · {money.pct < 0 ? "−" : ""}{Math.abs(money.pct)}%{money.loss ? " (loss)" : ""}</span>}
+      </Fact>
+    </>
+  );
+}
+
 export function RenewalDrawer({ item, open, onClose, names, followupRows, onFollowup, strong }: {
   /** The row it is about; null while ?sub= names a renewal not on this page. */
   item: DrawerItem | null;
@@ -166,6 +200,15 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
         renewedAnyway: vendorHoldState(sub as Parameters<typeof vendorHoldState>[0]) === "overridden",
       })
     : [];
+  /* R-2819: cost is internal — only a role that may open the catalogue sees it; nobody else's drawer reads it. */
+  const showCost = mayShowRenewalCost(me?.role);
+  const catalog = useRenewalDrawerCatalog(sub?.tenant_id ?? null, open && !!sub && showCost);
+  const cost = React.useMemo(
+    () => (!sub || catalog.isError ? null : catalog.data ? renewalCostForSub(catalog.data, sub) : undefined),
+    [sub, catalog.data, catalog.isError],
+  );
+  const money = item ? drawerMoney(item.amount, cost, sub?.term_months) : ({ kind: "loading" } as const);
+  const booksLine = item ? booksRupeeLine(item.amount, sub?.term_months) : null;
   const fu = item?.followup;
   const owner = fu?.ownerId ? nameOf(fu.ownerId) ?? "a colleague" : "Nobody yet";
 
@@ -207,8 +250,10 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                 <dl>
                   <Fact label="This term">{currentTermWords(sub) ?? "—"}</Fact>
                   <Fact label="Next term">{nextTermWords(sub) ?? "—"}</Fact>
-                  <Fact label="Amount"><span className="tabular-nums">{item.amount.text}</span> <span className="text-ink-3">{item.amount.gst}</span>
+                  <Fact label={showCost ? "Customer pays" : "Amount"}><span className="tabular-nums">{item.amount.text}</span> <span className="text-ink-3">{item.amount.gst}</span>
+                    {showCost && booksLine && <span className="block text-xs text-ink-3 tabular-nums" data-testid="renewal-drawer-books">{booksLine}</span>}
                     {item.amount.quoteNote && <span className="block text-xs text-ink-3">{item.amount.quoteNote}</span>}</Fact>
+                  {showCost && <CostFacts money={money} />}
                   <Fact label="Billed">{item.frequency ?? "—"}</Fact>
                   <Fact label="Term length">{termLengthWords(sub.term_months)}</Fact>
                 </dl>
