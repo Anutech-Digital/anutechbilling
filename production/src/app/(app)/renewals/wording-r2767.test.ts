@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { renewalAmount, EXPORT_GST } from "./queue";
 import { quoteExpiryNote, EXPIRY_ROW_DAYS } from "./last-docs";
-import { reminderButtonLabel, reminderScope } from "./reminders";
+import { reminderButton, reminderScope, type RenewalRowLike } from "./reminders";
 import {
   REVIEW_RENEWAL_QUOTE, CHANGE_RENEWAL_QUOTE, BILL_RENEWAL_YEAR, BILL_RENEWAL_TERM,
 } from "@/components/features/renewals/renewal-actions-rules";
@@ -89,7 +89,9 @@ describe("R-2767 foreign customers in their own currency (audit P11)", () => {
 
 describe("R-2767 Remind says the whole open tab (coordinator decision 14 Nov)", () => {
   it("nothing ticked → 'Remind 62 in Later' — every row of the tab, also the ones behind Show more", () => {
-    expect(reminderButtonLabel(reminderScope(0, "Later", 62))).toBe("Remind 62 in Later");
+    /* R-2820: the count is the rows it can send — here all 62 of the tab */
+    const send = Array.from({ length: 62 }, (_, i) => ({ sub: { id: String(i), customer_name: "C", renewal_date: null }, daysUntil: 5 }) as RenewalRowLike);
+    expect(reminderButton(reminderScope(0, "Later", 62), { send, skipped: [] }).label).toBe("Remind 62 in Later");
     const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
     /* the scope counts the tab's narrowed rows (shown[bucketTab]), never the 50 on screen */
     expect(page).toMatch(/const visibleRows = tile \? tileShown : shown\[bucketTab\];/);

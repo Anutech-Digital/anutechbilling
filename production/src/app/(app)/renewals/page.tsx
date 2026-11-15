@@ -56,7 +56,6 @@ import { Input } from "@/components/ui/input";
 import {
   reminderPlan,
   reminderScope,
-  reminderButtonLabel,
   type BulkReminderResult,
   matchesRenewalSearch,
   readJsonSafe,
@@ -81,7 +80,7 @@ import {
 import { buildQueueItems, firstRows, QUEUE_PAGE_ROWS, type QueueItem } from "./queue-items";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
 import { monthOf, renewalTiles, tileMatches, renewedRowMatches, reconcileWindows, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
-import { RenewalReminderDialog, type ReminderDialogState } from "./reminder-dialog";
+import { RenewalReminderDialog, RenewalRemindButton, type ReminderDialogState } from "./reminder-dialog";
 import { RenewalTileRow, TileViewBar } from "./tiles-card";
 import { ForecastPanel } from "./forecast-panel";
 import { renewalCommitment } from "./frequency";
@@ -908,13 +907,14 @@ export default function RenewalsPage() {
   /* undefined = contacts not read yet (the send route still checks); null = no email on file. */
   const emailOf = (i: QueueItem): string | null | undefined =>
     !i.sub.customer_id ? null : contacts ? contacts.get(i.sub.customer_id)?.email ?? null : undefined;
+  /* R-1124 in grace → emailed; R-2225 Won't renew, R-2431 flex, R-808 split-billed, past grace,
+     no email, reminded today → skipped and named (reminders.ts reminderPlan). R-2820: the SAME plan
+     gives the button its count — only rows it can really email; at 0 it is greyed with the reason. */
+  const scopeRows = tickedShown.length > 0 ? tickedShown : visibleRows;
+  const remindPlan = reminderPlan(scopeRows, { today, tenantGraceDays: graceDays, emailOf, isPaid: (i) => i.status.key === "renewed" });
   function openReminder() {
-    if (bulkSending) return;
-    const scopeRows = tickedShown.length > 0 ? tickedShown : visibleRows;
-    /* R-1124 in grace → emailed; R-2225 Won't renew, R-2431 flex, R-808 split-billed, past grace,
-       no email, reminded today → skipped and named (reminders.ts reminderPlan). */
-    const plan = reminderPlan(scopeRows, { today, tenantGraceDays: graceDays, emailOf, isPaid: (i) => i.status.key === "renewed" });
-    setReminder({ scope, ...plan });
+    if (bulkSending || remindPlan.send.length === 0) return;
+    setReminder({ scope, ...remindPlan });
   }
 
 
@@ -1049,18 +1049,9 @@ export default function RenewalsPage() {
             <Icon name="download" size={14} />
             Export
           </Button>
-          {/* R-2753: the ONE reminder button — the ticked rows, else the open tab's rows (label says which). */}
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={bulkSending || contactsLoading || scope.count === 0}
-            title={contactsLoading ? "Reading each customer's email…" : undefined}
-            onClick={openReminder}
-            data-testid="renewals-remind"
-          >
-            <Icon name="mail" size={14} />
-            {bulkSending ? "Sending…" : reminderButtonLabel(scope)}
-          </Button>
+          {/* R-2753: the ONE reminder button — the ticked rows, else the open tab's rows (label says which).
+              R-2820: it counts only the rows it can send; at 0 greyed with the reason. Waits for the contacts. */}
+          <RenewalRemindButton scope={scope} plan={remindPlan} busy={bulkSending} loading={contactsLoading} onClick={openReminder} />
         </div>
       </div>
 

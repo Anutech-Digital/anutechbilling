@@ -12,10 +12,53 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import {
-  groupSkips, reminderDialogTitle,
+  groupSkips, reminderDialogTitle, reminderButton, reminderRowName,
   type BulkReminderResult, type BulkReminderSkip, type RenewalRowLike, type ReminderScope,
 } from "./reminders";
+
+/**
+ * R-2820 — the header's ONE Remind button. Its count is the rows it can really email (the same plan
+ * the dialog lists); at 0 it is greyed and its label says why ("Remind 0 · 9 need a call or part
+ * bill"), the full reason per group in its tooltip and accessible description.
+ */
+export function RenewalRemindButton({
+  scope, plan, busy = false, loading = false, onClick,
+}: {
+  scope: ReminderScope;
+  plan: { send: readonly RenewalRowLike[]; skipped: readonly BulkReminderSkip[] };
+  /** A send is running. */
+  busy?: boolean;
+  /** The customers' emails are still being read — a no-email customer is never counted meanwhile. */
+  loading?: boolean;
+  onClick: () => void;
+}) {
+  const reasonId = React.useId();
+  const b = reminderButton(scope, plan);
+  const title = loading ? "Reading each customer's email…" : b.reason;
+  /* the tooltip sits on a wrapper: a disabled Button has pointer-events none, so its own title never shows */
+  return (
+    <span className="inline-flex" title={title} data-testid="renewals-remind-reason">
+      <Button
+        variant="primary"
+        size="sm"
+        /* a phone keeps the title room: the longer "Remind 0 · 9 need a call or part bill" wraps to 2 lines */
+        className="h-auto min-h-8 max-w-[11rem] whitespace-normal py-1 text-left md:h-8 md:max-w-none md:whitespace-nowrap md:py-0"
+        disabled={busy || loading || b.disabled}
+        title={title}
+        aria-describedby={b.reason ? reasonId : undefined}
+        onClick={onClick}
+        data-testid="renewals-remind"
+      >
+        <Icon name="mail" size={14} />
+        {/* no count while the emails load — a no-email customer would be counted, then drop out */}
+        {busy ? "Sending…" : loading ? "Remind…" : b.label}
+      </Button>
+      {b.reason && <span id={reasonId} className="sr-only">{b.reason}</span>}
+    </span>
+  );
+}
 
 export interface ReminderDialogState<T extends RenewalRowLike> {
   scope: ReminderScope;
@@ -99,7 +142,7 @@ export function RenewalReminderDialog<T extends RenewalRowLike>({
                 <section aria-label="Reminded">
                   <p className="mb-1 text-sm text-ink-2">Got the reminder: <b className="text-ink">{result.sent.length}</b></p>
                   <ul className="max-h-48 overflow-y-auto rounded-md border border-hairline divide-y divide-hairline text-sm">
-                    {result.sent.map((r) => <li key={r.sub.id} className="px-3 py-2 font-medium text-ink break-words">{r.sub.customer_name}</li>)}
+                    {result.sent.map((r) => <li key={r.sub.id} className="px-3 py-2 font-medium text-ink break-words">{reminderRowName(r)}</li>)}
                   </ul>
                 </section>
               )}
@@ -127,7 +170,7 @@ export function RenewalReminderDialog<T extends RenewalRowLike>({
                       const email = emailOf?.(r);
                       return (
                       <li key={r.sub.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2">
-                        <span className="min-w-0 flex-1 font-medium text-ink break-words">{r.sub.customer_name}</span>
+                        <span className="min-w-0 flex-1 font-medium text-ink break-words">{reminderRowName(r)}</span>
                         {email && <span className="text-xs text-ink-3 break-all">{email}</span>}
                         {r.daysUntil < 0 && <span className="text-xs text-amber-ink">past the date, in grace</span>}
                       </li>
@@ -144,7 +187,7 @@ export function RenewalReminderDialog<T extends RenewalRowLike>({
                       <li key={g.reason} className="px-3 py-2">
                         <span className="text-ink-2">{g.reason}</span>
                         <span className="text-ink-3"> ({g.rows.length}): </span>
-                        <span className="font-medium text-ink">{g.rows.map((r) => r.sub.customer_name).join(", ")}</span>
+                        <span className="font-medium text-ink">{g.rows.map(reminderRowName).join(", ")}</span>
                       </li>
                     ))}
                   </ul>
