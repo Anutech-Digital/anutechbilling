@@ -80,7 +80,7 @@ export function togetherRole(
 /** The period a member's part buys — its own subscription's next term (R-2848's invoice rule). */
 export function togetherMemberPeriod(m: TogetherMember): { from: string; to: string } | null {
   if (!/^\d{4}-\d{2}-\d{2}/.test(m.renewalTermDate ?? "")) return null;
-  const from = followingTermStart({ term_months: m.termMonths, start_date: m.startDate, renewal_date: m.renewalTermDate });
+  const from = followingTermStart({ term_months: m.termMonths ?? 12, start_date: m.startDate, renewal_date: m.renewalTermDate });
   return { from, to: termEndInclusive(from, Math.max(1, m.extensionMonths || 12)) };
 }
 
