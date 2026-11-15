@@ -18,7 +18,7 @@ import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { syncSubscriptionInstalments, readQuotePaymentFacts, unbilledPartPrice, INSTALMENT_SUB_SELECT, type InstalmentSub } from "@/lib/billing/sync-instalments.server";
 import type { TermRoll } from "./pay-to-renew";
-import type { TogetherFact } from "./bill-together-preview";
+import type { TogetherFact, TogetherSaleFacts } from "./bill-together-preview";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -127,12 +127,88 @@ export async function readTogetherFacts(db: SupabaseClient, tenantId: string, id
   });
 }
 
+interface SaleSubRow { id: string; plan: string | null; quote_id: string | null; status: string | null; billing_cycle: string | null;
+  start_date: string | null; mrr: number | null; billed_externally_until: string | null }
+
+const day = (d: string | null | undefined) => (d ? d.slice(0, 10) : null);
+
 /**
- * Each billable subscription's next part — Bill next part's own preview (one period), all at once. A failure is
- * logged and the sub says so in plain words (the raw database text never reaches the screen).
+ * R-2831 — what bill_parts_together's sale-quote refusals read (R-2810 §2), for each billable subscription sold on
+ * a sale quote, at the next part the preview found: that part as laid (first part of a sale), the sub's earliest
+ * term, and the other subscriptions of the sale quote with their unbilled parts' starts (R-2092 "tick it too") and,
+ * for the ones the RPC counts (same cycle, active, not yearly, started, MRR > 0), whether any part is laid. Signed-in
+ * client, company-filtered. Every read is bounded: the parts AT the next periods, one earliest-term row per sub, the
+ * siblings' UNBILLED parts, and a one-row existence check only for a counted sibling with no unbilled part.
  */
-export async function fillNextParts(db: SupabaseClient, facts: TogetherReadFact[]): Promise<TogetherReadFact[]> {
-  return Promise.all(facts.map(async (f) => {
+async function readSaleFacts(db: SupabaseClient, tenantId: string, facts: readonly TogetherReadFact[]): Promise<Map<string, TogetherSaleFacts>> {
+  const out = new Map<string, TogetherSaleFacts>();
+  const sold = facts.filter((f) => !!f.row?.quote_id && !!f.next).map((f) => ({ row: f.row!, start: f.next!.periodStart }));
+  if (sold.length === 0) return out;
+  const fail = (e: { message: string } | null) => { if (e) throw new Error(e.message); };
+
+  const { data: sibRows, error: sErr } = await db.from("subscriptions")
+    .select("id, plan, quote_id, status, billing_cycle, start_date, mrr, billed_externally_until")
+    .eq("tenant_id", tenantId).in("quote_id", [...new Set(sold.map((s) => s.row.quote_id!))]);
+  fail(sErr);
+  const sameSale = (sibRows ?? []) as SaleSubRow[];
+  const soldIds = sold.map((s) => s.row.id);
+  const sibIds = sameSale.map((s) => s.id).filter((id) => !soldIds.includes(id));
+
+  const [atNext, open, firstTerms] = await Promise.all([
+    db.from("subscription_billings").select("subscription_id, period_start, period_index, term_start, credited_invoice_ids")
+      .eq("tenant_id", tenantId).in("subscription_id", soldIds).in("period_start", [...new Set(sold.map((s) => s.start))]),
+    db.from("subscription_billings").select("subscription_id, period_start")
+      .eq("tenant_id", tenantId).in("subscription_id", [...soldIds, ...sibIds]).is("invoice_id", null),
+    Promise.all(sold.map(async (s) => {
+      const { data, error } = await db.from("subscription_billings").select("term_start")
+        .eq("tenant_id", tenantId).eq("subscription_id", s.row.id).order("term_start", { ascending: true }).limit(1);
+      fail(error);
+      return [s.row.id, day((data as Array<{ term_start: string | null }> | null)?.[0]?.term_start)] as const;
+    })),
+  ]);
+  fail(atNext.error); fail(open.error);
+  const openOf = new Map<string, string[]>();
+  for (const p of (open.data ?? []) as Array<{ subscription_id: string; period_start: string }>) {
+    openOf.set(p.subscription_id, [...(openOf.get(p.subscription_id) ?? []), day(p.period_start)!]);
+  }
+  const firstTermOf = new Map(firstTerms);
+
+  /* R-2092 counts a sibling only like the RPC: active, same cycle, billed in parts, started, MRR > 0. */
+  const counted = (o: SaleSubRow, me: TogetherSubRow) => o.status === "active" && o.billing_cycle === me.billing_cycle
+    && !!o.billing_cycle && o.billing_cycle !== "yearly" && !!o.start_date && (o.mrr ?? 0) > 0;
+  const needLaid = [...new Set(sold.flatMap((s) => sameSale.filter((o) => o.id !== s.row.id && o.quote_id === s.row.quote_id
+    && counted(o, s.row) && !openOf.has(o.id)).map((o) => o.id)))];
+  const laidIds = new Set<string>(openOf.keys());
+  await Promise.all(needLaid.map(async (id) => {
+    const { data, error } = await db.from("subscription_billings").select("id").eq("tenant_id", tenantId).eq("subscription_id", id).limit(1);
+    fail(error);
+    if ((data ?? []).length > 0) laidIds.add(id);
+  }));
+
+  for (const s of sold) {
+    const own = ((atNext.data ?? []) as Array<{ subscription_id: string; period_start: string; period_index: number | null; term_start: string | null;
+      credited_invoice_ids: string[] | null }>).find((p) => p.subscription_id === s.row.id && day(p.period_start) === s.start);
+    out.set(s.row.id, {
+      quoteId: s.row.quote_id!,
+      startDate: day(s.row.start_date),
+      termMonths: s.row.term_months ?? 12,
+      firstTermStart: firstTermOf.get(s.row.id) ?? null,
+      atNext: own ? { periodIndex: own.period_index, termStart: day(own.term_start), credited: (own.credited_invoice_ids ?? []).length > 0 } : null,
+      siblings: sameSale.filter((o) => o.id !== s.row.id && o.quote_id === s.row.quote_id).map((o) => ({
+        id: o.id, plan: o.plan, counted: counted(o, s.row), billedExternallyUntil: day(o.billed_externally_until),
+        laidAny: laidIds.has(o.id), openPeriodStarts: openOf.get(o.id) ?? [] })),
+    });
+  }
+  return out;
+}
+
+/**
+ * Each billable subscription's next part — Bill next part's own preview (one period), all at once — and then
+ * (R-2831) the sale-quote facts the RPC refuses on, read at those parts. A failed next part is logged and the sub
+ * says so in plain words (the raw database text never reaches the screen).
+ */
+export async function fillNextParts(db: SupabaseClient, facts: TogetherReadFact[], tenantId: string): Promise<TogetherReadFact[]> {
+  const filled = await Promise.all(facts.map(async (f) => {
     const s = f.row;
     if (!s || !isSplitBilled(s.billing_cycle as BillingCycle) || s.status !== "active" || s.auto_renew === false) return f;
     try {
@@ -146,6 +222,8 @@ export async function fillNextParts(db: SupabaseClient, facts: TogetherReadFact[
       return { ...f, nextError: "its billing data could not be read" };
     }
   }));
+  const saleOf = await readSaleFacts(db, tenantId, filled);
+  return filled.map((f) => (f.row && saleOf.has(f.row.id) ? { ...f, sale: saleOf.get(f.row.id)! } : f));
 }
 
 /** Refusal the route shows as is (status + plain sentence). */
@@ -209,7 +287,16 @@ export async function layTogetherPart(admin: SupabaseClient, tenantId: string, r
        (billNextPreview reprices only a freed part; any other laid part keeps its stored amount there and here). */
     const { data: gone, error: gErr } = await admin.from("quotes").select("id").eq("tenant_id", tenantId).eq("cancelled_part_billing_id", had).limit(1);
     if (gErr) throw new Error(gErr.message);
-    const price = (gone ?? []).length > 0 ? await unbilledPartPrice(admin as Parameters<typeof unbilledPartPrice>[0], had) : null;
+    /* R-2831: a freed part already on a LIVE request (a line of another together proforma, e.g. a concurrent POST
+       with an overlapping id) keeps the amount that request was made for — never repriced under it. The RPC then
+       refuses it ("already on proforma …"). part_live_request is the one definition of live (R-2810). */
+    let liveRequest: unknown = null;
+    if ((gone ?? []).length > 0) {
+      const { data: liveId, error: lErr } = await admin.rpc("part_live_request", { p_tenant: tenantId, p_part: had });
+      if (lErr) throw new Error(lErr.message);
+      liveRequest = liveId ?? null;
+    }
+    const price = (gone ?? []).length > 0 && !liveRequest ? await unbilledPartPrice(admin as Parameters<typeof unbilledPartPrice>[0], had) : null;
     if (price && price.to !== price.from) {
       const { error } = await admin.from("subscription_billings")
         .update({ taxable_amount: price.to, updated_at: new Date().toISOString() })
@@ -257,12 +344,104 @@ export async function billPartsTogether(db: SupabaseClient, billingIds: readonly
 }
 
 /**
- * Is bill_parts_together on this database? Asked BEFORE any part is laid. An empty list makes the RPC refuse
- * ("pick at least two") without writing; only "no such function" means not deployed.
+ * May this login bill together on this database? Asked BEFORE any part is laid. An empty list makes the RPC
+ * refuse ("pick at least two", 22023) without writing — after its login and role checks. So "no such function"
+ * = not deployed (503), and R-2831: 42501 (role) / 28000 (no company on the login) refuse here too, before a
+ * part is laid with the admin client. Anything else = ready (the real call decides).
  */
-export async function billTogetherReady(db: SupabaseClient): Promise<boolean> {
+export async function billTogetherReady(db: SupabaseClient): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const { error } = await billPartsTogether(db, []);
-  return !(error && (error.code === "42883" || error.code === "PGRST202"));
+  if (error && ["42883", "PGRST202", "42501", "28000"].includes(error.code ?? "")) {
+    const r = rpcRefusal(error);
+    if (r) return { ok: false, ...r };
+  }
+  return { ok: true };
+}
+
+/** An invoiced together request a retry may answer with (R-2831). */
+export interface InvoicedTogether { quoteId: string; invoiceId: string; subscriptionIds: string[] }
+
+/** Without the periods the screen showed (an older screen), how long after an 'invoice' answer a POST for the same
+ *  subscriptions is taken as its retry — later it is a new bill (the next part). */
+export const INVOICED_RETRY_MINUTES = 15;
+
+type ClosedQuote = LiveQuote & { invoice_id: string | null; created_at: string };
+
+/**
+ * R-2831 — retry after an 'invoice' answer. When the pool already paid a started together group,
+ * bill_parts_together invoices it at once: the proforma closes and the parts carry that invoice. A retry then no
+ * longer sees a live together proforma (existingTogetherBill) and would move on to the NEXT period.
+ *
+ * - `periods` given (subscription → the part start the screen showed and the user confirmed): those exact parts,
+ *   all invoiced by ONE invoice, named by one request (2+ parts, not cancelled / superseded) that holds exactly the
+ *   asked subscriptions → that request + invoice, however long ago. (The route refuses a POST whose periods no
+ *   longer match the preview, so a stale screen never bills the next month either.)
+ * - no `periods` (an older screen): a Bill together request ("Billed together: …") of these subscriptions' customer
+ *   made in the last INVOICED_RETRY_MINUTES whose parts were all invoiced by one invoice, holding exactly the asked
+ *   subscriptions. Newest first.
+ * Closed by its invoice = invoice_id set (a paid request) or 'expired' (bill_subscription_instalment closes a
+ * pool-paid / invoice-on-due-date request that way, R-2527 body) — both count.
+ */
+export async function findInvoicedTogether(db: SupabaseClient, tenantId: string, facts: readonly TogetherReadFact[],
+  opts: { periods?: ReadonlyMap<string, string> | null; nowMs?: number } = {}): Promise<InvoicedTogether | null> {
+  if (facts.length < 2 || facts.some((f) => !f.sub)) return null;
+  const customers = [...new Set(facts.map((f) => f.sub!.customer_id ?? null))];
+  if (customers.length !== 1 || !customers[0]) return null;
+  const asked = facts.map((f) => f.sub!.id);
+  const periods = opts.periods ?? null;
+
+  let candidates: ClosedQuote[];
+  if (periods) {
+    if (asked.some((id) => !periods.has(id))) return null;
+    const { data: shown, error } = await db.from("subscription_billings").select("id, subscription_id, period_start, invoice_id")
+      .eq("tenant_id", tenantId).in("subscription_id", asked).in("period_start", [...new Set(periods.values())]);
+    if (error) throw new Error(error.message);
+    const mine = ((shown ?? []) as Array<{ id: string; subscription_id: string; period_start: string; invoice_id: string | null }>)
+      .filter((p) => periods.get(p.subscription_id) === p.period_start.slice(0, 10));
+    if (mine.length !== asked.length || mine.some((p) => !p.invoice_id)) return null;
+    const { data: qs, error: qErr } = await db.from("quotes")
+      .select("id, status, invoice_id, subscription_billing_id, line_items, created_at")
+      .eq("tenant_id", tenantId).in("subscription_billing_id", mine.map((p) => p.id))
+      .is("cancelled_at", null).is("superseded_by", null);
+    if (qErr) throw new Error(qErr.message);
+    candidates = (qs ?? []) as ClosedQuote[];
+  } else {
+    const since = new Date((opts.nowMs ?? Date.now()) - INVOICED_RETRY_MINUTES * 60_000).toISOString();
+    const { data: qs, error } = await db.from("quotes")
+      .select("id, status, invoice_id, subscription_billing_id, line_items, created_at")
+      .eq("tenant_id", tenantId).eq("customer_id", customers[0])
+      .not("subscription_billing_id", "is", null)
+      .is("cancelled_at", null).is("superseded_by", null)
+      .like("notes", "Billed together:%")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    candidates = (qs ?? []) as ClosedQuote[];
+  }
+  const closed = candidates.filter((q) => q.invoice_id != null || q.status === "expired")
+    .map((q) => ({ q, parts: requestBillingIds(q) })).filter((x) => x.parts.length >= 2);
+  if (closed.length === 0) return null;
+  const { data: parts, error: pErr } = await db.from("subscription_billings")
+    .select("id, subscription_id, invoice_id").eq("tenant_id", tenantId).in("id", [...new Set(closed.flatMap((x) => x.parts))]);
+  if (pErr) throw new Error(pErr.message);
+  const partOf = new Map(((parts ?? []) as Array<{ id: string; subscription_id: string; invoice_id: string | null }>).map((p) => [p.id, p]));
+  const askedSet = new Set(asked);
+  for (const { q, parts: ps } of closed) {
+    const rows = ps.map((p) => partOf.get(p));
+    /* every part invoiced, all by ONE invoice — the request's own when it carries one */
+    const invoiceId = q.invoice_id ?? rows[0]?.invoice_id ?? null;
+    if (!invoiceId || rows.some((r) => !r || r.invoice_id !== invoiceId)) continue;
+    const subIds = new Set(rows.map((r) => r!.subscription_id));
+    if (subIds.size === askedSet.size && [...subIds].every((id) => askedSet.has(id))) return { quoteId: q.id, invoiceId, subscriptionIds: asked };
+  }
+  return null;
+}
+
+/** The tax invoice a request already has (null = none) — for an already_existed answer that carries no invoice_id. */
+export async function quoteInvoiceId(db: SupabaseClient, tenantId: string, quoteId: string): Promise<string | null> {
+  const { data, error } = await db.from("quotes").select("invoice_id").eq("tenant_id", tenantId).eq("id", quoteId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as { invoice_id: string | null } | null)?.invoice_id ?? null;
 }
 
 /** Postgres's own wording (not a sentence the RPC wrote) — never shown as it is (§24). */
