@@ -346,7 +346,30 @@ begin
   perform public.undo_cancel_quote(v_q1);
   if (select renewal_quote_id from public.subscriptions where id = c) is distinct from v_q1 then
     raise exception 'FAIL E3: undo cancel did not link % back (now %)', v_q1, (select renewal_quote_id from public.subscriptions where id = c); end if;
-  raise notice 'PASS E/E2/E3: cancel let go of every member (links released); a single renewal quote too';
+  /* E4 (rev-r2848 MED-B) — cancelled again → Generate makes a NEW quote, never hands the cancelled one back */
+  perform public.cancel_quote(v_q1, 'R2848 test cancel single again');
+  r := public.create_renewal_quote(c, pg_temp.t(), pg_temp.q('Business Plus', 5, 90000));
+  if (r->>'created')::boolean is not true or r->>'quote_id' = v_q1
+     or (select renewal_quote_id from public.subscriptions where id = c) is distinct from r->>'quote_id' then
+    raise exception 'FAIL E4: create_renewal_quote after cancelling % → % (want a new, linked quote)', v_q1, r; end if;
+  raise notice 'PASS E/E2/E3/E4: cancel let go of every member (links released); a single renewal quote too; undo cancel links back; after a cancel a NEW quote is made';
+end $$;
+
+-- ── E5 (rev-r2848 LOW-1) — undo cancel of a quote whose term the subscription has left → refused ──────────
+do $$
+declare d uuid; r jsonb; v_q text; v_msg text;
+begin
+  d := pg_temp.sub(20, pg_temp.cust(10), 'Business Plus', 5, '2027-01-15');
+  r := public.create_renewal_quote(d, pg_temp.t(), pg_temp.q('Business Plus', 5, 90000));
+  v_q := r->>'quote_id';
+  perform public.cancel_quote(v_q, 'R2848 test cancel then date moved');
+  update public.subscriptions set renewal_date = '2028-01-15' where id = d;
+  v_msg := pg_temp.try(format('select public.undo_cancel_quote(%L)', v_q));
+  if v_msg not like '23514 Quote % was made for the term of Business Plus due 15 Jan 2027, but it now renews on 15 Jan 2028%' then
+    raise exception 'FAIL E5: undo cancel after the date moved → %', v_msg; end if;
+  if (select renewal_quote_id from public.subscriptions where id = d) is not null then
+    raise exception 'FAIL E5: relinked to the old term''s quote'; end if;
+  raise notice 'PASS E5: a quote for a term the subscription has left is not reopened';
 end $$;
 
 -- ── F — a closed together quote is never reopened or paid; F2 never activated on credit ────────────────────

@@ -1575,7 +1575,7 @@ begin
    where l.quote_id = new.id and l.tenant_id = new.tenant_id and l.released_at is null and l.renewed_at is null;
   if v_ids is not null then
     insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label, changes)
-    values (new.tenant_id, (select u.id from public.users u where u.id = auth.uid()), 'quote.r2848_unlinked', 'quote', new.id,
+    values (new.tenant_id, public.current_user_id(), 'quote.r2848_unlinked', 'quote', new.id,
             left(format('Quote %s closed — %s subscription(s) let go of it', new.id, cardinality(v_ids)), 120),
             jsonb_build_object('subscription_ids', to_jsonb(v_ids), 'status', new.status::text));
   end if;
@@ -1600,7 +1600,9 @@ set search_path = public
 as $$
 /* R-2848 (code review): Undo cancel (R-2519) of a quote that let go of its subscriptions links them back — else
    paying the reopened quote finds no subscription and (an extension / support-upgrade quote has no
-   renewal_subscription_id) would file a NEW subscription. A subscription that has another open quote now → refused. */
+   renewal_subscription_id) would file a NEW subscription. A subscription that has another open quote now → refused.
+   rev-r2848 LOW-1: a renewal quote made for a term the subscription has left (its renewal date moved since) → refused:
+   paying it would renew a second year. */
 declare
   v_ids   uuid[];
   v_s     record;
@@ -1614,12 +1616,19 @@ begin
     return new;
   end if;
   for v_s in
-    select s.id, s.plan, s.renewal_quote_id from public.subscriptions s
+    select s.id, s.plan, s.renewal_quote_id, s.renewal_date from public.subscriptions s
      where s.id = any(v_ids) and s.tenant_id = new.tenant_id
      order by s.id for update
   loop
     if v_s.renewal_quote_id is not null and v_s.renewal_quote_id <> new.id and public.r2847_quote_live(v_s.renewal_quote_id) then
       raise exception '% now has quote % open — cancel that one first, then undo this cancel.', coalesce(v_s.plan, v_s.id::text), v_s.renewal_quote_id
+        using errcode = 'check_violation';
+    end if;
+    if new.renewal_subscription_id = v_s.id and new.renewal_term_date is not null
+       and v_s.renewal_date is distinct from new.renewal_term_date then
+      raise exception 'Quote % was made for the term of % due %, but it now renews on % — it cannot be reopened. Make a new renewal quote from Renewals.',
+        new.id, coalesce(v_s.plan, v_s.id::text), to_char(new.renewal_term_date, 'DD Mon YYYY'),
+        coalesce(to_char(v_s.renewal_date, 'DD Mon YYYY'), 'no date')
         using errcode = 'check_violation';
     end if;
     update public.subscriptions set renewal_quote_id = new.id where id = v_s.id and tenant_id = new.tenant_id;
@@ -2132,7 +2141,7 @@ begin
    where s.id = any(v_ids) and s.tenant_id = v_tenant;
 
   insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label, changes)
-  values (v_tenant, (select u.id from public.users u where u.id = auth.uid()), 'quote.renewal_together', 'quote', v_id,
+  values (v_tenant, public.current_user_id(), 'quote.renewal_together', 'quote', v_id,
           left(format('Renewal quote %s for %s together', v_id, array_to_string(v_plans, ' + ')), 120),
           jsonb_build_object('subscription_ids', to_jsonb(v_ids), 'subtotal', v_subtotal, 'tax_rate', v_rate, 'amount', v_amount));
 
@@ -2144,7 +2153,14 @@ $$;
 revoke all on function public.create_renewal_quote_together(uuid, jsonb) from public, anon;
 grant execute on function public.create_renewal_quote_together(uuid, jsonb) to authenticated, service_role;
 
--- ── 11. create_renewal_quote: rev-r2847 MED-1 ─────────────────────────────────────────────────
+-- ── 11. create_renewal_quote: rev-r2847 MED-1; rev-r2848 MED-B (a closed quote is never handed back) ──
+/* R-2848 (rev-r2848 MED-B): one LIVE renewal quote per subscription term (R-1574). A cancelled / rejected / expired /
+   replaced quote no longer holds the term, so a new renewal quote can be made after a cancel. */
+drop index if exists public.quotes_one_renewal_per_term;
+create unique index if not exists quotes_one_renewal_per_term
+  on public.quotes (renewal_subscription_id, renewal_term_date)
+  where renewal_subscription_id is not null and cancelled_at is null and superseded_by is null
+    and status not in ('rejected', 'expired');
 create or replace function public.create_renewal_quote(
   p_subscription_id uuid,
   p_tenant_id       uuid,
@@ -2243,12 +2259,15 @@ begin
   end if;
 
   -- 2. A quote already made for THIS term that lost its link → link it again, make nothing.
+  /* R-2848 (rev-r2848 MED-B): only a LIVE one (or one holding money) — a cancelled / rejected / expired / replaced
+     quote is never handed back; a new quote is made (quotes_one_renewal_per_term now counts live quotes only). */
   select q.id, q.amount, q.subtotal, q.discount_pct, q.tax_rate, q.line_items, q.seats
     into v_q
     from public.quotes q
    where q.tenant_id = v_sub.tenant_id
      and q.renewal_subscription_id = v_sub.id
      and q.renewal_term_date = v_sub.renewal_date
+     and public.r2847_quote_live(q.id)
    limit 1;
   if found then
     if v_cut.id is not null and v_q.seats is distinct from v_cut.seats_after then
