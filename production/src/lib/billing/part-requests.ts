@@ -18,6 +18,7 @@
 import { dunningRank, PRE_DUE_WINDOW_DAYS } from "@/lib/invoices/dunning";
 import { daysBetweenISO } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
+import { periodText } from "./proforma";
 
 /** What public.bill_subscription_instalment answers. */
 export type BillOutcome =
@@ -256,6 +257,52 @@ export function partLabelOf(lineName: string | null | undefined): string | null 
   if (m) return m[1].trim();
   const n = /\((part \d+(?: of \d+)?)\)$/.exec(name);
   return n ? n[1] : null;
+}
+
+/** R-2846: what a part request's payment is the ADVANCE for — read by the Record payment sheet. */
+export interface PartAdvance {
+  /** "month 1 · 1 Oct–31 Oct 2026" / "Q2 · 28 Jan–27 Apr 2027" / "1 Nov–30 Nov 2026"; null = not known. */
+  what: string | null;
+  /** "Part 1 of 12" — the header stamp's part (quote-kind.ts partShortText); null = not loaded. */
+  part: string | null;
+  /** The subscription it is for ("Google Workspace Business Starter · acme.in"); null = not known. */
+  subscription: string | null;
+}
+
+/**
+ * R-2846 (15 Nov, Pardeep: "jab quote advance payment ka hai to record payment me advance show kyo
+ * nahi kar raha"). The request's first line names its part: "Advance payment for month 1 · 1 Oct–31
+ * Oct 2026" → "month 1 · 1 Oct–31 Oct 2026"; a newer line ("… · 1 Nov–30 Nov 2026 (part 1 of 12)")
+ * → its own period dates. A request billing several subscriptions together carries its label in the
+ * first line's description (the rule of requestMailPart, part-request-chase.server.ts) and names no
+ * one subscription. Facts only — nothing known stays null. Wording only, never an amount.
+ */
+export function partAdvanceOf(a: {
+  lines: readonly { name?: string | null; description?: string | null; period_start?: string | null; period_end?: string | null }[];
+  partShort: string | null | undefined;
+  subscription: string | null | undefined;
+}): PartAdvance {
+  const first = a.lines[0];
+  const group = a.lines.length > 1;
+  const desc = first?.description?.trim() ?? "";
+  const label = group && desc.startsWith("Advance payment for") ? desc : (first?.name ?? "").trim();
+  const m = /^Advance payment for (.+)$/.exec(label);
+  let what: string | null = m ? m[1].trim() : null;
+  if (!what && !group) {
+    const start = first?.period_start?.slice(0, 10) ?? "";
+    const end = first?.period_end?.slice(0, 10) ?? "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(start) && /^\d{4}-\d{2}-\d{2}$/.test(end)) what = periodText(start, end);
+  }
+  return { what, part: a.partShort?.trim() || null, subscription: group ? null : a.subscription?.trim() || null };
+}
+
+/** "Advance for <what> of <subscription> (<part>) from <customer>. …" — the part's tax invoice is
+ *  raised by the payment that completes it (tg_payments_part_request_invoice; partRequestPaymentToast). */
+export function partAdvanceText(adv: PartAdvance, customerName: string): string {
+  const what = adv.what ?? "this part";
+  const of = adv.subscription ? ` of ${adv.subscription}` : "";
+  const part = adv.part ? ` (${adv.part})` : "";
+  return `Advance for ${what}${of}${part} from ${customerName}. The tax invoice is raised when you confirm the full advance.`;
 }
 
 interface StepLike { stage: string; label: string; state: "done" | "current" | "todo" | "skipped"; detail: string }
