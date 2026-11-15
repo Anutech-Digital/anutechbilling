@@ -11,6 +11,7 @@ const drawerQuery = vi.fn((): Q => ({ data: { docs: undefined, paid: undefined, 
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: "owner" } }) }));
 vi.mock("./drawer-data", () => ({ useRenewalDrawerData: () => drawerQuery() }));
 vi.mock("./drawer-cost-data", () => ({ useRenewalDrawerCatalog: () => ({ data: [], isError: false }) }));
+vi.mock("./drawer-seat-cut-data", () => ({ useRenewalDrawerSeatCuts: () => ({ data: [], isError: false }) }));
 vi.mock("@/components/features/renewals/renewal-actions", () => ({ RenewalActions: () => null }));
 vi.mock("next/link", () => ({ default: ({ href, children, ...p }: { href: string; children: React.ReactNode }) => <a href={href} {...p}>{children}</a> }));
 
