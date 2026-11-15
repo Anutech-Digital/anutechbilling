@@ -89,9 +89,9 @@ describe("client (the route's contract)", () => {
   it("POST {ids} → the one proforma; a refusal names each sub's reason", async () => {
     const made = { quoteId: "PI-ET-0001", href: "/quotes/PI-ET-0001", alreadyExisted: false, subscriptionIds: ["a", "b"] };
     const f = vi.fn(async () => res(200, made));
-    expect(await createTogetherProforma(["a", "b"], f as unknown as typeof fetch)).toEqual(made);
+    expect(await createTogetherProforma(["a", "b"], undefined, f as unknown as typeof fetch)).toEqual(made);
     expect(f).toHaveBeenCalledWith(BILL_TOGETHER_PATH, expect.objectContaining({ method: "POST", body: JSON.stringify({ ids: ["a", "b"] }) }));
     const refused = (async () => res(409, { error: "Cannot bill these together", reasons: [{ subscriptionId: "b", code: "unpaid_earlier_part", text: "Its Oct part is still unpaid" }] })) as unknown as typeof fetch;
-    await expect(createTogetherProforma(["a", "b"], refused)).rejects.toThrow("Cannot bill these together — Its Oct part is still unpaid");
+    await expect(createTogetherProforma(["a", "b"], undefined, refused)).rejects.toThrow("Cannot bill these together — Its Oct part is still unpaid");
   });
 });

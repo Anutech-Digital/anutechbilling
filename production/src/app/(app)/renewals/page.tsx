@@ -689,7 +689,7 @@ export default function RenewalsPage() {
      pop in and push the table down — only for the money roles the route allows (others get 403 → never shown) */
   const togetherPending = togetherProbe === "pending" && !!me?.role && canRecordMoney(me.role);
   const togetherVisible = togetherOn || togetherPending;
-  const billTogether = useBillTogether({ canQuotes: canOpenQuotes(me?.role) });
+  const billTogether = useBillTogether({ canQuotes: canOpenQuotes(me?.role), canInvoices: canOpenInvoices(me?.role) });
   /* the groups + hints, once per data change (R-2764) — not on every tick / keystroke */
   const togetherIdx = React.useMemo(() => (togetherVisible && built ? togetherIndex(built.allItems) : null), [togetherVisible, built]);
   /* the group subscriptions the user unticked (every group starts all ticked — Pardeep 14 Nov) */

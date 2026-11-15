@@ -18,7 +18,7 @@ import { rupee } from "@/lib/utils";
 import { formatForeign, isForeignCurrency } from "@/lib/currency";
 import { periodText } from "@/lib/billing/proforma";
 import {
-  billTogetherAvailable, fetchBillTogetherPreview, type BillTogetherPreview, type BillTogetherSub,
+  billTogetherAvailable, fetchBillTogetherPreview, type BillTogetherPeriod, type BillTogetherPreview, type BillTogetherSub,
 } from "@/lib/renewals/bill-together";
 
 export const BILL_TOGETHER = "Bill together";
@@ -53,6 +53,14 @@ export function useBillTogetherPreview(ids: readonly string[], enabled: boolean)
     queryKey: ["renewals", "bill-together", "preview", [...ids].sort().join(",")],
     enabled: enabled && ids.length > 0,
     retry: false,
+    /* R-2845: what is shown is what Create sends (periods) — no silent background refetch (window focus /
+       reconnect) while it is open: after a lost answer the shown parts may already be billed, and a refetch would
+       show — and Create would bill — the NEXT part; sending the parts first shown lets the route answer that same
+       bill instead. Fresh on every opening (gcTime 0 — no cached old lines); a 409 or a success refreshes it on purpose. */
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     queryFn: (): Promise<BillTogetherPreview> => fetchBillTogetherPreview(ids),
   });
 }
@@ -81,8 +89,11 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
   customerName: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  /** The ticked, joinable subscriptions — the caller POSTs them. */
-  onConfirm: (ids: string[]) => void;
+  /**
+   * The ticked, joinable subscriptions — the caller POSTs them — and (R-2845) the part each one's line shows, so
+   * the route bills exactly what was on screen (a part that moved since is refused, nothing billed).
+   */
+  onConfirm: (ids: string[], periods: BillTogetherPeriod[]) => void;
   busy: boolean;
 }) {
   const { data: preview, error, isLoading, refetch } = useBillTogetherPreview(ids, open);
@@ -98,7 +109,10 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
   }, [preview, idsKey]);
 
   const subs = preview?.subs ?? [];
-  const chosen = subs.filter((s) => canJoin(s) && ticked.has(s.subscriptionId)).map((s) => s.subscriptionId);
+  const chosenSubs = subs.filter((s) => canJoin(s) && ticked.has(s.subscriptionId));
+  const chosen = chosenSubs.map((s) => s.subscriptionId);
+  /* R-2845: the part each ticked line shows (canJoin guarantees a line) — sent with the ids */
+  const periods: BillTogetherPeriod[] = chosenSubs.map((s) => ({ subscriptionId: s.subscriptionId, periodStart: s.line!.periodStart }));
   const total = tickedTotal(subs, ticked);
   /* R-2832 F3: paise shown — a bill's lines and total are to the paisa, never rounded to whole rupees */
   const money = (n: number) => (preview && isForeignCurrency(preview.currency) ? formatForeign(n, preview.currency) : rupee(n, { decimals: 2 }));
@@ -139,8 +153,9 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
                           {" "}· {money(s.line.taxable)} + GST {s.line.taxRate}% {money(s.line.tax)}
                         </p>
                       )}
-                      {s.reasons.map((r) => (
-                        <p key={r.code} className="text-2xs text-rose" data-testid="bill-together-reason">{r.text}</p>
+                      {/* R-2845: keyed by place — one code can come twice (two not_billable sentences) */}
+                      {s.reasons.map((r, i) => (
+                        <p key={`${i}-${r.code}`} className="text-2xs text-rose" data-testid="bill-together-reason">{r.text}</p>
                       ))}
                       {s.onTogetherBill && (
                         <p className="text-2xs text-ink-3">
@@ -176,7 +191,7 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
 
         <DialogFooter className="mt-4">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={() => onConfirm(chosen)} disabled={!preview || chosen.length < 2} loading={busy}>
+          <Button variant="primary" onClick={() => onConfirm(chosen, periods)} disabled={!preview || chosen.length < 2} loading={busy}>
             Create proforma
           </Button>
         </DialogFooter>
