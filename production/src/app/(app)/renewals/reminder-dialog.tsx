@@ -47,6 +47,7 @@ export function RenewalRemindButton({
         className="h-auto min-h-8 max-w-[11rem] whitespace-normal py-1 text-left md:h-8 md:max-w-none md:whitespace-nowrap md:py-0"
         disabled={busy || loading || b.disabled}
         title={title}
+        aria-busy={loading || undefined}
         aria-describedby={b.reason ? reasonId : undefined}
         onClick={onClick}
         data-testid="renewals-remind"

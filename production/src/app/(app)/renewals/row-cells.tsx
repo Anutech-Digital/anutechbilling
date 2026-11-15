@@ -222,7 +222,7 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
   /** R-2840: the last payment line (LastPaidRowLine) — after the invoice line(s), before R-2841's quote note. */
   paidLine?: ReactNode;
 }) {
-  if (loading) return <p className="text-2xs text-ink-3">…</p>;
+  if (loading) return <p className="text-2xs text-ink-3" role="status" aria-busy="true" title="Last bill is loading…" data-testid="last-invoice-loading">Loading…</p>;
   if (failed) return <><p className="text-2xs text-ink-3" title="Last invoice couldn't load — reload the page">Couldn&apos;t load</p>{paidLine}</>;
   const { invoice, earlier } = lastInvoiceOf(docs);
   /* R-2747 / R-2752 (R-2760: kept in the table): money owed on the subscription with no unpaid invoice
