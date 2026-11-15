@@ -101,8 +101,21 @@ export function useRenewalDrawerSub(): [string | null, (id: string, view?: Drawe
 
 /**
  * R-2839: opened with view=history → scroll the History section into view and focus its active tab
- * (arrow keys then move between All · Quotes · Invoices · Payments). Runs once per open / renewal, after
- * the sheet's own auto-focus (which a history open skips — onOpenAutoFocus below).
+ * (arrow keys then move between All · Quotes · Invoices · Payments). "nearest": History sits right under the
+ * header, so the header (customer, button, Close) stays on screen. True when it found the section.
+ */
+function focusHistory(box: HTMLDivElement | null): boolean {
+  if (!box) return false;
+  box.scrollIntoView?.({ block: "nearest" });
+  const tab = box.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+  (tab ?? box).focus({ preventScroll: true });
+  return true;
+}
+
+/**
+ * The sheet's onOpenAutoFocus does it when the content is there (the normal case); this effect covers a
+ * shared ?sub=&view=history link whose row arrives after the sheet opened — once per open / renewal, and
+ * never when focus already sits inside History.
  */
 function useFocusHistory(ref: React.RefObject<HTMLDivElement | null>, key: string | null) {
   React.useEffect(() => {
@@ -111,11 +124,9 @@ function useFocusHistory(ref: React.RefObject<HTMLDivElement | null>, key: strin
     let frame = 0;
     const go = () => {
       const box = ref.current;
+      if (box?.contains(document.activeElement)) return;
       /* the sheet's content is portalled in a beat later — wait for it a few frames */
-      if (!box) { if (tries++ < 30) frame = requestAnimationFrame(go); return; }
-      box.scrollIntoView?.({ block: "start" });
-      const tab = box.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
-      (tab ?? box).focus({ preventScroll: true });
+      if (!focusHistory(box) && tries++ < 30) frame = requestAnimationFrame(go);
     };
     frame = requestAnimationFrame(go);
     return () => cancelAnimationFrame(frame);
@@ -282,7 +293,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:w-[30rem] sm:max-w-[95vw]" data-testid="renewal-drawer" onCloseAutoFocus={restoreFocus}
-        onOpenAutoFocus={(e) => { if (toHistory) e.preventDefault(); }}>
+        onOpenAutoFocus={(e) => { if (toHistory && focusHistory(historyRef.current)) e.preventDefault(); }}>
         {!item || !sub ? (
           <SheetHeader>
             <SheetTitle>Renewal not on this page</SheetTitle>

@@ -24,7 +24,9 @@ import { RenewalDrawer, useRenewalDrawerSub, type DrawerItem } from "./renewal-d
 import { renewalAmount } from "./queue";
 import type { LastDocs, LastInvoice } from "./last-docs";
 
-afterEach(() => { cleanup(); window.history.replaceState(null, "", "/renewals"); });
+/* jsdom has no scrollIntoView — the drawer tests stub it; put back whatever was there after each test */
+const realScroll = Element.prototype.scrollIntoView;
+afterEach(() => { cleanup(); window.history.replaceState(null, "", "/renewals"); Element.prototype.scrollIntoView = realScroll; });
 
 const SUB_ID = "a1b2c3d4-0000-4000-8000-000000002839";
 
