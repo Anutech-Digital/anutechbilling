@@ -151,6 +151,8 @@ test.describe("R-2818 card test", () => {
     await openAppPage(page, `/renewals?bucket=d30&sub=${SUB_U}`);
     const drawer = page.getByTestId("renewal-drawer");
     await expect(drawer).toBeVisible({ timeout: 60_000 });
+    /* R-2838: payments live in the History section — the Payments tab names the invoice each one paid */
+    await drawer.getByRole("tab", { name: /^Payments/ }).click();
     const pay = drawer.getByTestId("renewal-drawer-payment");
     await expect(pay).toHaveCount(1, { timeout: 60_000 });
     await expect(pay).toContainText("Paid on the invoice — no receipt in the app");
