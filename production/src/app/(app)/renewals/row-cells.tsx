@@ -11,7 +11,7 @@
  *   Status           ONE stage chip (R-2758) + flag icons; its note is the tooltip
  *   Last bill        the newest invoice's state (never cut) / its number · period /
  *                    R-2840: the last payment "Paid ₹40,000 · 2 Oct" or "No payment yet" (a 3rd line) /
- *                    R-2839: "History" (opens the drawer on History; replaced "+N earlier")
+ *                    R-2839: "History" (its own last line — opens the drawer on History; "+N earlier" removed)
  *   Action           ONE button + ⋯ (RenewalActions)
  *
  * Every cell is min-w-0; ids, names and periods may truncate (the full text is the tooltip) —
