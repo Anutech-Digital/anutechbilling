@@ -37,7 +37,7 @@ import { useRenewalDrawerCatalog } from "./drawer-cost-data";
 import { useRenewalDrawerSeatCuts } from "./drawer-seat-cut-data";
 import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, drawerSeatPlan, mayShowRenewalCost, renewalCostForSub, type DrawerMoney } from "./drawer-money";
 import {
-  currentTermWords, drawerSubFromSearch, withDrawerSub, drawerFlagRows, drawerFollowupRows, remindersWords, termLengthWords,
+  currentTermWords, drawerSubFromSearch, drawerViewFromSearch, withDrawerSub, drawerFlagRows, type DrawerView, drawerFollowupRows, remindersWords, termLengthWords,
 } from "./drawer";
 import { historyTabs } from "./drawer-history";
 import { DrawerHistory } from "./drawer-history-section";
@@ -64,8 +64,10 @@ let drawerOpener: HTMLElement | null = null;
  * entry; closing goes back over an entry this page pushed (also one reached again by Forward), or
  * just drops ?sub= when the page was opened from a shared link. Back / Forward re-read it.
  */
-export function useRenewalDrawerSub(): [string | null, (id: string) => void, () => void] {
+export function useRenewalDrawerSub(): [string | null, (id: string, view?: DrawerView) => void, () => void, DrawerView | null] {
   const [id, setId] = React.useState<string | null>(null);
+  /* R-2839: ?view=history — opened from the row's History button (focus goes to the History section) */
+  const [view, setView] = React.useState<DrawerView | null>(null);
   /* the ?sub= entry on screen was pushed by this page (so Close = Back) */
   const pushed = React.useRef(false);
   const pushedAny = React.useRef(false);
@@ -74,24 +76,50 @@ export function useRenewalDrawerSub(): [string | null, (id: string) => void, () 
       const next = drawerSubFromSearch(window.location.search);
       pushed.current = !!next && pushedAny.current;
       setId(next);
+      setView(drawerViewFromSearch(window.location.search));
     };
     read();
     window.addEventListener("popstate", read);
     return () => window.removeEventListener("popstate", read);
   }, []);
-  const open = React.useCallback((next: string) => {
+  const open = React.useCallback((next: string, nextView?: DrawerView) => {
     drawerOpener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     setId(next);
+    setView(nextView ?? null);
     pushed.current = true;
     pushedAny.current = true;
-    window.history.pushState(null, "", withDrawerSub(window.location.href, next));
+    window.history.pushState(null, "", withDrawerSub(window.location.href, next, nextView ?? null));
   }, []);
   const close = React.useCallback(() => {
     setId(null);
+    setView(null);
     if (pushed.current) { pushed.current = false; window.history.back(); }
     else window.history.replaceState(null, "", withDrawerSub(window.location.href, null));
   }, []);
-  return [id, open, close];
+  return [id, open, close, view];
+}
+
+/**
+ * R-2839: opened with view=history → scroll the History section into view and focus its active tab
+ * (arrow keys then move between All · Quotes · Invoices · Payments). Runs once per open / renewal, after
+ * the sheet's own auto-focus (which a history open skips — onOpenAutoFocus below).
+ */
+function useFocusHistory(ref: React.RefObject<HTMLDivElement | null>, key: string | null) {
+  React.useEffect(() => {
+    if (!key) return;
+    let tries = 0;
+    let frame = 0;
+    const go = () => {
+      const box = ref.current;
+      /* the sheet's content is portalled in a beat later — wait for it a few frames */
+      if (!box) { if (tries++ < 30) frame = requestAnimationFrame(go); return; }
+      box.scrollIntoView?.({ block: "start" });
+      const tab = box.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+      (tab ?? box).focus({ preventScroll: true });
+    };
+    frame = requestAnimationFrame(go);
+    return () => cancelAnimationFrame(frame);
+  }, [ref, key]);
 }
 
 
@@ -176,10 +204,12 @@ function CostFacts({ money }: { money: DrawerMoney }) {
   );
 }
 
-export function RenewalDrawer({ item, open, onClose, names, followupRows, onFollowup, strong }: {
+export function RenewalDrawer({ item, open, view = null, onClose, names, followupRows, onFollowup, strong }: {
   /** The row it is about; null while ?sub= names a renewal not on this page. */
   item: DrawerItem | null;
   open: boolean;
+  /** R-2839: "history" = opened from the row's History button — scroll to History and focus its tab. */
+  view?: DrawerView | null;
   onClose: () => void;
   names: Map<string, UserName> | undefined;
   /** The page's payment_followups rows (already read) — this renewal's are picked here. */
@@ -201,6 +231,10 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
     drawerOpener = null;
     if (el?.isConnected) { e.preventDefault(); el.focus(); }
   };
+  /* R-2839: the History button's open lands on History (the sheet's own first-element focus is skipped then) */
+  const historyRef = React.useRef<HTMLDivElement>(null);
+  const toHistory = open && view === "history" && !!sub;
+  useFocusHistory(historyRef, toHistory ? sub.id : null);
 
   const docs = q.data?.docs;
   /* R-2838: ONE History from R-2836's rules (R-2818's no-receipt lines kept). subQuoteId: instalment invoices
@@ -247,7 +281,8 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
 
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:w-[30rem] sm:max-w-[95vw]" data-testid="renewal-drawer" onCloseAutoFocus={restoreFocus}>
+      <SheetContent side="right" className="w-full overflow-y-auto sm:w-[30rem] sm:max-w-[95vw]" data-testid="renewal-drawer" onCloseAutoFocus={restoreFocus}
+        onOpenAutoFocus={(e) => { if (toHistory) e.preventDefault(); }}>
         {!item || !sub ? (
           <SheetHeader>
             <SheetTitle>Renewal not on this page</SheetTitle>
@@ -281,11 +316,14 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
             </SheetHeader>
 
             <div className="space-y-4 px-6 pb-6">
-              <DrawerHistory
-                key={sub.id} tabs={tabs} loading={q.isLoading} failed={q.isError}
-                customer={sub.customer_id ? { id: sub.customer_id, name: sub.customer_name } : null}
-                canQuotes={canQuotes} canInvoices={canInvoices}
-              />
+              {/* R-2839: the History button's target (scrolled to; its active tab gets focus) */}
+              <div ref={historyRef} tabIndex={-1} className="scroll-mt-4 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" data-testid="renewal-drawer-history-target">
+                <DrawerHistory
+                  key={sub.id} tabs={tabs} loading={q.isLoading} failed={q.isError}
+                  customer={sub.customer_id ? { id: sub.customer_id, name: sub.customer_name } : null}
+                  canQuotes={canQuotes} canInvoices={canInvoices}
+                />
+              </div>
 
               <Section title="Terms" testId="renewal-drawer-terms">
                 <dl>
