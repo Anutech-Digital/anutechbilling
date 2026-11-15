@@ -257,23 +257,27 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
 /**
  * R-2840 (renewals history audit H5): the table's "Last bill" 3rd line — the last payment from the
  * SAME last-paid read as the card layout (useRenewalLastPaid, no new query). Words:
- *   a receipt   "Paid ₹40,000 · 2 Oct" (the year added when not this year); a USD invoice's payment
+ *   a receipt   "Paid ₹40,000 · 2 Oct" (the year added when not this year; "for 2 subs" when one
+ *               payment covers several); a USD invoice's payment
  *               in dollars (₹ ÷ that invoice's fx rate — only when the invoice is on the row, else ₹
  *               as the books hold it, never a guessed rate); tooltip: full date · mode · receipt no.
  *               · invoice · "covers N subscriptions"
  *   no receipt  R-2752: a settled invoice → "Paid on invoice, no receipt"; money received on an
- *               invoice not yet settled → "Part paid on invoice, no receipt" — never "No payment
- *               yet" next to a Paid / Part paid invoice
+ *               invoice not yet settled (not cancelled) → "Part paid on invoice, no receipt"; when that
+ *               invoice is an OLDER one → "Earlier bill paid, no receipt" — never "No payment yet" next
+ *               to a Paid / Part paid invoice, never "Paid" under the newest invoice's "Unpaid"
  *   nothing     "No payment yet"
  */
 export function lastPaidRowFacts({ paid, docs, todayIst }: { paid: LastPaid | undefined; docs: LastDocs | undefined; todayIst: string }):
   { kind: "paid" | "no-receipt" | "none"; text: string; title: string } {
-  const invoices = docs ? (docs.invoices.length ? docs.invoices : docs.invoice ? [docs.invoice] : []) : [];
+  const invoices = docs?.invoices ?? [];
   if (paid) {
     const last: PaidLineWithReceipt = paid.last;
     const s = lastPaidSummary(last);
     const doc = invoices.find((i) => (last.invoiceId ? i.id === last.invoiceId : !!last.quoteId && i.sourceQuoteId === last.quoteId)) ?? null;
-    const money = doc ? docMoney(doc, last.amount) : s.amount;
+    const own = doc ? docMoney(doc, last.amount) : s.amount;
+    /* a foreign invoice with no fx rate reads "₹8,000 (USD)" — keep plain ₹ then */
+    const money = own.includes("(") ? s.amount : own;
     const day = toIstDate(last.receivedAt);
     const short = day.slice(0, 4) === todayIst.slice(0, 4) ? shortDate(day).replace(/ \d{2}$/, "") : shortDate(day);
     const title = [
@@ -282,15 +286,23 @@ export function lastPaidRowFacts({ paid, docs, todayIst }: { paid: LastPaid | un
       ...(s.doc ? [`for ${s.doc}`] : []),
       ...(s.shared ? [s.shared] : []),
     ].join(" · ");
-    return { kind: "paid", text: `Paid ${money} · ${short}`, title };
+    /* one payment for several subscriptions: say so on the row, never pass the whole amount off as this one's */
+    return { kind: "paid", text: `Paid ${money}${last.covers > 1 ? ` for ${last.covers} subs` : ""} · ${short}`, title };
   }
+  /* R-2752 rule (paidInvoiceOf) first; else money received on a not-settled, not-cancelled invoice */
   const settled = paidInvoiceOf(docs, todayIst);
-  if (settled) {
-    return { kind: "no-receipt", text: "Paid on invoice, no receipt", title: `Invoice ${settled.id} is ${settled.words}, but no payment receipt is linked in the app (advance, credit or old books)` };
-  }
-  const part = invoices.find((i) => i.paidAmount > 0 && invoiceStatusWords(i, todayIst).tone !== "muted");
-  if (part) {
-    return { kind: "no-receipt", text: "Part paid on invoice, no receipt", title: `Invoice ${part.id} shows ${docMoney(part, part.paidAmount)} received, but no payment receipt is linked in the app` };
+  const partAt = invoices.findIndex((i) => i.paidAmount > 0 && invoiceStatusWords(i, todayIst).text !== "Cancelled");
+  const settledAt = settled ? invoices.findIndex((i) => i.id === settled.id) : -1;
+  const at = settledAt >= 0 && (partAt < 0 || settledAt <= partAt) ? settledAt : partAt;
+  if (at >= 0) {
+    const inv = invoices[at];
+    const isSettled = at === settledAt;
+    /* an OLDER invoice: never "Paid" right under the newest one's "Unpaid" */
+    const text = at > 0 ? "Earlier bill paid, no receipt" : isSettled ? "Paid on invoice, no receipt" : "Part paid on invoice, no receipt";
+    const title = isSettled
+      ? `Invoice ${inv.id} is ${settled?.words ?? "Paid"}, but no payment receipt is linked in the app (advance, credit or old books)`
+      : `Invoice ${inv.id} shows ${docMoney(inv, inv.paidAmount)} received, but no payment receipt is linked in the app`;
+    return { kind: "no-receipt", text, title };
   }
   return { kind: "none", text: "No payment yet", title: "No payment received against this subscription's quotes or invoices in the app" };
 }

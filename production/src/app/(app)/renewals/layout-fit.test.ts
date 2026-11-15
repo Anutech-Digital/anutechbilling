@@ -68,7 +68,8 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
     expect(table).toContain("const paid = lastPaid.data?.get(sub.id);");
     expect(table).toMatch(/<LastInvoiceCell [^>]*\/>\s*\{\/\*[^*]*\*\/\}\s*<LastPaidRowLine paid=\{paid\} docs=\{item\.docs\}/);
     /* never "No payment yet" while either read is loading (R-2752: no false "never paid") */
-    expect(table).toContain("loading={lastPaid.loading || (!paid && docsState.loading)}");
+    /* both reads: a USD payment needs its invoice (fx) — no ₹ → $ jump */
+    expect(table).toContain("loading={lastPaid.loading || docsState.loading}");
     expect(cells).toMatch(/className=\{cn\("mt-0\.5 break-words text-2xs tabular-nums"/);
     expect((page.match(/useRenewalLastPaid\(/g) ?? []).length).toBe(1);
   });

@@ -545,7 +545,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   <td className="min-w-0 px-1.5 py-1.5">
                     <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} />
                     {/* R-2840: Last bill line 3 — the last payment, from the same Last paid read as the cards */}
-                    <LastPaidRowLine paid={paid} docs={item.docs} loading={lastPaid.loading || (!paid && docsState.loading)} failed={lastPaid.failed || (!paid && docsState.failed)} todayIst={todayIst} />
+                    <LastPaidRowLine paid={paid} docs={item.docs} loading={lastPaid.loading || docsState.loading} failed={lastPaid.failed || (!paid && docsState.failed)} todayIst={todayIst} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />

@@ -11,18 +11,19 @@ import { render, cleanup, screen } from "@testing-library/react";
 vi.mock("next/link", () => ({ default: ({ href, children, ...p }: { href: string; children: React.ReactNode }) => <a href={href} {...p}>{children}</a> }));
 
 import { LastPaidRowLine, lastPaidRowFacts } from "./row-cells";
-import type { LastPaid, PaidLine } from "./last-paid";
+import type { LastPaid } from "./last-paid";
+import type { PaidLineWithReceipt } from "./last-paid-data";
 import type { LastDocs, LastInvoice } from "./last-docs";
 
 afterEach(cleanup);
 
 const TODAY = "2026-11-15";
 
-const line = (over: Partial<PaidLine> & { receiptNo?: string | null } = {}): PaidLine => ({
+const line = (over: Partial<PaidLineWithReceipt> = {}): PaidLineWithReceipt => ({
   paymentId: "p-1", amount: 40000, method: "upi", receivedAt: "2026-10-02T06:30:00Z",
   invoiceId: "INV-1", quoteId: "Q-1", covers: 1, ...over,
 });
-const paidOf = (...xs: PaidLine[]): LastPaid => ({ last: xs[0], history: xs });
+const paidOf = (...xs: PaidLineWithReceipt[]): LastPaid => ({ last: xs[0], history: xs });
 
 const inv = (over: Partial<LastInvoice> = {}): LastInvoice => ({
   id: "INV-1", date: "2026-10-01", status: "sent", amount: 40000, paidAmount: 40000, currency: "INR",
@@ -33,7 +34,7 @@ const docsOf = (...invoices: LastInvoice[]): LastDocs => ({ quote: null, invoice
 
 describe("R-2840 — lastPaidRowFacts (pure)", () => {
   it("a receipt: Paid ₹ amount · short date; mode, receipt no. and the invoice in the tooltip", () => {
-    const f = lastPaidRowFacts({ paid: paidOf(line({ receiptNo: "RV-0012" } as never)), docs: docsOf(inv()), todayIst: TODAY });
+    const f = lastPaidRowFacts({ paid: paidOf(line({ receiptNo: "RV-0012" })), docs: docsOf(inv()), todayIst: TODAY });
     expect(f.kind).toBe("paid");
     expect(f.text).toBe("Paid ₹40,000 · 2 Oct");
     expect(f.title).toContain("UPI");
@@ -71,9 +72,16 @@ describe("R-2840 — lastPaidRowFacts (pure)", () => {
     expect(f.text).toBe("Paid ₹8,000 · 2 Oct");
   });
 
-  it("one payment for several subscriptions says so in the tooltip", () => {
+  it("one payment for several subscriptions says so on the row and in the tooltip", () => {
     const f = lastPaidRowFacts({ paid: paidOf(line({ covers: 2 })), docs: docsOf(inv()), todayIst: TODAY });
+    expect(f.text).toBe("Paid ₹40,000 for 2 subs · 2 Oct");
     expect(f.title).toContain("covers 2 subscriptions");
+  });
+
+  it("a USD invoice with no fx rate: plain ₹ (never \"₹8,000 (USD)\")", () => {
+    const usd = inv({ id: "INV-U", currency: "USD", fxRate: null });
+    const f = lastPaidRowFacts({ paid: paidOf(line({ amount: 8000, invoiceId: "INV-U" })), docs: docsOf(usd), todayIst: TODAY });
+    expect(f.text).toBe("Paid ₹8,000 · 2 Oct");
   });
 
   it("R-2752 (Greentin Behind): Paid invoice, no linked receipt → 'Paid on invoice, no receipt', never 'No payment yet'", () => {
@@ -90,6 +98,25 @@ describe("R-2840 — lastPaidRowFacts (pure)", () => {
     expect(f.text).toBe("Part paid on invoice, no receipt");
   });
 
+  it("an OLDER invoice settled with no receipt under a newest Unpaid one → 'Earlier bill paid, no receipt' (never 'Paid' under 'Unpaid')", () => {
+    const newest = inv({ id: "INV-NEW", paidAmount: 0, dueDate: "2026-12-30" });
+    const older = inv({ id: "INV-OLD" });
+    const f = lastPaidRowFacts({ paid: undefined, docs: docsOf(newest, older), todayIst: TODAY });
+    expect(f).toMatchObject({ kind: "no-receipt", text: "Earlier bill paid, no receipt" });
+    expect(f.title).toContain("INV-OLD");
+  });
+
+  it("money received on a written-off invoice (no receipt) is never 'No payment yet'", () => {
+    const f = lastPaidRowFacts({ paid: undefined, docs: docsOf(inv({ paidAmount: 10000, writtenOffAt: "2026-11-01" })), todayIst: TODAY });
+    expect(f.kind).toBe("no-receipt");
+    expect(f.text).not.toBe("No payment yet");
+  });
+
+  it("a cancelled invoice's paid amount does not count", () => {
+    const f = lastPaidRowFacts({ paid: undefined, docs: docsOf(inv({ status: "void", paidAmount: 10000 })), todayIst: TODAY });
+    expect(f.text).toBe("No payment yet");
+  });
+
   it("nothing received anywhere → 'No payment yet'", () => {
     const f = lastPaidRowFacts({ paid: undefined, docs: docsOf(inv({ paidAmount: 0, dueDate: "2026-12-30" })), todayIst: TODAY });
     expect(f).toMatchObject({ kind: "none", text: "No payment yet" });
@@ -101,7 +128,7 @@ describe("R-2840 — LastPaidRowLine (table row, line 3 of Last bill)", () => {
   const base = { loading: false, failed: false, todayIst: TODAY };
 
   it("shows the last payment, wrapping (never truncated), tooltip with mode + receipt", () => {
-    render(<LastPaidRowLine {...base} paid={paidOf(line({ receiptNo: "RV-0012" } as never))} docs={docsOf(inv())} />);
+    render(<LastPaidRowLine {...base} paid={paidOf(line({ receiptNo: "RV-0012" }))} docs={docsOf(inv())} />);
     const el = screen.getByTestId("renewal-row-last-paid");
     expect(el.textContent).toBe("Paid ₹40,000 · 2 Oct");
     expect(el.className).toContain("break-words");
