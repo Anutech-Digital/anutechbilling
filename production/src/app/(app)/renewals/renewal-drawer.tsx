@@ -7,8 +7,10 @@
  *   header      customer (link) · plan · seats · vendor · the stage chip + note · the button
  *   Terms       this term · next term · the vendor's own renewal date (R-2823) · amount · how it is billed · term length
  *               (R-2819: owner / manager — Customer pays · Our cost · Margin, or "Cost missing — add in catalogue")
- *   Documents   every quote + invoice (id link · date · period · amount · status), newest first
- *   Payments    date · amount · method · the invoice it paid
+ *   History     (R-2838, right under the header) tabs All · Quotes · Invoices · Payments with counts —
+ *               ./drawer-history.ts historyTabs (R-2836): each payment under the invoice it paid, with
+ *               that invoice's period; a "Last quote · Last invoice · Last paid" strip; "Show all N";
+ *               a link to the customer's whole history. UI: ./drawer-history-section.tsx.
  *   Follow-ups  owner / next date / promise · reminders sent (R-2762: each email / WhatsApp reminder from the logs) · each logged follow-up
  *   Flags       each flag with its reason and one plain line
  */
@@ -23,7 +25,6 @@ import { istToday } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { canOpenInvoices } from "@/lib/invoices/access";
-import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { RenewalContact } from "@/components/features/renewals/renewal-contact";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -36,10 +37,11 @@ import { useRenewalDrawerCatalog } from "./drawer-cost-data";
 import { useRenewalDrawerSeatCuts } from "./drawer-seat-cut-data";
 import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, drawerSeatPlan, mayShowRenewalCost, renewalCostForSub, type DrawerMoney } from "./drawer-money";
 import {
-  currentTermWords, drawerSubFromSearch, withDrawerSub, drawerDocRows, drawerFlagRows, drawerFollowupRows, drawerPage, drawerPaymentRows,
-  remindersWords, termLengthWords, type DrawerDocRow,
+  currentTermWords, drawerSubFromSearch, withDrawerSub, drawerFlagRows, drawerFollowupRows, remindersWords, termLengthWords,
 } from "./drawer";
-import { priorDueInvoiceGap, type DocTone, type LastDocs } from "./last-docs";
+import { historyTabs } from "./drawer-history";
+import { DrawerHistory } from "./drawer-history-section";
+import { priorDueInvoiceGap, type LastDocs } from "./last-docs";
 import { REMINDER_LOG_MAX, drawerReminderRows, reminderLogCapped, reminderLogWords } from "./reminder-log";
 import { currentTermStart } from "@/lib/billing/subscription-schedule";
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
@@ -109,13 +111,6 @@ export interface DrawerItem {
   contact?: RowContact;
 }
 
-const TONE: Record<DocTone, string> = {
-  ok: "text-emerald",
-  warn: "font-medium text-ink",
-  danger: "font-medium text-rose-600",
-  muted: "text-ink-3",
-};
-
 /** R-2834: the head's date line = the row's Due tooltip (dueCellFacts); a missing renewal date is still said. */
 function renewsWords(title: string | null, renewalDate: string | null): string {
   if (!title) return "Renews — no date";
@@ -138,13 +133,6 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
       <dd className="min-w-0 break-words text-ink">{children}</dd>
     </div>
   );
-}
-
-function DocId({ row, canQuotes, canInvoices }: { row: DrawerDocRow; canQuotes: boolean; canInvoices: boolean }) {
-  const href = row.kind === "invoice" ? (canInvoices ? invoiceHref(row.id) : null) : (canQuotes ? `/quotes/${encodeURIComponent(row.id)}` : null);
-  return href
-    ? <Link href={href as never} className="font-mono underline underline-offset-2 hover:text-ink">{row.id}</Link>
-    : <span className="font-mono">{row.id}</span>;
 }
 
 /** R-2819: Our cost + Margin (owner / manager only), or the way to the catalogue when the cost is missing. */
@@ -204,8 +192,6 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   const canInvoices = canOpenInvoices(me?.role);
   const sub = item?.sub ?? null;
   const q = useRenewalDrawerData(open && sub ? sub : null);
-  const [showAll, setShowAll] = React.useState(false);
-  React.useEffect(() => setShowAll(false), [sub?.id]);
   const todayIst = istToday();
   /* R-2823: the vendor's own renewal date (subscriptions.vendor_term_end). */
   const vendorWords = sub ? vendorTermWords({ ...sub, vendor_term_end: vendorTermEndOf(sub) || null }, todayIst) : null;
@@ -217,15 +203,17 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   };
 
   const docs = q.data?.docs;
-  const docRows = React.useMemo(() => drawerDocRows(docs, todayIst), [docs, todayIst]);
-  const page = drawerPage(docRows, showAll);
-  const payments = drawerPaymentRows(q.data?.paid, docs);   // R-2818: money on an invoice with no receipt is listed too
+  /* R-2838: ONE History from R-2836's rules (R-2818's no-receipt lines kept). subQuoteId: instalment invoices
+     billed from the subscription take payments on its own quote (R-1564) — without it they would show twice. */
+  const paid = q.data?.paid;
+  const subQuoteId = sub?.quote_id ?? null;
+  const tabs = React.useMemo(() => historyTabs(docs, paid, { subQuoteId, todayIst }), [docs, paid, subQuoteId, todayIst]);
   const nameOf = (id: string) => names?.get(id)?.label ?? null;
   const fuRows = sub ? drawerFollowupRows(followupRows.filter((r) => r.subscription_id === sub.id), nameOf) : [];
   /* R-2762: every renewal reminder from the email + WhatsApp logs (read in the drawer's one query). */
   const reminderLog = q.data?.reminders;
   const reminderRows = React.useMemo(() => drawerReminderRows(reminderLog), [reminderLog]);
-  /* only the logs' own read failing says so (a documents failure is said under Documents) */
+  /* only the logs' own read failing says so (a documents failure is said under History) */
   const reminderLogFailed = q.isSuccess && reminderLog === null;
   const termStart = sub?.renewal_date ? currentTermStart({ term_months: sub.term_months ?? 12, start_date: sub.start_date ?? null, renewal_date: sub.renewal_date }) : null;
   const [showAllReminders, setShowAllReminders] = React.useState(false);
@@ -293,6 +281,12 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
             </SheetHeader>
 
             <div className="space-y-4 px-6 pb-6">
+              <DrawerHistory
+                key={sub.id} tabs={tabs} loading={q.isLoading} failed={q.isError}
+                customer={sub.customer_id ? { id: sub.customer_id, name: sub.customer_name } : null}
+                canQuotes={canQuotes} canInvoices={canInvoices}
+              />
+
               <Section title="Terms" testId="renewal-drawer-terms">
                 <dl>
                   <Fact label="This term">{currentTermWords(sub) ?? "—"}</Fact>
@@ -306,67 +300,6 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                   <Fact label="Billed">{item.frequency ?? "—"}</Fact>
                   <Fact label="Term length">{termLengthWords(sub.term_months)}</Fact>
                 </dl>
-              </Section>
-
-              <Section title={`Quotes & invoices${docRows.length ? ` (${docRows.length})` : ""}`} testId="renewal-drawer-docs">
-                {q.isLoading ? <Skeleton className="h-16 w-full" /> : q.isError ? (
-                  <p className="text-sm text-ink-3">Couldn&apos;t load the documents — close and open again.</p>
-                ) : docRows.length === 0 ? (
-                  <p className="text-sm text-ink-3">No quotes or invoices yet.</p>
-                ) : (
-                  <>
-                    <ul className="divide-y divide-hairline/70">
-                      {page.shown.map((r) => (
-                        <li key={`${r.kind}-${r.id}`} className={cn("py-2 text-sm", r.tone === "muted" && r.kind === "invoice" && "opacity-70")} data-testid="renewal-drawer-doc" data-kind={r.kind}>
-                          <div className="flex items-baseline justify-between gap-2">
-                            <p className="min-w-0 truncate">
-                              <span className="mr-1.5 text-2xs uppercase text-ink-3">{r.kind === "invoice" ? "Invoice" : "Quote"}</span>
-                              <DocId row={r} canQuotes={canQuotes} canInvoices={canInvoices} />
-                            </p>
-                            <span className="shrink-0 tabular-nums text-ink">{r.amount ?? "—"}</span>
-                          </div>
-                          <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs">
-                            <span className="min-w-0 break-words text-ink-3 tabular-nums">
-                              {r.date ? formatDate(r.date) : "No date"}{r.period ? ` · for ${r.period}` : ""}
-                            </span>
-                            <span className={cn("shrink-0 text-right", TONE[r.tone])} data-testid="renewal-drawer-doc-status">{r.status}</span>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                    {page.hidden > 0 && (
-                      <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowAll(true)}>
-                        Show all {docRows.length}
-                      </Button>
-                    )}
-                  </>
-                )}
-              </Section>
-
-              <Section title={`Payments${payments.length ? ` (${payments.length})` : ""}`} testId="renewal-drawer-payments">
-                {q.isLoading ? <Skeleton className="h-10 w-full" /> : q.isError ? (
-                  <p className="text-sm text-ink-3">Couldn&apos;t load the payments — close and open again.</p>
-                ) : payments.length === 0 ? (
-                  <p className="text-sm text-ink-3">No payment recorded in the app for this subscription.</p>
-                ) : (
-                  <ul className="divide-y divide-hairline/70">
-                    {payments.map((p) => (
-                      <li key={p.id} className="flex items-baseline justify-between gap-2 py-1.5 text-sm" data-testid="renewal-drawer-payment">
-                        <span className="min-w-0 text-ink-2">
-                          {p.date ? <><span className="tabular-nums">{p.date}</span> · </> : null}{p.method}
-                          {p.doc && (
-                            <> · for {p.docKind === "invoice"
-                              ? (canInvoices ? <Link href={invoiceHref(p.doc) as never} className="font-mono underline underline-offset-2 hover:text-ink">{p.doc}</Link> : <span className="font-mono">{p.doc}</span>)
-                              : (canQuotes ? <Link href={`/quotes/${encodeURIComponent(p.doc)}` as never} className="font-mono underline underline-offset-2 hover:text-ink">{p.doc}</Link> : <span className="font-mono">{p.doc}</span>)}
-                            </>
-                          )}
-                          {p.shared ? <span className="text-ink-3"> · {p.shared}</span> : null}
-                        </span>
-                        <span className="shrink-0 font-medium tabular-nums text-ink">{p.amount}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </Section>
 
               <Section title="Follow-ups" testId="renewal-drawer-followups">
