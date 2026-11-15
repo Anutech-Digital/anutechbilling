@@ -372,6 +372,31 @@ begin
   raise notice 'PASS E5: a quote for a term the subscription has left is not reopened';
 end $$;
 
+-- ── E6 (rev-r2848 LOW-5) — undo cancel while a newer renewal quote is open for the term → plain refusal ───
+do $$
+declare e uuid; v_q1 text; v_q2 text; v_msg text;
+begin
+  e := pg_temp.sub(21, pg_temp.cust(11), 'Business Plus', 5, '2027-02-01');
+  v_q1 := public.create_renewal_quote(e, pg_temp.t(), pg_temp.q('Business Plus', 5, 90000))->>'quote_id';
+  perform public.cancel_quote(v_q1, 'R2848 test cancel before a newer quote');
+  v_q2 := public.create_renewal_quote(e, pg_temp.t(), pg_temp.q('Business Plus', 5, 90000))->>'quote_id';
+  v_msg := pg_temp.try(format('select public.undo_cancel_quote(%L)', v_q1));
+  if v_msg is distinct from format('23514 A newer renewal quote %s is already open for this term — cancel it first, then undo this cancel.', v_q2) then
+    raise exception 'FAIL E6: undo cancel with % open → %', v_q2, v_msg; end if;
+  if (select renewal_quote_id from public.subscriptions where id = e) is distinct from v_q2 then
+    raise exception 'FAIL E6: the newer quote lost its link'; end if;
+  raise notice 'PASS E6: undo cancel refused in plain words while % is open for the term', v_q2;
+end $$;
+
+-- ── MED-C (rev-r2848) — Renewals reads by renewal_subscription_id keep a plain index (R-2766 plan: r2766 test) ──
+do $$
+begin
+  if not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'quotes_renewal_subscription_idx'
+                  and indexdef like '%(renewal_subscription_id, renewal_term_date) WHERE (renewal_subscription_id IS NOT NULL)') then
+    raise exception 'FAIL MED-C: quotes_renewal_subscription_idx missing or not the plain one'; end if;
+  raise notice 'PASS MED-C: plain index quotes_renewal_subscription_idx is there for the Renewals reads';
+end $$;
+
 -- ── F — a closed together quote is never reopened or paid; F2 never activated on credit ────────────────────
 do $$
 declare v_q text; v_msg text; v_live text;

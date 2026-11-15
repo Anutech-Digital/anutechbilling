@@ -1653,8 +1653,26 @@ security definer
 set search_path = public
 as $$
 /* R-2848: a together quote whose links were released (closed) is never reopened — paying it would renew nothing;
-   a together quote is never activated on credit (that path files NEW subscriptions from its lines). */
+   a together quote is never activated on credit (that path files NEW subscriptions from its lines).
+   rev-r2848 LOW-5: reopening (Undo cancel) a renewal quote while a newer one is open for the same subscription term →
+   refused in plain words (else the raw quotes_one_renewal_per_term duplicate-key error). */
+declare
+  v_newer text;
 begin
+  if new.renewal_subscription_id is not null and new.renewal_term_date is not null
+     and new.cancelled_at is null and new.superseded_by is null and new.status::text not in ('rejected', 'expired')
+     and (old.cancelled_at is not null or old.superseded_by is not null or old.status::text in ('rejected', 'expired')) then
+    select q.id into v_newer
+      from public.quotes q
+     where q.tenant_id = new.tenant_id and q.id <> new.id
+       and q.renewal_subscription_id = new.renewal_subscription_id and q.renewal_term_date = new.renewal_term_date
+       and q.cancelled_at is null and q.superseded_by is null and q.status::text not in ('rejected', 'expired')
+     limit 1;
+    if v_newer is not null then
+      raise exception 'A newer renewal quote % is already open for this term — cancel it first, then undo this cancel.', v_newer
+        using errcode = 'check_violation';
+    end if;
+  end if;
   if not exists (select 1 from public.renewal_quote_subscriptions l where l.quote_id = old.id) then
     return new;
   end if;
@@ -2161,6 +2179,11 @@ create unique index if not exists quotes_one_renewal_per_term
   on public.quotes (renewal_subscription_id, renewal_term_date)
   where renewal_subscription_id is not null and cancelled_at is null and superseded_by is null
     and status not in ('rejected', 'expired');
+/* rev-r2848 MED-C: the Renewals page reads quotes by renewal_subscription_id (R-2766 BitmapOr with
+   add_seats_subscription_id) — the live-only unique index above no longer serves it, so a plain one does. */
+create index if not exists quotes_renewal_subscription_idx
+  on public.quotes (renewal_subscription_id, renewal_term_date)
+  where renewal_subscription_id is not null;
 create or replace function public.create_renewal_quote(
   p_subscription_id uuid,
   p_tenant_id       uuid,
