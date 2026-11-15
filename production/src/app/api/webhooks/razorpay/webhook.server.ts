@@ -80,6 +80,7 @@ import { maskContactValue } from "@/lib/security/redact-contact";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
 import { isSupportCheckoutPlan, SUPPORT_OWNER_ACTION, supportWhatNext } from "@/lib/support/public-checkout";
+import { renewedSubscriptionsOf, type RenewedReadClient } from "./renewed-subscriptions.server";
 
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET?.trim() || "";
 const FROM_EMAIL     = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -486,13 +487,9 @@ export async function settleCapturedPayment(
      rolls it forward and clears the link. Until 25 Sep 2026 every paid quote was read as a
      sale, so a paid domain renewal was queued as a REGISTRATION of a domain the customer
      already owns, and a paid hosting renewal as a NEW account, with DMS's expiry never
-     moved. */
-  const { data: renewedSub } = await admin
-    .from("subscriptions")
-    .select("id, domain, vendor")
-    .eq("tenant_id", quote.tenant_id)
-    .eq("renewal_quote_id", quote.id)
-    .maybeSingle();
+     moved. R-2852: a quote billed TOGETHER renews each of its renewal_quote_subscriptions rows
+     (renewed-subscriptions.server.ts) — the old single-row read errored on it. */
+  const renewed = await renewedSubscriptionsOf(admin as unknown as RenewedReadClient, quote);
 
   const { data: recorded, error: rpcErr } = await admin.rpc("record_payment", {
     p_quote_id:  quote.id,
@@ -612,24 +609,30 @@ export async function settleCapturedPayment(
        anything else (a Workspace / M365 / Zoho licence) → nothing to activate: the licence
        is already running, the payment only settles its next term.
      A quote marked as a renewal whose subscription cannot be found is not guessed at: it
-     queues nothing, loudly. */
-  const isRenewal = Boolean(renewedSub) || Boolean(quote.is_renewal);
-  const renewalDomain = renewedSub?.domain?.trim().toLowerCase() || null;
-  const renewalPlan =
-    renewedSub?.vendor === "domain" ? DOMAIN_RENEWAL_PLAN : renewedSub?.vendor === "hosting" ? HOSTING_RENEWAL_PLAN : null;
-  if (quote.is_renewal && !renewedSub) {
+     queues nothing, loudly. R-2852: a together quote queues one renewal per domain / hosting member
+     (none expected — create_renewal_quote_together refuses them), each with its own share. */
+  const isRenewal = renewed.subs.length > 0 || Boolean(quote.is_renewal);
+  const renewalPlanOf = (vendor: string | null | undefined) =>
+    vendor === "domain" ? DOMAIN_RENEWAL_PLAN : vendor === "hosting" ? HOSTING_RENEWAL_PLAN : null;
+  const renewalProducts = renewed.subs.flatMap((s) => {
+    const renewalDomain = s.domain?.trim().toLowerCase() || null;
+    return renewalPlanOf(s.vendor) && renewalDomain
+      ? [{ vendor: s.vendor as "domain" | "hosting", domain: renewalDomain, seats: 1, renewalShare: s.share }]
+      : [];
+  });
+  if (renewed.problem) {
+    console.error(`[webhooks/razorpay] ${quote.id} is a renewal quote but ${renewed.problem}, so nothing was queued for it. Find the subscriptions it renews and extend any domain or hosting by hand.`);
+  } else if (quote.is_renewal && renewed.subs.length === 0) {
     console.error(`[webhooks/razorpay] ${quote.id} is a renewal quote but no subscription points at it, so nothing was queued. Find the subscription it renews and extend it by hand.`);
-  } else if (renewedSub && !renewalPlan) {
-    console.log(`[webhooks/razorpay] ${quote.id} renews a ${renewedSub.vendor} subscription — nothing to activate.`);
+  } else if (renewed.subs.length > 0 && renewalProducts.length === 0) {
+    console.log(`[webhooks/razorpay] ${quote.id} renews ${renewed.subs.map((s) => `a ${s.vendor}`).join(", ")} subscription${renewed.subs.length > 1 ? "s (billed together)" : ""} — nothing to activate.`);
   }
   /* R-2083: a support plan bought on /buy/support has nothing to provision — its subscription
      (vendor 'support', filed by record_payment above) reaches the support desk through
      support_sync_outbox. Queuing it would hand the desk an "activate in the vendor's console". */
   const isSupportOrder = isSupportCheckoutPlan(quote.plan);
-  const products = isRenewal
-    ? renewalPlan && renewalDomain
-      ? [{ vendor: renewedSub!.vendor as "domain" | "hosting", domain: renewalDomain, seats: 1 }]
-      : []
+  const products: (ReturnType<typeof provisioningProducts>[number] & { renewalShare?: number | null })[] = isRenewal
+    ? renewalProducts
     : provisioningProducts({
         lineItems: quote.line_items,
         vendor: provisioningVendor,
@@ -639,6 +642,8 @@ export async function settleCapturedPayment(
       });
 
   for (const product of isSupportOrder ? [] : products) {
+    /* R-2852: each renewal product's own plan marker (a together quote may hold more than one). */
+    const renewalPlan = isRenewal ? renewalPlanOf(product.vendor) : null;
     const provisioning = decideProvisioning({
       paymentMode: razorpayMode(keyIdForMode),
       /* The signature verified and the amount was checked above — those two together are what
@@ -686,8 +691,9 @@ export async function settleCapturedPayment(
         plan:        renewalPlan ?? product.plan ?? quote.plan ?? null,
         /* R-033: this product's own share of the payment, not the whole order — the
            engine's spend check (paid ≥ cost) reads it per row. A renewal is one product
-           and its quote is that renewal, so its share is the whole payment. */
-        amountPaid:  isRenewal ? paymentAmount : productAmountPaid(product, quote.line_items, paymentAmount, domainItemIds),
+           and its quote is that renewal, so its share is the whole payment — R-2852: on a quote billed
+           together, that member's own subtotal + GST (never more than was paid). */
+        amountPaid:  isRenewal ? Math.min(paymentAmount, product.renewalShare ?? paymentAmount) : productAmountPaid(product, quote.line_items, paymentAmount, domainItemIds),
         paymentMode: razorpayMode(keyIdForMode),
         blocker:     provisioning.action === "queue" ? provisioning.blocker : null,
         note:        provisioning.reason,
