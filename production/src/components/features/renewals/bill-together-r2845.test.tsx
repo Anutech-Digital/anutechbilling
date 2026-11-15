@@ -22,6 +22,10 @@ import { useBillTogether } from "./bill-together";
 import { createTogetherProforma } from "@/lib/renewals/bill-together";
 import { focusManager } from "@tanstack/react-query";
 
+/* CI red 15 Nov: the dialog render alone used the whole default 5 s on a loaded shard (no timers in the code, pure CPU load),
+   so the 5 s waits below and vitest 5 s test limit expired together. 30 s limit for this file; waits stay under it. */
+vi.setConfig({ testTimeout: 30_000 });
+
 const fetchMock = vi.fn();
 beforeEach(() => { fetchMock.mockReset(); push.mockReset(); toastSuccess.mockReset(); toastInfo.mockReset(); toastError.mockReset(); vi.stubGlobal("fetch", fetchMock); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -59,10 +63,10 @@ async function openAndCreate(answer: unknown, opts: { untick?: string; canQuotes
   wrap(<Harness canQuotes={opts.canQuotes} canInvoices={opts.canInvoices} />);
   fireEvent.click(screen.getByRole("button", { name: "go" }));
   /* generous waits: on a loaded laptop the first render can pass 1 s (a flaky red, not a bug) */
-  await screen.findAllByTestId("bill-together-line", {}, { timeout: 5000 });
+  await screen.findAllByTestId("bill-together-line", {}, { timeout: 20_000 });
   if (opts.untick) fireEvent.click(screen.getByLabelText(opts.untick));
   fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
-  await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 5000 });
+  await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 20_000 });
 }
 
 describe("R-2845 (1) — Create sends the periods the dialog showed", () => {
@@ -177,14 +181,14 @@ describe("R-2845 review fixes", () => {
     });
     wrap(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "go" }));
-    await screen.findAllByTestId("bill-together-line", {}, { timeout: 5000 });
+    await screen.findAllByTestId("bill-together-line", {}, { timeout: 20_000 });
     fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
-    await waitFor(() => expect(toastError).toHaveBeenCalled(), { timeout: 5000 });
+    await waitFor(() => expect(toastError).toHaveBeenCalled(), { timeout: 20_000 });
     act(() => { focusManager.setFocused(false); focusManager.setFocused(true); });
     await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
     expect(previews).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
-    await waitFor(() => expect(posts()).toHaveLength(2), { timeout: 5000 });
+    await waitFor(() => expect(posts()).toHaveLength(2), { timeout: 20_000 });
     expect(bodyOf(1)).toEqual(bodyOf(0));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/invoices/INV-9"));
     focusManager.setFocused(undefined);
@@ -198,11 +202,11 @@ describe("R-2845 review fixes", () => {
     });
     wrap(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "go" }));
-    await screen.findAllByTestId("bill-together-line", {}, { timeout: 5000 });
+    await screen.findAllByTestId("bill-together-line", {}, { timeout: 20_000 });
     fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
-    await waitFor(() => expect(toastError).toHaveBeenCalled(), { timeout: 5000 });
+    await waitFor(() => expect(toastError).toHaveBeenCalled(), { timeout: 20_000 });
     const opts = toastError.mock.calls[0][1] as { action?: unknown } | undefined;
     expect(opts?.action).toBeUndefined();
-    await waitFor(() => expect(previews).toBe(2), { timeout: 5000 });
+    await waitFor(() => expect(previews).toBe(2), { timeout: 20_000 });
   });
 });
