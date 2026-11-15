@@ -30,12 +30,13 @@ import { lastPaidBySubscription, linkedDocs, type LastPaid, type LastPaidInput, 
 
 type SubRef = LastPaidInput["subs"][number];
 type QuoteRow = LastPaidInput["linkedQuotes"][number];
-type PaymentRow = LastPaidInput["payments"][number] & { receipt_voucher_no?: string | null };
+type PaymentRow = LastPaidInput["payments"][number];
 
-/** R-2840: a payment line with its receipt voucher no. (the table row's "Last bill" tooltip) — the same read, one more column. */
-export type PaidLineWithReceipt = PaidLine & { receiptNo?: string | null };
+/** R-2840: a payment line with its receipt voucher no. (the table row's "Last bill" tooltip). R-2843: PaidLine itself carries it now. */
+export type PaidLineWithReceipt = PaidLine;
 
-const PAYMENT_COLS = "id, amount, method, status, received_at, refunded_at, quote_id, invoice_id, receipt_voucher_no";
+/** R-2840 receipt_voucher_no, R-2843 reference — extra columns of the same payments read. */
+const PAYMENT_COLS = "id, amount, method, status, received_at, refunded_at, quote_id, invoice_id, receipt_voucher_no, reference";
 
 export function useRenewalLastPaid(subs: readonly SubRef[]) {
   const qc = useQueryClient();
@@ -120,9 +121,5 @@ export async function lastPaidFromDocRows(
     .order("id", { ascending: true })
     .range(from, to), c);
   const payments = [...byQuote, ...byInvoice];
-  const out = lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments }, opts);
-  /* R-2840: the receipt voucher no. rides on the same lines (last-paid.ts stays the rule) */
-  const receipt = new Map(payments.map((p) => [p.id, p.receipt_voucher_no ?? null]));
-  for (const lp of out.values()) for (const l of lp.history) (l as PaidLineWithReceipt).receiptNo = receipt.get(l.paymentId) ?? null;
-  return out;
+  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments }, opts);
 }

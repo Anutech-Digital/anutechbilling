@@ -17,6 +17,8 @@ import { docRefs, docsFromRows, readRenewalDocRows } from "./last-docs-data";
 import { lastPaidFromDocRows } from "./last-paid-data";
 import type { DocQuote, LastDocs, LastDocsInput } from "./last-docs";
 import type { LastPaid } from "./last-paid";
+import { tdsInfoByPayment, type PaymentTds } from "@/components/features/customers/payment-tds-line";
+import { TDS_REVERSED_STATUS } from "@/lib/queries/tds-receivable";
 import { REMINDER_LOG_MAX, WA_SENT_STATUSES, type ReminderLog } from "./reminder-log";
 
 type SubRef = LastDocsInput["subs"][number];
@@ -26,6 +28,31 @@ export interface DrawerData {
   paid: LastPaid | undefined;
   /** R-2762: null = the reminder logs could not be read (the drawer falls back to the counter). */
   reminders: ReminderLog | null;
+  /** R-2843: TDS deducted per payment id (tds_receivable, the customer page's source); {} when none / unreadable. */
+  tds?: Record<string, PaymentTds>;
+}
+
+/**
+ * R-2843 — TDS per payment: payments carries no TDS column, tds_receivable (payment_id, tds_amount, section) does.
+ * One read for this subscription's payment ids, in the same drawer query. Browser client — RLS scopes it to the
+ * tenant. A failed read gives {} (the payments still show, just without the TDS line).
+ */
+export async function readPaymentTds(paymentIds: readonly string[]): Promise<Record<string, PaymentTds>> {
+  if (!paymentIds.length) return {};
+  try {
+    const sb = createClient();
+    const rows = await fetchAllRowsIn<{ id: string; payment_id: string | null; tds_amount: number | null; section: string | null }, string>(
+      paymentIds, (run, from, to) => sb
+        .from("tds_receivable")
+        .select("id, payment_id, tds_amount, section")
+        .in("payment_id", run)
+        .filter("status", "neq", TDS_REVERSED_STATUS)
+        .order("id", { ascending: true })
+        .range(from, to));
+    return tdsInfoByPayment(rows);
+  } catch {
+    return {};
+  }
 }
 
 /** How far the drawer follows a quote's revisions (R1 → R2 → …). */
@@ -111,7 +138,9 @@ export function useRenewalDrawerData(sub: (SubRef & { tenant_id?: string | null 
         docsFromRows([ref!], rows, { all: true }),
         lastPaidFromDocRows([ref!], rows, { historySize: Infinity }),
       ]);
-      return { docs: docs.get(ref!.id), paid: paid.get(ref!.id), reminders };
+      const mine = paid.get(ref!.id);
+      const tds = await readPaymentTds([...new Set((mine?.history ?? []).map((l) => l.paymentId))]);
+      return { docs: docs.get(ref!.id), paid: mine, reminders, tds };
     },
   });
 }

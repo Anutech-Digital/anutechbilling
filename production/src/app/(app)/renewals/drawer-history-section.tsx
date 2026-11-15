@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn, formatDate } from "@/lib/utils";
+import { PaymentTdsLine } from "@/components/features/customers/payment-tds-line";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { drawerPage } from "./drawer";
 import type { HistoryPaymentLine, HistoryRow, HistoryTab, HistoryTabs } from "./drawer-history";
@@ -77,15 +78,20 @@ function LinkedWords({ text, hrefs }: { text: string; hrefs: Hrefs }) {
 
 /** One payment line. Under an invoice it does not repeat "for <invoice>" (the invoice line above says it). */
 function PaymentLine({ p, showFor, hrefs }: { p: HistoryPaymentLine; showFor: boolean; hrefs: Hrefs }) {
+  const ids = [p.receiptNo ? `Receipt ${p.receiptNo}` : null, p.reference ? `Ref ${p.reference}` : null].filter(Boolean).join(" · ");
   const rest = [p.partOf ? `part of ${p.partOf}` : null, p.shared].filter(Boolean).join(" · ");
   return (
-    <li className="flex items-baseline justify-between gap-2 py-1 text-sm" data-testid="renewal-drawer-payment" data-no-receipt={p.noReceipt || undefined}>
+    <li className="flex flex-wrap items-baseline justify-between gap-x-2 py-1 text-sm" data-testid="renewal-drawer-payment" data-no-receipt={p.noReceipt || undefined}>
       <span className="min-w-0 break-words text-ink-2">
         {p.date ? <><span className="tabular-nums">{p.date}</span> · </> : null}{p.method}
         {showFor && p.forWords ? <> · <LinkedWords text={p.forWords} hrefs={hrefs} /></> : null}
         {rest ? ` · ${rest}` : null}
       </span>
-      <span className="shrink-0 font-medium tabular-nums text-ink">{p.amount}</span>
+      <span className="shrink-0 text-right">
+        <span className="font-medium tabular-nums text-ink">{p.amount}</span>
+        <PaymentTdsLine amount={p.gross} tds={p.tds} />
+      </span>
+      {ids ? <span className="basis-full text-xs text-ink-3" data-testid="renewal-drawer-payment-ids">{ids}</span> : null}
     </li>
   );
 }

@@ -45,6 +45,8 @@ export interface LastPaidInput {
   payments: ReadonlyArray<{
     id: string; amount: number; method: string; status: string; received_at: string;
     refunded_at: string | null; quote_id: string | null; invoice_id: string | null;
+    /** R-2843: the receipt voucher no. and the UTR / reference typed at recording — shown in the drawer's History. */
+    receipt_voucher_no?: string | null; reference?: string | null;
   }>;
 }
 
@@ -62,6 +64,10 @@ export interface PaidLine {
   ownInvoiceId?: string | null;
   /** How many subscriptions this one payment is for (1 = this one alone). */
   covers: number;
+  /** R-2840 / R-2843: payments.receipt_voucher_no (null / undefined = none). */
+  receiptNo?: string | null;
+  /** R-2843: payments.reference — the UTR / cheque no. typed when the payment was recorded. */
+  reference?: string | null;
 }
 
 export interface LastPaid {
@@ -135,6 +141,8 @@ export function lastPaidBySubscription(input: LastPaidInput, opts: { historySize
       quoteId: p.quote_id,
       ownInvoiceId: p.invoice_id ?? null,
       covers: subs.size,
+      receiptNo: p.receipt_voucher_no?.trim() || null,
+      reference: p.reference?.trim() || null,
     };
     for (const sid of subs) {
       const xs = bySub.get(sid);

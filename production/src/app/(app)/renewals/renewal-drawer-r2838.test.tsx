@@ -230,7 +230,7 @@ describe("R-2838 one History section replaces 'Quotes & invoices' + 'Payments'",
   it("wiring: historyTabs gets the subscription's own quote (instalment payments are never counted twice)", () => {
     const src = readFileSync("src/app/(app)/renewals/renewal-drawer.tsx", "utf8");
     expect(src).toMatch(/const subQuoteId = sub\?\.quote_id \?\? null;/);
-    expect(src).toMatch(/historyTabs\(docs, paid, \{ subQuoteId, todayIst \}\)/);
+    expect(src).toMatch(/historyTabs\(docs, paid, \{ subQuoteId, todayIst, tds \}\)/);
     expect(src).not.toMatch(/drawerPaymentRows\(/);
   });
 });

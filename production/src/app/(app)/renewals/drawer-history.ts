@@ -29,6 +29,7 @@ import {
   forInvoicesText, invoicePaidAmount, linkPaymentsToInvoices,
   type InstalmentLink, type LinkInvoice, type LinkPayment, type PaymentShare,
 } from "@/components/features/customers/invoice-payment-links";
+import type { PaymentTds } from "@/components/features/customers/payment-tds-line";
 import { drawerDocRows, NO_RECEIPT_METHOD, type DrawerDocRow } from "./drawer";
 import { docMoney, type LastDocs, type LastInvoice } from "./last-docs";
 import { lastPaidSummary, type LastPaid, type PaidLine } from "./last-paid";
@@ -52,6 +53,12 @@ export interface HistoryPaymentLine {
   shared: string | null;
   /** R-2818: money on the invoice with no receipt row in the app. */
   noReceipt: boolean;
+  /** R-2843: the receipt voucher no. / UTR (reference) of the payment; null = none typed. */
+  receiptNo: string | null;
+  reference: string | null;
+  /** R-2843: the payment's full amount in rupees and its TDS (customer page's PaymentTdsLine). tds null = none, or this line is only a part of the payment. */
+  gross: number;
+  tds: PaymentTds | null;
 }
 
 export type HistoryQuoteRow = DrawerDocRow & { kind: "quote" };
@@ -84,7 +91,7 @@ const toLinkInvoice = (i: LastInvoice): LinkInvoice => ({
 export function historyTabs(
   docs: LastDocs | undefined,
   paid: LastPaid | undefined,
-  opts: { subQuoteId: string | null; todayIst?: string },
+  opts: { subQuoteId: string | null; todayIst?: string; /** R-2843: TDS per payment id (tdsInfoByPayment). */ tds?: Readonly<Record<string, PaymentTds>> },
 ): HistoryTabs {
   const docRows = drawerDocRows(docs, opts.todayIst ?? istToday());
   const invoices = docs?.allInvoices ?? docs?.invoices ?? [];
@@ -123,7 +130,11 @@ export function historyTabs(
   };
   const receiptLine = (p: PaidLine, amount: string, partOf: string | null, forWords: string | null): HistoryPaymentLine => {
     const s = lastPaidSummary(p);
-    return { id: p.paymentId, date: s.date, amount, partOf, method: s.method, forWords, shared: s.shared, noReceipt: false };
+    return {
+      id: p.paymentId, date: s.date, amount, partOf, method: s.method, forWords, shared: s.shared, noReceipt: false,
+      receiptNo: p.receiptNo?.trim() || null, reference: p.reference?.trim() || null,
+      gross: p.amount, tds: partOf ? null : opts.tds?.[p.paymentId] ?? null,
+    };
   };
   /* The link rule lists shares oldest payment first — reversed: newest first, like the drawer. */
   const shareLines = (shares: readonly PaymentShare[], money: (n: number) => string, forWords: (s: PaymentShare) => string | null) =>
@@ -144,7 +155,7 @@ export function historyTabs(
     if (gap >= 1) {
       const line: HistoryPaymentLine = {
         id: `invoice-paid:${inv.id}`, date: "", amount: docMoney(inv, gap), partOf: null, method: NO_RECEIPT_METHOD,
-        forWords, shared: null, noReceipt: true,
+        forWords, shared: null, noReceipt: true, receiptNo: null, reference: null, gross: gap, tds: null,
       };
       rows.push(line);
       gapLines.push(line);

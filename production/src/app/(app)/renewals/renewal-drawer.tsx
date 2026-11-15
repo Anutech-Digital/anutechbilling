@@ -252,7 +252,8 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
      billed from the subscription take payments on its own quote (R-1564) — without it they would show twice. */
   const paid = q.data?.paid;
   const subQuoteId = sub?.quote_id ?? null;
-  const tabs = React.useMemo(() => historyTabs(docs, paid, { subQuoteId, todayIst }), [docs, paid, subQuoteId, todayIst]);
+  const tds = q.data?.tds;
+  const tabs = React.useMemo(() => historyTabs(docs, paid, { subQuoteId, todayIst, tds }), [docs, paid, subQuoteId, todayIst, tds]);
   const nameOf = (id: string) => names?.get(id)?.label ?? null;
   const fuRows = sub ? drawerFollowupRows(followupRows.filter((r) => r.subscription_id === sub.id), nameOf) : [];
   /* R-2762: every renewal reminder from the email + WhatsApp logs (read in the drawer's one query). */
