@@ -11,7 +11,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  reminderPlan, reminderScope, reminderButtonLabel, reminderDialogTitle, groupSkips, REMINDER_SKIP,
+  reminderPlan, reminderScope, reminderButton, reminderDialogTitle, groupSkips, REMINDER_SKIP,
   type RenewalRowLike, type RenewalSubLike,
 } from "./reminders";
 
@@ -28,11 +28,12 @@ describe("R-2753 scope + label: the ticked rows, else the open tab", () => {
   it("nothing ticked → the open tab, named on the button", () => {
     const s = reminderScope(0, "Overdue", 3);
     expect(s).toEqual({ kind: "tab", label: "Overdue", count: 3 });
-    expect(reminderButtonLabel(s)).toBe("Remind 3 in Overdue");
+    /* R-2820: the count is the rows it can send — here all 3 */
+    expect(reminderButton(s, { send: [row("a", 1), row("b", 2), row("c", 3)], skipped: [] }).label).toBe("Remind 3 in Overdue");
   });
   it("rows ticked → only those", () => {
     const s = reminderScope(2, "Overdue", 3);
-    expect(reminderButtonLabel(s)).toBe("Remind 2 selected");
+    expect(reminderButton(s, { send: [row("a", 1), row("b", 2)], skipped: [] }).label).toBe("Remind 2 selected");
   });
   it("the dialog title names the scope; nobody due says so (a dialog, not a toast)", () => {
     expect(reminderDialogTitle(1, reminderScope(0, "8–30", 4))).toBe("Email 1 customer · 8–30");
@@ -113,7 +114,7 @@ describe("R-2753 page wiring: one button, no floating email button, no 'none due
   it("the one reminder button acts on the ticked rows, else the open tab's rows", () => {
     expect(page).toContain("reminderScope(tickedShown.length,");
     expect(page).toMatch(/tickedShown\.length > 0 \? tickedShown : visibleRows/);
-    expect(page).toContain("reminderButtonLabel(scope)");
+    expect(page).toContain("<RenewalRemindButton scope={scope} plan={remindPlan}");
     expect(page).not.toContain('"Bulk reminder"');
   });
   it("the ticked-rows bar has no second Send reminder; no FAB on phone", () => {
@@ -124,7 +125,7 @@ describe("R-2753 page wiring: one button, no floating email button, no 'none due
   it("the plan reads the row's contact email and paid quote", () => {
     expect(page).toMatch(/reminderPlan\(scopeRows, \{[^}]*emailOf/);
     /* the button waits for the contacts — a no-email customer is never counted while they load */
-    expect(page).toContain("disabled={bulkSending || contactsLoading || scope.count === 0}");
+    expect(page).toContain("loading={contactsLoading}");   // R-2820: RenewalRemindButton disables while loading
     expect(page).not.toContain('toast.info("No renewals due in the next 30 days');
     expect(page).not.toContain('toast.info("None of the selected renewals is due for a reminder"');
   });
