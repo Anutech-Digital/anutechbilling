@@ -30,6 +30,24 @@ describe("renewals cron", () => {
     expect(block).toMatch(/update\(\{ renewal_state: decision\.targetState \}\)/);
   });
 
+  it("a lead past its grace (only the owner's Stop-service task) does not lead — the next member sends", () => {
+    const at = c.indexOf("const remindable = new Set(allSubs.filter(");
+    expect(at).toBeGreaterThan(c.indexOf("overrides = await readGraceOverrides("));
+    expect(c.slice(at, at + 900)).toMatch(/return !pastGraceToday\(\{/);
+  });
+
+  it("the lead does not send again today when the quote already went from any member at any step (Send now)", () => {
+    const at = c.indexOf('together.kind === "lead") {');
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(c.indexOf("createOrGetRenewalQuote({"));
+    expect(c.slice(at, at + 700)).toMatch(/\.in\("subscription_id", together\.quote\.members\.map\(\(m\) => m\.subscriptionId\)\)\s*\.neq\("status", "skipped"\)/);
+  });
+
+  it("the plan list is used only when the quote returned IS the together quote", () => {
+    expect(c).toMatch(/const togetherText = together\.kind === "lead" && together\.quote\.quoteId === renewalQuoteId/);
+    expect(c.indexOf("const togetherText")).toBeGreaterThan(c.indexOf("const renewalQuoteId = quoteResult.quoteId"));
+  });
+
   it("the lead's email + WhatsApp name every plan, the seats added up and the plan list; amount stays the quote's", () => {
     expect(c).toMatch(/plan:\s*togetherText\?\.planName \?\? sub\.plan/);
     expect(c).toMatch(/planName:\s*togetherText\?\.planName \?\? sub\.plan,\s*seats:\s*togetherText\?\.seats \?\? sub\.seats,\s*amount:\s*renewalQuote\.amount,\s*planLines:\s*togetherText\?\.planLines/);
@@ -51,6 +69,12 @@ describe("Send now", () => {
     expect(s).toMatch(/planLines:\s*togetherText\?\.planLines/);
     expect(s).toMatch(/const loggedOn = together \? together\.members\.map\(\(m\) => m\.subscriptionId\) : \[sub\.id\]/);
     expect(s).toMatch(/renewal_email_log"\)\.insert\(loggedOn\.map\(/);
+  });
+
+  it("a together email names the quote's earliest due date, not the pressed row's", () => {
+    expect(s).toMatch(/const dueDate = together \? togetherLead\(together\)\?\.renewalTermDate \?\? sub\.renewal_date : sub\.renewal_date/);
+    expect(s).toMatch(/renewalDate:\s*formatIstDate\(dueDate\)/);
+    expect(s).toMatch(/stopDate:\s*formatIstDate\(serviceStopDate\(dueDate, graceDays\)\)/);
   });
 
   it("a failed together read sends nothing (503) — never the whole amount against one plan", () => {

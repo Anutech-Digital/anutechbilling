@@ -16,6 +16,10 @@
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { termEndInclusive } from "@/lib/billing/schedule";
 import { formatIstDate } from "@/lib/dates/ist";
+import { decideCadence, type RenewalState } from "./cadence";
+
+/** renewal_email_log.recipient_email of a member's "billed together" skip row (the drawer reads it). */
+export const TOGETHER_SKIP_RECIPIENT = "(billed together)";
 
 /** One subscription on a together quote (a live renewal_quote_subscriptions row + its subscription). */
 export interface TogetherMember {
@@ -48,8 +52,9 @@ const byTermThenId = (a: TogetherMember, b: TogetherMember) =>
 
 /**
  * The member that sends the quote's reminders: earliest renewal term, then lowest subscription id,
- * among the members `eligible` says this run may remind about (active, renewing). A lead that is
- * Won't renew / not active hands over to the next — never "nobody". No eligible member → null.
+ * among the members `eligible` says this run may remind about (active, renewing, grace not over —
+ * the cron passes that). A lead that is Won't renew / not active / past its grace (it only raises the
+ * owner's Stop-service task, no email) hands over to the next — never "nobody". None → null.
  */
 export function togetherLead(quote: TogetherQuote, eligible: (subscriptionId: string) => boolean = () => true): TogetherMember | null {
   return [...quote.members].filter((m) => eligible(m.subscriptionId)).sort(byTermThenId)[0] ?? null;
@@ -103,4 +108,17 @@ export function togetherTemplateFields(quote: TogetherQuote): { planName: string
     seats:     ordered.reduce((n, m) => n + (m.seats ?? 0), 0),
     planLines: togetherPlanLines(quote),
   };
+}
+
+/**
+ * Past its grace today: the cron only raises the owner's Stop-service task for it and emails nothing,
+ * so it cannot lead a together quote's reminders (togetherLead's `eligible`).
+ */
+export function pastGraceToday(s: { renewalDate: string; graceDays: number; renewalState: string | null; termMonths: number | null }): boolean {
+  return decideCadence({
+    renewalDate:  s.renewalDate,
+    graceDays:    s.graceDays,
+    currentState: (s.renewalState ?? "pending") as RenewalState,
+    termMonths:   s.termMonths,
+  }).targetState === "suspended";
 }

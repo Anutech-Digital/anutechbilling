@@ -80,7 +80,7 @@ import { maskContactValue } from "@/lib/security/redact-contact";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
 import { isSupportCheckoutPlan, SUPPORT_OWNER_ACTION, supportWhatNext } from "@/lib/support/public-checkout";
-import { renewedSubscriptionsOf, type RenewedReadClient } from "./renewed-subscriptions.server";
+import { renewedSubscriptionsOf, paymentShare, type RenewedReadClient } from "./renewed-subscriptions.server";
 
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET?.trim() || "";
 const FROM_EMAIL     = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -614,10 +614,12 @@ export async function settleCapturedPayment(
   const isRenewal = renewed.subs.length > 0 || Boolean(quote.is_renewal);
   const renewalPlanOf = (vendor: string | null | undefined) =>
     vendor === "domain" ? DOMAIN_RENEWAL_PLAN : vendor === "hosting" ? HOSTING_RENEWAL_PLAN : null;
-  const renewalProducts = renewed.subs.flatMap((s) => {
+  /* A named problem (rows not found / not readable) queues nothing — the owner is told to do it by hand,
+     and a half-queued renewal next to that message would be renewed twice. */
+  const renewalProducts = renewed.problem ? [] : renewed.subs.flatMap((s) => {
     const renewalDomain = s.domain?.trim().toLowerCase() || null;
     return renewalPlanOf(s.vendor) && renewalDomain
-      ? [{ vendor: s.vendor as "domain" | "hosting", domain: renewalDomain, seats: 1, renewalShare: s.share }]
+      ? [{ vendor: s.vendor as "domain" | "hosting", domain: renewalDomain, seats: 1, renewalShare: paymentShare(renewed, s.id, paymentAmount) }]
       : [];
   });
   if (renewed.problem) {
@@ -631,7 +633,7 @@ export async function settleCapturedPayment(
      (vendor 'support', filed by record_payment above) reaches the support desk through
      support_sync_outbox. Queuing it would hand the desk an "activate in the vendor's console". */
   const isSupportOrder = isSupportCheckoutPlan(quote.plan);
-  const products: (ReturnType<typeof provisioningProducts>[number] & { renewalShare?: number | null })[] = isRenewal
+  const products: (ReturnType<typeof provisioningProducts>[number] & { renewalShare?: number })[] = isRenewal
     ? renewalProducts
     : provisioningProducts({
         lineItems: quote.line_items,
@@ -692,8 +694,8 @@ export async function settleCapturedPayment(
         /* R-033: this product's own share of the payment, not the whole order — the
            engine's spend check (paid ≥ cost) reads it per row. A renewal is one product
            and its quote is that renewal, so its share is the whole payment — R-2852: on a quote billed
-           together, that member's own subtotal + GST (never more than was paid). */
-        amountPaid:  isRenewal ? Math.min(paymentAmount, product.renewalShare ?? paymentAmount) : productAmountPaid(product, quote.line_items, paymentAmount, domainItemIds),
+           together, this payment split by each member's own subtotal (the shares add up to what was paid). */
+        amountPaid:  isRenewal ? product.renewalShare ?? paymentAmount : productAmountPaid(product, quote.line_items, paymentAmount, domainItemIds),
         paymentMode: razorpayMode(keyIdForMode),
         blocker:     provisioning.action === "queue" ? provisioning.blocker : null,
         note:        provisioning.reason,

@@ -38,8 +38,9 @@ describe("the payment webhook", () => {
 
   it("a renewal is never read from the lines as a new sale; a Workspace renewal queues nothing", () => {
     expect(w).toMatch(/= isRenewal\s*\?\s*renewalProducts\s*:\s*provisioningProducts\(/);
-    expect(w).toMatch(/renewalPlanOf\(s\.vendor\) && renewalDomain\s*\?\s*\[/);
-    expect(w).toMatch(/:\s*\[\];/);
+    // R-2852: a Workspace member (no renewal plan) and a named problem both queue nothing
+    expect(w).toMatch(/const renewalProducts = renewed\.problem \? \[\] : renewed\.subs\.flatMap\(\(s\) => \{[\s\S]{0,200}?renewalPlanOf\(s\.vendor\) && renewalDomain\s*\?\s*\[\{[^\]]*\}\]\s*:\s*\[\];/);
+    expect(w).toMatch(/amountPaid:\s*isRenewal \? product\.renewalShare \?\? paymentAmount/);
   });
 
   it("creates domain subscriptions only on a first sale, never on a renewal", () => {

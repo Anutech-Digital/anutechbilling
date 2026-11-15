@@ -4,7 +4,7 @@
  * logged "no subscription points at it" and queued no domain / hosting renewal.
  */
 import { describe, it, expect } from "vitest";
-import { renewedSubscriptionsOf, type RenewedReadClient } from "./renewed-subscriptions.server";
+import { renewedSubscriptionsOf, paymentShare, type RenewedReadClient } from "./renewed-subscriptions.server";
 
 type Row = Record<string, unknown>;
 function fakeAdmin(tables: Record<string, Row[]>, errors: Record<string, { code?: string; message: string }> = {}) {
@@ -32,7 +32,7 @@ function fakeAdmin(tables: Record<string, Row[]>, errors: Record<string, { code?
 }
 
 const T = "ten-1";
-const quote = { id: "Q-T1", tenant_id: T, tax_rate: 18 };
+const quote = { id: "Q-T1", tenant_id: T };
 
 describe("R-2852 renewedSubscriptionsOf", () => {
   it("together quote: every live member, found by its renewal_quote_subscriptions rows — no false error", async () => {
@@ -51,10 +51,10 @@ describe("R-2852 renewedSubscriptionsOf", () => {
     const r = await renewedSubscriptionsOf(admin, quote);
     expect(r.together).toBe(true);
     expect(r.problem).toBeNull();
-    expect(r.subs.map((s) => [s.id, s.vendor, s.share])).toEqual([["s1", "google", 118000], ["s2", "google", 59000]]);
+    expect(r.subs.map((s) => [s.id, s.vendor, s.weight])).toEqual([["s1", "google", 100000], ["s2", "google", 50000]]);
   });
 
-  it("an old together quote with a domain member: that member's own share (subtotal + GST), never the whole payment", async () => {
+  it("an old together quote with a domain member: its share of THIS payment by its own subtotal — shares never add up to more than was paid", async () => {
     const { admin } = fakeAdmin({
       renewal_quote_subscriptions: [
         { tenant_id: T, quote_id: "Q-T1", subscription_id: "s1", subtotal: 100000, released_at: null },
@@ -66,7 +66,11 @@ describe("R-2852 renewedSubscriptionsOf", () => {
       ],
     });
     const r = await renewedSubscriptionsOf(admin, quote);
-    expect(r.subs.find((s) => s.id === "d1")).toMatchObject({ vendor: "domain", share: 1180 });
+    expect(r.subs.find((s) => s.id === "d1")).toMatchObject({ vendor: "domain", weight: 1000 });
+    expect(paymentShare(r, "d1", 119180)).toBe(1180);       // paid in full (subtotal + 18% GST)
+    expect(paymentShare(r, "d1", 101000)).toBe(1000);       // a discount / less paid → its part of what was paid
+    expect(paymentShare(r, "s1", 101000) + paymentShare(r, "d1", 101000)).toBeLessThanOrEqual(101000);
+    expect(paymentShare(r, "nobody", 101000)).toBe(0);
   });
 
   it("single quote: the one subscription linked to it, share = whole payment (unchanged)", async () => {
@@ -75,7 +79,8 @@ describe("R-2852 renewedSubscriptionsOf", () => {
       subscriptions: [{ id: "s1", tenant_id: T, vendor: "domain", domain: "acme.in", renewal_quote_id: "Q-T1" }],
     });
     const r = await renewedSubscriptionsOf(admin, quote);
-    expect(r).toMatchObject({ together: false, problem: null, subs: [{ id: "s1", vendor: "domain", domain: "acme.in", share: null }] });
+    expect(r).toMatchObject({ together: false, problem: null, subs: [{ id: "s1", vendor: "domain", domain: "acme.in", weight: null }] });
+    expect(paymentShare(r, "s1", 1180)).toBe(1180);
     expect(r.subs).toHaveLength(1);
     expect(reads[1].filters).toContainEqual(["eq", "tenant_id", T]);
   });

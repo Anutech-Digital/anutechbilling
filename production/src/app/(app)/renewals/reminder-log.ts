@@ -19,6 +19,7 @@ import { formatDate } from "@/lib/utils";
 import { renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
 import { REMINDER_KINDS, isReminderKind } from "@/lib/marketing/whatsapp-reminders";
 import { remindersWords } from "./drawer";
+import { TOGETHER_SKIP_RECIPIENT } from "@/lib/renewals/together-reminder";
 
 /** Rows read per log per drawer open (a subscription gets ~8 reminders a term). */
 export const REMINDER_LOG_MAX = 100;
@@ -87,8 +88,13 @@ export function drawerReminderRows(log: ReminderLog | null | undefined): DrawerR
   if (!log) return [];
   const rows: DrawerReminderRow[] = [];
   for (const e of log.email) {
-    const s = EMAIL_STATUS[e.status] ?? { text: plain(e.status), reached: false };
-    const to = e.recipient_email && e.recipient_email !== "(missing)" ? e.recipient_email : null;
+    /* R-2852: a member of a renewal quote billed together — its step went in the lead subscription's
+       reminder, it is NOT a missing contact. Not counted here (the lead's row counts it). */
+    const together = e.status === "skipped" && e.recipient_email === TOGETHER_SKIP_RECIPIENT;
+    const s = together
+      ? { text: "Not sent on its own — billed together; the quote's reminder went with the other subscription", reached: false }
+      : EMAIL_STATUS[e.status] ?? { text: plain(e.status), reached: false };
+    const to = e.recipient_email && e.recipient_email !== "(missing)" && !together ? e.recipient_email : null;
     rows.push({ id: `email:${e.id}`, at: e.sent_at, when: formatDate(e.sent_at), channel: "Email", what: stepWords(e.cadence_step), to, status: s.text, reached: s.reached });
   }
   for (const w of log.whatsapp) {

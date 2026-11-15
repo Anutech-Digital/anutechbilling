@@ -127,3 +127,13 @@ describe("R-2852 readTogetherQuotes", () => {
     await expect(readTogetherQuotes(client, ["Q-T1"])).rejects.toThrow(/renewal_quote_subscriptions: timeout/);
   });
 });
+
+describe("R-2852 pastGraceToday (who may lead)", () => {
+  it("past renewal + grace → cannot lead; before renewal → can", async () => {
+    const { pastGraceToday } = await import("./together-reminder");
+    const iso = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
+    expect(pastGraceToday({ renewalDate: iso(-30), graceDays: 7, renewalState: "grace_period", termMonths: 12 })).toBe(true);
+    expect(pastGraceToday({ renewalDate: iso(10), graceDays: 7, renewalState: "pending", termMonths: 12 })).toBe(false);
+    expect(pastGraceToday({ renewalDate: iso(-2), graceDays: 7, renewalState: "final_sent", termMonths: 12 })).toBe(false);
+  });
+});
