@@ -159,6 +159,8 @@ test.describe("R-2839 card test", () => {
     const card = page.getByTestId("renewals-cards").locator("li", { hasText: PLAN });
     const btn = card.getByRole("button", { name: /^History/ });
     await expect(btn).toBeVisible({ timeout: 90_000 });
+    /* R-2842: which tab it opens depends on the row having a payment — wait for the Last paid line */
+    await expect(card.getByText("Last paid").first()).toBeVisible({ timeout: 90_000 });
     await btn.click();
     /* R-2842: this card has a payment, so the card's one History button opens the drawer on the Payments tab */
     const drawer = page.getByTestId("renewal-drawer");

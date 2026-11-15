@@ -45,7 +45,7 @@ function seed(): void {
     insert into public.quotes (id, tenant_id, customer_id, customer_name, status, payment_status, created_date, amount, subtotal, tax_rate, line_items)
       values ('Q-CT2842-A', ${T}, '${CUST}', '${NAME}', 'accepted', 'partial', public.ist_today() - 360, 20000, 16949, 18, ${line});
     insert into public.invoices (id, tenant_id, customer_id, customer_name, quote_id, status, amount, tax_amount, paid_amount, invoice_date, due_date)
-      values ('INV-CT2842-A', ${T}, '${CUST}', '${NAME}', 'Q-CT2842-A', 'partial', 10000, 1525, 4000, public.ist_today() - 355, public.ist_today() - 340)
+      values ('INV-CT2842-A', ${T}, '${CUST}', '${NAME}', 'Q-CT2842-A', 'pending', 10000, 1525, 4000, public.ist_today() - 355, public.ist_today() - 340);
     update public.quotes set invoice_id = 'INV-CT2842-A' where id = 'Q-CT2842-A' and tenant_id = ${T};
     update public.subscriptions set quote_id = 'Q-CT2842-A' where id = '${SUB}' and tenant_id = ${T};
     insert into public.payments (id, tenant_id, quote_id, customer_id, amount, method, reference, status, received_at, notes)
