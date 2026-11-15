@@ -9,8 +9,9 @@
  *   Due              date / "in 6d" · "today" · "6d ago" (grey — the chip says Overdue / Due in)
  *   Amount           the renewal amount / + GST | incl. GST
  *   Status           ONE stage chip (R-2758) + flag icons; its note is the tooltip
- *   Last bill        the newest invoice's state (never cut) / its number · period (+N earlier) /
- *                    R-2840: the last payment "Paid ₹40,000 · 2 Oct" or "No payment yet" (a 3rd line)
+ *   Last bill        the newest invoice's state (never cut) / its number · period /
+ *                    R-2840: the last payment "Paid ₹40,000 · 2 Oct" or "No payment yet" (a 3rd line) /
+ *                    R-2839: "History" (opens the drawer on History; replaced "+N earlier")
  *   Action           ONE button + ⋯ (RenewalActions)
  *
  * Every cell is min-w-0; ids, names and periods may truncate (the full text is the tooltip) —
@@ -240,7 +241,8 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
   if (!invoice) return <><QuoteInstead quote={docs?.quote ?? null} canQuotes={canQuotes} todayIst={todayIst} gapLine={gapSpan} />{paidLine}</>;
   const state = invoiceStatusWords(invoice, todayIst);
   const total = invoiceTotalWords(invoice);
-  const more = earlier.length ? ` · +${earlier.length} earlier` : "";
+  /* R-2839: "+N earlier" is gone — the row's History button (under this cell) opens every document; the earlier
+     invoices stay in this cell's tooltip */
   const note = rowQuoteNote(docs, stage);
   const noteState = note ? quoteStateLabel(note, todayIst) : "";
   const title = [
@@ -256,7 +258,7 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
         {canInvoices
           ? <Link href={invoiceHref(invoice.id) as never} className="font-mono underline underline-offset-2 hover:text-ink">{invoice.id}</Link>
           : <span className="font-mono">{invoice.id}</span>}
-        {gapSpan ?? <>{invoice.period ? ` · ${invoice.period}` : ""}{more}</>}
+        {gapSpan ?? (invoice.period ? ` · ${invoice.period}` : "")}
       </p>
       {paidLine}
       {/* R-2841: a newer quote the chip does not name (e.g. accepted add-seats, not invoiced) — muted, linked.
@@ -346,6 +348,20 @@ export function LastPaidRowLine({ paid, docs, loading, failed, todayIst }: {
   const f = lastPaidRowFacts({ paid, docs, todayIst });
   return (
     <p className={cn("mt-0.5 break-words text-2xs tabular-nums", f.kind === "paid" ? "text-ink-2" : "text-ink-3")} data-testid="renewal-row-last-paid" title={f.title}>{f.text}</p>
+  );
+}
+
+/**
+ * R-2839 (history audit H4): the row's "History" text button — the same drawer as the product name, opened
+ * on its History section (?view=history). Table: under the Last bill cell; cards: under the last-docs lines.
+ * A native button, so Enter / Space work; the accessible name starts with the visible word.
+ */
+export function HistoryButton({ onOpen, name, className }: { onOpen: () => void; name: string; className?: string }) {
+  return (
+    <button type="button" onClick={onOpen} data-testid="renewal-open-history" aria-label={`History — ${name}`}
+      className={cn("mt-0.5 rounded-sm text-2xs font-medium text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber", className)}>
+      History
+    </button>
   );
 }
 

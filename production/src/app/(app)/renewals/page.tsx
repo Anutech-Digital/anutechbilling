@@ -110,8 +110,9 @@ import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/c
 import { type RenewalStage, type StageKey } from "@/lib/renewals/stage";
 import { StageFlagIcon } from "./stage-flag";
 import { dueCellFacts } from "./due-anchor";
-import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, LastPaidRowLine, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
+import { CustomerCell, ProductCell, DueCell, HistoryButton, LastInvoiceCell, LastPaidRowLine, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
+import type { DrawerView } from "./drawer";
 import { BillTogetherGroups, togetherHint, useBillTogether } from "@/components/features/renewals/bill-together";
 import { BILL_TOGETHER, useBillTogetherProbe } from "@/components/features/renewals/bill-together-dialog";
 import { canOfferBillTogether } from "@/lib/renewals/bill-together";
@@ -324,8 +325,9 @@ interface RenewalQueueProps {
   lastPaid: { data: Map<string, LastPaid> | undefined; loading: boolean; failed: boolean };
   /** R-2728: the last-docs read's state (the rows carry their own `docs`). */
   docsState: { loading: boolean; failed: boolean };
-  /** R-2740: open the row drawer — from the product name, a real button (no mouse-only row click, R-1658). */
-  onOpen: (subId: string) => void;
+  /** R-2740 / R-2839: open the row drawer — the product name plain (a real button, no mouse-only row click, R-1658),
+      the History button with view "history". */
+  onOpen: (subId: string, view?: DrawerView) => void;
   /** R-2808: billed together last cycle → the row's "Bills with <other plan>" (opens Bill together); null = none. */
   togetherOf?: (subId: string) => { text: string; title?: string; onClick: () => void } | null;
 }
@@ -479,6 +481,8 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   Renew anyway (grace over) is in the row's ⋯. */}
               {/* R-2232: "Renewal quote Q-x not sent yet" — never a second Generate. R-2728: last quote / invoice. */}
               {docsFor(item, action, "mb-2 text-xs")}
+              {/* R-2839: History — the row drawer on its History section */}
+              <HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} className="mb-2 block" />
 
               <div className="pt-2 border-t border-hairline/60">
                 <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
@@ -546,6 +550,8 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                     {/* R-2840: Last bill = invoice line(s) → the last payment (same Last paid read as the cards) → R-2841 quote note */}
                     <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} stage={stage}
                       paidLine={<LastPaidRowLine paid={paid} docs={item.docs} loading={lastPaid.loading || docsState.loading} failed={lastPaid.failed || (!paid && docsState.failed)} todayIst={todayIst} />} />
+                    {/* R-2839: History (replaced "+N earlier") — the row drawer on its History section */}
+                    <HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
@@ -629,7 +635,7 @@ export default function RenewalsPage() {
   const [fuFilters, setFuFilters] = React.useState<FollowupFilters>(NO_FOLLOWUP_FILTERS);
   const [followupFor, setFollowupFor] = React.useState<QueueItem | null>(null);
   /* R-2740: the row drawer — ?sub=<id> (shareable, Back closes it). */
-  const [drawerSub, openDrawer, closeDrawer] = useRenewalDrawerSub();
+  const [drawerSub, openDrawer, closeDrawer, drawerView] = useRenewalDrawerSub();
   const [assignOpen, setAssignOpen] = React.useState(false);
   const [assigning, setAssigning] = React.useState(false);
   const canReassign = mayReassignFollowup(me?.role);
@@ -1233,6 +1239,7 @@ export default function RenewalsPage() {
           <RenewalDrawer
             item={drawerItem && { ...drawerItem, contact: drawerItem.sub.customer_id ? contacts?.get(drawerItem.sub.customer_id) : undefined }}
             open={!!drawerSub}
+            view={drawerView}
             onClose={closeDrawer}
             names={names}
             followupRows={fuData?.rows ?? []}
