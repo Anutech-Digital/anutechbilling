@@ -49,6 +49,7 @@ import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
+import { canRecordMoney } from "@/lib/auth/roles";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { Input } from "@/components/ui/input";
@@ -683,12 +684,15 @@ export default function RenewalsPage() {
     return { mine: c({ mine: true }), due: c({ followUpDue: true }), broken: c({ promiseBroken: true }) };
   }, [built, me?.userId]);
   /* R-2808 Bill together: only once R-2807's route answers (404 before it lands → nothing shows). */
-  /* R-2832 F6: "pending" keeps the groups box in place (nothing pressable) so it does not pop in and shift the table */
   const togetherProbe = useBillTogetherProbe(!!built?.allItems.some((i) => i.stage?.split));
   const togetherOn = togetherProbe === "on";
+  /* R-2832 F6: while the check is out the groups box already holds its place (nothing pressable), so it does not
+     pop in and push the table down — only for the money roles the route allows (others get 403 → never shown) */
+  const togetherPending = togetherProbe === "pending" && !!me?.role && canRecordMoney(me.role);
+  const togetherVisible = togetherOn || togetherPending;
   const billTogether = useBillTogether({ canQuotes: canOpenQuotes(me?.role) });
   /* the groups + hints, once per data change (R-2764) — not on every tick / keystroke */
-  const togetherIdx = React.useMemo(() => (togetherProbe !== "off" && built ? togetherIndex(built.allItems) : null), [togetherProbe, built]);
+  const togetherIdx = React.useMemo(() => (togetherVisible && built ? togetherIndex(built.allItems) : null), [togetherVisible, built]);
   /* the group subscriptions the user unticked (every group starts all ticked — Pardeep 14 Nov) */
   const [togetherOff, setTogetherOff] = React.useState<Set<string>>(() => new Set());
   const toggleTogether = (id: string, on: boolean) => setTogetherOff((o) => {
@@ -1205,7 +1209,7 @@ export default function RenewalsPage() {
         <div className="border-t border-hairline">
           {togetherIdx && (
             <BillTogetherGroups groups={togetherGroups} onBill={billTogether.open} subOf={(id) => togetherIdx.subOf.get(id)}
-              off={togetherOff} onToggle={toggleTogether} pending={togetherProbe === "pending"} />
+              off={togetherOff} onToggle={toggleTogether} pending={togetherPending} />
           )}
           <RenewalQueue
             key={tile ?? bucketTab}   /* R-2764: a new tab / tile starts at 50 rows again */

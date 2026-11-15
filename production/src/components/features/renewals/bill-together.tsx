@@ -6,7 +6,7 @@
  *    per customer, every subscription ALREADY TICKED (Pardeep 14 Nov: "un subscription ko group me
  *    selected by default dikhao") — "Bill together" is one click; untick one to leave it out.
  *  - useBillTogether: opens the dialog for some subscriptions and makes the ONE proforma (POST).
- * Shown only when the R-2807 route answers (useBillTogetherAvailable) — merged before it lands, it shows nothing.
+ * Shown only when the R-2807 route answers (useBillTogetherProbe) — merged before it lands, it shows nothing.
  */
 import * as React from "react";
 import { useRouter } from "next/navigation";
@@ -18,18 +18,28 @@ import { queryKeys } from "@/lib/queries/keys";
 import { createTogetherProforma, type BillTogetherGroup } from "@/lib/renewals/bill-together";
 import { BILL_TOGETHER, BillTogetherDialog } from "./bill-together-dialog";
 
+interface Target { ids: string[]; customerName: string }
+
 export function useBillTogether({ canQuotes }: { canQuotes: boolean }) {
   const qc = useQueryClient();
   const router = useRouter();
-  const [target, setTarget] = React.useState<{ ids: string[]; customerName: string } | null>(null);
+  const [target, setTarget] = React.useState<Target | null>(null);
   const [busy, setBusy] = React.useState(false);
+  /* the dialog open right now, for a create that finishes later (a toast Retry may finish under another group) */
+  const openNow = React.useRef<Target | null>(null);
+  React.useEffect(() => { openNow.current = target; }, [target]);
   /* R-2832 (rev-r2808 F2): ONE request in flight — a double click or the toast's Retry pressed while a POST
      is still out never sends a second one (state updates too late for a same-tick second click). */
   const inFlight = React.useRef(false);
 
-  /* customerName is passed in (not read from `target`) so the toast's Retry still works after the dialog closed */
-  async function create(ids: string[], customerName: string) {
-    if (inFlight.current) return;
+  /* `from` = the dialog it was asked from, passed in (not read from `target`) so the toast's Retry still works
+     after that dialog closed */
+  async function create(ids: string[], from: Target) {
+    const { customerName } = from;
+    if (inFlight.current) {
+      toast.info("A proforma is still being created — wait for it, then try again.");
+      return;
+    }
     inFlight.current = true;
     setBusy(true);
     try {
@@ -42,11 +52,13 @@ export function useBillTogether({ canQuotes }: { canQuotes: boolean }) {
       toast.success(made.alreadyExisted
         ? `Opening the existing proforma ${made.quoteId} for ${customerName}`
         : `Proforma ${made.quoteId} created for ${ids.length} subscriptions of ${customerName} — not sent yet`, { duration: 6000 });
-      setTarget(null);
+      /* another group's dialog opened meanwhile (a Retry that finished later) stays open — never closed or left */
+      const mine = openNow.current === null || openNow.current === from;
+      if (mine) setTarget(null);
       /* like Bill next part: open it to check and send (roles that can open quotes) */
-      if (canQuotes && made.href) router.push(made.href as never);
+      if (mine && canQuotes && made.href) router.push(made.href as never);
     } catch (err) {
-      toastError(err, { fallback: "Could not create the proforma", action: { label: "Retry", onClick: () => void create(ids, customerName) } });
+      toastError(err, { fallback: "Could not create the proforma", action: { label: "Retry", onClick: () => void create(ids, from) } });
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -56,7 +68,7 @@ export function useBillTogether({ canQuotes }: { canQuotes: boolean }) {
   const dialog = target && (
     <BillTogetherDialog ids={target.ids} customerName={target.customerName} open busy={busy}
       onOpenChange={(v) => { if (!v && !busy) setTarget(null); }}
-      onConfirm={(ids) => void create(ids, target.customerName)} />
+      onConfirm={(ids) => void create(ids, target)} />
   );
   return { open: (ids: string[], customerName: string) => setTarget({ ids, customerName }), dialog };
 }
@@ -86,7 +98,8 @@ export function togetherHint(
   const on = tickedOf(group, off);
   if (on.length >= 2) return { text: hint.text, onClick: () => open(on, group.customerName) };
   const how = `Tick at least two subscriptions of ${group.customerName} in the Bill together box above to bill them on one proforma.`;
-  return { text: `${hint.text} — tick at least two`, title: how, onClick: () => toast.info(how) };
+  /* the instruction first — a long hint is cut at its end (truncate); the plan names stay in the tooltip */
+  return { text: `Tick at least two — ${hint.text.charAt(0).toLowerCase()}${hint.text.slice(1)}`, title: `${hint.text}. ${how}`, onClick: () => toast.info(how) };
 }
 
 /**

@@ -62,13 +62,17 @@ const canJoin = (s: BillTogetherSub) => s.reasons.length === 0 && !!s.line;
 /** Rupees → whole paise (the sum is done in paise so float tails never show — R-2832 F3). */
 const toPaise = (n: number) => Math.round(n * 100);
 
-/** The total of the ticked lines (the route's total covers every joinable line), summed in paise. */
+/**
+ * The total of the ticked lines, worked the way the proforma is (lib/renewals/bill-together-preview.ts total,
+ * the RPC): taxable summed in paise, GST = round(total taxable × rate) on the whole bill (one rate — mixed
+ * rates are refused), gross = taxable + GST. So the figure the user confirms is the proforma's (R-2832 F3).
+ */
 export function tickedTotal(subs: readonly BillTogetherSub[], ticked: ReadonlySet<string>) {
-  const p = subs.reduce((t, s) => {
-    if (!s.line || !ticked.has(s.subscriptionId) || !canJoin(s)) return t;
-    return { taxable: t.taxable + toPaise(s.line.taxable), tax: t.tax + toPaise(s.line.tax), gross: t.gross + toPaise(s.line.gross) };
-  }, { taxable: 0, tax: 0, gross: 0 });
-  return { taxable: p.taxable / 100, tax: p.tax / 100, gross: p.gross / 100 };
+  const lines = subs.filter((s) => s.line && ticked.has(s.subscriptionId) && canJoin(s)).map((s) => s.line!);
+  const taxableP = lines.reduce((t, l) => t + toPaise(l.taxable), 0);
+  const taxable = taxableP / 100;
+  const tax = lines.length > 0 ? Math.round((taxable * lines[0].taxRate) / 100) : 0;
+  return { taxable, tax, gross: (taxableP + toPaise(tax)) / 100 };
 }
 
 export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onConfirm, busy }: {

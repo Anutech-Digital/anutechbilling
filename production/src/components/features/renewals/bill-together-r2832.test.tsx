@@ -44,9 +44,11 @@ const PREVIEW: BillTogetherPreview = {
 };
 
 describe("F3 — the dialog shows paise and sums to the paisa", () => {
-  it("tickedTotal is rounded to paise (no float tail)", () => {
-    const t = tickedTotal([sub("x", "X", 0.1, 0.02), sub("y", "Y", 0.2, 0.04)], new Set(["x", "y"]));
-    expect(t).toEqual({ taxable: 0.3, tax: 0.06, gross: 0.36 });
+  it("tickedTotal sums taxable in paise (no float tail) and works GST like the proforma: round(total × rate)", () => {
+    const t = tickedTotal([sub("x", "X", 1000.1, 180.02), sub("y", "Y", 1000.2, 180.04)], new Set(["x", "y"]));
+    /* 0.1 + 0.2 in floats is 0.30000000000000004 — paise keep it 2000.30; GST round(2000.30 × 18%) = 360 */
+    expect(t).toEqual({ taxable: 2000.3, tax: 360, gross: 2360.3 });
+    expect(tickedTotal([sub("x", "X", 1000.1, 180.02)], new Set())).toEqual({ taxable: 0, tax: 0, gross: 0 });
   });
 
   it("each line and the total show two decimals", async () => {
@@ -56,7 +58,8 @@ describe("F3 — the dialog shows paise and sums to the paisa", () => {
     expect(lines[0].textContent).toContain("× ₹1,585.10");
     expect(lines[0].textContent).toContain("₹1,585.10 + GST 18% ₹285.32");
     expect(lines[0].textContent).toContain("₹1,870.42");
-    expect(screen.getByTestId("bill-together-total").textContent).toContain("₹2,035.30 + GST ₹366.36 = ₹2,401.66");
+    /* the proforma's own rule: GST round(2,035.30 × 18%) = ₹366 on the whole bill */
+    expect(screen.getByTestId("bill-together-total").textContent).toContain("₹2,035.30 + GST ₹366.00 = ₹2,401.30");
   });
 });
 
@@ -110,6 +113,45 @@ describe("F2 — one in-flight request", () => {
   });
 });
 
+describe("F2 — a Retry that finishes under another group's dialog", () => {
+  it("does not close that dialog or leave the page; its Create shows busy while the Retry is out", async () => {
+    function Two() {
+      const bt = useBillTogether({ canQuotes: true });
+      return <><button type="button" onClick={() => bt.open(["a", "b"], "ITBUZZ Technologies")}>go A</button>
+        <button type="button" onClick={() => bt.open(["c", "d"], "Other Co")}>go B</button>{bt.dialog}</>;
+    }
+    let answer: (r: Response) => void = () => {};
+    let first = true;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method !== "POST") {
+        return Promise.resolve(json(200, url.includes("ids=c") ? { ...PREVIEW, subs: [sub("c", "Plus", 100, 18), sub("d", "Plus 2", 100, 18)] } : PREVIEW));
+      }
+      if (first) { first = false; return Promise.resolve(json(500, { error: "Server busy" })); }
+      return new Promise<Response>((r) => { answer = r; });
+    });
+    wrap(<Two />);
+    fireEvent.click(screen.getByRole("button", { name: "go A" }));
+    await screen.findAllByTestId("bill-together-line");
+    fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    const retry = (toastError.mock.calls[0][1] as { action: { onClick: () => void } }).action.onClick;
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "go B" }));
+    await screen.findByText("Plus 2");
+    act(() => { retry(); });
+    expect(posts()).toHaveLength(2);
+    /* B's Create shows busy (disabled) while A's Retry is out — nothing sent */
+    const createB = screen.getByRole("button", { name: /Create proforma/ }) as HTMLButtonElement;
+    expect(createB.disabled).toBe(true);
+    fireEvent.click(createB);
+    expect(posts()).toHaveLength(2);
+    await act(async () => { answer(json(200, { quoteId: "PI-A", href: "/quotes/PI-A", alreadyExisted: false, subscriptionIds: ["a", "b"] })); });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByText("Plus 2")).toBeTruthy();
+  });
+});
+
 describe("F5 — the row hint under two ticked", () => {
   const G = { customerId: "c-it", customerName: "ITBUZZ Technologies", subIds: ["a", "b"], why: "same-bill" as const };
   it("two ticked → 'Bills with …' opens the dialog with them", () => {
@@ -122,8 +164,8 @@ describe("F5 — the row hint under two ticked", () => {
   it("one unticked → says tick at least two and does not open a near-empty dialog", () => {
     const open = vi.fn();
     const h = togetherHint({ group: G, text: "Bills with Business Starter" }, new Set(["b"]), open);
-    expect(h.text).toBe("Bills with Business Starter — tick at least two");
-    expect(h.title).toMatch(/Tick at least two/);
+    expect(h.text).toBe("Tick at least two — bills with Business Starter");
+    expect(h.title).toMatch(/^Bills with Business Starter\. Tick at least two/);
     h.onClick();
     expect(open).not.toHaveBeenCalled();
     expect(toastInfo).toHaveBeenCalledWith(expect.stringMatching(/Tick at least two subscriptions of ITBUZZ Technologies in the Bill together box/));
@@ -135,6 +177,8 @@ describe("F6 — probe: retry on error, keep the box's space", () => {
     const f = (status: number) => (async () => new Response("x", { status })) as unknown as typeof fetch;
     await expect(billTogetherAvailable(f(500))).rejects.toThrow(/500/);
     await expect(billTogetherAvailable(f(503))).rejects.toThrow();
+    await expect(billTogetherAvailable(f(429))).rejects.toThrow(/429/);
+    await expect(billTogetherAvailable(f(408))).rejects.toThrow();
     await expect(billTogetherAvailable(f(404))).resolves.toBe(false);
     await expect(billTogetherAvailable(f(403))).resolves.toBe(false);
     await expect(billTogetherAvailable(f(400))).resolves.toBe(true);

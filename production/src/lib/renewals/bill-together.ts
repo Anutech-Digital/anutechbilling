@@ -95,12 +95,14 @@ async function readJson(res: Response): Promise<unknown> {
 
 /**
  * Is the route deployed (and may this login use it)? 404 / 401 / 403 → false: the screen shows no Bill together.
- * R-2832 (rev-r2808 F6): a 5xx is NOT an answer — it throws, so the probe retries instead of caching "no"
- * for its 10-minute stale time.
+ * R-2832 (rev-r2808 F6): a 5xx or a "try later" (408 / 425 / 429) is NOT an answer — it throws, so the probe
+ * retries instead of caching "no" for its 10-minute stale time.
  */
 export async function billTogetherAvailable(fetcher: typeof fetch = fetch): Promise<boolean> {
   const res = await fetcher(BILL_TOGETHER_PATH, { method: "GET" });
-  if (res.status >= 500) throw new Error(`Bill together check failed (${res.status})`);
+  if (res.status >= 500 || res.status === 408 || res.status === 425 || res.status === 429) {
+    throw new Error(`Bill together check failed (${res.status})`);
+  }
   return res.ok || res.status === 400;
 }
 
