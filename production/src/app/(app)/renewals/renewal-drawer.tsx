@@ -41,6 +41,7 @@ import {
 import { priorDueInvoiceGap, type DocTone, type LastDocs } from "./last-docs";
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { nextTermWords, subscriptionDomain } from "./row-cells";
+import { dueCellFacts } from "./due-anchor";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
 import type { RowContact } from "./queue-data";
@@ -244,7 +245,8 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                     ? <Badge kind={item.stage.tone} dot className="whitespace-normal text-left">{item.stage.label}</Badge>
                     : <Skeleton className="h-5 w-24" aria-label="Loading status" />}
                   {item.stage?.note && <p className="mt-1 text-xs text-ink-3">{item.stage.note}</p>}
-                  <p className="mt-1 text-xs text-ink-3 tabular-nums">Renews {sub.renewal_date ? formatDate(sub.renewal_date) : "— no date"}</p>
+                  {/* R-2834: the row's Due answer (R-2817 anchor) — "Part due 1 Oct 2026 · renews 31 Oct 2026" when a part fell due first. */}
+                  <p className="mt-1 text-xs text-ink-3 tabular-nums" data-testid="renewal-drawer-renews">{dueCellFacts(item.stage, sub, item.daysUntil).title ?? "Renews — no date"}</p>
                 </div>
                 <div className="shrink-0">
                   <RenewalActions sub={sub} daysUntil={item.daysUntil} layout="card" strong={strong} onFollowup={onFollowup} messaging stage={item.stage} payHref={item.payHref} />

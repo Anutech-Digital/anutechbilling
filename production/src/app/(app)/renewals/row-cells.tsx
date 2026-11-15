@@ -190,13 +190,14 @@ export function quoteExpiryShort(expiresDate: string | null | undefined, todayIs
   return { text: d > 0 ? `exp. in ${d}d` : d === 0 ? "exp. today" : "expired", title };
 }
 
-/** `note`: replaces the "in 6d" line (a sent quote's validity — the chip already says the day count). */
-export function DueCell({ date, days, note }: { date: string | null; days: number | null; note?: { text: string; title: string } | null }) {
+/** `note`: replaces the "in 6d" line (a sent quote's validity — the chip already says the day count).
+ *  `title`: due-anchor.ts dueCellFacts' two-date words — the hover on the date and day count (R-2834). */
+export function DueCell({ date, days, note, title }: { date: string | null; days: number | null; note?: { text: string; title: string } | null; title?: string | null }) {
   const sub = note ? note.text : dueSubWords(days);
   return (
-    <div className="min-w-0 tabular-nums" data-cell="due">
+    <div className="min-w-0 tabular-nums" data-cell="due" title={title ?? undefined}>
       {/* "26 Nov 26" — the 88px column (measured: "26 Nov 2026" spilled at 1280); the full date is the tooltip */}
-      <p className="whitespace-nowrap text-ink" title={date ? formatDate(date) : undefined}>{date ? shortDate(date.slice(0, 10)) : "—"}</p>
+      <p className="whitespace-nowrap text-ink" title={title ? undefined : date ? formatDate(date) : undefined}>{date ? shortDate(date.slice(0, 10)) : "—"}</p>
       {sub && <p className="mt-0.5 whitespace-nowrap text-2xs text-ink-3" title={note?.title} data-testid={note ? "due-quote-expiry" : undefined}>{sub}</p>}
     </div>
   );
