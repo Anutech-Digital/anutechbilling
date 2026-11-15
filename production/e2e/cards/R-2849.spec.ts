@@ -36,10 +36,12 @@ const renewalQuotes = `(select q.id from public.quotes q where q.tenant_id = ${T
     or q.id in (select l.quote_id from public.renewal_quote_subscriptions l where l.subscription_id in ${SUBS})))`;
 
 function clean(): void {
+  /* the renewal quotes are found through the links — note them BEFORE the links are cleared */
   db().psql(`begin;
+    create temp table ct2849_q on commit drop as ${renewalQuotes.slice(1, -1)};
     update public.subscriptions set renewal_quote_id = null where id in ${SUBS} and tenant_id = ${T};
     delete from public.renewal_quote_subscriptions where subscription_id in ${SUBS} and tenant_id = ${T};
-    delete from public.quotes where id in ${renewalQuotes};
+    delete from public.quotes where id in (select id from ct2849_q) and tenant_id = ${T};
     delete from public.subscriptions where id in ${SUBS} and tenant_id = ${T};
     delete from public.quotes where id = '${SALE}' and tenant_id = ${T};
     delete from public.customers where id = '${CUST}' and tenant_id = ${T};
