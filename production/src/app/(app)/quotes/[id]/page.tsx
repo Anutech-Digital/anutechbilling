@@ -24,7 +24,7 @@ import { CustomerStoppedDialog } from "./customer-stopped-dialog";
 import { CancelQuoteDialog } from "./cancel-quote-dialog";
 import { proformaShownState, cancelQuoteAction } from "@/lib/billing/proforma";
 import { usePartDueOn } from "@/lib/billing/use-part-due";
-import { showCustomerStopped, isPartRequest, partRequestSteps, partRequestOpenLine, PART_REQUEST_BADGE } from "@/lib/billing/part-requests";
+import { showCustomerStopped, isPartRequest, partRequestSteps, partRequestOpenLine, PART_REQUEST_BADGE, partAdvanceOf } from "@/lib/billing/part-requests";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice, useDocumentSeries } from "@/lib/queries/invoices";
@@ -948,9 +948,10 @@ export default function QuoteDetailPage() {
   const shownStatus = shownQuoteStatus(quote);
   /* R-2326: while the quote waits for sign-off the header says the list's "Needs approval", not "Sent". */
   /* R-2519: Cancelled (any quote); a proforma never emailed reads "Ready to send", past its pay-by
-     date unpaid "Expired" — instead of the stored "Sent" (Q-A378-27-0947 said Sent, nothing went). */
+     date unpaid "Expired" — instead of the stored "Sent" (Q-A378-27-0947 said Sent, nothing went).
+     R-2846: that state reads "Pay-by date passed — still payable"; a request is never "Expired". */
   const proformaState = proformaShownState({
-    isPartRequest: partRequest, status: quote.status,
+    isPartRequest: partRequest, status: quote.status, validityEnded: shownStatus === "expired",
     cancelledAt: (quote as { cancelled_at?: string | null }).cancelled_at,
     invoiceId: quote.invoice_id, paymentStatus: quote.payment_status,
     mailed: proformaMailed,
@@ -2405,6 +2406,13 @@ export default function QuoteDetailPage() {
         }}
         quoteId={quote.id}
         customerName={quote.customer_name}
+        /* R-2846: a part payment request is the ADVANCE for its month / period — the sheet says
+           so (and that the tax invoice is raised on confirm). Part = the header stamp's part. */
+        partAdvance={partRequest && !quote.invoice_id ? partAdvanceOf({
+          lines: items as readonly { name?: string | null; description?: string | null; period_start?: string | null; period_end?: string | null }[],
+          partShort: kindStamp?.partShort,
+          subscription: [forSub?.plan?.trim(), forSub?.domain?.trim()].filter(Boolean).join(" · ") || null,
+        }) : null}
         expectedAmount={total}
         alreadyReceived={totalReceivedSoFar}
         isProspect={!!quote.lead_id && !quote.customer_id}
