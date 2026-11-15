@@ -74,7 +74,7 @@ describe("R-2849 yearly Bill together dialog", () => {
     expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({
       ids: ["std", "sta"], periods: [{ subscriptionId: "std", periodStart: "2026-10-31" }, { subscriptionId: "sta", periodStart: "2026-11-15" }],
     });
-    expect(toastSuccess.mock.calls[0][0]).toBe("Renewal quote Q-F588-27-0200 created for 2 subscriptions of ITBUZZ Technologies — not sent yet");
+    expect(toastSuccess.mock.calls[0][0]).toBe("Renewal quote Q-F588-27-0200 created for 2 subscriptions of ITBUZZ Technologies — not emailed yet");
   });
 
   it("a refused yearly line (e.g. mixed with parts) stays unticked with its reason; under two Create is off", async () => {
@@ -92,7 +92,7 @@ describe("R-2849 yearly Bill together dialog", () => {
 describe("R-2849 words", () => {
   it("togetherDone: renewal_quote → 'Renewal quote … created' / 'Opening the existing renewal quote …'; never an invoice", () => {
     expect(togetherDone({ quoteId: "Q-1", href: "/quotes/Q-1", alreadyExisted: false, subscriptionIds: ["a", "b"], action: "renewal_quote" }, 2, "ITBUZZ"))
-      .toEqual({ text: "Renewal quote Q-1 created for 2 subscriptions of ITBUZZ — not sent yet", invoiced: false });
+      .toEqual({ text: "Renewal quote Q-1 created for 2 subscriptions of ITBUZZ — not emailed yet", invoiced: false });
     expect(togetherDone({ quoteId: "Q-1", href: "/quotes/Q-1", alreadyExisted: true, subscriptionIds: ["a", "b"], action: "renewal_quote" }, 2, "ITBUZZ"))
       .toEqual({ text: "Opening the existing renewal quote Q-1 for ITBUZZ", invoiced: false });
   });

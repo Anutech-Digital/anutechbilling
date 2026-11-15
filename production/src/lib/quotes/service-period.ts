@@ -261,17 +261,22 @@ export interface LinePeriod { from: string; to: string; months: number | null }
 /**
  * R-2849 — the term ONE line of a together renewal quote renews (R-2847: each line carries subscription_id +
  * renewal_term_date): that line's own renewal date, and where its next term starts — billing's followingTermStart from
- * that subscription's start + term when known (the rule R-2848's invoice stamp uses), else the start the RPC stored on
- * the line. Null = not a together line (the quote-level renewal_term_date applies, as before).
+ * that subscription's start + term (the rule R-2848's invoice stamp uses). Its subscription not known (not read yet,
+ * read failed) → `unknown`: NO period is printed — the start can be the renewal date or the day after it, and a wrong
+ * date is worse than none (code review R-2849: never the RPC's stored period_start, which assumes the first).
+ * Null = not a together line (the quote-level renewal_term_date applies, as before).
  */
-function togetherLineTerm(line: LinePeriodLine, ctx: LinePeriodContext): { rtd: string; start: string | null } | null {
+function togetherLineTerm(line: LinePeriodLine, ctx: LinePeriodContext): { rtd: string; start: string } | "unknown" | null {
   const rtd = line.subscription_id ? isoDateOf(line.renewal_term_date) : null;
   if (!rtd) return null;
   const sub = ctx.lineSubscriptions?.[line.subscription_id!];
-  if (sub?.start_date) {
-    return { rtd, start: followingTermStart({ term_months: sub.term_months ?? 12, start_date: sub.start_date, renewal_date: rtd }) };
-  }
-  return { rtd, start: isoDateOf(line.period_start) };
+  if (!sub?.start_date) return "unknown";
+  return { rtd, start: followingTermStart({ term_months: sub.term_months ?? 12, start_date: sub.start_date, renewal_date: rtd }) };
+}
+
+/** R-2849: a together renewal line (it names its own subscription + term). */
+function isTogetherLine(line: LinePeriodLine): boolean {
+  return !!line.subscription_id && !!isoDateOf(line.renewal_term_date);
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -335,6 +340,7 @@ export function lineServicePeriod(line: LinePeriodLine, ctx: LinePeriodContext):
   if (ctx.isRenewal === true || ctx.isExtension === true) {
     /* R-2849: a together renewal quote has no quote-level renewal_term_date — each line names its own term. */
     const own = togetherLineTerm(line, ctx);
+    if (own === "unknown") return null;
     const rtd = own ? own.rtd : isoDateOf(ctx.renewalTermDate);
     const m = ctx.extensionMonths;
     if (!rtd || !validMonths(m)) return null;
@@ -382,9 +388,11 @@ export function linePeriodText(line: LinePeriodLine, ctx: LinePeriodContext): st
 export function lineDomainText(line: LinePeriodLine, ctx: LinePeriodContext): string | null {
   if (!isTermLine(line)) return null;
   if (line.bulk && (line.domains?.length ?? 0) > 0) return null;
-  /* R-2849: a together renewal line's own subscription's domain before the quote's (the first subscription's) */
+  /* R-2849: a together renewal line prints ITS subscription's domain only — never the quote's (the first
+     subscription's), which another line does not cover */
   const lineSub = line.subscription_id ? ctx.lineSubscriptions?.[line.subscription_id] : undefined;
-  const d = ((line.domain ?? "").trim() || (lineSub?.domain ?? "").trim() || (ctx.domain ?? "").trim()).toLowerCase();
+  const fallback = isTogetherLine(line) ? "" : (ctx.domain ?? "").trim();
+  const d = ((line.domain ?? "").trim() || (lineSub?.domain ?? "").trim() || fallback).toLowerCase();
   if (!d) return null;
   // The name or detail already says it (lineDomainNote's rule): once is enough.
   if (`${line.name ?? ""} ${line.description ?? ""}`.toLowerCase().includes(d)) return null;
@@ -451,13 +459,13 @@ export interface RenewedSubscriptionFacts {
 }
 
 /** R-2849: a together renewal quote's line subscriptions from a list of the customer's subscriptions (the client
- *  hook) — the subscriptions its lines name. Null when no line names one. */
+ *  hook) — the subscriptions its lines name. Null when no line names one, or the list is not loaded yet. */
 export function togetherLineSubscriptions<S extends { id: string } & RenewedSubscriptionFacts>(
   lines: ReadonlyArray<{ subscription_id?: unknown }> | null | undefined,
   subs: ReadonlyArray<S> | null | undefined,
 ): Record<string, RenewedSubscriptionFacts> | null {
   const ids = new Set((lines ?? []).map((l) => (typeof l?.subscription_id === "string" ? l.subscription_id : "")).filter(Boolean));
-  if (ids.size === 0) return null;
+  if (ids.size === 0 || !subs) return null;
   const out: Record<string, RenewedSubscriptionFacts> = {};
   for (const s of subs ?? []) if (ids.has(s.id)) out[s.id] = { domain: s.domain ?? null, start_date: s.start_date ?? null, term_months: s.term_months ?? null };
   return out;

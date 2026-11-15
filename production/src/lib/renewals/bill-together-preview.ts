@@ -164,7 +164,7 @@ function renewalReasons(f: TogetherFact, firstCustomer: { id: string | null; nam
     const withText = on.withPlans.length > 0 ? ` with ${on.withPlans.join(", ")}` : "";
     out.push(reason("already_together", `Its renewal is already on renewal quote ${on.quoteId}${withText} — open that quote (cancel it to make a new one).`));
   } else if (s.renewal_quote_id && f.renewal?.linked?.live !== false) {
-    out.push(reason("open_renewal_quote", `Renewal quote ${s.renewal_quote_id} is still open for it — cancel it first, then renew together.`));
+    out.push(reason("open_renewal_quote", `Renewal quote ${s.renewal_quote_id} is still open (or has money received on it) for it — cancel it, or record the rest of the payment on it, first; then renew together.`));
   }
   if (f.renewal?.settled) out.push(reason("not_billable", f.renewal.settled));
   if (out.length === 0 && notReady) out.push(reason("not_billable", notReady));

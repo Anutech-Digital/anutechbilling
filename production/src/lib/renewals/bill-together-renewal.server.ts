@@ -60,7 +60,7 @@ export function renewalLineOf(priced: PricedRenewal, period: { start: string; en
   };
 }
 
-interface LinkedQuote { id: string; status: string | null; cancelled_at: string | null; superseded_by: string | null }
+interface LinkedQuote { id: string; status: string | null; cancelled_at: string | null; superseded_by: string | null; payment_status: string | null }
 
 /** Each asked subscription's renewal_quote_id → is that quote still open, and which subscriptions it renews together. */
 async function readLinkedRenewals(db: SupabaseClient, tenantId: string, subs: readonly TogetherSubRow[]):
@@ -69,7 +69,7 @@ async function readLinkedRenewals(db: SupabaseClient, tenantId: string, subs: re
   const quoteIds = [...new Set(subs.map((s) => s.renewal_quote_id).filter((q): q is string => !!q))];
   if (quoteIds.length === 0) return out;
   const [{ data: qs, error: qErr }, { data: links, error: lErr }] = await Promise.all([
-    db.from("quotes").select("id, status, cancelled_at, superseded_by").eq("tenant_id", tenantId).in("id", quoteIds),
+    db.from("quotes").select("id, status, cancelled_at, superseded_by, payment_status").eq("tenant_id", tenantId).in("id", quoteIds),
     db.from("renewal_quote_subscriptions").select("quote_id, subscription_id").eq("tenant_id", tenantId).in("quote_id", quoteIds).is("released_at", null),
   ]);
   if (qErr) throw new Error(qErr.message);
@@ -90,8 +90,11 @@ async function readLinkedRenewals(db: SupabaseClient, tenantId: string, subs: re
   for (const s of subs) {
     if (!s.renewal_quote_id) continue;
     const q = quoteOf.get(s.renewal_quote_id);
-    /* not readable = treated as open (the RPC decides; never offered as free on an unknown) */
-    const live = !q || (q.cancelled_at == null && q.superseded_by == null && !["rejected", "expired"].includes(q.status ?? ""));
+    /* r2847_quote_live's rule: open, OR closed with money received on it (held — refund or finish it first). Not
+       readable = treated as open (the RPC decides; never offered as free on an unknown). */
+    const open = !q || (q.cancelled_at == null && q.superseded_by == null && !["rejected", "expired"].includes(q.status ?? ""));
+    const moneyOn = !!q && ["partial", "received"].includes(q.payment_status ?? "");
+    const live = open || moneyOn;
     const ids = members.get(s.renewal_quote_id) ?? [];
     out.set(s.id, {
       quoteId: s.renewal_quote_id, live, subscriptionIds: ids,

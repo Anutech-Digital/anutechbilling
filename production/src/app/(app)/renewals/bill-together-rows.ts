@@ -14,12 +14,21 @@ type Row = Pick<QueueItem, "sub" | "stage" | "docs">;
  * A part is to bill NOW: "Part not billed" (part-due), or "due" with the next part inside the Bill next
  * part window (the row's own button, stage.ts) — never a part months away (code review R-2808).
  */
-function billableNow(stage: Row["stage"], termMonths: number | null | undefined): boolean {
+/**
+ * R-2849: how far ahead a yearly row is offered for one renewal quote — 30 days BEFORE its first reminder (cadence.ts,
+ * when the renewals cron makes and sends each subscription's own renewal quote): once a single quote exists the row is
+ * no longer offered (cancel it first), so the together quote has to be possible before that (code review R-2849).
+ */
+export const YEARLY_TOGETHER_LEAD_DAYS = 30;
+
+function billableNow(stage: Row["stage"], sub: Row["sub"]): boolean {
   if (!stage) return false;
   if (!stage.split) {
-    /* R-2849: a yearly row whose renewal is due (no renewal quote made yet — not even a draft) and inside its first
-       reminder window (the renewal quote's own time, cadence.ts) — or past it. Never a renewal months away. */
-    return stage.key === "due" && !stage.quoteId && stage.renewalDays != null && stage.renewalDays <= firstReminderDaysOut(termMonths);
+    /* R-2849: a one-year yearly row (create_renewal_quote_together's rule — never a 24/36-month term) whose renewal is
+       due with no renewal quote made yet (not even a draft), from 30 days before its first reminder — or past it. */
+    const oneYear = sub.billing_cycle === "yearly" && (sub.term_months ?? 12) === 12;
+    return oneYear && stage.key === "due" && !stage.quoteId && stage.renewalDays != null
+      && stage.renewalDays <= firstReminderDaysOut(sub.term_months) + YEARLY_TOGETHER_LEAD_DAYS;
   }
   if (stage.key === "part-due") return true;
   return stage.key === "due" && stage.partDays != null && stage.partDays <= BILL_PART_WINDOW_DAYS;
@@ -35,7 +44,7 @@ export function togetherRowOf(item: Row): BillTogetherRow {
     seats: sub.seats ?? null,
     domain: subscriptionDomain(sub),
     split: !!stage?.split,
-    billable: billableNow(stage, sub.term_months),
+    billable: billableNow(stage, sub),
     billingCycle: (sub.billing_cycle as string | null | undefined) ?? null,
     nextPartStart: sub.renewal_date ?? null,
     lastQuoteId: docs?.quote?.id ?? null,

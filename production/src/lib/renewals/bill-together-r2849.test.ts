@@ -91,7 +91,7 @@ describe("R-2849 yearly preview", () => {
 
   it("R-2849 open quote: a single renewal quote still open → open_renewal_quote naming it; a closed (dead) link is no reason", () => {
     const open = buildTogetherPreview([yearly(STD), yearly(STA, { renewal_quote_id: "Q-7", renewal: { linked: { quoteId: "Q-7", live: true, subscriptionIds: [], withPlans: [] } } })], TODAY);
-    expect(reasonsOf(open, STA)).toEqual([{ code: "open_renewal_quote", text: "Renewal quote Q-7 is still open for it — cancel it first, then renew together." }]);
+    expect(reasonsOf(open, STA)).toEqual([{ code: "open_renewal_quote", text: "Renewal quote Q-7 is still open (or has money received on it) for it — cancel it, or record the rest of the payment on it, first; then renew together." }]);
     const dead = buildTogetherPreview([yearly(STD), yearly(STA, { renewal_quote_id: "Q-7", renewal: { linked: { quoteId: "Q-7", live: false, subscriptionIds: [], withPlans: [] } } })], TODAY);
     expect(reasonsOf(dead, STA)).toEqual([]);
   });

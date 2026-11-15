@@ -79,9 +79,11 @@ export const GET = withRoute({ route: "api/renewals/bill-together#preview", role
       /* R-2849: yearly — each one's next term, priced as its own renewal quote would be; a server that cannot make a
          together renewal quote yet says so on every line (nothing can be pressed). */
       const ready = await renewalTogetherReady(db, tenantId);
+      /* not ready → nothing is priced (every line says so) */
+      if (!ready.ok) return NextResponse.json(buildTogetherPreview(read, istToday(), { renewalNotReady: ready.error }));
       const admin = createAdminClientFor(user.id) as unknown as SupabaseClient;
       const facts = await fillRenewalLines(db, admin, tenantId, read);
-      return NextResponse.json(buildTogetherPreview(facts, istToday(), { renewalNotReady: ready.ok ? null : ready.error }));
+      return NextResponse.json(buildTogetherPreview(facts, istToday()));
     }
     const facts = await fillNextParts(db, read, tenantId);
     return NextResponse.json(buildTogetherPreview(facts, istToday()));

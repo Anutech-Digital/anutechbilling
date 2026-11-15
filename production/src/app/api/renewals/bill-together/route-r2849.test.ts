@@ -115,6 +115,7 @@ describe("R-2849 GET yearly", () => {
     st.ready = { ok: false, status: 503, error: "One renewal quote for several yearly subscriptions is not ready on this server yet — x" };
     const p = await (await get(`?ids=${A},${B}`)).json();
     expect(p.subs.every((s: { line: unknown; reasons: Array<{ text: string }> }) => !s.line && /not ready on this server/.test(s.reasons[0].text))).toBe(true);
+    expect(st.fillCalls, "nothing priced when not ready").toHaveLength(0);
   });
 
   it("split first → the parts path as before (no renewal pricing)", async () => {

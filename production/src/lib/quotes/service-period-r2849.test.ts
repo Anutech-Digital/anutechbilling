@@ -25,10 +25,17 @@ describe("R-2849 together lines", () => {
     expect(lineSubscriptionNotes(lineSta, ctx)).toEqual(["Domain: itbuzz.co", "Subscription period: 1 Year (16/11/2026 – 15/11/2027)"]);
   });
 
-  it("subscriptions not read → the line's own stored start (what the RPC wrote) — never no period, never the other line's", () => {
-    const ctx = quoteLinePeriodContext(quote, null);
-    expect(linePeriodText(lineStd, ctx)).toBe("Subscription period: 1 Year (31/10/2026 – 30/10/2027)");
-    expect(linePeriodText(lineSta, ctx)).toBe("Subscription period: 1 Year (15/11/2026 – 14/11/2027)");
+  it("subscriptions not read (loading / failed) → NO period and no other line's domain — never a guessed date", () => {
+    const ctx = quoteLinePeriodContext({ ...quote, domain: "lead.in" }, null);
+    expect(lineSubscriptionNotes(lineStd, ctx)).toEqual([]);
+    expect(lineSubscriptionNotes(lineSta, ctx)).toEqual([]);
+  });
+
+  it("a line whose own subscription has no domain prints none (not the lead's)", () => {
+    const ctx = quoteLinePeriodContext({ ...quote, domain: "itbuzz.in" }, {
+      domain: "itbuzz.in", lines: { [STD]: { domain: "itbuzz.in", start_date: "2025-10-31", term_months: 12 }, [STA]: { domain: null, start_date: "2025-11-15", term_months: 12 } },
+    });
+    expect(lineSubscriptionNotes(lineSta, ctx)).toEqual(["Subscription period: 1 Year (15/11/2026 – 14/11/2027)"]);
   });
 
   it("a single renewal quote is unchanged (no subscription_id on its line)", () => {
@@ -40,6 +47,7 @@ describe("R-2849 together lines", () => {
     const subs = [{ id: STD, domain: "itbuzz.in", start_date: "2025-10-31", term_months: 12 }, { id: "x", domain: null, start_date: null, term_months: 12 }];
     expect(togetherLineSubscriptions([lineStd, lineSta], subs)).toEqual({ [STD]: { domain: "itbuzz.in", start_date: "2025-10-31", term_months: 12 } });
     expect(togetherLineSubscriptions([{ name: "x" } as never], subs)).toBeNull();
+    expect(togetherLineSubscriptions([lineStd], undefined)).toBeNull();   // still loading → no facts (not an empty map)
   });
 
   it("server loader: a together quote reads its link rows, then each subscription (tenant-scoped)", async () => {

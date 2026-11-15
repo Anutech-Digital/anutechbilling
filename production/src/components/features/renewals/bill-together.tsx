@@ -94,7 +94,8 @@ export function togetherDone(made: BillTogetherCreated, count: number, customerN
     return {
       text: made.alreadyExisted
         ? `Opening the existing renewal quote ${made.quoteId} for ${customerName}`
-        : `Renewal quote ${made.quoteId} created for ${count} subscriptions of ${customerName} — not sent yet`,
+        /* stored 'sent' (the RPC's rule) but nothing is emailed here — say what is true */
+        : `Renewal quote ${made.quoteId} created for ${count} subscriptions of ${customerName} — not emailed yet`,
       invoiced: false,
     };
   }
