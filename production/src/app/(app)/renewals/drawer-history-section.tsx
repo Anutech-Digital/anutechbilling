@@ -146,7 +146,9 @@ function LastFact({ label, value, testId }: { label: string; value: string | nul
 }
 
 /** The drawer's History. Give it `key={subscription id}` so another renewal starts again on All, first page. */
-export function DrawerHistory({ tabs, loading, failed, customer, canQuotes, canInvoices }: {
+export function DrawerHistory({ initialTab = "all", tabs, loading, failed, customer, canQuotes, canInvoices }: {
+  /** R-2842: the tab the drawer opens on — Payments when the row's History button came from a payment. */
+  initialTab?: HistoryTab;
   tabs: HistoryTabs;
   loading: boolean;
   failed: boolean;
@@ -154,7 +156,7 @@ export function DrawerHistory({ tabs, loading, failed, customer, canQuotes, canI
   canQuotes: boolean;
   canInvoices: boolean;
 }) {
-  const [tab, setTab] = React.useState<HistoryTab>("all");
+  const [tab, setTab] = React.useState<HistoryTab>(initialTab);
   const [showAll, setShowAll] = React.useState(false);
   /* every document id on this list → its page (null = this role may not open it) */
   const hrefs = React.useMemo<Hrefs>(() => new Map<string, string | null>([

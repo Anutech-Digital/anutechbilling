@@ -139,7 +139,7 @@ describe("R-2839 wiring (page.tsx)", () => {
   const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
   it("both layouts show History on every row, opening the drawer with view=history; the product name still opens it plain", () => {
     expect(page.match(/<HistoryButton /g)).toHaveLength(2);
-    expect(page.match(/onOpen\(sub\.id, "history"\)/g)).toHaveLength(2);
+    expect(page.match(/onOpen\(sub\.id, "history"\)/g)).toHaveLength(1); /* table; the card opens Payments when it has a payment (R-2842) */
     expect(page).toMatch(/onOpen=\{\(\) => onOpen\(sub\.id\)\}/);
     expect(page).toMatch(/const \[drawerSub, openDrawer, closeDrawer, drawerView\] = useRenewalDrawerSub\(\);/);
     expect(page).toMatch(/view=\{drawerView\}/);
