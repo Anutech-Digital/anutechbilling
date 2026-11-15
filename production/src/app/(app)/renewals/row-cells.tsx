@@ -9,7 +9,8 @@
  *   Due              date / "in 6d" · "today" · "6d ago" (grey — the chip says Overdue / Due in)
  *   Amount           the renewal amount / + GST | incl. GST
  *   Status           ONE stage chip (R-2758) + flag icons; its note is the tooltip
- *   Last invoice     the newest invoice's state (never cut) / its number · period (+N earlier)
+ *   Last bill        the newest invoice's state (never cut) / its number · period (+N earlier) /
+ *                    R-2840: the last payment "Paid ₹40,000 · 2 Oct" or "No payment yet" (a 3rd line)
  *   Action           ONE button + ⋯ (RenewalActions)
  *
  * Every cell is min-w-0; ids, names and periods may truncate (the full text is the tooltip) —
@@ -27,10 +28,13 @@ import type { RenewalStage } from "@/lib/renewals/stage";
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { renewalTermStart } from "./stage-input";
 import {
-  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel,
+  daysBetweenIst, docMoney, invoiceStatusWords, invoiceTotalWords, paidInvoiceOf, periodWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel,
   type DocTone, type LastDocs, type LastInvoice, type LastQuote,
 } from "./last-docs";
 import type { RowContact } from "./queue-data";
+import { lastPaidSummary, type LastPaid } from "./last-paid";
+import type { PaidLineWithReceipt } from "./last-paid-data";
+import { toIstDate } from "@/lib/dates/ist";
 
 // ─── Pure helpers ───────────────────────────────────────────────────────────
 
@@ -247,6 +251,65 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
         {gapSpan ?? <>{invoice.period ? ` · ${invoice.period}` : ""}{more}</>}
       </p>
     </div>
+  );
+}
+
+/**
+ * R-2840 (renewals history audit H5): the table's "Last bill" 3rd line — the last payment from the
+ * SAME last-paid read as the card layout (useRenewalLastPaid, no new query). Words:
+ *   a receipt   "Paid ₹40,000 · 2 Oct" (the year added when not this year); a USD invoice's payment
+ *               in dollars (₹ ÷ that invoice's fx rate — only when the invoice is on the row, else ₹
+ *               as the books hold it, never a guessed rate); tooltip: full date · mode · receipt no.
+ *               · invoice · "covers N subscriptions"
+ *   no receipt  R-2752: a settled invoice → "Paid on invoice, no receipt"; money received on an
+ *               invoice not yet settled → "Part paid on invoice, no receipt" — never "No payment
+ *               yet" next to a Paid / Part paid invoice
+ *   nothing     "No payment yet"
+ */
+export function lastPaidRowFacts({ paid, docs, todayIst }: { paid: LastPaid | undefined; docs: LastDocs | undefined; todayIst: string }):
+  { kind: "paid" | "no-receipt" | "none"; text: string; title: string } {
+  const invoices = docs ? (docs.invoices.length ? docs.invoices : docs.invoice ? [docs.invoice] : []) : [];
+  if (paid) {
+    const last: PaidLineWithReceipt = paid.last;
+    const s = lastPaidSummary(last);
+    const doc = invoices.find((i) => (last.invoiceId ? i.id === last.invoiceId : !!last.quoteId && i.sourceQuoteId === last.quoteId)) ?? null;
+    const money = doc ? docMoney(doc, last.amount) : s.amount;
+    const day = toIstDate(last.receivedAt);
+    const short = day.slice(0, 4) === todayIst.slice(0, 4) ? shortDate(day).replace(/ \d{2}$/, "") : shortDate(day);
+    const title = [
+      `Last payment ${money}${money !== s.amount ? ` (${s.amount})` : ""}`, formatDate(day), s.method,
+      ...(last.receiptNo ? [`receipt ${last.receiptNo}`] : []),
+      ...(s.doc ? [`for ${s.doc}`] : []),
+      ...(s.shared ? [s.shared] : []),
+    ].join(" · ");
+    return { kind: "paid", text: `Paid ${money} · ${short}`, title };
+  }
+  const settled = paidInvoiceOf(docs, todayIst);
+  if (settled) {
+    return { kind: "no-receipt", text: "Paid on invoice, no receipt", title: `Invoice ${settled.id} is ${settled.words}, but no payment receipt is linked in the app (advance, credit or old books)` };
+  }
+  const part = invoices.find((i) => i.paidAmount > 0 && invoiceStatusWords(i, todayIst).tone !== "muted");
+  if (part) {
+    return { kind: "no-receipt", text: "Part paid on invoice, no receipt", title: `Invoice ${part.id} shows ${docMoney(part, part.paidAmount)} received, but no payment receipt is linked in the app` };
+  }
+  return { kind: "none", text: "No payment yet", title: "No payment received against this subscription's quotes or invoices in the app" };
+}
+
+export function LastPaidRowLine({ paid, docs, loading, failed, todayIst }: {
+  paid: LastPaid | undefined;
+  docs: LastDocs | undefined;
+  /** Last paid — or, with no receipt, Last docs — still loading: hold the line, never a false "No payment yet". */
+  loading: boolean;
+  failed: boolean;
+  todayIst: string;
+}) {
+  if (loading) return <p className="mt-0.5 text-2xs text-ink-3" data-testid="renewal-row-last-paid">…</p>;
+  if (failed) {
+    return <p className="mt-0.5 break-words text-2xs text-ink-3" data-testid="renewal-row-last-paid" title="Last payment couldn't load — reload the page">Last payment couldn&apos;t load</p>;
+  }
+  const f = lastPaidRowFacts({ paid, docs, todayIst });
+  return (
+    <p className={cn("mt-0.5 break-words text-2xs tabular-nums", f.kind === "paid" ? "text-ink-2" : "text-ink-3")} data-testid="renewal-row-last-paid" title={f.title}>{f.text}</p>
   );
 }
 
