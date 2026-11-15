@@ -118,6 +118,9 @@ const SQL_NOT_SALE: Record<string, string> = {
   tg_r2735_invoice_paid_renews: "R-2735: invoice turned paid → renew its marked part's subscription — not GST or revenue",
   unroll_unpaid_renewal_terms: "R-2749: is a renewal part's own tax invoice still paid — moves renewal_date back, not GST or revenue",
   tg_r2749_wont_renew_open_part: "R-2749: is the renewal part's own invoice unpaid — refuses Won't renew, not GST or revenue",
+  r2848_together_paid: "R-2848: is a together renewal quote's own invoice paid / credited in full — decides renew or move back, not GST or revenue",
+  r2848_roll_together: "R-2848: copies the together quote's invoice id onto the renewal move log — not GST or revenue",
+  tg_r2848_credit_note: "R-2848: finds the together quote of a credit note's invoice to re-check its renewals — not GST or revenue",
   // R-1739's own functions
   _opening_invoice_settle: "keeps an opening invoice's paid amount",
   _record_opening_invoice_payment: "payment on an opening invoice",
