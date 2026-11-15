@@ -57,6 +57,9 @@ export interface PaidLine {
   /** The invoice it paid, or the invoice raised from the quote it paid; null = no invoice yet. */
   invoiceId: string | null;
   quoteId: string | null;
+  /** R-2836: the payment's own payments.invoice_id (`invoiceId` above may be worked out from its quote) — drawer-history.ts
+      links it the way the customer page does (invoice-payment-links.ts). undefined = not given. */
+  ownInvoiceId?: string | null;
   /** How many subscriptions this one payment is for (1 = this one alone). */
   covers: number;
 }
@@ -130,6 +133,7 @@ export function lastPaidBySubscription(input: LastPaidInput, opts: { historySize
       paymentId: p.id, amount: Number(p.amount) || 0, method: p.method, receivedAt: p.received_at,
       invoiceId: p.invoice_id ?? (p.quote_id ? invoiceOfQuote.get(p.quote_id) ?? null : null),
       quoteId: p.quote_id,
+      ownInvoiceId: p.invoice_id ?? null,
       covers: subs.size,
     };
     for (const sid of subs) {
