@@ -26,13 +26,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { fetchRenewalDocRows, readRenewalDocRows, RENEWALS_READ_CONCURRENCY, type RenewalDocRows } from "./last-docs-data";
-import { lastPaidBySubscription, linkedDocs, type LastPaid, type LastPaidInput } from "./last-paid";
+import { lastPaidBySubscription, linkedDocs, type LastPaid, type LastPaidInput, type PaidLine } from "./last-paid";
 
 type SubRef = LastPaidInput["subs"][number];
 type QuoteRow = LastPaidInput["linkedQuotes"][number];
-type PaymentRow = LastPaidInput["payments"][number];
+type PaymentRow = LastPaidInput["payments"][number] & { receipt_voucher_no?: string | null };
 
-const PAYMENT_COLS = "id, amount, method, status, received_at, refunded_at, quote_id, invoice_id";
+/** R-2840: a payment line with its receipt voucher no. (the table row's "Last bill" tooltip) — the same read, one more column. */
+export type PaidLineWithReceipt = PaidLine & { receiptNo?: string | null };
+
+const PAYMENT_COLS = "id, amount, method, status, received_at, refunded_at, quote_id, invoice_id, receipt_voucher_no";
 
 export function useRenewalLastPaid(subs: readonly SubRef[]) {
   const qc = useQueryClient();
@@ -116,5 +119,10 @@ export async function lastPaidFromDocRows(
     .eq("status", "received")
     .order("id", { ascending: true })
     .range(from, to), c);
-  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments: [...byQuote, ...byInvoice] }, opts);
+  const payments = [...byQuote, ...byInvoice];
+  const out = lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments }, opts);
+  /* R-2840: the receipt voucher no. rides on the same lines (last-paid.ts stays the rule) */
+  const receipt = new Map(payments.map((p) => [p.id, p.receipt_voucher_no ?? null]));
+  for (const lp of out.values()) for (const l of lp.history) (l as PaidLineWithReceipt).receiptNo = receipt.get(l.paymentId) ?? null;
+  return out;
 }

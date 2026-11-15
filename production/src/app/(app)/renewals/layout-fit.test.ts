@@ -6,7 +6,7 @@
  * R-2759 (R-2739b, changed expectation): user audit 14 Nov measured the table needing 1,634px in a
  * 1,599px box at 1920, and at 1280 the page showed the CARD list (a 1280 laptop's inner width is
  * 1264–1276, under the xl switch). Now: the table from a 1260px window, eight columns
- * (☐ · Customer · Product & period · Due · Amount · Status · Last invoice · Action), every cell at
+ * (☐ · Customer · Product & period · Due · Amount · Status · Last bill · Action), every cell at
  * most two lines (row-cells.tsx). jsdom has no layout, so this proves the structure; the real width
  * check is the card spec e2e/cards/R-2759.spec.ts (1280 and 1568, scrollWidth ≤ innerWidth).
  */
@@ -37,7 +37,8 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
     expect(QUEUE_FLEX_MIN_PX).toBeGreaterThanOrEqual(200);
     expect(fixed + flex.length * QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
     expect(QUEUE_TABLE_COLS.map((c) => c.key)).toEqual(["select", "customer", "product", "due", "amount", "status", "invoice", "actions"]);
-    expect(QUEUE_TABLE_COLS.map((c) => c.label)).toEqual(["", "Customer", "Product & period", "Due", "Amount", "Status", "Last invoice", "Action"]);
+    /* R-2840 (changed expectation): "Last invoice" → "Last bill" (the invoice + its last payment) */
+    expect(QUEUE_TABLE_COLS.map((c) => c.label)).toEqual(["", "Customer", "Product & period", "Due", "Amount", "Status", "Last bill", "Action"]);
   });
 
   it("the table is fixed-layout, driven by that budget; the header row comes from the same list; no min-width", () => {
@@ -62,7 +63,21 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
     expect(page).toContain('<p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>');
   });
 
-  it("the table row carries no Last paid / emails sent / follow-up / vendor-hold / prior-due lines (flags + drawer)", () => {
+  it("R-2840: Last bill line 3 = the last payment from the SAME Last paid read (no new query); it wraps, never cut", () => {
+    const table = page.slice(page.indexOf('data-testid="renewals-table"'), page.indexOf("</table>"));
+    expect(table).toContain("const paid = lastPaid.data?.get(sub.id);");
+    /* order inside Last bill: invoice line(s) → the paid line → the R-2841 quote note (row-cells LastInvoiceCell) */
+    expect(table).toMatch(/<LastInvoiceCell [^>]*\s+paidLine=\{<LastPaidRowLine paid=\{paid\} docs=\{item\.docs\}/);
+    const cell = cells.slice(cells.indexOf("export function LastInvoiceCell"), cells.indexOf("function QuoteInstead"));
+    expect(cell.search(/\{paidLine\}\s*\{\/\* R-2841: a newer quote/)).toBeGreaterThan(0);
+    /* never "No payment yet" while either read is loading (R-2752: no false "never paid") */
+    /* both reads: a USD payment needs its invoice (fx) — no ₹ → $ jump */
+    expect(table).toContain("loading={lastPaid.loading || docsState.loading}");
+    expect(cells).toMatch(/className=\{cn\("mt-0\.5 break-words text-2xs tabular-nums"/);
+    expect((page.match(/useRenewalLastPaid\(/g) ?? []).length).toBe(1);
+  });
+
+  it("the table row carries no Last paid (card) / emails sent / follow-up / vendor-hold / prior-due lines (flags + drawer)", () => {
     const table = page.slice(page.indexOf('data-testid="renewals-table"'), page.indexOf("</table>"));
     for (const gone of ["lastPaidFor(", "reminder_count", "<FollowupLine", "<VendorHoldBadge", "priorTermDueText(", "docsFor(", "sentDue("]) {
       expect(table).not.toContain(gone);

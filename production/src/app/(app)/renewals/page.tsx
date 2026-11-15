@@ -110,7 +110,7 @@ import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/c
 import { type RenewalStage, type StageKey } from "@/lib/renewals/stage";
 import { StageFlagIcon } from "./stage-flag";
 import { dueCellFacts } from "./due-anchor";
-import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
+import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, LastPaidRowLine, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 import { BillTogetherGroups, togetherHint, useBillTogether } from "@/components/features/renewals/bill-together";
 import { BILL_TOGETHER, useBillTogetherProbe } from "@/components/features/renewals/bill-together-dialog";
@@ -520,6 +520,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
           <tbody>
             {page.shown.map((item) => {
               const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
+              const paid = lastPaid.data?.get(sub.id);
               return (
                 <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
                   <td className="px-1.5 py-1.5">
@@ -542,7 +543,9 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
                   <td className="min-w-0 px-1.5 py-1.5">
-                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} stage={stage} />
+                    {/* R-2840: Last bill = invoice line(s) → the last payment (same Last paid read as the cards) → R-2841 quote note */}
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} stage={stage}
+                      paidLine={<LastPaidRowLine paid={paid} docs={item.docs} loading={lastPaid.loading || docsState.loading} failed={lastPaid.failed || (!paid && docsState.failed)} todayIst={todayIst} />} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
