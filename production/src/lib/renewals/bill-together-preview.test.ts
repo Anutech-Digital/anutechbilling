@@ -215,3 +215,29 @@ describe("R-2831 periods the screen showed", () => {
       "What will be billed changed since you opened it — you saw Plan b's part from 12 Oct 2026, now it would bill the part from 12 Nov 2026. Nothing was billed — refresh Renewals and check again.");
   });
 });
+
+describe("R-2845 ids lowercased (rev-r2831 L1 — an UPPERCASE id must not switch the period guard off)", () => {
+  const A = "AAAAAAAA-aaaa-4AAA-8aaa-AAAAAAAAAAAA";
+  it("parseTogetherIds lowercases, then drops repeats (A and a are one id)", () => {
+    expect(parseTogetherIds(`${A}, ${A.toLowerCase()} ,B`)).toEqual([A.toLowerCase(), "b"]);
+    expect(parseTogetherIds([A, "B", "b"])).toEqual([A.toLowerCase(), "b"]);
+  });
+  it("parseTogetherPeriods matches ids case-blind and keys the map lowercase", () => {
+    const ids = parseTogetherIds([A, "B"]);
+    expect(parseTogetherPeriods([{ subscriptionId: A, periodStart: "2026-10-12" }, { subscriptionId: "b", periodStart: "2026-10-15" }], ids))
+      .toEqual(new Map([[A.toLowerCase(), "2026-10-12"], ["b", "2026-10-15"]]));
+    /* the same id twice in two spellings is still a repeat → bad */
+    expect(parseTogetherPeriods([{ subscriptionId: A, periodStart: "2026-10-12" }, { subscriptionId: A.toLowerCase(), periodStart: "2026-10-12" },
+      { subscriptionId: "b", periodStart: "2026-10-15" }], ids)).toBe("bad");
+  });
+});
+
+describe("R-2845 parseTogetherPeriods: a real calendar day only", () => {
+  it("2026-02-30 / 2026-13-01 → bad (would be a Postgres 500), 2028-02-29 ok", () => {
+    for (const d of ["2026-02-30", "2026-13-01", "2026-00-10"]) {
+      expect(parseTogetherPeriods([{ subscriptionId: "a", periodStart: d }, { subscriptionId: "b", periodStart: "2026-10-12" }], ["a", "b"])).toBe("bad");
+    }
+    expect(parseTogetherPeriods([{ subscriptionId: "a", periodStart: "2028-02-29" }, { subscriptionId: "b", periodStart: "2026-10-12" }], ["a", "b"]))
+      .toEqual(new Map([["a", "2028-02-29"], ["b", "2026-10-12"]]));
+  });
+});

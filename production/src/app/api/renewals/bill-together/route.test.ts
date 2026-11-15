@@ -283,6 +283,18 @@ describe("R-2831 POST: invoice answers, retry after an invoice, login refused be
       subscriptionIds: [A, B], action: "invoice", invoiceId: "INV-7" });
   });
 
+  it("R-2845: an invoice number with '/' (document series ANU/26-27/…) → href encoded like every invoice link", async () => {
+    st.rpc = { data: { action: "invoice", quote_id: "PI-2", already_existed: false, invoice_id: "ANU/26-27/0042", subscription_ids: [A, B] }, error: null };
+    expect(await (await post({ ids: [A, B] })).json()).toMatchObject({ href: "/invoices/ANU%2F26-27%2F0042", action: "invoice", invoiceId: "ANU/26-27/0042" });
+  });
+
+  it("R-2845: UPPERCASE ids from the screen reach the reads and the period guard lowercase", async () => {
+    const res = await post({ ids: [A.toUpperCase(), B], periods: [{ subscriptionId: A.toUpperCase(), periodStart: "2026-10-12" }, { subscriptionId: B, periodStart: "2026-10-12" }] });
+    expect(res.status).toBe(200);
+    expect(st.readCalls[0].ids).toEqual([A, B]);
+    expect(st.invoicedOpts).toEqual({ periods: new Map([[A, "2026-10-12"], [B, "2026-10-12"]]) });
+  });
+
   it("'invoice' with no invoice_id is a fault (500), never a quote link pretending it billed", async () => {
     st.rpc = { data: { action: "invoice", quote_id: "PI-2", already_existed: false, subscription_ids: [A, B] }, error: null };
     expect((await post({ ids: [A, B] })).status).toBe(500);

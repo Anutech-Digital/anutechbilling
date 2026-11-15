@@ -22,9 +22,9 @@ import { withRoute, RouteError } from "@/lib/api/with-route";
 import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { createAdminClientFor } from "@/lib/supabase/server";
 import { istToday } from "@/lib/dates/ist";
-import type { BillTogetherCreated } from "@/lib/renewals/bill-together";
-import { buildTogetherPreview, existingTogetherBill, parseTogetherIds, parseTogetherPeriods, periodsChanged, MAX_TOGETHER_IDS,
-  type TogetherReason } from "@/lib/renewals/bill-together-preview";
+import type { BillTogetherCreated, BillTogetherError } from "@/lib/renewals/bill-together";
+import { buildTogetherPreview, existingTogetherBill, parseTogetherIds, parseTogetherPeriods, periodsChanged, MAX_TOGETHER_IDS } from "@/lib/renewals/bill-together-preview";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { readTogetherFacts, fillNextParts, layTogetherPart, billPartsTogether, billTogetherReady, rpcRefusal, TogetherRefusal,
   findInvoicedTogether, quoteInvoiceId } from "@/lib/renewals/bill-together.server";
 
@@ -32,15 +32,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const ROLE_HINT = "Only an owner, manager, accountant or billing user can bill subscriptions together.";
-/** BillTogetherError, with R-2807's extra "not_billable" code (bill-together-preview.ts). */
-type TogetherError = { error: string; reasons?: Array<{ subscriptionId: string } & TogetherReason> };
-/** BillTogetherCreated plus R-2831's action / invoiceId: a pool-paid group is invoiced at once (href = the invoice). */
-type TogetherCreated = BillTogetherCreated & { action: "request" | "invoice"; invoiceId: string | null };
+/** The contract's answer; this route always sets R-2831's action / invoiceId (a pool-paid group is invoiced at once, href = the invoice). */
+type TogetherCreated = BillTogetherCreated & Required<Pick<BillTogetherCreated, "action" | "invoiceId">>;
+/* R-2845: the invoice link through invoiceHref — a document-series number with "/" (ANU/26-27/001) stays one segment */
 const created = (quoteId: string, invoiceId: string | null, alreadyExisted: boolean, subscriptionIds: string[]): TogetherCreated => ({
-  quoteId, href: invoiceId ? `/invoices/${invoiceId}` : `/quotes/${quoteId}`, alreadyExisted, subscriptionIds,
+  quoteId, href: invoiceId ? invoiceHref(invoiceId) : `/quotes/${quoteId}`, alreadyExisted, subscriptionIds,
   action: invoiceId ? "invoice" : "request", invoiceId,
 });
-const err = (status: number, body: TogetherError) => NextResponse.json(body, { status });
+const err = (status: number, body: BillTogetherError) => NextResponse.json(body, { status });
 
 function idsOrError(ids: string[], min: number): string | null {
   if (ids.length < min) return min > 1 ? "Tick at least two subscriptions of one customer to bill them together." : "Pick the subscriptions to bill together.";

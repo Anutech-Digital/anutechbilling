@@ -15,12 +15,12 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/lib/errors/toast-error";
 import { queryKeys } from "@/lib/queries/keys";
-import { createTogetherProforma, type BillTogetherGroup } from "@/lib/renewals/bill-together";
+import { BillTogetherHttpError, createTogetherProforma, type BillTogetherCreated, type BillTogetherGroup, type BillTogetherPeriod } from "@/lib/renewals/bill-together";
 import { BILL_TOGETHER, BillTogetherDialog } from "./bill-together-dialog";
 
 interface Target { ids: string[]; customerName: string }
 
-export function useBillTogether({ canQuotes }: { canQuotes: boolean }) {
+export function useBillTogether({ canQuotes, canInvoices = false }: { canQuotes: boolean; canInvoices?: boolean }) {
   const qc = useQueryClient();
   const router = useRouter();
   const [target, setTarget] = React.useState<Target | null>(null);
@@ -34,7 +34,7 @@ export function useBillTogether({ canQuotes }: { canQuotes: boolean }) {
 
   /* `from` = the dialog it was asked from, passed in (not read from `target`) so the toast's Retry still works
      after that dialog closed */
-  async function create(ids: string[], from: Target) {
+  async function create(ids: string[], periods: BillTogetherPeriod[], from: Target) {
     const { customerName } = from;
     if (inFlight.current) {
       toast.info("A proforma is still being created — wait for it, then try again.");
@@ -43,22 +43,32 @@ export function useBillTogether({ canQuotes }: { canQuotes: boolean }) {
     inFlight.current = true;
     setBusy(true);
     try {
-      const made = await createTogetherProforma(ids);
+      /* R-2845: with the parts the dialog showed — a Retry sends the same ones, so it never bills the next month */
+      const made = await createTogetherProforma(ids, periods);
       void qc.invalidateQueries({ queryKey: ["subscriptions"] });
       void qc.invalidateQueries({ queryKey: ["quotes"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });
       void qc.invalidateQueries({ queryKey: ["renewals", "bill-together"] });
       void qc.invalidateQueries({ queryKey: queryKeys.collections() });
-      toast.success(made.alreadyExisted
-        ? `Opening the existing proforma ${made.quoteId} for ${customerName}`
-        : `Proforma ${made.quoteId} created for ${ids.length} subscriptions of ${customerName} — not sent yet`, { duration: 6000 });
+      /* R-2845 (R-2831's action): "invoice" = the money already received paid the group, so its tax invoice was
+         raised at once — say so and open the invoice (href from the API), never "Proforma … created" */
+      const done = togetherDone(made, ids.length, customerName);
+      toast.success(done.text, { duration: 6000 });
       /* another group's dialog opened meanwhile (a Retry that finished later) stays open — never closed or left */
       const mine = openNow.current === null || openNow.current === from;
       if (mine) setTarget(null);
-      /* like Bill next part: open it to check and send (roles that can open quotes) */
-      if (mine && canQuotes && made.href) router.push(made.href as never);
+      /* like Bill next part: open it to check and send — the proforma for roles that can open quotes, the
+         invoice for roles that can open invoices (R-2422's canOpenInvoices) */
+      if (mine && (done.invoiced ? canInvoices : canQuotes) && made.href) router.push(made.href as never);
     } catch (err) {
-      toastError(err, { fallback: "Could not create the proforma", action: { label: "Retry", onClick: () => void create(ids, from) } });
+      if (err instanceof BillTogetherHttpError && err.status === 409) {
+        /* R-2845: refused (a part moved since the dialog loaded it, or one cannot join) — show the fresh lines and
+           NO Retry: resending the same parts would only be refused again; the user checks and presses Create */
+        void qc.invalidateQueries({ queryKey: ["renewals", "bill-together", "preview"] });
+        toastError(err, { fallback: "Could not create the proforma" });
+        return;
+      }
+      toastError(err, { fallback: "Could not create the proforma", action: { label: "Retry", onClick: () => void create(ids, periods, from) } });
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -68,9 +78,23 @@ export function useBillTogether({ canQuotes }: { canQuotes: boolean }) {
   const dialog = target && (
     <BillTogetherDialog ids={target.ids} customerName={target.customerName} open busy={busy}
       onOpenChange={(v) => { if (!v && !busy) setTarget(null); }}
-      onConfirm={(ids) => void create(ids, target)} />
+      onConfirm={(ids, periods) => void create(ids, periods, target)} />
   );
   return { open: (ids: string[], customerName: string) => setTarget({ ids, customerName }), dialog };
+}
+
+/**
+ * After Create: what the toast says and whether an invoice (not a proforma) opens — ONE decision for both (R-2845).
+ * "invoice" = the route already invoiced the group from money received (R-2831); else the proforma.
+ */
+export function togetherDone(made: BillTogetherCreated, count: number, customerName: string): { text: string; invoiced: boolean } {
+  if (made.action === "invoice" && made.invoiceId) return { text: `Invoice ${made.invoiceId} — already paid from money received`, invoiced: true };
+  return {
+    text: made.alreadyExisted
+      ? `Opening the existing proforma ${made.quoteId} for ${customerName}`
+      : `Proforma ${made.quoteId} created for ${count} subscriptions of ${customerName} — not sent yet`,
+    invoiced: false,
+  };
 }
 
 export interface GroupSub { id: string; plan: string | null; seats: number | null }
