@@ -97,8 +97,8 @@ describe("R-2838 one History section replaces 'Quotes & invoices' + 'Payments'",
     withData(twoInvoiceDocs, twoInvoicePaid);
     show();
     const tabs = history().getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["All4", "Quotes1", "Invoices2", "Payments1"]);
-    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["All4", "Quotes1", "Invoices2", "Payments1", "Timeline4"]);   // R-2844 added Timeline
+    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false"]);
     expect(history().getByRole("tablist", { name: "History" })).toBeTruthy();
     expect(history().getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(tabs[0].id);
   });
@@ -147,7 +147,7 @@ describe("R-2838 one History section replaces 'Quotes & invoices' + 'Payments'",
   it("keyboard: arrows move and select (wrap), Home / End jump; only the selected tab is in the Tab order", async () => {
     withData(twoInvoiceDocs, twoInvoicePaid);
     show();
-    expect(history().getAllByRole("tab").map((t) => t.tabIndex)).toEqual([0, -1, -1, -1]);
+    expect(history().getAllByRole("tab").map((t) => t.tabIndex)).toEqual([0, -1, -1, -1, -1]);
     /* Radix moves focus on the next tick, then selects the focused tab */
     const press = async (key: string, to: RegExp) => {
       fireEvent.keyDown(document.activeElement!, { key });
@@ -156,11 +156,11 @@ describe("R-2838 one History section replaces 'Quotes & invoices' + 'Payments'",
     };
     act(() => tab(/^All/).focus());
     await press("ArrowRight", /^Quotes/);
-    await press("End", /^Payments/);
+    await press("End", /^Timeline/);   // R-2844: Timeline is the last tab
     await press("ArrowRight", /^All/);
-    await press("ArrowLeft", /^Payments/);
+    await press("ArrowLeft", /^Timeline/);
     await press("Home", /^All/);
-    expect(history().getAllByRole("tab").map((t) => t.tabIndex)).toEqual([0, -1, -1, -1]);
+    expect(history().getAllByRole("tab").map((t) => t.tabIndex)).toEqual([0, -1, -1, -1, -1]);
   });
 
   it("the strip: Last quote · Last invoice · Last paid", () => {

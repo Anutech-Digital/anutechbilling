@@ -98,7 +98,7 @@ test.describe("R-2838 card test", () => {
       });
       expect(order).toBeTruthy();
       const tabs = history.getByRole("tab");
-      await expect(tabs).toHaveText(["All4", "Quotes1", "Invoices2", "Payments1"], { timeout: 60_000 });
+      await expect(tabs).toHaveText(["All4", "Quotes1", "Invoices2", "Payments1", "Timeline4"], { timeout: 60_000 });   // R-2844 added Timeline
       await expect(history.getByRole("tab", { name: /^All/ })).toHaveAttribute("aria-selected", "true");
       const doc = (id: string) => history.locator(`[data-testid=renewal-drawer-doc][data-doc="${id}"]`);
       await expect(doc("INV-CT2838-A").getByTestId("renewal-drawer-payment")).toHaveCount(1);
@@ -122,7 +122,9 @@ test.describe("R-2838 card test", () => {
     await page.keyboard.press("ArrowRight");
     await expect(history.getByRole("tab", { name: /^Quotes/ })).toHaveAttribute("aria-selected", "true");
     await expect(history.getByRole("tab", { name: /^Quotes/ })).toBeFocused();
-    await page.keyboard.press("End");
+    await page.keyboard.press("End");   // R-2844: End = Timeline (the last tab); one step back = Payments
+    await expect(history.getByRole("tab", { name: /^Timeline/ })).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
     const payments = history.getByRole("tab", { name: /^Payments/ });
     await expect(payments).toHaveAttribute("aria-selected", "true");
     const pay = history.getByTestId("renewal-drawer-payment");

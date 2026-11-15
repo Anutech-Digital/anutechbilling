@@ -200,6 +200,8 @@ export function termLengthWords(months: number | null | undefined): string {
 
 export interface DrawerFollowupRow {
   id: string;
+  /** R-2844: when it was logged (ISO timestamp — the Timeline sorts on it). */
+  at: string;
   /** When it was logged (formatted). */
   when: string;
   /** How (call / email / WhatsApp / note), as logged. */
@@ -221,6 +223,7 @@ export function drawerFollowupRows(rows: readonly RenewalFollowupRow[], nameOf: 
     .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id))
     .map((r) => ({
       id: r.id,
+      at: r.created_at,
       when: formatDate(r.created_at),
       kind: r.kind ? r.kind.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : null,
       who: r.assigned_to ? nameOf(r.assigned_to) ?? "a colleague" : null,

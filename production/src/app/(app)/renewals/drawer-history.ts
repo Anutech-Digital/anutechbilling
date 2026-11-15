@@ -24,13 +24,14 @@
  * drawer-history-h1.test.ts.
  */
 import { rupee } from "@/lib/utils";
-import { istToday } from "@/lib/dates/ist";
+import { istToday, toIstDate } from "@/lib/dates/ist";
 import {
   forInvoicesText, invoicePaidAmount, linkPaymentsToInvoices,
   type InstalmentLink, type LinkInvoice, type LinkPayment, type PaymentShare,
 } from "@/components/features/customers/invoice-payment-links";
 import type { PaymentTds } from "@/components/features/customers/payment-tds-line";
-import { drawerDocRows, NO_RECEIPT_METHOD, type DrawerDocRow } from "./drawer";
+import { drawerDocRows, NO_RECEIPT_METHOD, type DrawerDocRow, type DrawerFollowupRow } from "./drawer";
+import type { DrawerReminderRow } from "./reminder-log";
 import { docMoney, type LastDocs, type LastInvoice } from "./last-docs";
 import { lastPaidSummary, type LastPaid, type PaidLine } from "./last-paid";
 
@@ -42,6 +43,8 @@ export interface HistoryPaymentLine {
   id: string;
   /** "1 Nov 2026"; "" = a no-receipt line (no date known). */
   date: string;
+  /** R-2844: when it came in (payments.received_at); a no-receipt line = its invoice's date (null = undated) — the Timeline sorts on it. */
+  at: string | null;
   /** The money that went HERE (in the invoice's currency under an invoice) — a split payment shows each invoice its part. */
   amount: string;
   /** The payment's full amount in ₹ when this is only part of it; null = the whole payment. */
@@ -131,7 +134,7 @@ export function historyTabs(
   const receiptLine = (p: PaidLine, amount: string, partOf: string | null, forWords: string | null): HistoryPaymentLine => {
     const s = lastPaidSummary(p);
     return {
-      id: p.paymentId, date: s.date, amount, partOf, method: s.method, forWords, shared: s.shared, noReceipt: false,
+      id: p.paymentId, date: s.date, at: p.receivedAt, amount, partOf, method: s.method, forWords, shared: s.shared, noReceipt: false,
       receiptNo: p.receiptNo?.trim() || null, reference: p.reference?.trim() || null,
       gross: p.amount, tds: partOf ? null : opts.tds?.[p.paymentId] ?? null,
     };
@@ -154,7 +157,7 @@ export function historyTabs(
     const gap = invoicePaidAmount(toLinkInvoice(inv)) - inReceipts;   // whole rupees; 0 for a draft / void invoice
     if (gap >= 1) {
       const line: HistoryPaymentLine = {
-        id: `invoice-paid:${inv.id}`, date: "", amount: docMoney(inv, gap), partOf: null, method: NO_RECEIPT_METHOD,
+        id: `invoice-paid:${inv.id}`, date: "", at: inv.date, amount: docMoney(inv, gap), partOf: null, method: NO_RECEIPT_METHOD,
         forWords, shared: null, noReceipt: true, receiptNo: null, reference: null, gross: gap, tds: null,
       };
       rows.push(line);
@@ -204,4 +207,61 @@ export function historyTabs(
     all, quotes: quoteRows, invoices: invoiceRows, payments, unlinked,
     counts: { all: docRows.length + payments.length, quotes: quoteRows.length, invoices: invoiceRows.length, payments: payments.length },
   };
+}
+
+// ─── Timeline (R-2844, history H9) ──────────────────────────────────────────
+
+/**
+ * One line of the drawer's Timeline. `key` is unique in the list; `sort` = "<IST day>|<ISO time>" ("<day>|" for a
+ * date-only document, so a timed event on the same IST day sits above it); null = undated (bottom).
+ */
+export type TimelineItem = { key: string; sort: string | null } & (
+  /** A quote / invoice on its own date (a sent quote's row already says "Sent 4 Nov" — R-2822 — so no second line for it). */
+  | { kind: "doc"; row: HistoryQuoteRow | HistoryInvoiceRow }
+  | { kind: "payment"; line: HistoryPaymentLine }
+  | { kind: "followup"; row: DrawerFollowupRow }
+  | { kind: "reminder"; row: DrawerReminderRow }
+);
+
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+/** Sort key on the IST calendar: a timestamp's IST day + the time; a plain date = that day, before any time. */
+function timelineSort(at: string | null | undefined): string | null {
+  if (!at) return null;
+  if (DAY_ONLY.test(at)) return `${at}|`;
+  const t = Date.parse(at);
+  return Number.isNaN(t) ? null : `${toIstDate(t)}|${new Date(t).toISOString()}`;
+}
+
+/** Same moment: money first, then what was sent / said, then the document (newest-first reading order). */
+const SAME_TIME_ORDER: Record<TimelineItem["kind"], number> = { payment: 0, reminder: 1, followup: 2, doc: 3 };
+
+/**
+ * The drawer's Timeline (Gainsight / HubSpot pattern — the whole story before a call): every quote (its row says
+ * Sent / Viewed / Accepted …), invoice raised, payment (historyTabs' Payments lines — R-2843 receipt / UTR / TDS kept),
+ * follow-up logged (calls, promises) and renewal reminder (R-2762 email / WhatsApp log), newest first. Only rows
+ * the drawer already has — no new read. An invoice here carries no nested payments: each payment is its own line.
+ * Documents carry only a day (quote date / invoice date), so on the same IST day they sit below the timed events.
+ */
+export function historyTimeline(
+  tabs: HistoryTabs,
+  more: { followups?: readonly DrawerFollowupRow[]; reminders?: readonly DrawerReminderRow[] },
+): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  for (const line of tabs.payments) items.push({ kind: "payment", key: `payment:${line.id}`, sort: timelineSort(line.at), line });
+  for (const row of more.reminders ?? []) items.push({ kind: "reminder", key: `reminder:${row.id}`, sort: timelineSort(row.at), row });
+  for (const row of more.followups ?? []) items.push({ kind: "followup", key: `followup:${row.id}`, sort: timelineSort(row.at), row });
+  for (const row of tabs.all) {
+    /* drawerDocRows' own order (a same-day quote and invoice keep it) */
+    if (row.kind !== "unlinked") items.push({ kind: "doc", key: `${row.kind}:${row.id}`, sort: timelineSort(row.date), row: row.kind === "invoice" ? { ...row, payments: [] } : row });
+  }
+  /* stable: same moment and kind keep the order they came in (each source is already newest first) */
+  return items
+    .map((item, n) => ({ item, n }))
+    .sort((a, b) => {
+      const x = a.item.sort;
+      const y = b.item.sort;
+      if (x !== y) return x === null ? 1 : y === null ? -1 : y.localeCompare(x);
+      return SAME_TIME_ORDER[a.item.kind] - SAME_TIME_ORDER[b.item.kind] || a.n - b.n;
+    })
+    .map(({ item }) => item);
 }

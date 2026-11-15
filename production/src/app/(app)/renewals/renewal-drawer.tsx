@@ -10,7 +10,8 @@
  *   History     (R-2838, right under the header) tabs All · Quotes · Invoices · Payments with counts —
  *               ./drawer-history.ts historyTabs (R-2836): each payment under the invoice it paid, with
  *               that invoice's period; a "Last quote · Last invoice · Last paid" strip; "Show all N";
- *               a link to the customer's whole history. UI: ./drawer-history-section.tsx.
+ *               a link to the customer's whole history. UI: ./drawer-history-section.tsx. R-2844: a fifth tab,
+ *               Timeline — documents, payments, follow-ups and reminders on one list, newest first (historyTimeline).
  *   Follow-ups  owner / next date / promise · reminders sent (R-2762: each email / WhatsApp reminder from the logs) · each logged follow-up
  *   Flags       each flag with its reason and one plain line
  */
@@ -39,8 +40,8 @@ import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, drawerSeatPlan, mayShowRen
 import {
   currentTermWords, drawerSubFromSearch, drawerViewFromSearch, withDrawerSub, drawerFlagRows, type DrawerView, drawerFollowupRows, remindersWords, termLengthWords,
 } from "./drawer";
-import { historyTabs } from "./drawer-history";
-import { DrawerHistory } from "./drawer-history-section";
+import { historyTabs, historyTimeline } from "./drawer-history";
+import { DrawerHistory, FollowupLine, ReminderLine } from "./drawer-history-section";
 import { priorDueInvoiceGap, type LastDocs } from "./last-docs";
 import { REMINDER_LOG_MAX, drawerReminderRows, reminderLogCapped, reminderLogWords } from "./reminder-log";
 import { currentTermStart } from "@/lib/billing/subscription-schedule";
@@ -255,7 +256,11 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
   const tds = q.data?.tds;
   const tabs = React.useMemo(() => historyTabs(docs, paid, { subQuoteId, todayIst, tds }), [docs, paid, subQuoteId, todayIst, tds]);
   const nameOf = (id: string) => names?.get(id)?.label ?? null;
-  const fuRows = sub ? drawerFollowupRows(followupRows.filter((r) => r.subscription_id === sub.id), nameOf) : [];
+  const subId = sub?.id ?? null;
+  const fuRows = React.useMemo(
+    () => (subId ? drawerFollowupRows(followupRows.filter((r) => r.subscription_id === subId), (id) => names?.get(id)?.label ?? null) : []),
+    [subId, followupRows, names],
+  );
   /* R-2762: every renewal reminder from the email + WhatsApp logs (read in the drawer's one query). */
   const reminderLog = q.data?.reminders;
   const reminderRows = React.useMemo(() => drawerReminderRows(reminderLog), [reminderLog]);
@@ -265,6 +270,8 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
   const [showAllReminders, setShowAllReminders] = React.useState(false);
   React.useEffect(() => setShowAllReminders(false), [sub?.id]);
   const remindersShown = showAllReminders ? reminderRows : reminderRows.slice(0, REMINDERS_PAGE);
+  /* R-2844: the Timeline tab — the same rows, on one list by date (no new read) */
+  const timeline = React.useMemo(() => historyTimeline(tabs, { followups: fuRows, reminders: reminderRows }), [tabs, fuRows, reminderRows]);
   const flags = item?.stage && sub
     ? drawerFlagRows(item.stage.flags, {
         priorDueGap: priorDueInvoiceGap(item.docs, item.prior ?? null, todayIst),
@@ -331,7 +338,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
               {/* R-2839: the History button's target (scrolled to; its active tab gets focus) */}
               <div ref={historyRef} tabIndex={-1} className="scroll-mt-4 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" data-testid="renewal-drawer-history-target">
                 <DrawerHistory
-                  key={sub.id} initialTab={view === "payments" ? "payments" : "all"} tabs={tabs} loading={q.isLoading} failed={q.isError}
+                  key={sub.id} initialTab={view === "payments" ? "payments" : "all"} tabs={tabs} timeline={timeline} loading={q.isLoading} failed={q.isError}
                   customer={sub.customer_id ? { id: sub.customer_id, name: sub.customer_name } : null}
                   canQuotes={canQuotes} canInvoices={canInvoices}
                 />
@@ -374,15 +381,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
                 {reminderRows.length > 0 && (
                   <div className="mb-2" data-testid="renewal-drawer-reminders">
                     <ul className="divide-y divide-hairline/70">
-                      {remindersShown.map((r) => (
-                        <li key={r.id} className="py-1.5 text-sm" data-testid="renewal-drawer-reminder" data-channel={r.channel}>
-                          <div className="flex items-baseline justify-between gap-2">
-                            <span className="min-w-0 text-ink-2"><span className="tabular-nums">{r.when}</span> · {r.channel} · {r.what}</span>
-                            <span className={cn("shrink-0 text-right text-xs", r.reached ? "text-ink-2" : "font-medium text-rose-600")}>{r.status}</span>
-                          </div>
-                          {r.to && <p className="truncate text-xs text-ink-3" title={r.to}>to {r.to}</p>}
-                        </li>
-                      ))}
+                      {remindersShown.map((r) => <ReminderLine key={r.id} r={r} />)}
                     </ul>
                     {!showAllReminders && reminderRows.length > REMINDERS_PAGE && (
                       <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowAllReminders(true)}>
@@ -395,15 +394,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
                   <p className="text-sm text-ink-3">No follow-up logged yet.</p>
                 ) : (
                   <ul className="divide-y divide-hairline/70">
-                    {fuRows.map((f) => (
-                      <li key={f.id} className="py-1.5 text-sm" data-testid="renewal-drawer-followup">
-                        <p className="text-xs text-ink-3">{[f.when, f.kind, f.who].filter(Boolean).join(" · ")}</p>
-                        {f.note && <p className="break-words text-ink">{f.note}</p>}
-                        {[f.outcome, f.promise, f.next].filter(Boolean).length > 0 && (
-                          <p className="text-xs text-ink-2">{[f.outcome, f.promise, f.next].filter(Boolean).join(" · ")}</p>
-                        )}
-                      </li>
-                    ))}
+                    {fuRows.map((f) => <FollowupLine key={f.id} f={f} />)}
                   </ul>
                 )}
               </Section>
