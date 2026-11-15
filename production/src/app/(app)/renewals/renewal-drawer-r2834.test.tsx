@@ -60,6 +60,11 @@ describe("R-2834 drawer 'Renews' line = the row's Due answer", () => {
     show({ ...SUB, renewal_date: null }, null);
     expect(renewsLine()).toBe("Renews — no date");
   });
+  it("part due but no renewal date → still says the renewal date is missing", () => {
+    const s = renewalStage({ sub: greentinStage, todayIst: TODAY, ...partDoc("2026-10-01") });
+    show({ ...SUB, renewal_date: null }, { ...s, anchorKind: "part", anchorDate: "2026-10-01" });
+    expect(renewsLine()).toBe("Part due 1 Oct 2026 · no renewal date");
+  });
   it("R-2823's vendor line stays", () => {
     show(SUB, renewalStage({ sub: greentinStage, todayIst: TODAY, ...partDoc("2026-10-01") }));
     expect(screen.getByTestId("renewal-drawer-vendor-term").textContent).toMatch(/^Google renews /);

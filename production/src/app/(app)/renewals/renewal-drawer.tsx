@@ -110,6 +110,12 @@ const TONE: Record<DocTone, string> = {
   muted: "text-ink-3",
 };
 
+/** R-2834: the head's date line = the row's Due tooltip (dueCellFacts); a missing renewal date is still said. */
+function renewsWords(title: string | null, renewalDate: string | null): string {
+  if (!title) return "Renews — no date";
+  return renewalDate ? title : `${title} · no renewal date`;
+}
+
 function Section({ title, children, testId }: { title: string; children: React.ReactNode; testId: string }) {
   return (
     <section className="border-t border-hairline pt-4" data-testid={testId} aria-label={title}>
@@ -246,7 +252,7 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                     : <Skeleton className="h-5 w-24" aria-label="Loading status" />}
                   {item.stage?.note && <p className="mt-1 text-xs text-ink-3">{item.stage.note}</p>}
                   {/* R-2834: the row's Due answer (R-2817 anchor) — "Part due 1 Oct 2026 · renews 31 Oct 2026" when a part fell due first. */}
-                  <p className="mt-1 text-xs text-ink-3 tabular-nums" data-testid="renewal-drawer-renews">{dueCellFacts(item.stage, sub, item.daysUntil).title ?? "Renews — no date"}</p>
+                  <p className="mt-1 text-xs text-ink-3 tabular-nums" data-testid="renewal-drawer-renews">{renewsWords(dueCellFacts(item.stage, sub, item.daysUntil).title, sub.renewal_date)}</p>
                 </div>
                 <div className="shrink-0">
                   <RenewalActions sub={sub} daysUntil={item.daysUntil} layout="card" strong={strong} onFollowup={onFollowup} messaging stage={item.stage} payHref={item.payHref} />
