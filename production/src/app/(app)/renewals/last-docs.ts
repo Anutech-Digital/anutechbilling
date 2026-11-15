@@ -580,6 +580,52 @@ export function sourceQuoteState(q: Pick<SourceQuote, "status">): string {
 }
 
 /**
+ * R-2841 (renewals history audit H6, ask (b) "last quote") — the quote a row shows BESIDE its last
+ * invoice: the newest quote sent, only when it is newer than the last invoice (same day counts), is
+ * not invoiced (its own invoice_id set → that invoice says it), is not a shown invoice's source quote,
+ * and is not the quote the stage chip already names (`stage.quoteId`). Otherwise null — one fact one
+ * place. No invoice → null too: the row's no-invoice line already is the quote (row-cells QuoteInstead).
+ * Typical hit: an accepted add-seats quote not invoiced yet, on a row whose last invoice is Paid.
+ * `stage` null = not read yet → null (the line never shows and then vanishes, like the chip's skeleton).
+ * The card layout's chip names no quote number, so the card passes CARD_CHIP (nothing named).
+ */
+export function rowQuoteNote(docs: LastDocs | undefined, stage: ChipQuote | null | undefined): LastQuote | null {
+  const q = docs?.quote ?? null;
+  const invoices = shownInvoices(docs);
+  const last = invoices[0];
+  if (!q || !last || !stage) return null;
+  if (q.invoice_id || q.payment_status === "invoiced" || docs?.invoicedQuoteIds?.includes(q.id)) return null;
+  if (chipNamesQuote(stage) === q.id) return null;
+  if (invoices.some((i) => i.sourceQuoteId === q.id)) return null;
+  if (last.date && q.date < last.date.slice(0, 10)) return null;
+  return q;
+}
+
+/** R-2841: what of the stage the rule reads (RenewalStage fits). */
+export type ChipQuote = { quoteId: string | null; key?: string; quoteStatus?: string | null };
+/** The card layout's chip: its label names no quote number. */
+export const CARD_CHIP: ChipQuote = { quoteId: null };
+
+/** R-2841: the quote the table's compact chip names and links (page.tsx StageChip: a quote stage, quote read) — else null. */
+export function chipNamesQuote(stage: ChipQuote): string | null {
+  if (!stage.quoteId || stage.quoteStatus === "unknown") return null;
+  return stage.key === "sent" || stage.key === "draft" || stage.key === "quote-closed" ? stage.quoteId : null;
+}
+
+/** The row's invoices, newest first (R-2748 reads up to two; `invoice` alone on an older shape). */
+export function shownInvoices(docs: LastDocs | undefined): LastInvoice[] {
+  return docs ? (docs.invoices?.length ? docs.invoices : docs.invoice ? [docs.invoice] : []) : [];
+}
+
+/**
+ * R-2841: the quote line the CARD layout shows — beside an invoice by rowQuoteNote, else (no invoice) the
+ * newest quote sent, the only document. page.tsx keeps its action line by this same answer.
+ */
+export function cardDocQuote(docs: LastDocs | undefined): LastQuote | null {
+  return shownInvoices(docs).length ? rowQuoteNote(docs, CARD_CHIP) : docs?.quote ?? null;
+}
+
+/**
  * R-2737 — the last invoice's state, by the /invoices rules (overdue.ts + payment-state.ts):
  * "Paid" · "Part paid · ₹x due" · "Unpaid · ₹x" · "Overdue Nd · ₹x" (past its due date, IST; no due
  * date = never overdue) · "Cancelled" (void) · "Cancelled · credit note" (notes for the whole value)

@@ -135,7 +135,7 @@ export async function readRenewalDocRows(
       .select(QUOTE_COLS)
       .or(`renewal_subscription_id.in.${inList(run)},add_seats_subscription_id.in.${inList(run)}`)
       .order("id", { ascending: true })
-      .range(from, to), { chunkSize: 100, ...c }),   // the id list is in the URL twice
+      .range(from, to), { chunkSize: 60, ...c }),   // the id list is in the URL twice — R-2841: 100 ids = ~8.2k chars, local Kong answers 414 (no CORS) → whole column "Couldn't load"
     fetchAllRowsIn<DocQuote, string>(ownQuoteIds, (run, from, to) => loose
       .from("quotes")
       .select(QUOTE_COLS)

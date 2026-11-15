@@ -16,7 +16,7 @@ import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import {
   daysBetweenIst, invoiceStatusWords, invoiceTotalWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel, renewalDueText,
-  sourceQuoteState,
+  cardDocQuote, shownInvoices, sourceQuoteState,
   type DocTone, type LastDocs, type LastInvoice, type SentRenewal,
 } from "./last-docs";
 
@@ -39,9 +39,10 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
 }) {
   if (loading) return null;
   if (failed) return <p className={cn("text-2xs text-ink-3", className)}>Last quote / invoice: couldn&apos;t load — reload the page</p>;
-  const invoices = docs?.invoices ?? [];
-  /* R-2748: one fact one place — the newest quote sent is not repeated when it is an invoice's own quote */
-  const quote = docs?.quote && !invoices.some((i) => i.sourceQuoteId === docs.quote?.id) ? docs.quote : null;
+  const invoices = shownInvoices(docs);
+  /* R-2748 / R-2841: one fact one place — beside an invoice the quote shows only by the table's rule
+     (rowQuoteNote: newer than the last invoice, not invoiced, not its quote); no invoice → it is the only document */
+  const quote = cardDocQuote(docs);
   const gap = priorDueInvoiceGap(docs, prior, todayIst);
   if (!quote && invoices.length === 0 && !gap) return null;
   const quoteState = quote ? quoteStateLabel(quote, todayIst) : "";

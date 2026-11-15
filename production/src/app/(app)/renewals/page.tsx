@@ -90,7 +90,7 @@ import type { LastPaid } from "./last-paid";
 import { useRenewalLastDocs } from "./last-docs-data";
 import { useRenewalHolds } from "./held-data";
 import { LastDocsLines, SentDueLines } from "./last-docs-cell";
-import { paidInvoiceOf, type LastDocs } from "./last-docs";
+import { cardDocQuote, paidInvoiceOf, type LastDocs } from "./last-docs";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import {
   filterByFollowup, bulkAssignRequests, bulkAssignReport,
@@ -391,9 +391,9 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
   const todayIst = istToday();
   const docsFor = (item: QueueItem, action: RowAction, className: string) => {
     /* R-2232's line stays when it says something the docs lines do not: a draft ("not sent yet"),
-       the docs still loading / unread, or a linked renewal quote that is not the newest quote sent. */
+       the docs still loading / unread, or a linked renewal quote the docs lines do not show (R-2841: cardDocQuote). */
     const keepActionLine = action.kind === "send" || docsState.loading || docsState.failed
-      || (!!action.quoteId && item.docs?.quote?.id !== action.quoteId);
+      || (!!action.quoteId && cardDocQuote(item.docs)?.id !== action.quoteId);
     return (
       <>
         {keepActionLine && <RowActionLine action={action} canQuotes={canQuotes} className={className} />}
@@ -542,7 +542,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
                   <td className="min-w-0 px-1.5 py-1.5">
-                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} />
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} stage={stage} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />

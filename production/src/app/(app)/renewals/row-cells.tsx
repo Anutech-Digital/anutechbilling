@@ -27,8 +27,8 @@ import type { RenewalStage } from "@/lib/renewals/stage";
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { renewalTermStart } from "./stage-input";
 import {
-  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel,
-  type DocTone, type LastDocs, type LastInvoice, type LastQuote,
+  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel, rowQuoteNote, shownInvoices,
+  type ChipQuote, type DocTone, type LastDocs, type LastInvoice, type LastQuote,
 } from "./last-docs";
 import type { RowContact } from "./queue-data";
 
@@ -85,7 +85,7 @@ export function dueSubWords(days: number | null): string | null {
 
 /** The Last invoice cell: the newest invoice and the earlier ones (R-2748 reads up to two). */
 export function lastInvoiceOf(docs: LastDocs | undefined): { invoice: LastInvoice | null; earlier: LastInvoice[] } {
-  const list = docs ? (docs.invoices.length ? docs.invoices : docs.invoice ? [docs.invoice] : []) : [];
+  const list = shownInvoices(docs);
   return { invoice: list[0] ?? null, earlier: list.slice(1) };
 }
 
@@ -203,7 +203,7 @@ export function DueCell({ date, days, note, title }: { date: string | null; days
   );
 }
 
-export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst, prior = null }: {
+export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst, prior = null, stage = null }: {
   docs: LastDocs | undefined;
   loading: boolean;
   failed: boolean;
@@ -212,6 +212,8 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
   todayIst: string;
   /** R-2747 / R-2818: what the previous term still owes (queue item `prior`, the one owed rule); null = none / not read. */
   prior?: SubscriptionOwed | null;
+  /** R-2841: the row's stage (null = not read yet: no quote line) — a quote its chip names is not repeated here. */
+  stage?: ChipQuote | null;
 }) {
   if (loading) return <p className="text-2xs text-ink-3">…</p>;
   if (failed) return <p className="text-2xs text-ink-3" title="Last invoice couldn't load — reload the page">Couldn&apos;t load</p>;
@@ -232,10 +234,13 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
   const state = invoiceStatusWords(invoice, todayIst);
   const total = invoiceTotalWords(invoice);
   const more = earlier.length ? ` · +${earlier.length} earlier` : "";
+  const note = rowQuoteNote(docs, stage);
+  const noteState = note ? quoteStateLabel(note, todayIst) : "";
   const title = [
     `Last invoice ${invoice.id}${invoice.date ? ` · dated ${formatDate(invoice.date)}` : ""} · ${total} · ${state.text}${invoice.period ? ` · for ${invoice.period}` : ""}`,
     ...earlier.map((e) => `Earlier invoice ${e.id} · ${invoiceTotalWords(e)} · ${invoiceStatusWords(e, todayIst).text}${e.period ? ` · for ${e.period}` : ""}`),
     ...(gap ? [gap] : []),
+    ...(note ? [`Quote ${note.id} · ${formatDate(note.date)} · ${noteState}${note.period ? ` · for ${note.period}` : ""}`] : []),
   ].join("\n");
   return (
     <div className="min-w-0 text-2xs" data-cell="invoice" data-testid="renewal-last-invoice-cell" title={title}>
@@ -246,6 +251,19 @@ export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes,
           : <span className="font-mono">{invoice.id}</span>}
         {gapSpan ?? <>{invoice.period ? ` · ${invoice.period}` : ""}{more}</>}
       </p>
+      {/* R-2841: a newer quote the chip does not name (e.g. accepted add-seats, not invoiced) — muted, linked.
+          The ~80px column at 1280 (measured) cannot hold "Quote Q-F588-27-0031 · Rejected" on one line: "Quote <no.>"
+          may truncate like the invoice number above (full text is the cell's tooltip); the state is its own line, never cut. */}
+      {note && (
+        <div className="mt-0.5 text-ink-3 tabular-nums" data-testid="renewal-row-quote-note">
+          <p className="truncate">
+            Quote {canQuotes
+              ? <Link href={`/quotes/${encodeURIComponent(note.id)}` as never} className="font-mono underline underline-offset-2 hover:text-ink">{note.id}</Link>
+              : <span className="font-mono">{note.id}</span>}
+          </p>
+          <p className="break-words" data-testid="renewal-row-quote-note-state">{noteState}</p>
+        </div>
+      )}
     </div>
   );
 }
