@@ -37,7 +37,7 @@ export function useBillTogether({ canQuotes, canInvoices = false }: { canQuotes:
   async function create(ids: string[], periods: BillTogetherPeriod[], from: Target) {
     const { customerName } = from;
     if (inFlight.current) {
-      toast.info("A proforma is still being created — wait for it, then try again.");
+      toast.info("The bill is still being created — wait for it, then try again.");
       return;
     }
     inFlight.current = true;
@@ -89,6 +89,15 @@ export function useBillTogether({ canQuotes, canInvoices = false }: { canQuotes:
  */
 export function togetherDone(made: BillTogetherCreated, count: number, customerName: string): { text: string; invoiced: boolean } {
   if (made.action === "invoice" && made.invoiceId) return { text: `Invoice ${made.invoiceId} — already paid from money received`, invoiced: true };
+  /* R-2849: yearly subscriptions → ONE renewal quote (opened on the quote page, not emailed) */
+  if (made.action === "renewal_quote") {
+    return {
+      text: made.alreadyExisted
+        ? `Opening the existing renewal quote ${made.quoteId} for ${customerName}`
+        : `Renewal quote ${made.quoteId} created for ${count} subscriptions of ${customerName} — not sent yet`,
+      invoiced: false,
+    };
+  }
   return {
     text: made.alreadyExisted
       ? `Opening the existing proforma ${made.quoteId} for ${customerName}`
@@ -105,6 +114,12 @@ export const GROUP_WHY: Record<BillTogetherGroup["why"], string> = {
   "same-domain": "Same domain and period",
 };
 
+/** R-2849: a group's label — a yearly group says it becomes ONE renewal quote (and "renewal month" for a domain match). */
+export function groupWhyText(g: Pick<BillTogetherGroup, "why" | "kind">): string {
+  if (g.kind !== "renewal") return GROUP_WHY[g.why];
+  return `${g.why === "same-domain" ? "Same domain and renewal month" : GROUP_WHY[g.why]} · one renewal quote`;
+}
+
 /** The subscriptions of a group still ticked (`off` = the ones unticked; a new group starts all ticked). */
 export const tickedOf = (g: BillTogetherGroup, off: ReadonlySet<string>) => g.subIds.filter((id) => !off.has(id));
 
@@ -120,8 +135,10 @@ export function togetherHint(
 ): { text: string; title?: string; onClick: () => void } {
   const { group } = hint;
   const on = tickedOf(group, off);
-  if (on.length >= 2) return { text: hint.text, onClick: () => open(on, group.customerName) };
-  const how = `Tick at least two subscriptions of ${group.customerName} in the Bill together box above to bill them on one proforma.`;
+  /* R-2849: a yearly group becomes ONE renewal quote, not a proforma */
+  const one = group.kind === "renewal" ? "renew them on one renewal quote" : "bill them on one proforma";
+  if (on.length >= 2) return { text: hint.text, title: `${hint.text} — ${one}`, onClick: () => open(on, group.customerName) };
+  const how = `Tick at least two subscriptions of ${group.customerName} in the Bill together box above to ${one}.`;
   /* the instruction first — a long hint is cut at its end (truncate); the plan names stay in the tooltip */
   return { text: `Tick at least two — ${hint.text.charAt(0).toLowerCase()}${hint.text.slice(1)}`, title: `${hint.text}. ${how}`, onClick: () => toast.info(how) };
 }
@@ -142,7 +159,7 @@ export function BillTogetherGroups({ groups, subOf, onBill, off, onToggle, pendi
   if (groups.length === 0) return null;
   return (
     <section aria-label="Bill together" aria-busy={pending || undefined} data-testid="bill-together-groups" className="border-b border-hairline bg-amber/5 px-3 py-1.5">
-      <p className="text-2xs font-medium text-ink-3">Bill together — one proforma for these subscriptions of one customer</p>
+      <p className="text-2xs font-medium text-ink-3">Bill together — one bill for these subscriptions of one customer</p>
       {/* R-2821: compact — a few groups show at once, the rest scroll inside (keyboard: Tab to the list) */}
       <ul className="mt-1 max-h-24 space-y-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" tabIndex={0} aria-label="Subscriptions billed together">
         {groups.map((g) => {
@@ -150,7 +167,7 @@ export function BillTogetherGroups({ groups, subOf, onBill, off, onToggle, pendi
           return (
             <li key={g.subIds.join(",")} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" data-testid="bill-together-group">
               <span className="font-medium text-ink">{g.customerName}</span>
-              <span className="text-2xs text-ink-3" data-testid="bill-together-why">{GROUP_WHY[g.why]}</span>
+              <span className="text-2xs text-ink-3" data-testid="bill-together-why">{groupWhyText(g)}</span>
               {g.subIds.map((id) => {
                 const s = subOf(id);
                 const label = `${s?.plan ?? "Subscription"}${s?.seats != null ? ` · ${s.seats} seats` : ""}`;

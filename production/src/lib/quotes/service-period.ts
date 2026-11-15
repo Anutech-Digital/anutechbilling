@@ -224,6 +224,12 @@ export interface LinePeriodLine {
   /** R-2744: the period the invoice stored for this line at issue (stored-line-period.ts) — read
    *  only when the context says `storedPeriods`. */
   service_period?: unknown;
+  /** R-2849: a renewal quote billed together (R-2847) — the subscription this line renews and the renewal date of
+   *  ITS term (each line its own), plus the period the RPC stored on the line. */
+  subscription_id?: string | null;
+  renewal_term_date?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
 }
 
 export interface LinePeriodContext {
@@ -246,9 +252,27 @@ export interface LinePeriodContext {
   /** R-2744: an issued invoice's lines carry the period stored at issue (withStoredLinePeriods) —
    *  print that, never a period worked out again from today's quote / subscription. */
   storedPeriods?: boolean;
+  /** R-2849: a together renewal quote — each line's subscription (start + term, domain) by subscription id. */
+  lineSubscriptions?: Readonly<Record<string, RenewedSubscriptionFacts>> | null;
 }
 
 export interface LinePeriod { from: string; to: string; months: number | null }
+
+/**
+ * R-2849 — the term ONE line of a together renewal quote renews (R-2847: each line carries subscription_id +
+ * renewal_term_date): that line's own renewal date, and where its next term starts — billing's followingTermStart from
+ * that subscription's start + term when known (the rule R-2848's invoice stamp uses), else the start the RPC stored on
+ * the line. Null = not a together line (the quote-level renewal_term_date applies, as before).
+ */
+function togetherLineTerm(line: LinePeriodLine, ctx: LinePeriodContext): { rtd: string; start: string | null } | null {
+  const rtd = line.subscription_id ? isoDateOf(line.renewal_term_date) : null;
+  if (!rtd) return null;
+  const sub = ctx.lineSubscriptions?.[line.subscription_id!];
+  if (sub?.start_date) {
+    return { rtd, start: followingTermStart({ term_months: sub.term_months ?? 12, start_date: sub.start_date, renewal_date: rtd }) };
+  }
+  return { rtd, start: isoDateOf(line.period_start) };
+}
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -309,14 +333,16 @@ export function lineServicePeriod(line: LinePeriodLine, ctx: LinePeriodContext):
 
   // 2. Renewal / extension: the next term after the one the quote was made for.
   if (ctx.isRenewal === true || ctx.isExtension === true) {
-    const rtd = isoDateOf(ctx.renewalTermDate);
+    /* R-2849: a together renewal quote has no quote-level renewal_term_date — each line names its own term. */
+    const own = togetherLineTerm(line, ctx);
+    const rtd = own ? own.rtd : isoDateOf(ctx.renewalTermDate);
     const m = ctx.extensionMonths;
     if (!rtd || !validMonths(m)) return null;
     if (termMonths === 1 && m !== 1) return null; // monthly line, longer field: conflict
     /* R-2727: an app-made subscription's next term starts ON renewal_date (billing's
        followingTermStart) and record_payment rolls renewal_date by m months → it covers
        renewal_date … renewal_date + m − 1 day. */
-    const start = isoDateOf(ctx.renewalStart);
+    const start = own ? own.start : isoDateOf(ctx.renewalStart);
     if (start === rtd) return { from: rtd, to: addDaysIso(addMonthsIso(rtd, m), -1), months: m };
     return { from: addDaysIso(rtd, 1), to: addMonthsIso(rtd, m), months: m };
   }
@@ -356,7 +382,9 @@ export function linePeriodText(line: LinePeriodLine, ctx: LinePeriodContext): st
 export function lineDomainText(line: LinePeriodLine, ctx: LinePeriodContext): string | null {
   if (!isTermLine(line)) return null;
   if (line.bulk && (line.domains?.length ?? 0) > 0) return null;
-  const d = ((line.domain ?? "").trim() || (ctx.domain ?? "").trim()).toLowerCase();
+  /* R-2849: a together renewal line's own subscription's domain before the quote's (the first subscription's) */
+  const lineSub = line.subscription_id ? ctx.lineSubscriptions?.[line.subscription_id] : undefined;
+  const d = ((line.domain ?? "").trim() || (lineSub?.domain ?? "").trim() || (ctx.domain ?? "").trim()).toLowerCase();
   if (!d) return null;
   // The name or detail already says it (lineDomainNote's rule): once is enough.
   if (`${line.name ?? ""} ${line.description ?? ""}`.toLowerCase().includes(d)) return null;
@@ -418,6 +446,21 @@ export interface RenewedSubscriptionFacts {
   domain?: string | null;
   start_date?: string | null;
   term_months?: number | null;
+  /** R-2849: a together renewal quote renews several subscriptions — each line's own (by subscription id). */
+  lines?: Readonly<Record<string, RenewedSubscriptionFacts>> | null;
+}
+
+/** R-2849: a together renewal quote's line subscriptions from a list of the customer's subscriptions (the client
+ *  hook) — the subscriptions its lines name. Null when no line names one. */
+export function togetherLineSubscriptions<S extends { id: string } & RenewedSubscriptionFacts>(
+  lines: ReadonlyArray<{ subscription_id?: unknown }> | null | undefined,
+  subs: ReadonlyArray<S> | null | undefined,
+): Record<string, RenewedSubscriptionFacts> | null {
+  const ids = new Set((lines ?? []).map((l) => (typeof l?.subscription_id === "string" ? l.subscription_id : "")).filter(Boolean));
+  if (ids.size === 0) return null;
+  const out: Record<string, RenewedSubscriptionFacts> = {};
+  for (const s of subs ?? []) if (ids.has(s.id)) out[s.id] = { domain: s.domain ?? null, start_date: s.start_date ?? null, term_months: s.term_months ?? null };
+  return out;
 }
 
 /** The subscription a renewal / extension quote renews: the one named by
@@ -464,5 +507,7 @@ export function quoteLinePeriodContext(
     ...(renewalStart ? { renewalStart } : {}),
     startFallback: q.created_date ?? null,
     domain: (q.domain ?? "").trim() || (sub?.domain ?? "").trim() || null,
+    /* R-2849: a together renewal quote — each line's own subscription */
+    ...(sub?.lines ? { lineSubscriptions: sub.lines } : {}),
   };
 }

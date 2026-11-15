@@ -198,8 +198,8 @@ export interface BillTogetherGroup {
   /** same-bill = their last part was on one quote / invoice; same-domain = same domain + same next period
    *  (R-2849: yearly — same domain + same renewal month). */
   why: "same-bill" | "same-domain";
-  /** R-2849: "parts" (one proforma) or "renewal" (one renewal quote for yearly subscriptions). Never mixed. */
-  kind: BillTogetherKind;
+  /** R-2849: "parts" (one proforma) or "renewal" (one renewal quote for yearly subscriptions). Never mixed. Absent = parts. */
+  kind?: BillTogetherKind;
 }
 
 /**
