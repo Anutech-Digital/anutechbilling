@@ -39,16 +39,17 @@ import {
   remindersWords, termLengthWords, type DrawerDocRow,
 } from "./drawer";
 import { priorDueInvoiceGap, type DocTone, type LastDocs } from "./last-docs";
-import { drawerReminderRows, reminderLogWords } from "./reminder-log";
-
-/** R-2762: reminders shown before "Show all N reminders". */
-const REMINDERS_PAGE = 5;
+import { REMINDER_LOG_MAX, drawerReminderRows, reminderLogCapped, reminderLogWords } from "./reminder-log";
+import { currentTermStart } from "@/lib/billing/subscription-schedule";
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { nextTermWords, subscriptionDomain } from "./row-cells";
 import { dueCellFacts } from "./due-anchor";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
 import type { RowContact } from "./queue-data";
+
+/** R-2762: reminders shown before "Show all N". */
+const REMINDERS_PAGE = 5;
 
 /** What opened the drawer (the product button) — focus goes back to it on close. */
 let drawerOpener: HTMLElement | null = null;
@@ -213,7 +214,9 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   /* R-2762: every renewal reminder from the email + WhatsApp logs (read in the drawer's one query). */
   const reminderLog = q.data?.reminders;
   const reminderRows = React.useMemo(() => drawerReminderRows(reminderLog), [reminderLog]);
-  const reminderLogFailed = q.isError || (q.isSuccess && reminderLog === null);
+  /* only the logs' own read failing says so (a documents failure is said under Documents) */
+  const reminderLogFailed = q.isSuccess && reminderLog === null;
+  const termStart = sub?.renewal_date ? currentTermStart({ term_months: sub.term_months ?? 12, start_date: sub.start_date ?? null, renewal_date: sub.renewal_date }) : null;
   const [showAllReminders, setShowAllReminders] = React.useState(false);
   React.useEffect(() => setShowAllReminders(false), [sub?.id]);
   const remindersShown = showAllReminders ? reminderRows : reminderRows.slice(0, REMINDERS_PAGE);
@@ -361,8 +364,9 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                   <Fact label="Confirmed">{fu?.confirmed ? "Yes — customer confirmed the renewal" : "Not yet"}</Fact>
                   <Fact label="Reminders">
                     {q.isLoading ? <Skeleton className="inline-block h-4 w-40 align-middle" aria-label="Loading reminders" /> : (
-                      <span data-testid="renewal-drawer-reminders-summary">{reminderLogFailed ? remindersWords(sub) : reminderLogWords(reminderRows, sub)}</span>
+                      <span data-testid="renewal-drawer-reminders-summary">{q.isError || reminderLogFailed ? remindersWords(sub) : reminderLogWords(reminderRows, sub, termStart)}</span>
                     )}
+                    {reminderLogCapped(reminderLog) && <span className="block text-xs text-ink-3">Only the latest {REMINDER_LOG_MAX} per channel are listed.</span>}
                     {reminderLogFailed && <span className="block text-xs text-ink-3">Couldn&apos;t load the reminder list — close and open again.</span>}
                   </Fact>
                 </dl>
@@ -381,7 +385,7 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                     </ul>
                     {!showAllReminders && reminderRows.length > REMINDERS_PAGE && (
                       <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowAllReminders(true)}>
-                        Show all {reminderRows.length} reminders
+                        Show all {reminderRows.length}
                       </Button>
                     )}
                   </div>

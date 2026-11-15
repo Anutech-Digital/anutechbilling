@@ -80,7 +80,7 @@ export async function readReminderLog(subId: string, tenantId: string | null | u
         .order("sent_at", { ascending: false })
         .limit(REMINDER_LOG_MAX),
       sb.from("whatsapp_reminder_log")
-        .select("id, kind, phone, status, sent_at, created_at")
+        .select("id, kind, step, phone, status, sent_at, created_at")
         .eq("tenant_id", tenantId)
         .eq("subject_type", "subscription")
         .eq("subject_id", subId)
@@ -95,10 +95,10 @@ export async function readReminderLog(subId: string, tenantId: string | null | u
   }
 }
 
-export function useRenewalDrawerData(sub: (SubRef & { tenant_id?: string | null; last_reminder_sent_at_v2?: string | null }) | null) {
+export function useRenewalDrawerData(sub: (SubRef & { tenant_id?: string | null }) | null) {
   const ref = sub ? docRefs([sub])[0] : null;
   return useQuery({
-    queryKey: ["quotes", "renewal-drawer", ref?.id ?? "", ref?.quote_id ?? "", ref?.renewal_quote_id ?? "", ref?.plan ?? "", ref?.domain ?? "", ref?.term_months ?? "", ref?.start_date ?? "", sub?.last_reminder_sent_at_v2 ?? ""],
+    queryKey: ["quotes", "renewal-drawer", ref?.id ?? "", ref?.quote_id ?? "", ref?.renewal_quote_id ?? "", ref?.plan ?? "", ref?.domain ?? "", ref?.term_months ?? "", ref?.start_date ?? ""],
     enabled: !!ref,
     staleTime: 0,   // every open reads afresh (a payment saved elsewhere invalidates only "payments")
     queryFn: async (): Promise<DrawerData> => {

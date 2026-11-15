@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { drawerReminderRows, reminderLogWords, REMINDER_LOG_MAX, type ReminderLog } from "./reminder-log";
+import { drawerReminderRows, reminderLogCapped, reminderLogWords, REMINDER_LOG_MAX, type ReminderLog } from "./reminder-log";
 
 const log = (over: Partial<ReminderLog> = {}): ReminderLog => ({ email: [], whatsapp: [], ...over });
 
@@ -15,11 +15,11 @@ describe("R-2762 reminder rows", () => {
         { id: "e1", cadence_step: "early_notice", recipient_email: "a@x.in", status: "sent", sent_at: "2026-10-01T04:00:00Z" },
         { id: "e2", cadence_step: "reminder_1", recipient_email: "a@x.in", status: "sent", sent_at: "2026-10-19T04:00:00Z" },
       ],
-      whatsapp: [{ id: "w1", kind: "renewal_upcoming", phone: "+919800000000", status: "read", sent_at: "2026-10-10T04:00:00Z", created_at: "2026-10-10T03:59:00Z" }],
+      whatsapp: [{ id: "w1", kind: "renewal_upcoming", step: "early_notice", phone: "+919800000000", status: "read", sent_at: "2026-10-10T04:00:00Z", created_at: "2026-10-10T03:59:00Z" }],
     }));
     expect(rows.map((r) => r.id)).toEqual(["email:e2", "whatsapp:w1", "email:e1"]);
     expect(rows[0]).toMatchObject({ channel: "Email", what: "Reminder 1 (T-12)", to: "a@x.in", status: "Sent", reached: true, when: "19 Oct 2026" });
-    expect(rows[1]).toMatchObject({ channel: "WhatsApp", what: "Renewal coming up", to: "+919800000000", status: "Read", reached: true });
+    expect(rows[1]).toMatchObject({ channel: "WhatsApp", what: "Early notice (T-30)", to: "+919800000000", status: "Read", reached: true });
     expect(rows[2].what).toBe("Early notice (T-30)");
   });
 
@@ -40,8 +40,8 @@ describe("R-2762 reminder rows", () => {
   });
 
   it("WhatsApp without sent_at is dated by created_at; an unknown step reads in plain words", () => {
-    const [r] = drawerReminderRows(log({ whatsapp: [{ id: "w", kind: "renewal_grace", phone: null, status: "sent", sent_at: null, created_at: "2026-11-02T10:00:00Z" }] }));
-    expect(r).toMatchObject({ when: "2 Nov 2026", what: "Grace period", to: null, status: "Sent" });
+    const [r] = drawerReminderRows(log({ whatsapp: [{ id: "w", kind: "renewal_grace", step: null, phone: null, status: "sent", sent_at: null, created_at: "2026-11-02T10:00:00Z" }] }));
+    expect(r).toMatchObject({ when: "2 Nov 2026", what: "Renewal passed — grace period", to: null, status: "Sent" });
     const [e] = drawerReminderRows(log({ email: [{ id: "e", cadence_step: "manual_note", recipient_email: "a@x.in", status: "sent", sent_at: "2026-11-02T10:00:00Z" }] }));
     expect(e.what).toBe("Manual note");
   });
@@ -59,7 +59,7 @@ describe("R-2762 Reminders line", () => {
       { id: "e2", cadence_step: "reminder_1", recipient_email: "a@x.in", status: "sent", sent_at: "2026-11-02T04:00:00Z" },
       { id: "e3", cadence_step: "reminder_2", recipient_email: "a@x.in", status: "failed", sent_at: "2026-11-05T04:00:00Z" },
     ],
-    whatsapp: [{ id: "w1", kind: "renewal_upcoming", phone: "+91", status: "delivered", sent_at: "2026-10-10T04:00:00Z", created_at: "2026-10-10T04:00:00Z" }],
+    whatsapp: [{ id: "w1", kind: "renewal_upcoming", step: "notice_sent", phone: "+91", status: "delivered", sent_at: "2026-10-10T04:00:00Z", created_at: "2026-10-10T04:00:00Z" }],
   }));
 
   it("count + channels + the last one that went out (not the last try)", () => {
@@ -75,6 +75,26 @@ describe("R-2762 Reminders line", () => {
     expect(reminderLogWords([], { reminder_count: 0 })).toBe("No reminder sent yet");
     expect(reminderLogWords([], {})).toBe("No reminder sent yet");
     expect(reminderLogWords([], { reminder_count: 2, last_reminder_sent_at_v2: "2026-11-02T05:00:00Z" })).toBe("2 reminders sent · last 2 Nov 2026");
+  });
+
+  it("counts THIS term only (the counter resets each term); older terms' reminders are named, still listed", () => {
+    expect(reminderLogWords(rows, {}, "2026-10-05")).toBe("2 reminders sent this term (1 email, 1 WhatsApp) · last 2 Nov 2026 · 1 try not sent · 1 from earlier terms");
+    expect(reminderLogWords(rows, {}, "2026-11-03")).toBe("No reminder sent yet this term · 1 try not sent · 3 from earlier terms");
+    expect(reminderLogWords(rows.filter((r) => r.at < "2026-10-05"), {}, "2026-10-05")).toBe("No reminder sent yet this term · 1 from earlier terms");
+  });
+});
+
+describe("R-2762 capped + WhatsApp step", () => {
+  it("a full log (100 rows) is flagged so the count is never read as the whole history", () => {
+    const e = { id: "e", cadence_step: "reminder_1", recipient_email: "a@x.in", status: "sent", sent_at: "2026-11-02T04:00:00Z" };
+    expect(reminderLogCapped({ email: Array.from({ length: REMINDER_LOG_MAX }, (_, i) => ({ ...e, id: `e${i}` })), whatsapp: [] })).toBe(true);
+    expect(reminderLogCapped({ email: [e], whatsapp: [] })).toBe(false);
+    expect(reminderLogCapped(null)).toBe(false);
+  });
+
+  it("a WhatsApp row names its cadence step like an email row", () => {
+    const [w] = drawerReminderRows(log({ whatsapp: [{ id: "w", kind: "renewal_upcoming", step: "reminder_2", phone: null, status: "sent", sent_at: "2026-11-02T04:00:00Z", created_at: "2026-11-02T04:00:00Z" }] }));
+    expect(w.what).toBe("Reminder 2 (T-9)");
   });
 });
 
@@ -96,6 +116,9 @@ describe("R-2762 the read (drawer-data.ts)", () => {
     const hook = src.slice(src.indexOf("export function useRenewalDrawerData"));
     expect(hook).toMatch(/Promise\.all\(\[[\s\S]*readReminderLog\(/);
     expect(fn).toMatch(/return null/);
-    expect(hook).toMatch(/last_reminder_sent_at_v2/);   // a new reminder re-reads it
+    /* Send now invalidates "quotes" → this key re-reads; no reminder field in the key (it would re-key + flash skeletons) */
+    expect(hook).toMatch(/queryKey: \["quotes", "renewal-drawer"/);
+    expect(hook).not.toMatch(/last_reminder_sent_at_v2/);
+    expect(fn).toMatch(/select\("id, kind, step, phone/);
   });
 });

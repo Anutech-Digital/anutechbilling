@@ -45,14 +45,15 @@ describe("R-2762 drawer: reminders sent", () => {
   it("lists email + WhatsApp newest first with date · channel · step · to whom, and the count", () => {
     withLog({
       email: [email("e1", "2026-10-01", "early_notice"), email("e2", "2026-11-02")],
-      whatsapp: [{ id: "w1", kind: "renewal_upcoming", phone: "+919800000001", status: "delivered", sent_at: "2026-10-20T04:00:00Z", created_at: "2026-10-20T04:00:00Z" }],
+      whatsapp: [{ id: "w1", kind: "renewal_upcoming", step: "notice_sent", phone: "+919800000001", status: "delivered", sent_at: "2026-10-20T04:00:00Z", created_at: "2026-10-20T04:00:00Z" }],
     });
     show();
-    expect(fu().getByTestId("renewal-drawer-reminders-summary").textContent).toBe("3 reminders sent (2 email, 1 WhatsApp) · last 2 Nov 2026");
+    expect(fu().getByTestId("renewal-drawer-reminders-summary").textContent).toBe("3 reminders sent this term (2 email, 1 WhatsApp) · last 2 Nov 2026");
     const rows = fu().getAllByTestId("renewal-drawer-reminder");
     expect(rows.map((r) => r.getAttribute("data-channel"))).toEqual(["Email", "WhatsApp", "Email"]);
     expect(rows[0].textContent).toContain("2 Nov 2026 · Email · Reminder 1 (T-12)");
     expect(rows[0].textContent).toContain("to ap@client.in");
+    expect(rows[1].textContent).toContain("WhatsApp · Notice sent (T-15)");
     expect(rows[1].textContent).toContain("Delivered");
     expect(rows[2].textContent).toContain("Early notice (T-30)");
   });
@@ -61,7 +62,7 @@ describe("R-2762 drawer: reminders sent", () => {
     withLog({ email: Array.from({ length: 7 }, (_, i) => email(`e${i}`, `2026-10-1${i}`)), whatsapp: [] });
     show();
     expect(fu().getAllByTestId("renewal-drawer-reminder")).toHaveLength(5);
-    fireEvent.click(fu().getByRole("button", { name: "Show all 7 reminders" }));
+    fireEvent.click(fu().getByRole("button", { name: "Show all 7" }));
     expect(fu().getAllByTestId("renewal-drawer-reminder")).toHaveLength(7);
   });
 

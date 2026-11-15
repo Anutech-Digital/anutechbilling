@@ -2,7 +2,7 @@
  * Card test — R-2762 "Renewals drawer: renewal emails/reminders sent (count + dates + channel) in the
  * Follow-ups section".
  *
- * At 1276×800 the owner opens a renewal's drawer: Follow-ups → Reminders reads "3 reminders sent
+ * At 1276×800 the owner opens a renewal's drawer: Follow-ups → Reminders reads "3 reminders sent this term
  * (2 email, 1 WhatsApp) · last <date> · 1 try not sent", and the list shows the four tries newest
  * first — date · Email/WhatsApp · step · status · to whom. A renewal with nothing sent reads
  * "No reminder sent yet" and has no list.
@@ -47,7 +47,7 @@ function seed(): void {
              (${T}, '${SUB_SENT}', 'notice_sent', 'ct2762@example.test', 'Renewal notice', 'sent', now() - interval '5 days'),
              (${T}, '${SUB_SENT}', 'reminder_1', 'ct2762@example.test', 'Renewal reminder', 'stubbed', now() - interval '1 day');
     insert into public.whatsapp_reminder_log (id, tenant_id, kind, subject_type, subject_id, step, phone, status, sent_at)
-      values ('${WA}', ${T}, 'renewal_upcoming', 'subscription', '${SUB_SENT}', 'ct-r2762-notice', '+919876527620', 'delivered', now() - interval '7 days');
+      values ('${WA}', ${T}, 'renewal_upcoming', 'subscription', '${SUB_SENT}', 'early_notice', '+919876527620', 'delivered', now() - interval '7 days');
     commit;`);
 }
 
@@ -67,17 +67,17 @@ test.describe("R-2762 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: Follow-ups → Reminders: 3 sent (2 email, 1 WhatsApp) · last … · 1 try not sent, listed newest first", async ({ browser, baseURL }) => {
+  test("Step 1: Follow-ups → Reminders: 3 sent this term (2 email, 1 WhatsApp) · last … · 1 try not sent, listed newest first", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const fu = await openFollowups(page, SUB_SENT);
     const summary = fu.getByTestId("renewal-drawer-reminders-summary");
-    await expect(summary).toHaveText(/^3 reminders sent \(2 email, 1 WhatsApp\) · last \d{1,2} \w{3} \d{4} · 1 try not sent$/, { timeout: 60_000 });
+    await expect(summary).toHaveText(/^3 reminders sent this term \(2 email, 1 WhatsApp\) · last \d{1,2} \w{3} \d{4} · 1 try not sent$/, { timeout: 60_000 });
     const rows = fu.getByTestId("renewal-drawer-reminder");
     await expect(rows).toHaveCount(4);
     await expect(rows.nth(0)).toContainText("Email · Reminder 1 (T-12)");
     await expect(rows.nth(0)).toContainText("Not sent — email sending is not set up");
     await expect(rows.nth(1)).toContainText("Email · Notice sent (T-15)");
-    await expect(rows.nth(2)).toContainText("WhatsApp · Renewal coming up");
+    await expect(rows.nth(2)).toContainText("WhatsApp · Early notice (T-30)");
     await expect(rows.nth(2)).toContainText("Delivered");
     await expect(rows.nth(2)).toContainText("to +919876527620");
     await expect(rows.nth(3)).toContainText("Email · Early notice (T-30)");
