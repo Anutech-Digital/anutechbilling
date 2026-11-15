@@ -20,7 +20,7 @@ import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { lineServicePeriod } from "@/lib/quotes/service-period";
 import { renewalIsSettled, firstReminderDaysOut } from "./cadence";
 import { priceRenewalQuote, type PricedRenewal } from "./create-renewal-quote";
-import type { BillTogetherLine } from "./bill-together";
+import { isOwnRenewalVendor, type BillTogetherLine } from "./bill-together";
 import type { TogetherRenewalFacts } from "./bill-together-preview";
 import { rpcRefusal, type TogetherReadFact, type TogetherSubRow } from "./bill-together.server";
 
@@ -29,7 +29,8 @@ export type RenewalReadFact = TogetherReadFact & { renewal?: TogetherRenewalFact
 
 /** The yearly renewal can be priced at all (the preview names any other reason without pricing it). */
 function priceable(s: TogetherSubRow): boolean {
-  return s.status === "active" && s.auto_renew !== false && !!s.renewal_date && s.billing_cycle === "yearly" && (s.term_months ?? 12) === 12;
+  /* rev H1: a domain / hosting renewal is priced live on its own quote — never here */
+  return !isOwnRenewalVendor(s.vendor) && s.status === "active" && s.auto_renew !== false && !!s.renewal_date && s.billing_cycle === "yearly" && (s.term_months ?? 12) === 12;
 }
 
 /** "Already renewed — …" (Generate renewal quote's own words, R-1562), or null. */
@@ -155,6 +156,8 @@ export async function fillRenewalLines(db: SupabaseClient, admin: SupabaseClient
 /** renewalTerm's / the seat-cut read's reason is for the log; the screen gets a short plain phrase. */
 function plainPriceError(reason: string): string {
   if (/seat cut/i.test(reason)) return "its scheduled seat cuts could not be read";
+  /* rev L1: renewalTerm's "no seat count" / "no monthly rate" — say what to fix, not "price does not match" */
+  if (/no seat count|no monthly rate/i.test(reason)) return "it has no seat count or no monthly rate — set them on the subscription";
   if (/price data/i.test(reason)) return reason;
   return "its stored price does not match its plan's catalogue price";
 }

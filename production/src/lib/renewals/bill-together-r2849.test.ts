@@ -205,3 +205,13 @@ describe("R-2849 suggestions + offer", () => {
     expect(canOfferBillTogether([{ customerId: "c", split: false }, { customerId: "d", split: false }])).toBe(false);
   });
 });
+
+describe("R-2849 H1 — domain and hosting never go on a together renewal quote", () => {
+  it("a domain / hosting subscription is refused with plain words (its own Review renewal quote prices it live)", () => {
+    for (const vendor of ["domain", "hosting"]) {
+      const p = buildTogetherPreview([yearly(STD), yearly(STA, { vendor } as Over)], TODAY);
+      expect(reasonsOf(p, STA)).toEqual([{ code: "not_billable", text: "It is a domain or hosting renewal — renew it with Review renewal quote on its row." }]);
+      expect(p.subs[1].line).toBeNull();
+    }
+  });
+});

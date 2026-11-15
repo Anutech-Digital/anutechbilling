@@ -37,3 +37,14 @@ describe("R-2849 yearly rows", () => {
     expect(idx.hintOf.has("c")).toBe(false);
   });
 });
+
+describe("R-2849 H1 rows", () => {
+  it("a yearly domain / hosting row is never billable (never suggested with a Workspace row on the same domain)", () => {
+    for (const vendor of ["domain", "hosting"]) {
+      const it0 = item("d", "example.in");
+      (it0.sub as unknown as { vendor: string }).vendor = vendor;
+      expect(togetherRowOf(it0).billable).toBe(false);
+      expect(togetherIndex([item("a", "Business Standard", { inv: null }), it0]).groups).toEqual([]);
+    }
+  });
+});

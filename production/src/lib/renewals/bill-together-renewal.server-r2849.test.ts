@@ -11,6 +11,8 @@ const priced = vi.hoisted(() => ({ calls: [] as Array<{ id: string; client: stri
 vi.mock("./create-renewal-quote", () => ({
   priceRenewalQuote: async (i: { subscriptionId: string; supabase: { __kind: string }; graceDays: number; seats: number }) => {
     priced.calls.push({ id: i.subscriptionId, client: i.supabase.__kind, graceDays: i.graceDays });
+    /* renewalTerm's own words for a row with no seats (L1) */
+    if (!i.seats) return { ok: false, reason: "This subscription has no seat count, so a renewal quote cannot be priced. Set the seats first." };
     if (priced.fail.has(i.subscriptionId)) return { ok: false, reason: "subscription x: stored mrr is 144x the catalogue price" };
     return { ok: true, pQuote: { subtotal: i.seats * 1080 }, lineItems: [], seats: i.seats, perSeatRate: 1080, subtotal: i.seats * 1080,
       amount: Math.round(i.seats * 1080 * 1.18), taxRate: 18, termMonths: 12 };
@@ -92,6 +94,14 @@ describe("R-2849 fillRenewalLines", () => {
     expect(out[0].renewalQuote).toBeNull();
     expect(out[1].renewal).toBeUndefined();
     expect(out[2].renewal).toBeUndefined();
+  });
+
+  it("L1: no seats / no MRR → says so (not 'price does not match the catalogue'); H1: a domain / hosting sub is never priced", async () => {
+    const out = await fillRenewalLines(fakeDb("cookie", {}), fakeDb("admin", {}), T,
+      [fact(A, { seats: 0 }), fact(B, { vendor: "domain" })]);
+    expect(out[0].renewal?.priceError).toBe("it has no seat count or no monthly rate — set them on the subscription");
+    expect(out[1].renewal).toBeUndefined();
+    expect(priced.calls.map((c) => c.id)).toEqual([A]);
   });
 
   it("already renewed for this term → settled words, not priced", async () => {

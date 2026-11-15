@@ -2,7 +2,7 @@
  * R-2808 — a Renewals row as suggestBillTogether / canOfferBillTogether read it (lib/renewals/bill-together.ts),
  * and the suggested groups the queue shows (ticked by default) with each row's "Bills with …" hint.
  */
-import { billsWithText, suggestBillTogether, type BillTogetherGroup, type BillTogetherRow } from "@/lib/renewals/bill-together";
+import { billsWithText, isOwnRenewalVendor, suggestBillTogether, type BillTogetherGroup, type BillTogetherRow } from "@/lib/renewals/bill-together";
 import { BILL_PART_WINDOW_DAYS } from "@/lib/renewals/stage";
 import { firstReminderDaysOut } from "@/lib/renewals/cadence";
 import { subscriptionDomain } from "./row-cells";
@@ -26,7 +26,8 @@ function billableNow(stage: Row["stage"], sub: Row["sub"]): boolean {
   if (!stage.split) {
     /* R-2849: a one-year yearly row (create_renewal_quote_together's rule — never a 24/36-month term) whose renewal is
        due with no renewal quote made yet (not even a draft), from 30 days before its first reminder — or past it. */
-    const oneYear = sub.billing_cycle === "yearly" && (sub.term_months ?? 12) === 12;
+    /* rev H1: never a domain / hosting row — they renew on their own quote (live price, registrar / DMS renewal) */
+    const oneYear = sub.billing_cycle === "yearly" && (sub.term_months ?? 12) === 12 && !isOwnRenewalVendor(sub.vendor as string | null | undefined);
     return oneYear && stage.key === "due" && !stage.quoteId && stage.renewalDays != null
       && stage.renewalDays <= firstReminderDaysOut(sub.term_months) + YEARLY_TOGETHER_LEAD_DAYS;
   }

@@ -269,3 +269,14 @@ export function canOfferBillTogether(rows: ReadonlyArray<Pick<BillTogetherRow, "
   const split = rows[0].split;
   return !!c && rows.every((r) => r.customerId === c && r.split === split);
 }
+
+/**
+ * R-2849 (rev H1): a domain or hosting subscription never goes on a together renewal quote — its own renewal quote is
+ * priced live (ResellerClub / DMS, createDomainRenewalQuote) and paying it queues the registrar / DMS renewal, which a
+ * quote renewing several subscriptions does not. Renewed with Review renewal quote on its row.
+ */
+export function isOwnRenewalVendor(vendor: string | null | undefined): boolean {
+  return vendor === "domain" || vendor === "hosting";
+}
+
+export const OWN_RENEWAL_TEXT = "It is a domain or hosting renewal — renew it with Review renewal quote on its row.";

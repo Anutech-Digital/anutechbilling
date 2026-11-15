@@ -14,6 +14,7 @@
 import type { BillTogetherKind, BillTogetherLine, BillTogetherPreview, BillTogetherReason, BillTogetherReasonCode, BillTogetherSub, TogetherBillRef } from "./bill-together";
 import type { UnpaidEarlierPart } from "@/lib/billing/proforma";
 import { isSplitBilled } from "@/lib/billing/instalments";
+import { isOwnRenewalVendor, OWN_RENEWAL_TEXT } from "./bill-together";
 
 /*
  * Reasons use the contract's ONE code list (BillTogetherReasonCode, ./bill-together.ts — R-2845): "not_billable"
@@ -37,6 +38,8 @@ export interface TogetherFact {
     /** R-2849 (yearly): the renewal date and term length. */
     renewal_date?: string | null;
     term_months?: number | null;
+    /** R-2849 (rev H1): domain / hosting renew on their own quote. */
+    vendor?: string | null;
   } | null;
   /** Its next unbilled part (Bill next part's own preview, one period); null when it was not worked out. */
   next: (BillTogetherLine & { unpaidEarlier: UnpaidEarlierPart[] }) | null;
@@ -139,6 +142,10 @@ function renewalReasons(f: TogetherFact, firstCustomer: { id: string | null; nam
   }
   if (isSplitBilled(s.billing_cycle as Parameters<typeof isSplitBilled>[0])) {
     out.push(reason("mixed_billing", `It is billed ${cycleWord(s.billing_cycle)} in parts, the others are renewed once a year — parts and yearly renewals cannot be on one bill. Bill its part with Bill next part.`));
+    return out;
+  }
+  if (isOwnRenewalVendor(s.vendor)) {
+    out.push(reason("not_billable", OWN_RENEWAL_TEXT));
     return out;
   }
   if (s.status !== "active") {
