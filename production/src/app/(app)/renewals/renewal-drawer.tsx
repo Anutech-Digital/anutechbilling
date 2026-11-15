@@ -244,7 +244,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
   };
   /* R-2839: the History button's open lands on History (the sheet's own first-element focus is skipped then) */
   const historyRef = React.useRef<HTMLDivElement>(null);
-  const toHistory = open && view === "history" && !!sub;
+  const toHistory = open && (view === "history" || view === "payments") && !!sub;
   useFocusHistory(historyRef, toHistory ? sub.id : null);
 
   const docs = q.data?.docs;
@@ -331,7 +331,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
               {/* R-2839: the History button's target (scrolled to; its active tab gets focus) */}
               <div ref={historyRef} tabIndex={-1} className="scroll-mt-4 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" data-testid="renewal-drawer-history-target">
                 <DrawerHistory
-                  key={sub.id} tabs={tabs} loading={q.isLoading} failed={q.isError}
+                  key={sub.id} initialTab={view === "payments" ? "payments" : "all"} tabs={tabs} loading={q.isLoading} failed={q.isError}
                   customer={sub.customer_id ? { id: sub.customer_id, name: sub.customer_name } : null}
                   canQuotes={canQuotes} canInvoices={canInvoices}
                 />

@@ -46,13 +46,14 @@ export function drawerSubFromSearch(search: string): string | null {
  * then scrolls to its History section and focuses the active tab. The product name opens it with no view.
  */
 export const DRAWER_VIEW_PARAM = "view";
-export type DrawerView = "history";
+/** R-2842: "payments" = History on its Payments tab (the card layout's one History button when the row has a payment). */
+export type DrawerView = "history" | "payments";
 
 /** The drawer's view in a location.search — only a known one, and only next to a drawer id; else null. */
 export function drawerViewFromSearch(search: string): DrawerView | null {
   if (!drawerSubFromSearch(search)) return null;
   const v = new URLSearchParams(search).get(DRAWER_VIEW_PARAM)?.trim();
-  return v === "history" ? v : null;
+  return v === "history" || v === "payments" ? v : null;
 }
 
 /** The same URL with ?sub= set (id) or removed (null), ?view= only next to an id (R-2839); every other parameter kept. */

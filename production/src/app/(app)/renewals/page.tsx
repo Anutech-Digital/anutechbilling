@@ -482,7 +482,8 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
               {/* R-2232: "Renewal quote Q-x not sent yet" — never a second Generate. R-2728: last quote / invoice. */}
               {docsFor(item, action, "mb-2 text-xs")}
               {/* R-2839: History — the row drawer on its History section */}
-              <HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} className="mb-2 block" />
+              {/* R-2842: the ONE history way on a card — Payments tab when the row has a payment (R-2422's popover is gone) */}
+              <HistoryButton onOpen={() => onOpen(sub.id, lastPaid.data?.get(sub.id) ? "payments" : "history")} name={`${sub.customer_name} · ${sub.plan}`} className="mb-2 block" />
 
               <div className="pt-2 border-t border-hairline/60">
                 <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
