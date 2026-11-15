@@ -160,6 +160,10 @@ test.describe("R-2839 card test", () => {
     const btn = card.getByRole("button", { name: /^History/ });
     await expect(btn).toBeVisible({ timeout: 90_000 });
     await btn.click();
-    await expectOnHistory(page);
+    /* R-2842: this card has a payment, so the card's one History button opens the drawer on the Payments tab */
+    const drawer = page.getByTestId("renewal-drawer");
+    await expect(drawer).toBeVisible({ timeout: 60_000 });
+    await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe("payments");
+    await expect(drawer.getByTestId("renewal-drawer-history").getByRole("tab", { name: /^Payments/ })).toBeFocused({ timeout: 10_000 });
   });
 });
