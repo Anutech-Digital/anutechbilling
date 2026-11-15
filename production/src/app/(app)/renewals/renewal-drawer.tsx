@@ -9,7 +9,7 @@
  *               (R-2819: owner / manager — Customer pays · Our cost · Margin, or "Cost missing — add in catalogue")
  *   Documents   every quote + invoice (id link · date · period · amount · status), newest first
  *   Payments    date · amount · method · the invoice it paid
- *   Follow-ups  owner / next date / promise · each logged follow-up · reminders sent
+ *   Follow-ups  owner / next date / promise · reminders sent (R-2762: each email / WhatsApp reminder from the logs) · each logged follow-up
  *   Flags       each flag with its reason and one plain line
  */
 import * as React from "react";
@@ -39,6 +39,10 @@ import {
   remindersWords, termLengthWords, type DrawerDocRow,
 } from "./drawer";
 import { priorDueInvoiceGap, type DocTone, type LastDocs } from "./last-docs";
+import { drawerReminderRows, reminderLogWords } from "./reminder-log";
+
+/** R-2762: reminders shown before "Show all N reminders". */
+const REMINDERS_PAGE = 5;
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { nextTermWords, subscriptionDomain } from "./row-cells";
 import { dueCellFacts } from "./due-anchor";
@@ -206,6 +210,13 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   const payments = drawerPaymentRows(q.data?.paid, docs);   // R-2818: money on an invoice with no receipt is listed too
   const nameOf = (id: string) => names?.get(id)?.label ?? null;
   const fuRows = sub ? drawerFollowupRows(followupRows.filter((r) => r.subscription_id === sub.id), nameOf) : [];
+  /* R-2762: every renewal reminder from the email + WhatsApp logs (read in the drawer's one query). */
+  const reminderLog = q.data?.reminders;
+  const reminderRows = React.useMemo(() => drawerReminderRows(reminderLog), [reminderLog]);
+  const reminderLogFailed = q.isError || (q.isSuccess && reminderLog === null);
+  const [showAllReminders, setShowAllReminders] = React.useState(false);
+  React.useEffect(() => setShowAllReminders(false), [sub?.id]);
+  const remindersShown = showAllReminders ? reminderRows : reminderRows.slice(0, REMINDERS_PAGE);
   const flags = item?.stage && sub
     ? drawerFlagRows(item.stage.flags, {
         priorDueGap: priorDueInvoiceGap(item.docs, item.prior ?? null, todayIst),
@@ -348,8 +359,33 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
                     </Fact>
                   )}
                   <Fact label="Confirmed">{fu?.confirmed ? "Yes — customer confirmed the renewal" : "Not yet"}</Fact>
-                  <Fact label="Reminders">{remindersWords(sub)}</Fact>
+                  <Fact label="Reminders">
+                    {q.isLoading ? <Skeleton className="inline-block h-4 w-40 align-middle" aria-label="Loading reminders" /> : (
+                      <span data-testid="renewal-drawer-reminders-summary">{reminderLogFailed ? remindersWords(sub) : reminderLogWords(reminderRows, sub)}</span>
+                    )}
+                    {reminderLogFailed && <span className="block text-xs text-ink-3">Couldn&apos;t load the reminder list — close and open again.</span>}
+                  </Fact>
                 </dl>
+                {reminderRows.length > 0 && (
+                  <div className="mb-2" data-testid="renewal-drawer-reminders">
+                    <ul className="divide-y divide-hairline/70">
+                      {remindersShown.map((r) => (
+                        <li key={r.id} className="py-1.5 text-sm" data-testid="renewal-drawer-reminder" data-channel={r.channel}>
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="min-w-0 text-ink-2"><span className="tabular-nums">{r.when}</span> · {r.channel} · {r.what}</span>
+                            <span className={cn("shrink-0 text-right text-xs", r.reached ? "text-ink-2" : "font-medium text-rose-600")}>{r.status}</span>
+                          </div>
+                          {r.to && <p className="truncate text-xs text-ink-3" title={r.to}>to {r.to}</p>}
+                        </li>
+                      ))}
+                    </ul>
+                    {!showAllReminders && reminderRows.length > REMINDERS_PAGE && (
+                      <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowAllReminders(true)}>
+                        Show all {reminderRows.length} reminders
+                      </Button>
+                    )}
+                  </div>
+                )}
                 {fuRows.length === 0 ? (
                   <p className="text-sm text-ink-3">No follow-up logged yet.</p>
                 ) : (
