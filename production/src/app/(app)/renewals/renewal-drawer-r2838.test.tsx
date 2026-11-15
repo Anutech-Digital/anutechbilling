@@ -16,7 +16,6 @@ vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { 
 vi.mock("@/lib/dates/ist", async (orig) => ({ ...(await orig<typeof import("@/lib/dates/ist")>()), istToday: () => "2026-11-15" }));
 vi.mock("./drawer-data", () => ({ useRenewalDrawerData: () => drawerQuery() }));
 vi.mock("./drawer-cost-data", () => ({ useRenewalDrawerCatalog: () => ({ data: [], isError: false }) }));
-vi.mock("./drawer-seat-cut-data", () => ({ useRenewalDrawerSeatCuts: () => ({ data: [], isError: false }) }));
 vi.mock("@/components/features/renewals/renewal-actions", () => ({ RenewalActions: () => null }));
 vi.mock("next/link", () => ({ default: ({ href, children, ...p }: { href: string; children: React.ReactNode }) => <a href={href} {...p}>{children}</a> }));
 
