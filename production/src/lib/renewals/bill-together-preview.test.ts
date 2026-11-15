@@ -4,7 +4,7 @@
  * one customer, monthly, both "Part not billed (Oct)".
  */
 import { describe, it, expect } from "vitest";
-import { buildTogetherPreview, existingTogetherBill, parseTogetherIds, type TogetherFact } from "./bill-together-preview";
+import { buildTogetherPreview, existingTogetherBill, parseTogetherIds, parseTogetherPeriods, periodsChanged, type TogetherFact } from "./bill-together-preview";
 
 const TODAY = "2026-11-14";
 const C1 = "c1", C2 = "c2";
@@ -125,5 +125,93 @@ describe("R-2807 parseTogetherIds", () => {
     expect(parseTogetherIds(" a, b ,,a,c")).toEqual(["a", "b", "c"]);
     expect(parseTogetherIds(["b", "b", " a ", 3, null])).toEqual(["b", "a"]);
     expect(parseTogetherIds(undefined)).toEqual([]);
+  });
+});
+
+describe("R-2831 sale-quote refusals in the preview (the RPC's, shown before anything is laid)", () => {
+  type Sale = NonNullable<TogetherFact["sale"]>;
+  const withSale = (f: TogetherFact, sale: Partial<Sale>): TogetherFact =>
+    ({ ...f, sale: { quoteId: "Q-1", startDate: "2025-10-12", termMonths: 12, firstTermStart: "2025-10-12", atNext: null, siblings: [], ...sale } });
+  const at = (o: Partial<NonNullable<Sale["atNext"]>> = {}) => ({ periodIndex: 2, termStart: "2025-10-12", credited: false, ...o });
+  const sib = (id: string, o: Partial<Sale["siblings"][number]> = {}) =>
+    ({ id, plan: `Plan ${id}`, counted: true, billedExternallyUntil: null, laidAny: true, openPeriodStarts: [] as string[], ...o });
+  const FIRST = "Its first part is billed by its sale quote Q-1 — bill it from there; later parts can be billed together.";
+
+  it("first part of a sale: its laid next part is period 1 of the EARLIEST term, never credit-noted → first_part_of_sale, no line", () => {
+    const first = withSale(fact("a", { next: { periodStart: "2025-10-12" } }), { atNext: at({ periodIndex: 1 }) });
+    const p = buildTogetherPreview([first, fact("b", { next: { periodStart: "2025-10-12" } })], TODAY);
+    expect(p.subs[0].reasons).toEqual([{ code: "first_part_of_sale", text: FIRST }]);
+    expect(p.subs[0].line).toBeNull();
+  });
+
+  it("not laid yet and NO part at all: first part when it opens a term (start date, or a rolled term's start); mid-term → not", () => {
+    const none = (start: string) => withSale(fact("a", { next: { periodStart: start } }), { firstTermStart: null, atNext: null });
+    for (const start of ["2025-10-12", "2026-10-12"]) {
+      expect(buildTogetherPreview([none(start), fact("b", { next: { periodStart: start } })], TODAY).subs[0].reasons.map((r) => r.code))
+        .toEqual(["first_part_of_sale"]);
+    }
+    expect(buildTogetherPreview([none("2026-11-12"), fact("b", { next: { periodStart: "2026-11-12" } })], TODAY).subs[0].reasons).toEqual([]);
+    // other parts already laid → laying this one never makes it the earliest term's first
+    expect(buildTogetherPreview([withSale(fact("a"), { atNext: null }), fact("b")], TODAY).subs[0].reasons).toEqual([]);
+  });
+
+  it("NOT the first part of a sale: period 1 of a LATER term (renewal), a credit-noted first part, a later period", () => {
+    const later = withSale(fact("a"), { atNext: at({ periodIndex: 1, termStart: "2026-10-12" }) });
+    const credited = withSale(fact("a", { next: { periodStart: "2025-10-12" } }), { atNext: at({ periodIndex: 1, credited: true }) });
+    const second = withSale(fact("a", { next: { periodStart: "2025-11-12" } }), { atNext: at() });
+    for (const f of [later, credited, second]) {
+      expect(buildTogetherPreview([f, fact("b", { next: { periodStart: f.next!.periodStart } })], TODAY).subs[0].reasons).toEqual([]);
+    }
+  });
+
+  it("R-2092: a counted sibling with no parts laid yet blocks it (not one billed elsewhere past this part, not an uncounted one); ticked → fine", () => {
+    const f = (o: Partial<Sale["siblings"][number]>) => withSale(fact("a"), { atNext: at(), siblings: [sib("s", { laidAny: false, ...o })] });
+    expect(buildTogetherPreview([f({}), fact("b")], TODAY).subs[0].reasons).toEqual([{ code: "sale_sibling",
+      text: "It is sold with Plan s on sale quote Q-1, whose parts are not laid yet — wait for the next billing run, then bill them together." }]);
+    expect(buildTogetherPreview([f({ billedExternallyUntil: "2026-10-12" }), fact("b")], TODAY).subs[0].reasons).toEqual([]);
+    expect(buildTogetherPreview([f({ counted: false }), fact("b")], TODAY).subs[0].reasons).toEqual([]);
+    expect(buildTogetherPreview([f({}), fact("b"), fact("s")], TODAY).subs[0].reasons).toEqual([]);
+  });
+
+  it("R-2092: a sibling's unbilled part of the SAME period (counted or not) not ticked → 'tick it too'; another period / ticked for it → fine", () => {
+    const f = (starts: string[], counted = true) => withSale(fact("a"), { atNext: at(), siblings: [sib("s", { openPeriodStarts: starts, counted })] });
+    for (const counted of [true, false]) {
+      const p = buildTogetherPreview([f(["2026-10-12"], counted), fact("b")], TODAY);
+      expect(p.subs[0].reasons).toEqual([{ code: "sale_sibling", text: "It is billed with Plan s (same sale quote Q-1, same period) — tick Plan s too." }]);
+      expect(p.total.taxable).toBe(1610);   // only b's line counts
+    }
+    expect(buildTogetherPreview([f(["2026-11-12"]), fact("b")], TODAY).subs[0].reasons).toEqual([]);
+    expect(buildTogetherPreview([f(["2026-10-12"]), fact("b"), fact("s")], TODAY).subs[0].reasons).toEqual([]);
+  });
+
+  it("R-2092: the sibling IS ticked but would bill an earlier part → says so (the RPC would refuse after laying)", () => {
+    const a = withSale(fact("a", { next: { periodStart: "2026-11-12" } }), { atNext: at(), siblings: [sib("s", { openPeriodStarts: ["2026-10-12", "2026-11-12"] })] });
+    const p = buildTogetherPreview([a, fact("s", { next: { periodStart: "2026-10-12" } })], TODAY);
+    expect(p.subs[0].reasons.map((r) => r.text)).toContain(
+      "It is billed with Plan s's part from 12 Nov 2026 (same sale quote Q-1), but Plan s would bill its part from 12 Oct 2026 now — bill Plan s's earlier part first.");
+  });
+
+  it("no sale facts (not sold on a quote) → unchanged", () => {
+    expect(buildTogetherPreview([fact("a"), fact("b")], TODAY).subs.map((s) => s.reasons)).toEqual([[], []]);
+  });
+});
+
+describe("R-2831 periods the screen showed", () => {
+  it("parseTogetherPeriods: absent → null; one per asked id, YYYY-MM-DD → map; anything else → bad", () => {
+    expect(parseTogetherPeriods(undefined, ["a", "b"])).toBeNull();
+    expect(parseTogetherPeriods([{ subscriptionId: "a", periodStart: "2026-10-12" }, { subscriptionId: "b", periodStart: "2026-10-12" }], ["a", "b"]))
+      .toEqual(new Map([["a", "2026-10-12"], ["b", "2026-10-12"]]));
+    for (const bad of ["x", [{ subscriptionId: "a", periodStart: "2026-10-12" }], [{ subscriptionId: "a", periodStart: "12 Oct" }, { subscriptionId: "b", periodStart: "2026-10-12" }],
+      [{ subscriptionId: "a", periodStart: "2026-10-12" }, { subscriptionId: "z", periodStart: "2026-10-12" }],
+      [{ subscriptionId: "a", periodStart: "2026-10-12" }, { subscriptionId: "a", periodStart: "2026-10-12" }, { subscriptionId: "b", periodStart: "2026-10-12" }]]) {
+      expect(parseTogetherPeriods(bad, ["a", "b"])).toBe("bad");
+    }
+  });
+
+  it("periodsChanged: same parts → null; a sub now billing another part (e.g. the next month after a retry) → plain sentence", () => {
+    const p = buildTogetherPreview([fact("a"), fact("b", { next: { periodStart: "2026-11-12" } })], "2026-11-14");
+    expect(periodsChanged(p, new Map([["a", "2026-10-12"], ["b", "2026-11-12"]]))).toBeNull();
+    expect(periodsChanged(p, new Map([["a", "2026-10-12"], ["b", "2026-10-12"]]))).toBe(
+      "What will be billed changed since you opened it — you saw Plan b's part from 12 Oct 2026, now it would bill the part from 12 Nov 2026. Nothing was billed — refresh Renewals and check again.");
   });
 });
