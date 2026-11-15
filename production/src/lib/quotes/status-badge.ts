@@ -23,7 +23,8 @@
  * reader needs first.
  */
 import type { Quote } from "@/lib/supabase/database.types";
-import { quoteBalanceDue } from "./list-tab";
+import { quoteBalanceDue, listPayByPassed } from "./list-tab";
+import { PAY_BY_PASSED_LABEL } from "@/lib/billing/proforma";
 import { invoicedPartPaid } from "./quote-payment-state";
 import { shownQuoteStatus } from "./quote-expiry";
 import { istToday } from "@/lib/dates/ist";
@@ -56,6 +57,7 @@ type QuoteStatusFields = Pick<Quote, "status" | "payment_status" | "amount" | "p
   below_cost?: boolean | null;
   /** R-2519: cancelled (kept, stored status rejected) — reads "Cancelled". */
   cancelled_at?: string | null;
+  cancelled_part_billing_id?: string | null;
 };
 
 /** What is still owed on this quote. Never negative — an overpayment is not a debt. */
@@ -88,6 +90,9 @@ export function unifiedStatus(q: QuoteStatusFields, today: string = istToday()):
     return { label: QUOTE_STATE_LABEL.partial, kind: "danger" };
   }
   if (q.payment_status === "received") return { label: QUOTE_STATE_LABEL.received, kind: "success" };
+
+  /* R-2851: same words as the quote page (R-2846) for a payment request past its pay-by date, unpaid. */
+  if (listPayByPassed(q, today)) return { label: PAY_BY_PASSED_LABEL, kind: "warning" };
 
   /* R-2213: staging July — a below-cost Manage-seats quote waiting for the owner read "Sent". A live
      quote (sent / viewed / accepted) whose approval is pending, or that is below cost and not

@@ -11,7 +11,10 @@
  *                                                  404 = the route is not deployed yet → the screen shows nothing)
  *   GET  /api/renewals/bill-together?ids=a,b    → 200 BillTogetherPreview  (never 404 — an unknown id is a
  *                                                  sub with reason "not_found")
- *   POST /api/renewals/bill-together {ids:[…]}  → 200 BillTogetherCreated | 4xx { error, reasons? }
+ *   POST /api/renewals/bill-together {ids:[…], periods?:[{subscriptionId, periodStart}]}
+ *                                               → 200 BillTogetherCreated | 4xx { error, reasons? }
+ *                                                  (R-2845: the screen sends the part each line showed — the
+ *                                                  route's guard then never bills a part nobody saw)
  *
  * R-2808 also owns suggestBillTogether(): which listed rows were billed together last cycle (the
  * Renewals queue groups them, ticked by default — Pardeep 14 Nov: "un subscription ko group me
@@ -20,7 +23,11 @@
 
 export const BILL_TOGETHER_PATH = "/api/renewals/bill-together";
 
-/** Why a subscription cannot go on the together bill. `text` is the plain sentence the screen shows. */
+/**
+ * Why a subscription cannot go on the together bill. `text` is the plain sentence the screen shows — the screen
+ * never switches on the code. R-2845: the ONE list — every code the route's preview returns is here (no wider
+ * type elsewhere).
+ */
 export type BillTogetherReasonCode =
   | "other_customer"        // not the first ticked subscription's customer
   | "yearly"                // not billed in parts (yearly / whole-term renewal quote — R-2809)
@@ -28,7 +35,10 @@ export type BillTogetherReasonCode =
   | "unpaid_earlier_part"   // an earlier part is still unpaid
   | "already_together"      // its next part is already on a live together proforma (see onTogetherBill)
   | "different_gst"         // its GST rate differs from the others
-  | "not_found";            // no such subscription in this company
+  | "not_found"             // no such subscription in this company
+  | "not_billable"          // not active / Won't renew / next part not worked out / not started next to a started one (R-2807)
+  | "first_part_of_sale"    // its first part is billed by its sale quote (R-2831)
+  | "sale_sibling";         // sold with others on one sale quote whose parts are not laid / not ticked (R-2092, R-2831)
 
 export interface BillTogetherReason { code: BillTogetherReasonCode; text: string }
 
@@ -80,22 +90,43 @@ export interface BillTogetherPreview {
 export interface BillTogetherCreated {
   /** The ONE proforma made (or the existing one, alreadyExisted). */
   quoteId: string;
-  /** Where to open it — `/quotes/<id>`. */
+  /** Where to open it — `/quotes/<id>`, or `/invoices/<id>` when action is "invoice". */
   href: string;
   alreadyExisted: boolean;
   /** The subscriptions on it. */
   subscriptionIds: string[];
+  /**
+   * R-2831: "request" = a proforma to send; "invoice" = the money already received paid the group, so its tax
+   * invoice was raised at once (invoiceId). Absent from a server older than R-2831 (read as "request").
+   */
+  action?: "request" | "invoice";
+  invoiceId?: string | null;
 }
 
+/** R-2845: the part one ticked line bills, as the dialog showed it (its line's periodStart). */
+export interface BillTogetherPeriod { subscriptionId: string; periodStart: string }
+
 export interface BillTogetherError { error: string; reasons?: Array<{ subscriptionId: string } & BillTogetherReason> }
+
+/** A refusal / failure from the route, with its HTTP status (R-2845: the screen treats 409 "changed / cannot join" apart). */
+export class BillTogetherHttpError extends Error {
+  constructor(message: string, readonly status: number) { super(message); this.name = "BillTogetherHttpError"; }
+}
 
 async function readJson(res: Response): Promise<unknown> {
   try { return await res.json(); } catch { return {}; }
 }
 
-/** Is the route deployed (and may this login use it)? 404 / 401 / 403 → false: the screen shows no Bill together. */
+/**
+ * Is the route deployed (and may this login use it)? 404 / 401 / 403 → false: the screen shows no Bill together.
+ * R-2832 (rev-r2808 F6): a 5xx or a "try later" (408 / 425 / 429) is NOT an answer — it throws, so the probe
+ * retries instead of caching "no" for its 10-minute stale time.
+ */
 export async function billTogetherAvailable(fetcher: typeof fetch = fetch): Promise<boolean> {
   const res = await fetcher(BILL_TOGETHER_PATH, { method: "GET" });
+  if (res.status >= 500 || res.status === 408 || res.status === 425 || res.status === 429) {
+    throw new Error(`Bill together check failed (${res.status})`);
+  }
   return res.ok || res.status === 400;
 }
 
@@ -107,17 +138,20 @@ export async function fetchBillTogetherPreview(ids: readonly string[], fetcher: 
   return json as BillTogetherPreview;
 }
 
-/** Make the ONE proforma. Throws with the route's own words (and the refused subscriptions' reasons). */
-export async function createTogetherProforma(ids: readonly string[], fetcher: typeof fetch = fetch): Promise<BillTogetherCreated> {
+/**
+ * Make the ONE proforma. Throws with the route's own words (and the refused subscriptions' reasons).
+ * `periods` (R-2845) = the part each ticked line showed; the route refuses (409, nothing billed) when one moved.
+ */
+export async function createTogetherProforma(ids: readonly string[], periods?: readonly BillTogetherPeriod[], fetcher: typeof fetch = fetch): Promise<BillTogetherCreated> {
   const res = await fetcher(BILL_TOGETHER_PATH, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify(periods?.length ? { ids, periods } : { ids }),
   });
   const json = (await readJson(res)) as Partial<BillTogetherCreated> & Partial<BillTogetherError>;
   if (!res.ok || !json.quoteId) {
     const why = json.reasons?.length ? ` — ${json.reasons.map((r) => r.text).join("; ")}` : "";
-    throw new Error(`${json.error ?? `Could not create the proforma (${res.status})`}${why}`);
+    throw new BillTogetherHttpError(`${json.error ?? `Could not create the proforma (${res.status})`}${why}`, res.status);
   }
   return json as BillTogetherCreated;
 }

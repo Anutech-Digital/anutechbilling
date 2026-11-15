@@ -11,20 +11,16 @@
  * - total.tax = round(total taxable × the one GST rate) — the RPC's own rule (GST on the bill's taxable), so the
  *   total shown is the proforma's to the rupee, not a sum of per-line roundings.
  */
-import type { BillTogetherLine, BillTogetherPreview, BillTogetherReasonCode, BillTogetherSub, TogetherBillRef } from "./bill-together";
+import type { BillTogetherLine, BillTogetherPreview, BillTogetherReason, BillTogetherReasonCode, BillTogetherSub, TogetherBillRef } from "./bill-together";
 import type { UnpaidEarlierPart } from "@/lib/billing/proforma";
 import { isSplitBilled } from "@/lib/billing/instalments";
 
-/**
- * The contract's reason codes plus "not_billable": not active / Won't renew / its next part could not be worked
- * out / a part not started yet next to a started one (R-2519b) — the text says which. The screen shows `text`
- * as it is and never switches on the code. Follow-up: fold "not_billable" into BillTogetherReasonCode in
- * ./bill-together.ts once R-2808 (which holds that file's lock) has landed.
+/*
+ * Reasons use the contract's ONE code list (BillTogetherReasonCode, ./bill-together.ts — R-2845): "not_billable"
+ * (not active / Won't renew / next part not worked out / a part not started next to a started one, R-2519b — the
+ * text says which) and R-2831's sale-quote refusals (first_part_of_sale, sale_sibling) are in it. The screen shows
+ * `text` as it is and never switches on the code.
  */
-export type TogetherReasonCode = BillTogetherReasonCode | "not_billable";
-export interface TogetherReason { code: TogetherReasonCode; text: string }
-export type TogetherSub = Omit<BillTogetherSub, "reasons"> & { reasons: TogetherReason[] };
-export type TogetherPreview = Omit<BillTogetherPreview, "subs"> & { subs: TogetherSub[] };
 
 /** What the server read about one asked id. `sub` null = not in this company (or not an id at all). */
 export interface TogetherFact {
@@ -46,6 +42,30 @@ export interface TogetherFact {
   /** Every live together proforma an unbilled part of it is on: that part's start, whether it is the
    *  subscription's oldest part with no tax invoice, and every subscription on the proforma. */
   togetherBills: TogetherBillOn[];
+  /** R-2831: what the RPC's sale-quote refusals need (the sub was sold on sale quote `quoteId`); absent = none. */
+  sale?: TogetherSaleFacts | null;
+}
+
+/** R-2831 — the facts behind bill_parts_together's two sale-quote refusals, so the preview shows them first. */
+export interface TogetherSaleFacts {
+  quoteId: string;
+  /** The subscription's start date (YYYY-MM-DD) and term length — where its terms begin. */
+  startDate: string | null;
+  termMonths: number;
+  /** Its earliest laid term's start; null = no part laid yet. */
+  firstTermStart: string | null;
+  /** Its next part as laid (null = not laid yet): index in its term, the term's start, credit-noted. */
+  atNext: { periodIndex: number | null; termStart: string | null; credited: boolean } | null;
+  /** Every other subscription of the same sale quote: its unbilled parts' starts (R-2092 group); `counted` = the
+   *  RPC's "not laid yet" rule counts it (active, same cycle, not yearly, started, MRR > 0) and `laidAny` = a part. */
+  siblings: Array<{ id: string; plan: string | null; counted: boolean; billedExternallyUntil: string | null; laidAny: boolean; openPeriodStarts: string[] }>;
+}
+
+/** Does a part starting `start` open a term of a subscription that began `startDate` with `termMonths`-month terms? */
+function opensTerm(startDate: string, termMonths: number, start: string): boolean {
+  if (start < startDate || start.slice(8, 10) !== startDate.slice(8, 10)) return false;
+  const months = (Number(start.slice(0, 4)) - Number(startDate.slice(0, 4))) * 12 + Number(start.slice(5, 7)) - Number(startDate.slice(5, 7));
+  return months % Math.max(1, termMonths) === 0;
 }
 
 export interface TogetherBillOn extends TogetherBillRef {
@@ -60,7 +80,7 @@ function onNextPart(f: TogetherFact): TogetherBillOn | null {
   return start ? f.togetherBills.find((t) => t.partPeriodStart === start) ?? null : null;
 }
 
-const reason = (code: TogetherReasonCode, text: string): TogetherReason => ({ code, text });
+const reason = (code: BillTogetherReasonCode, text: string): BillTogetherReason => ({ code, text });
 
 function dayMonYear(iso: string): string {
   const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -72,10 +92,10 @@ function cycleWord(cycle: string | null): string {
 }
 
 /** The reasons that depend on this subscription alone (and the first one's customer). */
-function ownReasons(f: TogetherFact, firstCustomer: { id: string | null; name: string | null } | null): TogetherReason[] {
+function ownReasons(f: TogetherFact, firstCustomer: { id: string | null; name: string | null } | null, asked: ReadonlyMap<string, string | null>): BillTogetherReason[] {
   const s = f.sub;
   if (!s) return [reason("not_found", "This subscription was not found in your company — refresh Renewals and tick it again.")];
-  const out: TogetherReason[] = [];
+  const out: BillTogetherReason[] = [];
   if (firstCustomer && (s.customer_id ?? null) !== firstCustomer.id) {
     out.push(reason("other_customer", `It is ${s.customer_name ?? "another customer"}'s, not ${firstCustomer.name ?? "the first customer"}'s — one bill is for one customer.`));
   }
@@ -104,17 +124,56 @@ function ownReasons(f: TogetherFact, firstCustomer: { id: string | null; name: s
     const doc = unpaid.kind === "invoice" ? "invoice" : "proforma";
     out.push(reason("unpaid_earlier_part", `Its part from ${dayMonYear(unpaid.start)} is still unpaid (${doc} ${unpaid.id}) — get it paid or cancel it first.`));
   }
+  out.push(...saleReasons(f, asked));
   if (!f.next && out.length === 0) {
     out.push(reason("not_billable", `Its next part could not be worked out${f.nextError ? ` (${f.nextError})` : ""} — use Bill next part on its row.`));
   }
   return out;
 }
 
+/**
+ * R-2831 — bill_parts_together's sale-quote refusals, before anything is laid (the RPC still decides):
+ * - the first part of a sale (period 1 of its earliest term, never credit-noted; not laid yet = no part at all and
+ *   the part opens a term) is billed by its sale quote, with the one-time lines;
+ * - R-2092: a counted sibling of the same sale quote with no parts laid yet blocks it; a sibling's unbilled part of
+ *   the same period must be on the same bill (one sale quote, one period = one bill).
+ * `asked` = each ticked subscription → the start of the part it would bill.
+ */
+function saleReasons(f: TogetherFact, asked: ReadonlyMap<string, string | null>): BillTogetherReason[] {
+  const sale = f.sale;
+  const start = f.next?.periodStart;
+  if (!sale || !start) return [];
+  const out: BillTogetherReason[] = [];
+  const own = sale.atNext;
+  const first = own
+    ? own.periodIndex === 1 && !own.credited && !!own.termStart && own.termStart === sale.firstTermStart
+    /* not laid: laying it makes it the only (so earliest) term's part — period 1 when it opens a term */
+    : sale.firstTermStart === null && !!sale.startDate && opensTerm(sale.startDate, sale.termMonths, start);
+  if (first) {
+    out.push(reason("first_part_of_sale", `Its first part is billed by its sale quote ${sale.quoteId} — bill it from there; later parts can be billed together.`));
+  }
+  const others = sale.siblings.filter((s) => s.id !== f.sub?.id);
+  const notLaid = others.filter((s) => s.counted && !asked.has(s.id) && !s.laidAny && (!s.billedExternallyUntil || s.billedExternallyUntil < start));
+  if (notLaid.length > 0) {
+    const plans = notLaid.map((s) => s.plan ?? "another subscription").join(", ");
+    out.push(reason("sale_sibling", `It is sold with ${plans} on sale quote ${sale.quoteId}, whose parts are not laid yet — wait for the next billing run, then bill them together.`));
+  }
+  for (const s of others.filter((x) => x.openPeriodStarts.includes(start) && asked.get(x.id) !== start)) {
+    const plan = s.plan ?? "another subscription";
+    const theirs = asked.get(s.id);
+    out.push(reason("sale_sibling", asked.has(s.id)
+      ? `It is billed with ${plan}'s part from ${dayMonYear(start)} (same sale quote ${sale.quoteId}), but ${plan} would bill ${theirs ? `its part from ${dayMonYear(theirs)}` : "no part"} now — bill ${plan}'s earlier part first.`
+      : `It is billed with ${plan} (same sale quote ${sale.quoteId}, same period) — tick ${plan} too.`));
+  }
+  return out;
+}
+
 /** The preview for the asked ids, in the asked order (duplicates dropped). */
-export function buildTogetherPreview(facts: readonly TogetherFact[], todayISO: string): TogetherPreview {
+export function buildTogetherPreview(facts: readonly TogetherFact[], todayISO: string): BillTogetherPreview {
   const firstFound = facts.find((f) => f.sub)?.sub ?? null;
   const firstCustomer = firstFound ? { id: firstFound.customer_id ?? null, name: firstFound.customer_name } : null;
-  const rows = facts.map((f) => ({ f, reasons: ownReasons(f, firstCustomer) }));
+  const asked = new Map(facts.filter((f) => f.sub).map((f) => [f.sub!.id, f.next?.periodStart ?? null] as const));
+  const rows = facts.map((f) => ({ f, reasons: ownReasons(f, firstCustomer, asked) }));
 
   /* One GST rate on one bill — the first joinable one's rate decides (as the RPC refuses a mix). */
   const joinable = () => rows.filter((r) => r.reasons.length === 0 && r.f.next);
@@ -134,7 +193,7 @@ export function buildTogetherPreview(facts: readonly TogetherFact[], todayISO: s
     }
   }
 
-  const subs: TogetherSub[] = rows.map(({ f, reasons }) => {
+  const subs: BillTogetherSub[] = rows.map(({ f, reasons }) => {
     const on = onNextPart(f);
     return {
       subscriptionId: f.sub?.id ?? f.id,
@@ -172,15 +231,57 @@ export function existingTogetherBill(facts: readonly TogetherFact[]): string | n
   return asked.size === on.size && [...asked].every((id) => on.has(id)) ? t.quoteId : null;
 }
 
-/** The asked ids: trimmed, empties and repeats dropped, order kept. */
+/**
+ * The asked ids: trimmed, lowercased, empties and repeats dropped, order kept. Lowercase (R-2845, rev-r2831 L1):
+ * Postgres prints uuids lowercase, so every id the server reads back (and keys the period guard by) is lowercase —
+ * an UPPERCASE id kept as sent would match nothing in parseTogetherPeriods / findInvoicedTogether.
+ */
 export function parseTogetherIds(raw: unknown): string[] {
   const list = typeof raw === "string" ? raw.split(",") : Array.isArray(raw) ? raw : [];
   const out: string[] = [];
   for (const x of list) {
-    const id = typeof x === "string" ? x.trim() : "";
+    const id = typeof x === "string" ? x.trim().toLowerCase() : "";
     if (id && !out.includes(id)) out.push(id);
   }
   return out;
+}
+
+/**
+ * R-2831 — the part each ticked subscription bills, as the screen showed it: `[{ subscriptionId, periodStart }]`.
+ * Absent → null (an older screen). Anything else malformed, a date that is not YYYY-MM-DD, an id not asked, or an
+ * asked id missing → "bad". Ids are lowercased like parseTogetherIds (R-2845) — `ids` are its output.
+ */
+export function parseTogetherPeriods(raw: unknown, ids: readonly string[]): Map<string, string> | null | "bad" {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) return "bad";
+  const out = new Map<string, string>();
+  for (const x of raw as Array<{ subscriptionId?: unknown; periodStart?: unknown }>) {
+    const id = typeof x?.subscriptionId === "string" ? x.subscriptionId.trim().toLowerCase() : "";
+    const start = typeof x?.periodStart === "string" ? x.periodStart : "";
+    if (!ids.includes(id) || !realDate(start) || out.has(id)) return "bad";
+    out.set(id, start);
+  }
+  return ids.every((id) => out.has(id)) ? out : "bad";
+}
+
+/** YYYY-MM-DD and a real calendar day — 2026-02-30 would reach Postgres and fail as a 500, not a 400 (R-2845). */
+function realDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/** R-2831 — the sentence when a subscription would now bill another part than the screen showed; null = same. */
+export function periodsChanged(preview: BillTogetherPreview, periods: ReadonlyMap<string, string>): string | null {
+  for (const s of preview.subs) {
+    const shown = periods.get(s.subscriptionId);
+    const now = s.line?.periodStart ?? null;
+    if (shown && now !== shown) {
+      return `What will be billed changed since you opened it — you saw ${s.plan ?? "a subscription"}'s part from ${dayMonYear(shown)}, `
+        + `${now ? `now it would bill the part from ${dayMonYear(now)}` : "now it cannot be billed"}. Nothing was billed — refresh Renewals and check again.`;
+    }
+  }
+  return null;
 }
 
 /** Most subscriptions on one together bill (a Renewals screen's worth). */

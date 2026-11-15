@@ -34,7 +34,7 @@ import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { isPartRequest, partLabelOf, partRequestPaymentToast, partRequestTdsCheck } from "@/lib/billing/part-requests";
+import { isPartRequest, partAdvanceText, partLabelOf, partRequestPaymentToast, partRequestTdsCheck, type PartAdvance } from "@/lib/billing/part-requests";
 import { paymentToast, blankReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
   invoiceNowOffer,
@@ -283,7 +283,85 @@ function computeTds(quoteAmountInclGst: number, ratePct: number, taxRatePct: num
   return { preGST, tds };
 }
 
+/* ── R-2846: a part payment request (advance proforma) says it is the ADVANCE ─────────────
+   Owner, 15 Nov (Q-F588-27-0059): the request reads "Renewal · Part 1 of 1 · Oct 2026" and
+   "Advance payment for month 1 · 1 Oct–31 Oct 2026", but this sheet said "Log a payment against
+   quote … Quote total / Expected this payment". Wording only — every amount is the same. */
+
+/** The sheet's title. `advance` = the part request's advance (null on any other quote). */
+export function recordPaymentTitle(hasPriorPayments: boolean, advance: PartAdvance | null): string {
+  if (advance) return hasPriorPayments ? "Record rest of advance" : "Record advance payment";
+  return hasPriorPayments ? "Record additional payment" : "Record payment received";
+}
+
+/** The line under the title. */
+export function RecordPaymentSubtext({ advance, quoteId, customerName, hasPriorPayments }: {
+  advance: PartAdvance | null; quoteId: string; customerName: string; hasPriorPayments: boolean;
+}) {
+  if (advance) return <>{partAdvanceText(advance, customerName)}</>;
+  return (
+    <>
+      Log a payment against quote <span className="font-mono font-semibold">{quoteId}</span> from <b>{customerName}</b>.
+      {hasPriorPayments
+        ? " Multiple payments are supported (installments / partial)."
+        : " You can record more payments later if it's paid in installments."}
+    </>
+  );
+}
+
+/** The totals box: already paid + this payment + remaining. On a part request one "Advance due"
+ *  row (then "Already received" / "Remaining" once part of it is paid). */
+export function PaymentSummaryRows({ split, expectedAmount, alreadyReceived, remaining, advance }: {
+  split: SplitExpectation | null; expectedAmount: number; alreadyReceived: number; remaining: number; advance: boolean;
+}) {
+  const hasPriorPayments = alreadyReceived > 0;
+  return (
+    <div className="bg-paper-2 rounded-md p-3 text-sm space-y-1.5">
+      {split ? (
+        /* R-527: the year is shown for reference; what is expected is the instalments
+           due so far — the same per-instalment figure the customer page collects. */
+        <>
+          <div className="flex justify-between items-baseline">
+            <span className="text-ink-3">Year, {split.scheduleLabel}</span>
+            <span className="tabular-nums text-ink-3">
+              {split.plan.lines.every((l) => l.gross === split.plan.lines[0].gross)
+                ? `${split.plan.count} × ${rupee(split.plan.lines[0].gross)} = `
+                : `${split.plan.count} instalments · `}
+              {rupee(split.plan.instalmentsGross)}
+            </span>
+          </div>
+          <div className="flex justify-between items-baseline">
+            <span className="text-ink-3">Due now · {split.dueLabel}</span>
+            <span className="font-medium tabular-nums">{rupee(expectedAmount)}</span>
+          </div>
+        </>
+      ) : advance && !hasPriorPayments ? null : (
+        <div className="flex justify-between items-baseline">
+          <span className="text-ink-3">{advance ? "Advance due" : "Quote total"}</span>
+          <span className="font-medium tabular-nums">{rupee(expectedAmount)}</span>
+        </div>
+      )}
+      {hasPriorPayments && (
+        <div className="flex justify-between items-baseline">
+          <span className="text-ink-3">Already received</span>
+          <span className="tabular-nums text-emerald">−{rupee(alreadyReceived)}</span>
+        </div>
+      )}
+      <div className={`flex justify-between items-baseline${advance && !hasPriorPayments && !split ? "" : " pt-1.5 border-t border-hairline"}`}>
+        <span className="text-ink-3">{hasPriorPayments ? "Remaining" : advance ? "Advance due" : "Expected this payment"}</span>
+        <span className="font-serif text-lg tabular-nums text-amber-ink">{rupee(remaining)}</span>
+      </div>
+    </div>
+  );
+}
+
 interface RecordPaymentDialogProps {
+  /**
+   * R-2846: a part payment request — what its advance is for (part-requests.ts partAdvanceOf).
+   * The title, the line under it and the totals then say "advance". Wording only; null/absent =
+   * any other quote, unchanged.
+   */
+  partAdvance?: PartAdvance | null;
   /**
    * The quote's line items, used only to explain WHY no subscription was created.
    * Optional: without it the explanation falls back to a generic one rather than
@@ -370,6 +448,7 @@ export function RecordPaymentDialog({
   lineItems,
   onRecorded,
   tdsOnly = null,
+  partAdvance = null,
 }: RecordPaymentDialogProps) {
   const qc = useQueryClient();
   /* The receipt-voucher counter, so the sheet can name the number it will consume. */
@@ -1291,7 +1370,7 @@ export function RecordPaymentDialog({
           <SheetHeader className="pr-12 pt-4 px-6 pb-3 border-b border-hairline bg-paper-2/40">
             <div className="flex items-center justify-between gap-3">
               <SheetTitle>
-                {hasPriorPayments ? "Record additional payment" : "Record payment received"}
+                {recordPaymentTitle(hasPriorPayments, partAdvance)}
               </SheetTitle>
 
               {/* 🐛 Top Header Report Bug Button inside Slider Panel */}
@@ -1307,10 +1386,7 @@ export function RecordPaymentDialog({
             </div>
 
             <SheetDescription className="mt-1">
-              Log a payment against quote <span className="font-mono font-semibold">{quoteId}</span> from <b>{customerName}</b>.
-              {hasPriorPayments
-                ? " Multiple payments are supported (installments / partial)."
-                : " You can record more payments later if it's paid in installments."}
+              <RecordPaymentSubtext advance={partAdvance} quoteId={quoteId} customerName={customerName} hasPriorPayments={hasPriorPayments} />
             </SheetDescription>
           </SheetHeader>
 
@@ -1377,42 +1453,13 @@ export function RecordPaymentDialog({
           )}
 
           {/* Payment summary — already paid + this payment + remaining */}
-          <div className="bg-paper-2 rounded-md p-3 text-sm space-y-1.5">
-            {split ? (
-              /* R-527: the year is shown for reference; what is expected is the instalments
-                 due so far — the same per-instalment figure the customer page collects. */
-              <>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-ink-3">Year, {split.scheduleLabel}</span>
-                  <span className="tabular-nums text-ink-3">
-                    {split.plan.lines.every((l) => l.gross === split.plan.lines[0].gross)
-                      ? `${split.plan.count} × ${rupee(split.plan.lines[0].gross)} = `
-                      : `${split.plan.count} instalments · `}
-                    {rupee(split.plan.instalmentsGross)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-ink-3">Due now · {split.dueLabel}</span>
-                  <span className="font-medium tabular-nums">{rupee(expectedAmount)}</span>
-                </div>
-              </>
-            ) : (
-              <div className="flex justify-between items-baseline">
-                <span className="text-ink-3">Quote total</span>
-                <span className="font-medium tabular-nums">{rupee(expectedAmount)}</span>
-              </div>
-            )}
-            {hasPriorPayments && (
-              <div className="flex justify-between items-baseline">
-                <span className="text-ink-3">Already received</span>
-                <span className="tabular-nums text-emerald">−{rupee(alreadyReceived)}</span>
-              </div>
-            )}
-            <div className="flex justify-between items-baseline pt-1.5 border-t border-hairline">
-              <span className="text-ink-3">{hasPriorPayments ? "Remaining" : "Expected this payment"}</span>
-              <span className="font-serif text-lg tabular-nums text-amber-ink">{rupee(remaining)}</span>
-            </div>
-          </div>
+          <PaymentSummaryRows
+            split={split}
+            expectedAmount={expectedAmount}
+            alreadyReceived={alreadyReceived}
+            remaining={remaining}
+            advance={!!partAdvance}
+          />
 
           {/* Advance credit — this customer paid ahead (R-1863 advance / overpayment); use it here.
               R-2023: "Use advance", partial allowed — the ONE way an advance is used. */}

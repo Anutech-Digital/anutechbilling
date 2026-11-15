@@ -26,13 +26,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { fetchRenewalDocRows, readRenewalDocRows, RENEWALS_READ_CONCURRENCY, type RenewalDocRows } from "./last-docs-data";
-import { lastPaidBySubscription, linkedDocs, type LastPaid, type LastPaidInput } from "./last-paid";
+import { lastPaidBySubscription, linkedDocs, type LastPaid, type LastPaidInput, type PaidLine } from "./last-paid";
 
 type SubRef = LastPaidInput["subs"][number];
 type QuoteRow = LastPaidInput["linkedQuotes"][number];
 type PaymentRow = LastPaidInput["payments"][number];
 
-const PAYMENT_COLS = "id, amount, method, status, received_at, refunded_at, quote_id, invoice_id";
+/** R-2840: a payment line with its receipt voucher no. (the table row's "Last bill" tooltip). R-2843: PaidLine itself carries it now. */
+export type PaidLineWithReceipt = PaidLine;
+
+/** R-2840 receipt_voucher_no, R-2843 reference — extra columns of the same payments read. */
+const PAYMENT_COLS = "id, amount, method, status, received_at, refunded_at, quote_id, invoice_id, receipt_voucher_no, reference";
 
 export function useRenewalLastPaid(subs: readonly SubRef[]) {
   const qc = useQueryClient();
@@ -116,5 +120,6 @@ export async function lastPaidFromDocRows(
     .eq("status", "received")
     .order("id", { ascending: true })
     .range(from, to), c);
-  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments: [...byQuote, ...byInvoice] }, opts);
+  const payments = [...byQuote, ...byInvoice];
+  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments }, opts);
 }

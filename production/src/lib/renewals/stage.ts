@@ -47,7 +47,7 @@
 import { isSplitBilled } from "@/lib/billing/instalments";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { partsDue } from "@/lib/renewals/split-billed-next-part";
-import { canRenewAnyway, type VendorHoldState } from "@/lib/renewals/vendor-hold";
+import { canRenewAnyway, vendorHoldWords, type VendorHoldState } from "@/lib/renewals/vendor-hold";
 import { RENEWAL_FUTURE_DAYS, RENEWAL_UPCOMING_DAYS, RENEWAL_URGENT_DAYS } from "@/lib/renewals/buckets";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { formatDate, rupee } from "@/lib/utils";
@@ -102,6 +102,8 @@ export interface StageFlagInput {
   /** renewalRisk(...).level === "high" and its reasons. */
   atRisk?: { reasons: readonly string[] } | null;
   vendorHold?: VendorHoldState | null;
+  /** R-2823: subscriptions.vendor — names the vendor in the hold's words ("Hold at Google — unpaid"). */
+  vendor?: string | null;
   /** priorTermDueText(...) — "Previous term ₹x still unpaid"; null = nothing owed. */
   priorTermUnpaid?: string | null;
   promiseBroken?: { promisedOn: string | null } | null;
@@ -137,7 +139,12 @@ export type StageKey = "stopped" | "ending" | "renewed" | "invoiced" | "draft" |
 export type StageTone = "danger" | "warning" | "info" | "success" | "muted";
 
 export type FlagKey = "atRisk" | "vendorHold" | "priorTermUnpaid" | "promiseBroken" | "followUpDue" | "renewalHeld";
-export interface StageFlag { key: FlagKey; reason: string }
+export interface StageFlag {
+  key: FlagKey;
+  reason: string;
+  /** R-2823: shown in words next to the icon (the vendor hold) — not only a lock icon. */
+  words?: string;
+}
 
 export interface RenewalStage {
   key: StageKey;
@@ -259,7 +266,7 @@ function stageFlags(f: StageFlagInput | undefined, sub: StageSub): StageFlag[] {
   const held = renewalHeldReason(f.renewalHeld, sub);
   if (held) out.push({ key: "renewalHeld", reason: held });
   if (f.atRisk) out.push({ key: "atRisk", reason: f.atRisk.reasons.length ? `At risk: ${f.atRisk.reasons.join(", ")}` : "At risk" });
-  if (f.vendorHold === "hold") out.push({ key: "vendorHold", reason: "Payment due — do not renew at the vendor yet" });
+  if (f.vendorHold === "hold") out.push({ key: "vendorHold", reason: "Payment due — do not renew at the vendor yet", words: vendorHoldWords(f.vendor) });
   if (f.priorTermUnpaid) out.push({ key: "priorTermUnpaid", reason: f.priorTermUnpaid });
   if (f.promiseBroken) out.push({ key: "promiseBroken", reason: f.promiseBroken.promisedOn ? `Promised to pay by ${formatDate(f.promiseBroken.promisedOn)} — not paid` : "Payment promise broken" });
   if (f.followUpDue) out.push({ key: "followUpDue", reason: f.followUpDue.nextFollowUpOn ? `Follow-up due ${formatDate(f.followUpDue.nextFollowUpOn)}` : "Follow-up due" });

@@ -45,6 +45,8 @@ export interface LastPaidInput {
   payments: ReadonlyArray<{
     id: string; amount: number; method: string; status: string; received_at: string;
     refunded_at: string | null; quote_id: string | null; invoice_id: string | null;
+    /** R-2843: the receipt voucher no. and the UTR / reference typed at recording — shown in the drawer's History. */
+    receipt_voucher_no?: string | null; reference?: string | null;
   }>;
 }
 
@@ -57,8 +59,15 @@ export interface PaidLine {
   /** The invoice it paid, or the invoice raised from the quote it paid; null = no invoice yet. */
   invoiceId: string | null;
   quoteId: string | null;
+  /** R-2836: the payment's own payments.invoice_id (`invoiceId` above may be worked out from its quote) — drawer-history.ts
+      links it the way the customer page does (invoice-payment-links.ts). undefined = not given. */
+  ownInvoiceId?: string | null;
   /** How many subscriptions this one payment is for (1 = this one alone). */
   covers: number;
+  /** R-2840 / R-2843: payments.receipt_voucher_no (null / undefined = none). */
+  receiptNo?: string | null;
+  /** R-2843: payments.reference — the UTR / cheque no. typed when the payment was recorded. */
+  reference?: string | null;
 }
 
 export interface LastPaid {
@@ -130,7 +139,10 @@ export function lastPaidBySubscription(input: LastPaidInput, opts: { historySize
       paymentId: p.id, amount: Number(p.amount) || 0, method: p.method, receivedAt: p.received_at,
       invoiceId: p.invoice_id ?? (p.quote_id ? invoiceOfQuote.get(p.quote_id) ?? null : null),
       quoteId: p.quote_id,
+      ownInvoiceId: p.invoice_id ?? null,
       covers: subs.size,
+      receiptNo: p.receipt_voucher_no?.trim() || null,
+      reference: p.reference?.trim() || null,
     };
     for (const sid of subs) {
       const xs = bySub.get(sid);

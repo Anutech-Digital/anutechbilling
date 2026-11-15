@@ -89,7 +89,8 @@ import { RecordTable, RowLink } from "@/components/features/customers/customer-r
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { uninvoicedSubscriptionDue } from "@/lib/renewals/owed";
 import { advanceTxnView, isPaymentTxn } from "@/components/features/customers/advance-txn";
-import { CustomerTransactionsTab, paymentReference, type TxnFilter } from "@/components/features/customers/customer-transactions-tab";
+import { CustomerTransactionsTab, paymentReference } from "@/components/features/customers/customer-transactions-tab";
+import { useProfileTabState, type MainTab } from "./customer-profile-tab-state";
 
 export interface CustomerProfileProps {
   customerId: string;
@@ -149,20 +150,19 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   /* R-1522: the customer's people — the header shows the primary one. Same query (and
      cache) as the Contacts card below. */
   const { data: contactRows } = useCustomerContacts(params.id);
+  /* R-2837: page = tab + segment in the URL (?tab=transactions&show=payments, deep-linkable);
+     panel = local state. Segment filter lets quotes / invoices / payments be viewed alone. */
+  const { mainTab, setMainTab, txnFilter, setTxnFilter } = useProfileTabState(inPanel);
   /* "Add contact" from the header / identity card opens the Contacts card's own dialog
      (one add flow, not a second form). It lives on the Overview tab, so go there first. */
   const [addContactAsked, setAddContactAsked] = React.useState(false);
-  const startAddContact = React.useCallback(() => { setMainTab("overview"); setAddContactAsked(true); }, []);
+  const startAddContact = React.useCallback(() => { setMainTab("overview"); setAddContactAsked(true); }, [setMainTab]);
   const clearAddContactAsk = React.useCallback(() => setAddContactAsked(false), []);
 
   /* The ?edit=1 deep link is a ROUTE concern. In the panel there is no URL to read, and
      calling useSearchParams there would also opt the whole /customers page into a
      Suspense boundary it does not need. */
   const searchParams = useSearchParams();
-  const [mainTab, setMainTab] = React.useState<"overview" | "transactions" | "statement">("overview");
-  // Segment filter inside the Transactions tab so quotes / invoices / payments
-  // can each be viewed on their own (not just the combined feed).
-  const [txnFilter, setTxnFilter] = React.useState<TxnFilter>("all");
   const [svcView, setSvcView] = React.useState<"subscription" | "project">("subscription");
   const [projQuoteOpen, setProjQuoteOpen] = React.useState(false);
   const [referralOpen, setReferralOpen] = React.useState(false);
@@ -465,7 +465,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
       {/* Top tabs — Zoho-style customer 360 */}
       <TabBar
         value={mainTab}
-        onChange={(v) => setMainTab(v as "overview" | "transactions" | "statement")}
+        onChange={(v) => setMainTab(v as MainTab)}
         items={[
           { id: "overview",     label: "Overview" },
           { id: "transactions", label: "Transactions", count: txns.length || undefined },

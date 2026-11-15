@@ -161,6 +161,8 @@ export interface CorrectSubscriptionDetailsInput {
     start_date: string | null;
     renewal_date: string | null;
     payment_due_date: string | null;
+    /** R-2823: the vendor's own renewal date (blank clears). Omit = unchanged → correct_subscription_details (R-2545). */
+    vendor_term_end?: string | null;
   };
 }
 
@@ -182,7 +184,17 @@ export function correctDetailsArgs(input: CorrectSubscriptionDetailsInput) {
     p_term_months: input.commitment?.termMonths ?? null,
     p_billing_cycle: input.commitment?.billingCycle ?? null,
     p_commitment_renewal: input.commitment?.renewalDate ?? null,
+    /* R-2823: only when the vendor date changed — then correctDetailsFn is correct_subscription_with_vendor_term. */
+    ...(input.patch.vendor_term_end !== undefined ? { p_vendor_term_end: input.patch.vendor_term_end } : {}),
   };
+}
+
+/**
+ * R-2823: which function the save calls — correct_subscription_with_vendor_term (migration 20261114224316: the R-2545
+ * save + vendor_term_end, one transaction) only when the vendor date is sent; otherwise correct_subscription_details.
+ */
+export function correctDetailsFn(input: CorrectSubscriptionDetailsInput): "correct_subscription_details" | "correct_subscription_with_vendor_term" {
+  return input.patch.vendor_term_end !== undefined ? "correct_subscription_with_vendor_term" : "correct_subscription_details";
 }
 
 /**
@@ -197,10 +209,10 @@ export function useCorrectSubscriptionDetails() {
     mutationFn: async (input: CorrectSubscriptionDetailsInput) => {
       const supabase = createClient();
       const rpc = supabase.rpc as unknown as (
-        fn: "correct_subscription_details",
+        fn: ReturnType<typeof correctDetailsFn>,
         args: ReturnType<typeof correctDetailsArgs>,
       ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-      const { error } = await rpc.call(supabase, "correct_subscription_details", correctDetailsArgs(input));
+      const { error } = await rpc.call(supabase, correctDetailsFn(input), correctDetailsArgs(input));
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {

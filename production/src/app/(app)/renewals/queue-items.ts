@@ -115,6 +115,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
         /* R-2756: a Won't renew / stopped row is not a renewal to chase — no at-risk flag on it. */
         atRisk: atRiskIds.has(r.sub.id) && riskChased(r.sub) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
         vendorHold: vendorHoldState(r.sub, today),
+        vendor: r.sub.vendor,   // R-2823: "Hold at Google — unpaid"
         priorTermUnpaid: priorTermOwedText(r.sub, docs),   // R-2818: the one owed rule, never outstanding_amount alone
         promiseBroken: followup.promiseBroken ? { promisedOn: followup.promisedOn } : null,
         followUpDue: followup.followUpDue ? { nextFollowUpOn: followup.nextFollowUpOn } : null,

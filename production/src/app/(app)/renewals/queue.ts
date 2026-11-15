@@ -522,7 +522,7 @@ export function bulkQuoteConfirm(
    R-2821 (14 Nov): the page's side padding is 16px (was 32px) below 2xl, so the budget is 968px; Customer and Product get ≥200px
    each (names wrap to 2 lines), so Status / Last invoice are 92px and wrap (chip text, "Overdue 12d · ₹…"). Eight
    columns, every cell at most two lines:
-   ☐ · Customer · Product & period · Due · Amount · Status · Last invoice · Action. */
+   ☐ · Customer · Product & period · Due · Amount · Status · Last bill · Action. R-2840: Last bill has a 3rd line (last payment). */
 export const QUEUE_TABLE_MIN_VIEWPORT_PX = 1260;
 export const QUEUE_TABLE_BUDGET_PX = 968;
 export const QUEUE_FLEX_MIN_PX = 200;
@@ -534,7 +534,8 @@ export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: QueueColKey; label: string; 
   { key: "due", label: "Due", width: 80 },
   { key: "amount", label: "Amount", width: 88, align: "right" },
   { key: "status", label: "Status", width: 92 },
-  { key: "invoice", label: "Last invoice", width: 92 },
+  /* R-2840: "Last bill" — invoice state / number · period / last payment (3 lines; money wraps) */
+  { key: "invoice", label: "Last bill", width: 92 },
   /* "Record payment" + ⋯ on one line (the card spec checks no cell overflows) */
   { key: "actions", label: "Action", width: 184 },
 ];

@@ -77,19 +77,26 @@ test.describe("R-2753 card test", () => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1280, height: 900 });
     await openTab(page, "overdue", LATE);
-    const dlg = await openReminder(page, /^Remind \d+ in Overdue$/);
-    await expect(dlg.getByText(KOCHI)).toHaveCount(0);
-    await expect(dlg.getByText(DELHI)).toHaveCount(0);
-    const skipped = await onlyOne(dlg.getByRole("region", { name: "Skipped" }), "Skipped list");
-    const pastGrace = await onlyOne(skipped.locator("li", { hasText: "past the renewal date and the grace" }), "past-grace group");
-    await expect(pastGrace).toContainText(LATE);
-    await expect(pastGrace).toContainText("Send renewal quote");
-    /* never send — Close / Cancel */
-    await dlg.getByRole("button", { name: /^(Cancel|Close)$/ }).first().click();
-    await expect(page.getByTestId("renewal-reminder-dialog")).toHaveCount(0);
-    /* one reminder button: the ticked-rows bar has none */
+    /* R-2820: the button counts only rows it can send — on Overdue it names the tab, or is greyed
+       ("Remind 0 · N …") when every overdue row needs a call or a part bill */
+    const btn = await onlyOne(page.getByTestId("renewals-remind"), "Remind button");
+    await expect(btn).toHaveText(/^Remind (\d+ in Overdue|0 · \d+ .+)$/, { timeout: 60_000 });
+    if (!/^Remind 0/.test((await btn.textContent()) ?? "")) {
+      const dlg = await openReminder(page, /^Remind \d+ in Overdue$/);
+      await expect(dlg.getByText(KOCHI)).toHaveCount(0);
+      await expect(dlg.getByText(DELHI)).toHaveCount(0);
+      const skipped = await onlyOne(dlg.getByRole("region", { name: "Skipped" }), "Skipped list");
+      const pastGrace = await onlyOne(skipped.locator("li", { hasText: "past the renewal date and the grace" }), "past-grace group");
+      await expect(pastGrace).toContainText(LATE);
+      await expect(pastGrace).toContainText("Send renewal quote");
+      /* never send — Close / Cancel */
+      await dlg.getByRole("button", { name: /^(Cancel|Close)$/ }).first().click();
+      await expect(page.getByTestId("renewal-reminder-dialog")).toHaveCount(0);
+    }
+    /* one reminder button: the ticked-rows bar has none; the past-grace row alone greys it with the reason */
     await (await onlyOne(page.getByRole("checkbox", { name: new RegExp(`^Select ${LATE}`) }).filter({ visible: true }), "row tick")).check();
-    await expect(page.getByTestId("renewals-remind")).toHaveText("Remind 1 selected");
+    await expect(page.getByTestId("renewals-remind")).toHaveText("Remind 0 · 1 needs a call");
+    await expect(page.getByTestId("renewals-remind")).toHaveAttribute("title", /Send renewal quote/);
     await expect(page.getByRole("button", { name: "Send reminder" })).toHaveCount(0);
   });
 

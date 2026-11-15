@@ -58,6 +58,7 @@ import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { monthsBetween } from "@/lib/accounting/saas-charts";
 import { istToday } from "@/lib/dates/ist";
+import { hasVendorTerm, vendorName, vendorTermEndOf } from "@/lib/renewals/vendor-hold";
 
 const VENDORS: Subscription["vendor"][] = ["google", "microsoft", "zoho", "other"];
 /** R-1684: the Plan box value for "keep the plan as recorded" (not in the catalog). */
@@ -116,6 +117,9 @@ export function EditSubscriptionDialog({
    *  all, which is the exact silence the countdown was built to end. This is the one
    *  screen that can give those rows a date. */
   const [paymentDue, setPaymentDue] = React.useState(sub.payment_due_date ?? "");
+  /* R-2823: the vendor's OWN renewal date (Google / Microsoft / Zoho) — newer than the generated types. */
+  const recordedVendorTerm = vendorTermEndOf(sub);
+  const [vendorTerm, setVendorTerm] = React.useState(recordedVendorTerm);
   /* R-2228: seats / MRR open only behind the owner's "Data correction (owner)" switch. */
   const [dataFix, setDataFix] = React.useState(false);
   const canDataFix = mayDataCorrect(me?.role);
@@ -132,6 +136,7 @@ export function EditSubscriptionDialog({
     setVendor(sub.vendor); setSeats(String(sub.seats)); setDomain(sub.domain ?? "");
     setMrr(String(sub.mrr)); setStart(sub.start_date ?? ""); setRenewal(sub.renewal_date ?? "");
     setPaymentDue(sub.payment_due_date ?? ""); setDataFix(false);
+    setVendorTerm(vendorTermEndOf(sub));
   }, [sub]);
 
   /* R-2613 (rule N5): moving the renewal date earlier (or clearing it) moves a scheduled
@@ -290,6 +295,9 @@ export function EditSubscriptionDialog({
     if (!mrrTouched) setMrr(String(mrrForSeats(sub.mrr, sub.seats, Math.max(0, Math.round(Number(v) || 0)))));
   };
 
+  /* R-2823: what the vendor date will be — a vendor with no own term (domain, hosting, other) has none. */
+  const nextVendorTerm = hasVendorTerm(vendor) ? (vendorTerm || null) : null;
+
   const save = async () => {
     if (verdict.roleBlock) {
       toast.error("Not allowed for your role", { description: verdict.roleBlock });
@@ -359,6 +367,9 @@ export function EditSubscriptionDialog({
              and an operator who empties the field means "there is no agreed date" —
              inventing one would put a countdown against terms nobody set. */
           payment_due_date: paymentDue || null,
+          /* R-2823: sent only when it changed (blank clears; a vendor with no own term clears it) — then the
+             save goes to correct_subscription_with_vendor_term; otherwise correct_subscription_details as before. */
+          vendor_term_end: nextVendorTerm !== (recordedVendorTerm || null) ? nextVendorTerm : undefined,
           /* R-2228: no status here — Suspend / Resume / Cancel / Won't renew change it. */
         },
       });
@@ -581,6 +592,16 @@ export function EditSubscriptionDialog({
               )}
             </FormField>
           </div>
+
+          {/* R-2823: the vendor's own renewal date — the Renewals drawer shows it when it differs from ours. */}
+          {hasVendorTerm(vendor) && (
+            <FormField label={`${vendorName(vendor)} renewal date`} htmlFor="sub_vendor_term">
+              <Input id="sub_vendor_term" type="date" value={vendorTerm} onChange={(e) => setVendorTerm(e.target.value)} />
+              <p className="mt-1 text-2xs leading-snug text-ink-3">
+                The date {vendorName(vendor)} itself renews it. Leave blank if not known or the same as the renewal date.
+              </p>
+            </FormField>
+          )}
 
           {/* Postpaid credit clock. Shown only when money is actually owed — a settled
               subscription has nothing to chase, and a date field on it would invite one

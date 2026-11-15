@@ -14,6 +14,7 @@ vi.mock("./drawer-data", () => ({
 vi.mock("./drawer-cost-data", () => ({
   useRenewalDrawerCatalog: (t: string | null, on: boolean) => useRenewalDrawerCatalog(t, on),
 }));
+vi.mock("./drawer-seat-cut-data", () => ({ useRenewalDrawerSeatCuts: () => ({ data: [], isError: false }) }));
 vi.mock("@/components/features/renewals/renewal-actions", () => ({ RenewalActions: () => null }));
 vi.mock("next/link", () => ({ default: ({ href, children, ...p }: { href: string; children: React.ReactNode }) => <a href={href} {...p}>{children}</a> }));
 

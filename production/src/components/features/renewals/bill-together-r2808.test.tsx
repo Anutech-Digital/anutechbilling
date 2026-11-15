@@ -106,7 +106,7 @@ describe("R-2808 Bill together dialog", () => {
     show();
     const lines = await screen.findAllByTestId("bill-together-line");
     expect(fetchMock).toHaveBeenCalledWith("/api/renewals/bill-together?ids=std,sta,ext", { method: "GET" });
-    expect(lines[0].textContent).toContain("161 seats × ₹1,585 · 1 Oct–31 Oct 2026");
+    expect(lines[0].textContent).toContain("161 seats × ₹1,585.00 · 1 Oct–31 Oct 2026");
     expect(lines[0].textContent).toContain("GST 18%");
     expect(box("Business Standard").checked).toBe(true);
     expect(box("Business Starter").checked).toBe(true);
@@ -122,7 +122,7 @@ describe("R-2808 Bill together dialog", () => {
     const both = tickedTotal(PREVIEW.subs, new Set(["std", "sta"]));
     expect(screen.getByTestId("bill-together-total").textContent).toContain(`= ₹${both.gross.toLocaleString("en-IN")}`);
     fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
-    expect(onConfirm).toHaveBeenCalledWith(["std", "sta"]);
+    expect(onConfirm).toHaveBeenCalledWith(["std", "sta"], [{ subscriptionId: "std", periodStart: "2026-10-01" }, { subscriptionId: "sta", periodStart: "2026-10-01" }]); // R-2845: + the shown parts
     fireEvent.click(box("Business Starter"));
     const one = tickedTotal(PREVIEW.subs, new Set(["std"]));
     expect(screen.getByTestId("bill-together-total").textContent).toContain(`= ₹${one.gross.toLocaleString("en-IN")}`);
@@ -156,7 +156,7 @@ describe("R-2808 Bill together dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/quotes/PI-ET-2026-27-0101"));
     const post = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "POST");
-    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ ids: ["std", "sta"] });
+    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ ids: ["std", "sta"], periods: [{ subscriptionId: "std", periodStart: "2026-10-01" }, { subscriptionId: "sta", periodStart: "2026-10-01" }] }); // R-2845
     expect(toastSuccess.mock.calls[0][0]).toBe("Proforma PI-ET-2026-27-0101 created for 2 subscriptions of ITBUZZ Technologies — not sent yet");
   });
 });

@@ -11,7 +11,9 @@
  *
  * Data (fresh every run, E2E Test Co + the local docker DB only, fixed ids, removed after): CT R2808 Itbuzz
  * Pvt Ltd with two MONTHLY subscriptions on different (no) sale quotes whose term ended 5 days ago; last
- * month's parts of both were on ONE paid invoice INV-CT2808-PREV:
+ * month's parts of both were on ONE paid invoice INV-CT2808-PREV, paid through its request PI-CT2808-PREV (a
+ * receipt behind it, as every real path leaves — a paid part invoice with no receipt empties the R-2806 money pool,
+ * so Step 5's paid together proforma would raise a 'pending' invoice and renew nothing; R-2829 was this seed gap):
  *   · A "CT R2808 Business Standard" 161 seats · B "CT R2808 Business Starter" 49 seats.
  * A payment is planted as the payment row every path (Record payment, bank reconcile, Razorpay) writes.
  */
@@ -27,6 +29,7 @@ const NAME = "CT R2808 Itbuzz Pvt Ltd";
 const PLAN_A = "CT R2808 Business Standard";
 const PLAN_B = "CT R2808 Business Starter";
 const PREV_INV = "INV-CT2808-PREV";
+const PREV_PI = "PI-CT2808-PREV";
 const db = () => localDb("R-2808");
 const T = E2E_TENANT_SQL;
 const SUBS = `('${SUB_A}', '${SUB_B}')`;
@@ -35,7 +38,7 @@ const API = "/api/renewals/bill-together";
 
 function clean(): void {
   const parts = `(select b.id from public.subscription_billings b where b.subscription_id in ${SUBS})`;
-  const reqs = `(select q.id from public.quotes q where q.subscription_billing_id in ${parts} or q.cancelled_part_billing_id in ${parts}
+  const reqs = `(select q.id from public.quotes q where q.id = '${PREV_PI}' or q.subscription_billing_id in ${parts} or q.cancelled_part_billing_id in ${parts}
                   or exists (select 1 from jsonb_array_elements(coalesce(q.line_items, '[]'::jsonb)) l where l->>'billing_id' in (select b.id::text from public.subscription_billings b where b.subscription_id in ${SUBS})))`;
   const invoiceIds = db().psql(`select distinct b.invoice_id from public.subscription_billings b where b.subscription_id in ${SUBS} and b.invoice_id is not null`);
   localCleanupDeleteIssuedInvoice(db(), "R-2808", {
@@ -68,6 +71,11 @@ function seed(): void {
               public.ist_today() - 35, public.ist_today() - 4, 255185, 18, '${PREV_INV}'),
              ('${BILL_B0}', ${T}, '${SUB_B}', ((public.ist_today() - 4) - interval '12 months')::date, 11, public.ist_today() - 35,
               public.ist_today() - 35, public.ist_today() - 4, 22050, 18, '${PREV_INV}');
+    /* The money behind last month's bill: its paid request + receipt (no line_items, invoiced → never a live together bill). */
+    insert into public.quotes (id, tenant_id, customer_id, customer_name, status, amount, subscription_billing_id, invoice_id, line_items)
+      values ('${PREV_PI}', ${T}, '${CUST}', '${NAME}', 'accepted', 327137.3, '${BILL_A0}', '${PREV_INV}', '[]'::jsonb);
+    insert into public.payments (tenant_id, quote_id, amount, method, reference, status, received_at)
+      values (${T}, '${PREV_PI}', 327137.3, 'bank_transfer', 'CT-R2808-PREV', 'received', now() - interval '33 days');
     commit;`);
 }
 

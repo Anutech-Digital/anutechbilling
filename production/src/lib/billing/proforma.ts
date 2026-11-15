@@ -2,8 +2,8 @@
  * R-2519 (Pardeep, 6 Nov 2026 — "Zoho ki tarah proforma bhejna") — a renewal part's payment
  * request is a PROFORMA INVOICE: its own PI series (PI-<code>-<YY>-<NNNN>, migration
  * 20261106065103), seats × a per-seat rate with the period, a pay-by date, and a state that says
- * what really happened — "Ready to send" until an email went, "Expired" once the pay-by date passed
- * unpaid (still payable — the service period is running, so the reminders go on), "Cancelled" when
+ * what really happened — "Ready to send" until an email went, "Pay-by date passed — still payable"
+ * once the pay-by date passed unpaid (R-2846; was "Expired") (still payable — the service period is running, so the reminders go on), "Cancelled" when
  * it was cancelled (kept, never deleted).
  *
  * Pure rules for the Bill-next-part preview (Renewals), the quote page and the PDF. Tests:
@@ -75,7 +75,11 @@ export function parseBillNextBody(body: unknown): BillNextBody | { error: string
   return { periods, seats, seatRate };
 }
 
-export interface ShownState { label: "Ready to send" | "Expired" | "Cancelled"; kind: "info" | "danger" | "muted" }
+/** R-2846: a part request past its pay-by date is still payable — "Expired" (red) beside "Awaiting
+ *  payment" read as dead, so it says what it is. Display only: reminders and payment are unchanged. */
+export const PAY_BY_PASSED_LABEL = "Pay-by date passed — still payable";
+
+export interface ShownState { label: "Ready to send" | typeof PAY_BY_PASSED_LABEL | "Cancelled"; kind: "info" | "warning" | "muted" }
 
 const MONEY = new Set(["partial", "received", "invoiced"]);
 
@@ -83,7 +87,9 @@ const MONEY = new Set(["partial", "received", "invoiced"]);
  * The state to show instead of the stored status, or null to keep the usual badge.
  *   cancelled (any quote)                            → Cancelled
  *   a part request with money / an invoice           → null (the payment badge says it)
- *   a part request past its pay-by date, unpaid      → Expired (still payable)
+ *   a part request past its pay-by date, unpaid      → "Pay-by date passed — still payable" (R-2846;
+ *                                                      also stored 'expired', or validity ended and
+ *                                                      no pay-by date known — never "Expired")
  *   a part request no email ever went out for        → Ready to send (it is stored 'sent' so every
  *                                                      money path keeps treating it as open)
  */
@@ -96,12 +102,18 @@ export function proformaShownState(q: {
   mailed: boolean;
   dueOn: string | null | undefined;
   todayISO: string;
+  /** R-2846: the quote's validity date passed (quote-expiry.ts shownQuoteStatus = "expired"). A part
+   *  request is never "Expired": with no pay-by date known (not loaded / no part row) it reads as
+   *  past its pay-by date instead. */
+  validityEnded?: boolean;
 }): ShownState | null {
   if (q.cancelledAt) return { label: "Cancelled", kind: "muted" };
   if (!q.isPartRequest) return null;
   if (q.invoiceId || (q.paymentStatus && MONEY.has(q.paymentStatus))) return null;
+  if (q.status === "expired") return { label: PAY_BY_PASSED_LABEL, kind: "warning" };
   if (!["sent", "viewed", "accepted"].includes(q.status)) return null;
-  if (q.dueOn && q.dueOn.slice(0, 10) < q.todayISO) return { label: "Expired", kind: "danger" };
+  if (q.dueOn && q.dueOn.slice(0, 10) < q.todayISO) return { label: PAY_BY_PASSED_LABEL, kind: "warning" };
+  if (!q.dueOn && q.validityEnded) return { label: PAY_BY_PASSED_LABEL, kind: "warning" };
   if (!q.mailed) return { label: "Ready to send", kind: "info" };
   return null;
 }

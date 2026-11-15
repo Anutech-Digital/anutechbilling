@@ -109,6 +109,8 @@ async function drawerShowsTheStory(page: Page): Promise<void> {
   await expect(doc("INV-CT2740-P").getByTestId("renewal-drawer-doc-status")).toHaveText(/^Overdue 43d · ₹23,010$/);
   await expect(doc("INV-CT2740-A").getByTestId("renewal-drawer-doc-status")).toHaveText("Paid");
   await expect(doc("INV-CT2740-P")).toContainText(" · for ");   // the billed quarter's period
+  /* R-2838: payments live in the History section — the Payments tab names the invoice each one paid */
+  await drawer.getByRole("tab", { name: /^Payments/ }).click();
   const pay = drawer.getByTestId("renewal-drawer-payment");
   await expect(pay).toHaveCount(1);
   await expect(pay).toContainText("UPI");

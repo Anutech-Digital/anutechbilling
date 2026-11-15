@@ -139,7 +139,9 @@ describe("R-2748 the cell", () => {
     expect(cell).toMatch(/data-invoice-id=\{invoice\.id\}/);
   });
   it("the newest quote sent is not repeated when it is a shown invoice's own quote (one fact one place)", () => {
-    expect(cell).toMatch(/!invoices\.some\(\(i\) => i\.sourceQuoteId === docs\.quote\?\.id\)/);
+    /* R-2841: the rule moved into last-docs.ts cardDocQuote → rowQuoteNote (same check + newer than the
+       invoice + not invoiced) — its behaviour is proved in row-quote-note-r2841.test.tsx (case 3) */
+    expect(cell).toMatch(/const quote = cardDocQuote\(docs\);/);
   });
   it("no new per-row read: the same 10 batched reads as R-2737 (R-2822: + the drawer-only send log)", () => {
     expect((data.match(/fetchAllRowsIn</g) ?? []).length).toBe(10);
