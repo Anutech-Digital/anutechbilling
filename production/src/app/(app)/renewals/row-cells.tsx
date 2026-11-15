@@ -142,7 +142,7 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
   /** R-2740: the product name opens the row drawer (keyboard reachable — the row press is mouse only). */
   onOpen?: () => void;
   /** R-2808: billed together last cycle → line 2 reads "Bills with <other plan>" (a button that opens Bill together). */
-  together?: { text: string; onClick: () => void } | null;
+  together?: { text: string; title?: string; onClick: () => void } | null;
 }) {
   const vendorWord = vendor ? vendor[0].toUpperCase() + vendor.slice(1) : null;
   const line1 = [plan, seats != null ? `${seats} seats` : null, vendorWord].filter(Boolean).join(" · ");
@@ -163,7 +163,7 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
            stays in the tooltip and the Due column shows when it starts); the button opens Bill together. */
         <p className="mt-0.5 flex min-w-0 items-baseline gap-x-1 text-2xs" title={title2 || undefined}>
           {domain && <span className="min-w-0 max-w-[55%] shrink truncate text-ink-2" title={domain} data-testid="renewal-row-domain">{domain} ·</span>}
-          <button type="button" onClick={together.onClick} data-testid="renewal-bills-with" title={`${together.text} — bill them on one proforma`}
+          <button type="button" onClick={together.onClick} data-testid="renewal-bills-with" title={together.title ?? `${together.text} — bill them on one proforma`}
             className="min-w-0 shrink truncate rounded-sm text-left font-medium text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
             {together.text}
           </button>

@@ -106,7 +106,7 @@ describe("R-2808 Bill together dialog", () => {
     show();
     const lines = await screen.findAllByTestId("bill-together-line");
     expect(fetchMock).toHaveBeenCalledWith("/api/renewals/bill-together?ids=std,sta,ext", { method: "GET" });
-    expect(lines[0].textContent).toContain("161 seats × ₹1,585 · 1 Oct–31 Oct 2026");
+    expect(lines[0].textContent).toContain("161 seats × ₹1,585.00 · 1 Oct–31 Oct 2026");
     expect(lines[0].textContent).toContain("GST 18%");
     expect(box("Business Standard").checked).toBe(true);
     expect(box("Business Starter").checked).toBe(true);

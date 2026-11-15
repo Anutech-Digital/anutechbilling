@@ -28,13 +28,19 @@ export function useBillTogetherAvailable(enabled = true): boolean {
   return useBillTogetherProbe(enabled) === "on";
 }
 
+const PROBE_RETRY_MS = 1000;
+
 /** "pending" while the probe is out — Bill next part waits for it before offering Create (no fail-open, code review). */
 export function useBillTogetherProbe(enabled = true): "pending" | "on" | "off" {
   const { data, isPending, isError } = useQuery({
     queryKey: ["renewals", "bill-together", "available"],
     enabled,
     staleTime: 10 * 60_000,
-    retry: false,
+    /* R-2832 (rev-r2808 F6): a 5xx / network error is not "no" — retry twice a second apart, and while it
+       stays in error ask again every minute, so one transient 500 never hides the box for 10 minutes. */
+    retry: 2,
+    retryDelay: PROBE_RETRY_MS,
+    refetchInterval: (q) => (q.state.status === "error" ? 60_000 : false),
     queryFn: () => billTogetherAvailable(),
   });
   if (!enabled) return "off";
@@ -53,12 +59,16 @@ export function useBillTogetherPreview(ids: readonly string[], enabled: boolean)
 
 const canJoin = (s: BillTogetherSub) => s.reasons.length === 0 && !!s.line;
 
-/** The total of the ticked lines (the route's total covers every joinable line). */
+/** Rupees → whole paise (the sum is done in paise so float tails never show — R-2832 F3). */
+const toPaise = (n: number) => Math.round(n * 100);
+
+/** The total of the ticked lines (the route's total covers every joinable line), summed in paise. */
 export function tickedTotal(subs: readonly BillTogetherSub[], ticked: ReadonlySet<string>) {
-  return subs.reduce((t, s) => {
+  const p = subs.reduce((t, s) => {
     if (!s.line || !ticked.has(s.subscriptionId) || !canJoin(s)) return t;
-    return { taxable: t.taxable + s.line.taxable, tax: t.tax + s.line.tax, gross: t.gross + s.line.gross };
+    return { taxable: t.taxable + toPaise(s.line.taxable), tax: t.tax + toPaise(s.line.tax), gross: t.gross + toPaise(s.line.gross) };
   }, { taxable: 0, tax: 0, gross: 0 });
+  return { taxable: p.taxable / 100, tax: p.tax / 100, gross: p.gross / 100 };
 }
 
 export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onConfirm, busy }: {
@@ -86,7 +96,8 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
   const subs = preview?.subs ?? [];
   const chosen = subs.filter((s) => canJoin(s) && ticked.has(s.subscriptionId)).map((s) => s.subscriptionId);
   const total = tickedTotal(subs, ticked);
-  const money = (n: number) => (preview && isForeignCurrency(preview.currency) ? formatForeign(n, preview.currency) : rupee(n));
+  /* R-2832 F3: paise shown — a bill's lines and total are to the paisa, never rounded to whole rupees */
+  const money = (n: number) => (preview && isForeignCurrency(preview.currency) ? formatForeign(n, preview.currency) : rupee(n, { decimals: 2 }));
   const toggle = (id: string, on: boolean) => setTicked((t) => {
     const n = new Set(t);
     if (on) n.add(id); else n.delete(id);

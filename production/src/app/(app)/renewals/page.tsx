@@ -112,8 +112,8 @@ import { StageFlagIcon } from "./stage-flag";
 import { dueCellFacts } from "./due-anchor";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
-import { BillTogetherGroups, tickedOf, useBillTogether } from "@/components/features/renewals/bill-together";
-import { BILL_TOGETHER, useBillTogetherAvailable } from "@/components/features/renewals/bill-together-dialog";
+import { BillTogetherGroups, togetherHint, useBillTogether } from "@/components/features/renewals/bill-together";
+import { BILL_TOGETHER, useBillTogetherProbe } from "@/components/features/renewals/bill-together-dialog";
 import { canOfferBillTogether } from "@/lib/renewals/bill-together";
 import { groupsShown, togetherIndex, togetherRowOf } from "./bill-together-rows";
 
@@ -327,7 +327,7 @@ interface RenewalQueueProps {
   /** R-2740: open the row drawer — from the product name, a real button (no mouse-only row click, R-1658). */
   onOpen: (subId: string) => void;
   /** R-2808: billed together last cycle → the row's "Bills with <other plan>" (opens Bill together); null = none. */
-  togetherOf?: (subId: string) => { text: string; onClick: () => void } | null;
+  togetherOf?: (subId: string) => { text: string; title?: string; onClick: () => void } | null;
 }
 
 function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen, togetherOf }: RenewalQueueProps) {
@@ -451,7 +451,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   {(() => {
                     const t = togetherOf?.(sub.id);
                     return t ? (
-                      <button type="button" onClick={t.onClick} data-testid="renewal-bills-with"
+                      <button type="button" onClick={t.onClick} data-testid="renewal-bills-with" title={t.title}
                         className="mt-0.5 block max-w-full truncate rounded-sm text-left text-2xs font-medium text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
                         {t.text}
                       </button>
@@ -683,10 +683,12 @@ export default function RenewalsPage() {
     return { mine: c({ mine: true }), due: c({ followUpDue: true }), broken: c({ promiseBroken: true }) };
   }, [built, me?.userId]);
   /* R-2808 Bill together: only once R-2807's route answers (404 before it lands → nothing shows). */
-  const togetherOn = useBillTogetherAvailable(!!built?.allItems.some((i) => i.stage?.split));
+  /* R-2832 F6: "pending" keeps the groups box in place (nothing pressable) so it does not pop in and shift the table */
+  const togetherProbe = useBillTogetherProbe(!!built?.allItems.some((i) => i.stage?.split));
+  const togetherOn = togetherProbe === "on";
   const billTogether = useBillTogether({ canQuotes: canOpenQuotes(me?.role) });
   /* the groups + hints, once per data change (R-2764) — not on every tick / keystroke */
-  const togetherIdx = React.useMemo(() => (togetherOn && built ? togetherIndex(built.allItems) : null), [togetherOn, built]);
+  const togetherIdx = React.useMemo(() => (togetherProbe !== "off" && built ? togetherIndex(built.allItems) : null), [togetherProbe, built]);
   /* the group subscriptions the user unticked (every group starts all ticked — Pardeep 14 Nov) */
   const [togetherOff, setTogetherOff] = React.useState<Set<string>>(() => new Set());
   const toggleTogether = (id: string, on: boolean) => setTogetherOff((o) => {
@@ -889,10 +891,11 @@ export default function RenewalsPage() {
      14 Nov), and each row's "Bills with <other plan>"; ticked rows of one customer → "Bill together". */
   const togetherGroups = togetherIdx ? groupsShown(togetherIdx, new Set(visibleRows.map((i) => i.sub.id))) : [];
   /* the hint opens the group as the box above shows it (an unticked one stays out) */
-  const togetherOf = togetherIdx
+  const togetherOf = togetherOn && togetherIdx
     ? (id: string) => {
         const h = togetherIdx.hintOf.get(id);
-        return h ? { text: h.text, onClick: () => billTogether.open(tickedOf(h.group, togetherOff), h.group.customerName) } : null;
+        /* R-2832 F5: under two still ticked the hint says "tick at least two" instead of opening the dialog */
+        return h ? togetherHint(h, togetherOff, billTogether.open) : null;
       }
     : undefined;
   /* only ticked rows still on screen (as the reminder) — a tick hidden by a search is never billed */
@@ -1202,7 +1205,7 @@ export default function RenewalsPage() {
         <div className="border-t border-hairline">
           {togetherIdx && (
             <BillTogetherGroups groups={togetherGroups} onBill={billTogether.open} subOf={(id) => togetherIdx.subOf.get(id)}
-              off={togetherOff} onToggle={toggleTogether} />
+              off={togetherOff} onToggle={toggleTogether} pending={togetherProbe === "pending"} />
           )}
           <RenewalQueue
             key={tile ?? bucketTab}   /* R-2764: a new tab / tile starts at 50 rows again */
