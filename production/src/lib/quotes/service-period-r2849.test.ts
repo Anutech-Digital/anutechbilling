@@ -39,7 +39,7 @@ describe("R-2849 together lines", () => {
   });
 
   it("a single renewal quote is unchanged (no subscription_id on its line)", () => {
-    const ctx = quoteLinePeriodContext({ ...quote, renewal_term_date: "2026-10-31", renewal_subscription_id: STD }, { start_date: "2025-10-31", term_months: 12 });
+    const ctx = quoteLinePeriodContext({ ...quote, renewal_term_date: "2026-10-31" }, { start_date: "2025-10-31", term_months: 12 });
     expect(linePeriodText({ name: "Business Standard", commitment: "annual_yearly" }, ctx)).toBe("Subscription period: 1 Year (31/10/2026 – 30/10/2027)");
   });
 
