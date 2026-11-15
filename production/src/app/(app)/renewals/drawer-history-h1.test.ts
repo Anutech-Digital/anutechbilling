@@ -45,7 +45,7 @@ describe("R-2836 USD Plan: the $500 sits under its invoice with the period it pa
   }, { "INV-CT2737-F": "9 Nov 2025 – 8 Nov 2026" });
 
   it("no receipt row (R-2818): the gap line is under INV-CT2737-F in dollars, 'for <invoice> · <period>'", () => {
-    const t = historyTabs(docs, undefined);
+    const t = historyTabs(docs, undefined, { subQuoteId: sub.quote_id, todayIst: TODAY });
     const row = invoiceRow(t.invoices, "INV-CT2737-F")!;
     expect(row.payments).toHaveLength(1);
     expect(row.payments[0]).toMatchObject({ amount: "$500", method: NO_RECEIPT_METHOD, noReceipt: true, forWords: "for INV-CT2737-F · 9 Nov 2025 – 8 Nov 2026" });
@@ -60,11 +60,13 @@ describe("R-2836 USD Plan: the $500 sits under its invoice with the period it pa
       billings: [], invoices: [{ id: "INV-CT2737-F", quote_id: "Q-CT2737-F" }],
       payments: [pay({ id: "P1", amount: 42000, invoice_id: "INV-CT2737-F", received_at: "2026-11-01T05:00:00Z" })],
     });
-    const t = historyTabs(docs, paid);
+    const t = historyTabs(docs, paid, { subQuoteId: sub.quote_id, todayIst: TODAY });
     const row = invoiceRow(t.invoices, "INV-CT2737-F")!;
     expect(row.payments.map((p) => p.id)).toEqual(["P1"]);
-    expect(row.payments[0]).toMatchObject({ noReceipt: false, amount: "₹42,000", date: "1 Nov 2026", forWords: "for INV-CT2737-F · 9 Nov 2025 – 8 Nov 2026" });
+    expect(row.payments[0]).toMatchObject({ noReceipt: false, amount: "$500", partOf: null, date: "1 Nov 2026", forWords: "for INV-CT2737-F · 9 Nov 2025 – 8 Nov 2026" });
     expect(t.counts).toEqual({ all: 3, quotes: 1, invoices: 1, payments: 1 });
+    /* the Payments tab keeps the receipt's own ₹ (as the drawer does today) */
+    expect(t.payments[0]).toMatchObject({ id: "P1", amount: "₹42,000", forWords: "for INV-CT2737-F · 9 Nov 2025 – 8 Nov 2026" });
   });
 });
 
@@ -84,7 +86,7 @@ describe("R-2836 a quote with two invoices settles oldest first (the database's 
   });
 
   it("one ₹14,000 receipt on the quote: ₹10,000 under the older INV-A, ₹4,000 under INV-B, each with its period", () => {
-    const t = historyTabs(docs, paid);
+    const t = historyTabs(docs, paid, { subQuoteId: sub.quote_id, todayIst: TODAY });
     const a = invoiceRow(t.invoices, "INV-A")!.payments;
     const b = invoiceRow(t.invoices, "INV-B")!.payments;
     expect(a).toHaveLength(1);
@@ -99,10 +101,66 @@ describe("R-2836 a quote with two invoices settles oldest first (the database's 
   });
 
   it("the invoices tab is newest first and holds only invoices; quotes tab only quotes", () => {
-    const t = historyTabs(docs, paid);
+    const t = historyTabs(docs, paid, { subQuoteId: sub.quote_id, todayIst: TODAY });
     expect(t.invoices.map((r) => r.id)).toEqual(["INV-B", "INV-A"]);
     expect(t.quotes.map((r) => r.id)).toEqual(["Q-2"]);
     expect(t.quotes.every((r) => r.kind === "quote")).toBe(true);
+  });
+
+  it("known difference: today's drawerPaymentRows puts the receipt on the quote's first invoice and lists INV-A's ₹10,000 again as 'no receipt' — History lists it once", () => {
+    const today = drawerPaymentRows(paid, docs);
+    expect(today.map((r) => r.id)).toEqual(["P-14K", "invoice-paid:INV-A"]);
+    const t = historyTabs(docs, paid, { subQuoteId: sub.quote_id, todayIst: TODAY });
+    expect(t.payments.map((r) => r.id)).toEqual(["P-14K"]);
+  });
+});
+
+describe("R-2836 review fixes: money is never listed twice", () => {
+  it("an overpaid invoice: the extra ₹2,000 is in 'Not against an invoice yet' only — no 'no receipt' line for it", () => {
+    const sub: Sub = { id: "S5", quote_id: "Q-5", renewal_quote_id: null, start_date: "2025-10-01" };
+    const docs = docsOf(sub, {
+      quotes: [q({ id: "Q-5", invoice_id: "INV-5", amount: 10000 })],
+      invoices: [inv({ id: "INV-5", quote_id: "Q-5", amount: 10000, paid_amount: 12000, status: "paid" })],
+    });
+    const paid = paidOf(sub, {
+      linkedQuotes: [{ id: "Q-5", renewal_subscription_id: null, add_seats_subscription_id: null, invoice_id: "INV-5" }],
+      billings: [], invoices: [{ id: "INV-5", quote_id: "Q-5" }],
+      payments: [pay({ id: "P-12K", amount: 12000, invoice_id: "INV-5" })],
+    });
+    const t = historyTabs(docs, paid, { subQuoteId: sub.quote_id, todayIst: TODAY });
+    expect(invoiceRow(t.invoices, "INV-5")!.payments.map((p) => [p.id, p.amount, p.partOf])).toEqual([["P-12K", "₹10,000", "₹12,000"]]);
+    expect(t.unlinked?.payments.map((p) => [p.id, p.amount])).toEqual([["P-12K", "₹2,000"]]);
+    expect(t.payments.some((p) => p.noReceipt)).toBe(false);
+  });
+
+  it("a receipt on a part proforma whose invoice is known only through the billing row (R-2752) sits under that invoice", () => {
+    const SUB = "S6";
+    const sub: Sub = { id: SUB, quote_id: "Q-6", renewal_quote_id: null, start_date: "2026-10-01" };
+    const docs = docsOf(sub, {
+      quotes: [q({ id: "Q-6" }), q({ id: "PI-6", subscription_billing_id: "B6", payment_status: "paid", created_date: "2026-10-01", created_at: "2026-10-01T05:00:00Z" })],
+      billings: [{ id: "B6", subscription_id: SUB, invoice_id: "INV-6", term_start: "2026-10-01", period_index: 1, period_start: "2026-10-01", period_end: "2026-11-01" }],
+      invoices: [inv({ id: "INV-6", invoice_date: "2026-10-02", amount: 3835, paid_amount: 3835, status: "paid" })],
+    });
+    const paid = paidOf(sub, {
+      linkedQuotes: [{ id: "PI-6", renewal_subscription_id: null, add_seats_subscription_id: null, invoice_id: null, subscription_billing_id: "B6" }],
+      billings: [{ id: "B6", subscription_id: SUB, invoice_id: "INV-6" }], invoices: [],
+      payments: [pay({ id: "P-UPI", amount: 3835, method: "upi", quote_id: "PI-6", received_at: "2026-10-12T05:00:00Z" })],
+    });
+    const t = historyTabs(docs, paid, { subQuoteId: null, todayIst: TODAY });
+    expect(invoiceRow(t.invoices, "INV-6")?.payments.map((p) => [p.id, p.noReceipt])).toEqual([["P-UPI", false]]);
+    expect(t.unlinked).toBeNull();
+  });
+
+  it("a receipt on an invoice that is not on this subscription's list still names it (never 'on quote' / blank)", () => {
+    const sub: Sub = { id: "S7", quote_id: "Q-7", renewal_quote_id: null, start_date: "2025-10-01" };
+    const docs = docsOf(sub, { quotes: [q({ id: "Q-7", payment_status: "partial" })] });
+    const lp = paidOf(sub, {
+      linkedQuotes: [{ id: "Q-7", renewal_subscription_id: null, add_seats_subscription_id: null, invoice_id: null }],
+      billings: [{ id: "B7", subscription_id: "S7", invoice_id: "INV-9" }], invoices: [],
+      payments: [pay({ id: "P-9", invoice_id: "INV-9" })],
+    });
+    const t = historyTabs(docs, lp, { subQuoteId: sub.quote_id, todayIst: TODAY });
+    expect(t.payments.map((p) => [p.id, p.forWords])).toEqual([["P-9", "for INV-9"]]);
   });
 });
 
@@ -128,7 +186,7 @@ describe("R-2836 money not against an invoice yet", () => {
   });
 
   it("an advance on the renewal quote → ONE 'Not against an invoice yet' group at the top of All, naming the quote", () => {
-    const t = historyTabs(docs, paid);
+    const t = historyTabs(docs, paid, { subQuoteId: sub.quote_id, todayIst: TODAY });
     expect(NOT_AGAINST_INVOICE).toBe("Not against an invoice yet");
     expect(t.unlinked?.title).toBe(NOT_AGAINST_INVOICE);
     expect(t.unlinked?.payments.map((p) => p.id)).toEqual(["P-ADV"]);
@@ -136,12 +194,12 @@ describe("R-2836 money not against an invoice yet", () => {
     expect(t.all[0]).toBe(t.unlinked);
     expect(invoiceRow(t.all, "INV-1")!.payments.map((p) => p.id)).toEqual(["P-OLD"]);
     /* Invoices tab = invoices only; the advance is in Payments with the same words */
-    expect(t.invoices.some((r) => r.kind === "unlinked")).toBe(false);
+    expect(t.invoices.map((r) => r.kind as string)).not.toContain("unlinked");
     expect(t.payments.map((p) => [p.id, p.forWords])).toEqual([["P-ADV", "on quote Q-NEW"], ["P-OLD", "for INV-1"]]);
   });
 
   it("counts per tab equal today's drawerDocRows + drawerPaymentRows lengths", () => {
-    const t = historyTabs(docs, paid);
+    const t = historyTabs(docs, paid, { subQuoteId: sub.quote_id, todayIst: TODAY });
     const docRows = drawerDocRows(docs, TODAY);
     const payRows = drawerPaymentRows(paid, docs);
     expect(t.counts.quotes + t.counts.invoices).toBe(docRows.length);
@@ -156,7 +214,7 @@ describe("R-2836 money not against an invoice yet", () => {
 
 describe("R-2836 edge cases", () => {
   it("nothing read yet → empty tabs, zero counts", () => {
-    expect(historyTabs(undefined, undefined)).toMatchObject({ all: [], quotes: [], invoices: [], payments: [], unlinked: null, counts: { all: 0, quotes: 0, invoices: 0, payments: 0 } });
+    expect(historyTabs(undefined, undefined, { subQuoteId: null })).toMatchObject({ all: [], quotes: [], invoices: [], payments: [], unlinked: null, counts: { all: 0, quotes: 0, invoices: 0, payments: 0 } });
   });
 
   it("an instalment invoice billed from the subscription takes a payment on the subscription's quote (R-1564 link)", () => {
@@ -171,7 +229,7 @@ describe("R-2836 edge cases", () => {
       billings: [{ id: "B1", subscription_id: "S4", invoice_id: "INV-P1" }], invoices: [{ id: "INV-P1", quote_id: null }],
       payments: [pay({ id: "P-I", amount: 3000, quote_id: "Q-I", received_at: "2026-04-05T05:00:00Z" })],
     });
-    const t = historyTabs(docs, paid, { subQuoteId: "Q-I" });
+    const t = historyTabs(docs, paid, { subQuoteId: "Q-I", todayIst: TODAY });
     expect(invoiceRow(t.invoices, "INV-P1")?.payments.map((p) => [p.id, p.noReceipt])).toEqual([["P-I", false]]);
     expect(t.unlinked).toBeNull();
   });
