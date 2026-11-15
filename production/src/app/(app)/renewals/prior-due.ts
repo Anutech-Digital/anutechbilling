@@ -14,6 +14,42 @@
  */
 import { rupee } from "@/lib/utils";
 import { subscriptionDue } from "@/lib/accounting/receivables-due";
+import { priorTermOwed, subscriptionOwed, type OwedInvoice, type SubscriptionOwed } from "@/lib/renewals/owed";
+import type { LastDocs, LastInvoice } from "./last-docs";
+
+/**
+ * R-2818 (renewals audit 14 Nov): the Renewals page no longer reads outstanding_amount alone — SCN
+ * Kochi showed "Previous term ₹25,488 still unpaid" (a balance on no quote or invoice) while its
+ * customer page said All clear. These read the ONE owed rule (lib/renewals/owed.ts — the customer
+ * page's) over the row's linked documents. null = documents not read yet: no amount, never a guess.
+ * (priorTermDue / priorTermDueText below stay for the quote page's renewal-quote warning, R-1703.)
+ */
+type OwedSub = { quote_id: string | null; outstanding_amount: number | null; written_off_at?: string | null; renewal_quote_id?: string | null };
+
+const owedInvoice = (i: LastInvoice): OwedInvoice => ({
+  id: i.id, status: i.status, amount: i.amount, net_payable: i.netPayable, paid_amount: i.paidAmount,
+  written_off_at: i.writtenOffAt, sourceQuoteId: i.sourceQuoteId,   // notes are already in net_payable (review rev-r2818 #1)
+});
+
+/** Everything the subscription still owes on its documents — the follow-up dialog's "Still owes". */
+export function subscriptionOwedOf(sub: OwedSub, docs: LastDocs | undefined): SubscriptionOwed | null {
+  if (!docs) return null;
+  return subscriptionOwed(sub, (docs.owedInvoices ?? []).map(owedInvoice), new Set(docs.invoicedQuoteIds ?? []));
+}
+
+/** The part from before this renewal (its own renewal quote / billed part left out); null = not read yet. */
+export function priorTermOwedOf(sub: OwedSub, docs: LastDocs | undefined): SubscriptionOwed | null {
+  const all = subscriptionOwedOf(sub, docs);
+  if (!all) return null;
+  const renewal = new Set([sub.renewal_quote_id, docs?.sent?.quoteId].filter((x): x is string => !!x));
+  return priorTermOwed(all, renewal, new Set(docs?.renewalPartInvoiceIds ?? []));
+}
+
+/** The row / drawer flag text, or null when the previous term owes nothing (or is not read yet). */
+export function priorTermOwedText(sub: OwedSub, docs: LastDocs | undefined): string | null {
+  const due = priorTermOwedOf(sub, docs)?.total ?? 0;
+  return due > 0 ? `Previous term ${rupee(due)} still unpaid` : null;
+}
 
 export interface PriorDueSub {
   id: string;

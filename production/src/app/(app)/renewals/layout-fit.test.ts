@@ -28,11 +28,13 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
     expect(page).not.toMatch(/"hidden xl:block"|"xl:hidden/);
   });
 
-  it("column budget: fixed columns + flexible minimums ≤ the ~936px card (974 measured at 1280, minus a Windows scrollbar and 20px), Action inside it", () => {
+  it("column budget: fixed columns + flexible minimums ≤ the ~968px card, Action inside it; R-2821: Customer and Product get ≥ 200px each", () => {
     const fixed = QUEUE_TABLE_COLS.reduce((s, c) => s + (c.width ?? 0), 0);
     const flex = QUEUE_TABLE_COLS.filter((c) => c.width == null);
     expect(flex.map((c) => c.key)).toEqual(["customer", "product"]);
-    expect(QUEUE_TABLE_BUDGET_PX).toBeLessThanOrEqual(936);
+    /* R-2821: page side padding 32 → 16px below 2xl gives the card 32px more (936 → 968); the fixed columns shrank */
+    expect(QUEUE_TABLE_BUDGET_PX).toBeLessThanOrEqual(968);
+    expect(QUEUE_FLEX_MIN_PX).toBeGreaterThanOrEqual(200);
     expect(fixed + flex.length * QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
     expect(QUEUE_TABLE_COLS.map((c) => c.key)).toEqual(["select", "customer", "product", "due", "amount", "status", "invoice", "actions"]);
     expect(QUEUE_TABLE_COLS.map((c) => c.label)).toEqual(["", "Customer", "Product & period", "Due", "Amount", "Status", "Last invoice", "Action"]);
@@ -46,8 +48,9 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
   });
 
   it("two lines per cell: names / ids / periods truncate with a tooltip; money and status never truncate", () => {
-    expect(cells).toMatch(/className="block truncate font-semibold text-ink hover:underline" title=\{nameTitle\}/);
-    expect(cells).toMatch(/truncate text-ink" title=\{line1\}/);
+    /* R-2821: the customer name and the product line wrap to two lines (the full text stays the tooltip) */
+    expect(cells).toMatch(/className="line-clamp-2 break-words font-semibold text-ink hover:underline" title=\{nameTitle\}/);
+    expect(cells).toContain('<span className="line-clamp-2 break-words">{line1}</span>');
     /* the invoice state (money + status) wraps, never cut */
     expect(cells).toMatch(/className=\{cn\("break-words tabular-nums", TONE\[state\.tone\]\)\} data-testid="renewal-last-invoice-status"/);
     /* the stage chip may wrap in the table (Badge is whitespace-nowrap by default); its period is in

@@ -14,10 +14,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { lastPaidBySubscription, paidNoReceipt } from "./last-paid";
 import { lastDocsBySubscription, paidInvoiceOf, priorDueInvoiceGap, type DocInvoice, type DocQuote } from "./last-docs";
-import { priorTermDue, priorTermDueText } from "./prior-due";
+import { priorTermDue, priorTermDueText, priorTermOwedOf, priorTermOwedText } from "./prior-due";
 
 const TODAY = "2026-11-14";
-const GAP = "Balance on the subscription — no unpaid invoice linked to it";
 
 describe("R-2752 Greentin shape — a receipt on the billed part's proforma is this subscription's Last paid", () => {
   const SUB = "5ab00000-2095-0000-0000-000000000011";
@@ -60,15 +59,24 @@ describe("R-2752 Greentin shape — a receipt on the billed part's proforma is t
   });
 });
 
-describe("R-2752 SCN Ads / SCN Kochi shapes — 'Previous term' says where the balance is", () => {
-  it("₹98 on the subscription, its invoice Paid (shown on the row) → the balance words, true next to a Paid invoice", () => {
-    const paidInv = { id: "SCN-ADS-INV3", date: "2026-11-01", status: "paid", amount: 1180, paidAmount: 1180, currency: "INR", dueDate: null, netPayable: null, adjustedAdvances: null, writtenOffAt: null, fxRate: null, sourceQuoteId: null, part: null, period: null, notes: undefined };
-    const docs = { quote: null, sent: null, invoice: paidInv, invoices: [paidInv] };
-    expect(priorTermDueText({ outstanding_amount: 98, written_off_at: null })).toBe("Previous term ₹98 still unpaid");
-    expect(priorDueInvoiceGap(docs, 98, TODAY)).toBe(GAP);
+/* R-2818 (changed expectation): a balance only on subscriptions.outstanding_amount — on no quote or
+   invoice, or on a quote whose invoice is Paid — is not owed by the customer page's rule (it says All
+   clear), so Renewals no longer says "Previous term … still unpaid" for it (owed-r2818.test.ts). The
+   stored-balance text below stays only for the quote page's renewal-quote warning (R-1703). */
+describe("R-2752 SCN Ads / SCN Kochi shapes — 'Previous term' agrees with the customer page", () => {
+  it("₹98 on the subscription, its invoice Paid (shown on the row) → no previous-term debt next to a Paid invoice", () => {
+    const paidInv = { id: "SCN-ADS-INV3", date: "2026-11-01", status: "paid", amount: 1180, paidAmount: 1180, currency: "INR", dueDate: null, netPayable: null, adjustedAdvances: null, writtenOffAt: null, fxRate: null, sourceQuoteId: "Q-ADS", part: null, period: null, notes: undefined };
+    const docs = { quote: null, sent: null, invoice: paidInv, invoices: [paidInv], owedInvoices: [], invoicedQuoteIds: ["Q-ADS"] };
+    const sub = { quote_id: "Q-ADS", renewal_quote_id: null, outstanding_amount: 98, written_off_at: null };
+    expect(priorTermDueText({ outstanding_amount: 98, written_off_at: null })).toBe("Previous term ₹98 still unpaid");   // the quote page's stored-balance text
+    expect(priorTermOwedText(sub, docs)).toBeNull();
+    expect(priorDueInvoiceGap(docs, priorTermOwedOf(sub, docs), TODAY)).toBeNull();
   });
-  it("₹25,488 with no invoice at all → the same words", () => {
-    expect(priorDueInvoiceGap(undefined, 25488, TODAY)).toBe(GAP);
+  it("₹25,488 with no quote and no invoice at all → nothing owed, no words", () => {
+    const docs = { quote: null, sent: null, invoice: null, invoices: [] };
+    const sub = { quote_id: null, renewal_quote_id: null, outstanding_amount: 25488, written_off_at: null };
+    expect(priorTermOwedText(sub, docs)).toBeNull();
+    expect(priorDueInvoiceGap(docs, priorTermOwedOf(sub, docs), TODAY)).toBeNull();
   });
   it("under ₹1 is paise rounding — never 'still unpaid'", () => {
     expect(priorTermDue({ outstanding_amount: 0.4, written_off_at: null })).toBe(0);

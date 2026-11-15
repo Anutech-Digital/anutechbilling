@@ -12,6 +12,7 @@
  */
 import Link from "next/link";
 import { cn, formatDate } from "@/lib/utils";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import {
   daysBetweenIst, invoiceStatusWords, invoiceTotalWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel, renewalDueText,
@@ -25,15 +26,15 @@ function DocLink({ id, href }: { id: string; href: string | null }) {
     : <span className="font-mono">{id}</span>;
 }
 
-export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, todayIst, priorDue = 0, className }: {
+export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, todayIst, prior = null, className }: {
   docs: LastDocs | undefined;
   loading: boolean;
   failed: boolean;
   canQuotes: boolean;
   canInvoices: boolean;
   todayIst: string;
-  /** R-2747: the row's "Previous term ₹x still unpaid" amount (prior-due.ts priorTermDue); 0 = none. */
-  priorDue?: number;
+  /** R-2747 / R-2818: what the previous term still owes (queue item `prior`, the one owed rule); null = none / not read. */
+  prior?: SubscriptionOwed | null;
   className?: string;
 }) {
   if (loading) return null;
@@ -41,7 +42,7 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
   const invoices = docs?.invoices ?? [];
   /* R-2748: one fact one place — the newest quote sent is not repeated when it is an invoice's own quote */
   const quote = docs?.quote && !invoices.some((i) => i.sourceQuoteId === docs.quote?.id) ? docs.quote : null;
-  const gap = priorDueInvoiceGap(docs, priorDue, todayIst);
+  const gap = priorDueInvoiceGap(docs, prior, todayIst);
   if (!quote && invoices.length === 0 && !gap) return null;
   const quoteState = quote ? quoteStateLabel(quote, todayIst) : "";
   /* R-2737: line 2 says the period the document covers (else the invoice's date). The block is

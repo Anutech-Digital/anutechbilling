@@ -20,6 +20,8 @@ export interface RowContact {
   name: string | null;
   email: string | null;
   phone: string | null;
+  /** R-2824: customers.country — the dialling code for a number saved without one (call / WhatsApp links). */
+  country?: string | null;
 }
 
 const CHUNK = 150;
@@ -33,12 +35,13 @@ function chunks<T>(xs: readonly T[], n: number): T[][] {
 /** Primary contact wins; the legacy customers.contact_* columns fill what it leaves empty. */
 export function mergeContact(
   primary: { name: string | null; email: string | null; phone: string | null } | undefined,
-  legacy: { contact_email: string | null; contact_phone: string | null } | undefined,
+  legacy: { contact_email: string | null; contact_phone: string | null; country?: string | null } | undefined,
 ): RowContact {
   return {
     name: primary?.name ?? null,
     email: primary?.email?.trim() || legacy?.contact_email?.trim() || null,
     phone: primary?.phone?.trim() || legacy?.contact_phone?.trim() || null,
+    country: legacy?.country?.trim() || null,
   };
 }
 
@@ -55,11 +58,11 @@ export function useRenewalContacts(customerIds: readonly string[]) {
         const m = await primaryContactsFor(supabase, run);
         for (const [k, v] of m) primary.set(k, v);
       }
-      const legacy = await fetchAllRowsIn<{ id: string; contact_email: string | null; contact_phone: string | null }, string>(
+      const legacy = await fetchAllRowsIn<{ id: string; contact_email: string | null; contact_phone: string | null; country: string | null }, string>(
         ids,
         (run, from, to) => supabase
           .from("customers")
-          .select("id, contact_email, contact_phone")
+          .select("id, contact_email, contact_phone, country")
           .in("id", run)
           .order("id", { ascending: true })
           .range(from, to),

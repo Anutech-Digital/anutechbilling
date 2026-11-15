@@ -45,15 +45,47 @@ export type SalaryRowActionState = {
   lockReason: string | null;
   /** Why only Edit is not offered (Undo still is) — null when it is. */
   editNote: string | null;
+  /** R-2812: the page that lifts a TDS lock (the challan's bank account / Compliance) + its label. */
+  lockHref?: string;
+  lockLinkLabel?: string;
 };
+
+/** R-2812: rpc salary_tds_lock's answer — the government already has this salary's TDS. */
+export type SalaryTdsLock = { kind: "deposited" | "filed"; what: string; href: string };
+
+/** R-2812: the toast button for a refused Undo — the refusal's HINT page (Compliance for a filed
+ *  return, the challan's / bank line's Banking page), Banking when the server gave none. */
+export function salaryGuardNext(hint: string | null | undefined): { label: string; href: string } {
+  const href = hint && hint.startsWith("/") ? hint : "/accounting/banking";
+  return { label: href.startsWith("/compliance") ? "Open Compliance" : href.startsWith("/accounting/payroll") ? "Open Payroll" : "Open Banking", href };
+}
 
 /** Which salary actions a booked row offers. `canWrite` = canWriteMoney(role). */
 export function salaryRowActionState(
-  p: Pick<BookedSalary, "paid_amount" | "paid_status"> & Partial<Pick<BookedSalary, "advance_recovered" | "advance_loan_id" | "period">>,
+  p: Pick<BookedSalary, "paid_amount" | "paid_status"> & Partial<Pick<BookedSalary, "advance_recovered" | "advance_loan_id" | "period" | "tds">>,
   canWrite: boolean,
-  /** `exitDate` = the employee's last working day (employees.exit_date), when they have left. */
-  opts: { exitDate?: string | null } = {},
+  /** `exitDate` = the employee's last working day (employees.exit_date), when they have left.
+   *  `tdsLock` = salary_tds_lock for this salary (R-2812), when read. */
+  opts: { exitDate?: string | null; tdsLock?: SalaryTdsLock | null; tdsLockLoading?: boolean } = {},
 ): SalaryRowActionState {
+  /* R-2812: while the lock is being read, offer nothing that the answer could take away. */
+  if (p.paid_amount <= 0 && canWrite && opts.tdsLockLoading && (p.tds ?? 0) > 0) {
+    return { edit: false, undo: false, adjustLop: false, editNote: null, lockReason: "Checking whether this month's TDS is already deposited or filed…" };
+  }
+  /* R-2812: TDS deposited by challan / 24Q filed — delete_salary_payment refuses the Undo, and
+     Edit's Save starts with that Undo (until R-2813 makes it one edit_salary_payment call), so
+     neither is offered; the line says why and links to the page that lifts it. */
+  if (p.paid_amount <= 0 && canWrite && opts.tdsLock && (p.tds ?? 0) > 0) {
+    const l = opts.tdsLock;
+    return {
+      edit: false, undo: false, adjustLop: false, editNote: null,
+      lockReason: l.kind === "filed"
+        ? `${l.what} — Undo / Edit would change a filed return`
+        : `TDS already deposited (${l.what}) — Undo / Edit would leave the challan without this TDS. A wrong TDS: put the difference into a later month's TDS`,
+      lockHref: l.href,
+      lockLinkLabel: l.kind === "filed" ? "Open Compliance →" : "Open challan bank line →",
+    };
+  }
   if (p.paid_amount <= 0) {
     /* The advance this salary recovered from was deleted since: the form could not carry the
        recovery, and dropping it silently would raise the net — so no one-step Edit. */

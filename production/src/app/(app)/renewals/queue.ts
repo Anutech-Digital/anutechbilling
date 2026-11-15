@@ -518,21 +518,23 @@ export function bulkQuoteConfirm(
 /* R-2759 (R-2739b, 14 Nov): the table now shows from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX) — a
    1280 laptop has a 1264–1276px inner width, so the old xl (1280px) switch showed it the card list.
    Measured (R-2759 card spec): the table box is 974px at a 1280 window with an overlay scrollbar; a
-   classic Windows scrollbar takes ~17px and a 1260 window 20px more → ~936px is the budget. Eight
+   classic Windows scrollbar takes ~17px and a 1260 window 20px more → ~936px was the budget.
+   R-2821 (14 Nov): the page's side padding is 16px (was 32px) below 2xl, so the budget is 968px; Customer and Product get ≥200px
+   each (names wrap to 2 lines), so Status / Last invoice are 92px and wrap (chip text, "Overdue 12d · ₹…"). Eight
    columns, every cell at most two lines:
    ☐ · Customer · Product & period · Due · Amount · Status · Last invoice · Action. */
 export const QUEUE_TABLE_MIN_VIEWPORT_PX = 1260;
-export const QUEUE_TABLE_BUDGET_PX = 936;
-export const QUEUE_FLEX_MIN_PX = 108;
+export const QUEUE_TABLE_BUDGET_PX = 968;
+export const QUEUE_FLEX_MIN_PX = 200;
 export type QueueColKey = "select" | "customer" | "product" | "due" | "amount" | "status" | "invoice" | "actions";
 export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: QueueColKey; label: string; width: number | null; align?: "right" }> = [
-  { key: "select", label: "", width: 32 },
+  { key: "select", label: "", width: 28 },
   { key: "customer", label: "Customer", width: null },
   { key: "product", label: "Product & period", width: null },
-  { key: "due", label: "Due", width: 84 },
-  { key: "amount", label: "Amount", width: 112, align: "right" },
-  { key: "status", label: "Status", width: 152 },
-  { key: "invoice", label: "Last invoice", width: 156 },
+  { key: "due", label: "Due", width: 80 },
+  { key: "amount", label: "Amount", width: 88, align: "right" },
+  { key: "status", label: "Status", width: 92 },
+  { key: "invoice", label: "Last invoice", width: 92 },
   /* "Record payment" + ⋯ on one line (the card spec checks no cell overflows) */
   { key: "actions", label: "Action", width: 184 },
 ];

@@ -282,6 +282,6 @@ describe("R-2737 (d) the cell never widens the table; one batched read", () => {
     expect(data).toContain("credit_notes");
     expect(data).toContain("debit_notes");
     expect(data).not.toMatch(/\.single\(\)|\.maybeSingle\(\)/);
-    expect((data.match(/fetchAllRowsIn</g) ?? []).length).toBe(9);
+    expect((data.match(/fetchAllRowsIn</g) ?? []).length).toBe(10);   // R-2822: + the drawer-only quote_send_log read
   });
 });

@@ -24,6 +24,7 @@ import { Icon } from "@/components/ui/icon";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { termEndInclusive } from "@/lib/billing/schedule";
 import type { RenewalStage } from "@/lib/renewals/stage";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { renewalTermStart } from "./stage-input";
 import {
   daysBetweenIst, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel,
@@ -104,9 +105,9 @@ export function CustomerCell({ name, customerId, contact, more }: { name: string
   return (
     <div className="min-w-0" data-cell="customer">
       {customerId ? (
-        <Link href={`/customers/${customerId}` as never} className="block truncate font-semibold text-ink hover:underline" title={nameTitle}>{name}</Link>
+        <Link href={`/customers/${customerId}` as never} className="line-clamp-2 break-words font-semibold text-ink hover:underline" title={nameTitle}>{name}</Link>
       ) : (
-        <p className="truncate font-semibold text-ink" title={nameTitle}>{name}</p>
+        <p className="line-clamp-2 break-words font-semibold text-ink" title={nameTitle}>{name}</p>
       )}
       {parts.length ? (
         <p className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs text-ink-3" title={parts.join(" · ")}>
@@ -134,12 +135,14 @@ export function subscriptionDomain(sub: { domain?: string | null }): string | nu
   return d ? d : null;
 }
 
-export function ProductCell({ plan, seats, vendor, term, termShort, frequency, domain = null, onOpen }: {
+export function ProductCell({ plan, seats, vendor, term, termShort, frequency, domain = null, onOpen, together = null }: {
   plan: string | null; seats: number | null; vendor: string | null; term: string | null; termShort: string | null; frequency: string | null;
   /** R-2755: the subscription's domain (subscriptionDomain) — line 2, before the period. */
   domain?: string | null;
   /** R-2740: the product name opens the row drawer (keyboard reachable — the row press is mouse only). */
   onOpen?: () => void;
+  /** R-2808: billed together last cycle → line 2 reads "Bills with <other plan>" (a button that opens Bill together). */
+  together?: { text: string; onClick: () => void } | null;
 }) {
   const vendorWord = vendor ? vendor[0].toUpperCase() + vendor.slice(1) : null;
   const line1 = [plan, seats != null ? `${seats} seats` : null, vendorWord].filter(Boolean).join(" · ");
@@ -147,15 +150,25 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
   const title2 = [term ? `Renews for ${term}` : null, frequency].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0" data-cell="product">
-      <p className="truncate text-ink" title={line1}>
+      <p className="text-ink" title={line1}>
         {onOpen ? (
           <button type="button" onClick={onOpen} data-testid="renewal-open-drawer" aria-label={`${line1} — open details`}
-            className="block w-full min-w-0 truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            className="line-clamp-2 w-full min-w-0 break-words rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
             {line1}
           </button>
-        ) : line1}
+        ) : <span className="line-clamp-2 break-words">{line1}</span>}
       </p>
-      {domain ? (
+      {together ? (
+        /* R-2808: billed together last cycle — "Bills with <other plan>" takes the period's place (the period
+           stays in the tooltip and the Due column shows when it starts); the button opens Bill together. */
+        <p className="mt-0.5 flex min-w-0 items-baseline gap-x-1 text-2xs" title={title2 || undefined}>
+          {domain && <span className="min-w-0 max-w-[55%] shrink truncate text-ink-2" title={domain} data-testid="renewal-row-domain">{domain} ·</span>}
+          <button type="button" onClick={together.onClick} data-testid="renewal-bills-with" title={`${together.text} — bill them on one proforma`}
+            className="min-w-0 shrink truncate rounded-sm text-left font-medium text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            {together.text}
+          </button>
+        </p>
+      ) : domain ? (
         /* R-2755: one line — the domain first (cut with its full text on hover when long); the period follows
            where it fits and otherwise wraps out of sight (max-h one line): it stays in the tooltip, and the
            Due column shows the date it starts. */
@@ -189,22 +202,22 @@ export function DueCell({ date, days, note }: { date: string | null; days: numbe
   );
 }
 
-export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst, priorDue = 0 }: {
+export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst, prior = null }: {
   docs: LastDocs | undefined;
   loading: boolean;
   failed: boolean;
   canInvoices: boolean;
   canQuotes: boolean;
   todayIst: string;
-  /** R-2747: the row's "Previous term ₹x still unpaid" amount (prior-due.ts); 0 = none. */
-  priorDue?: number;
+  /** R-2747 / R-2818: what the previous term still owes (queue item `prior`, the one owed rule); null = none / not read. */
+  prior?: SubscriptionOwed | null;
 }) {
   if (loading) return <p className="text-2xs text-ink-3">…</p>;
   if (failed) return <p className="text-2xs text-ink-3" title="Last invoice couldn't load — reload the page">Couldn&apos;t load</p>;
   const { invoice, earlier } = lastInvoiceOf(docs);
   /* R-2747 / R-2752 (R-2760: kept in the table): money owed on the subscription with no unpaid invoice
      linked — say why, also next to a Paid / Cancelled invoice (line 2) */
-  const gap = priorDueInvoiceGap(docs, priorDue, todayIst);
+  const gap = priorDueInvoiceGap(docs, prior, todayIst);
   const gapSpan = gap ? <span title={gap} data-testid="renewal-prior-due-no-invoice"> · {gap}</span> : null;
   if (!invoice && gap && !docs?.quote) {
     return (

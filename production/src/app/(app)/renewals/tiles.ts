@@ -39,11 +39,8 @@ export const TILE_LABEL: Record<TileKey, string> = {
   renewedMonth: "Renewed this month",
 };
 
-/** What the table shows when a tile is pressed (the Renewed tile shows the work still left). */
-export const TILE_VIEW_LABEL: Record<TileKey, string> = {
-  ...TILE_LABEL,
-  renewedMonth: "Still due this month",
-};
+/** What the table shows when a tile is pressed. R-2741: the Renewed tile lists the renewals it counts. */
+export const TILE_VIEW_LABEL: Record<TileKey, string> = { ...TILE_LABEL };
 
 /** One queue row, as the tiles need it. */
 export interface TileRow {
@@ -126,7 +123,8 @@ const NOT_DUE: ReadonlySet<RowStatusKey> = new Set(["renewed", "non-renewing"]);
  */
 export function tileMatches(key: TileKey, r: TileRow, month: MonthRange, paidSubs: ReadonlySet<string> = new Set()): boolean {
   switch (key) {
-    case "overdue":   return r.tab === "overdue";
+    /* R-2741: Overdue leaves out a Won't renew / renewed row too — it is counted in its own tile, once. */
+    case "overdue":   return r.tab === "overdue" && !NOT_DUE.has(r.statusKey);
     case "due30":     return (r.tab === "due7" || r.tab === "d30") && !NOT_DUE.has(r.statusKey);
     case "due60":     return r.tab === "d60" && !NOT_DUE.has(r.statusKey);
     case "due90":     return r.tab === "d90" && !NOT_DUE.has(r.statusKey);
@@ -134,6 +132,53 @@ export function tileMatches(key: TileKey, r: TileRow, month: MonthRange, paidSub
     case "renewedMonth":
       return inMonth(r.renewalDate, month) && !NOT_DUE.has(r.statusKey) && !paidSubs.has(r.id);
   }
+}
+
+/** R-2741: the rows the Renewed tile's press lists — the renewals it adds up (a paid quote, or a Renewed row not moved on yet). */
+export function renewedRowMatches(r: TileRow, month: MonthRange, paidSubs: ReadonlySet<string>): boolean {
+  return paidSubs.has(r.id) || (r.statusKey === "renewed" && inMonth(r.renewalDate, month));
+}
+
+/** The queue tabs each Overdue / Due tile is made of. */
+export const TILE_WINDOW_TABS = {
+  overdue: ["overdue"], due30: ["due7", "d30"], due60: ["d60"], due90: ["d90"],
+} as const satisfies Record<string, readonly QueueTab[]>;
+export type WindowKey = keyof typeof TILE_WINDOW_TABS;
+
+export interface WindowReconcile {
+  /** Rows the tabs of this window hold (the tab counts added up). */
+  tabRows: number;
+  /** Rows the tile counts. */
+  tileRows: number;
+  /** Closed rows the tabs still list but the tile leaves out (own tile / already renewed). */
+  wontRenew: number;
+  renewed: number;
+}
+
+/**
+ * R-2741 — ONE function for "tile = tab count = sum of rows": for each window, the tab rows split
+ * into what the tile counts + the closed rows it leaves out, so tabRows === tileRows + wontRenew + renewed
+ * always, and the tile can say "(+1 won't renew)" instead of looking 1 short of its tab.
+ */
+export function reconcileWindows(rows: readonly TileRow[], month: MonthRange): Record<WindowKey, WindowReconcile> {
+  const out = {} as Record<WindowKey, WindowReconcile>;
+  for (const key of Object.keys(TILE_WINDOW_TABS) as WindowKey[]) {
+    const tabs: readonly QueueTab[] = TILE_WINDOW_TABS[key];
+    const inTabs = rows.filter((r) => tabs.includes(r.tab));
+    out[key] = {
+      tabRows: inTabs.length,
+      tileRows: inTabs.filter((r) => tileMatches(key, r, month)).length,
+      wontRenew: inTabs.filter((r) => r.statusKey === "non-renewing").length,
+      renewed: inTabs.filter((r) => r.statusKey === "renewed").length,
+    };
+  }
+  return out;
+}
+
+/** "(+1 won't renew)" / "(+2 renewed)" — what a tab holds beyond its tile; "" when they agree. */
+export function windowExtraNote(w: WindowReconcile): string {
+  const parts = [w.wontRenew > 0 ? `${w.wontRenew} won't renew` : "", w.renewed > 0 ? `${w.renewed} renewed` : ""].filter(Boolean);
+  return parts.length ? `(+${parts.join(", +")})` : "";
 }
 
 export interface TileFigure {

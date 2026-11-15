@@ -15,7 +15,8 @@ import { renewalStage, type RenewalStage, type RenewalHeld } from "@/lib/renewal
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { renewalRisk, riskChased } from "./risk";
-import { priorTermDueText } from "./prior-due";
+import { priorTermOwedOf, priorTermOwedText, subscriptionOwedOf } from "./prior-due";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { withRenewalQuote } from "./open-renewal-quotes";
 import { classifyRenewals, type RenewalGroups } from "./classify";
 import {
@@ -48,6 +49,10 @@ export interface QueueItem {
   stage: RenewalStage | null;
   /** R-2758: where Record payment goes (the open quote's dialog, else the invoice's). */
   payHref: string | null;
+  /** R-2818: what the previous term still owes by the one owed rule (lib/renewals/owed.ts); null = documents not read. */
+  prior: SubscriptionOwed | null;
+  /** R-2818 (review #2): everything its documents still owe — risk reason, follow-up "Still owes", CSV Outstanding. */
+  owed: SubscriptionOwed | null;
 }
 
 export interface QueueBuildInput {
@@ -83,13 +88,15 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
     .map((s) => ({ sub: withRenewalQuote(s, f.openRenewalMap), daysUntil: daysUntilRenewal(s.renewal_date!, today) }));
   const quoteOf = (sub: Subscription) => f.quoteInfo?.get(sub.renewal_quote_id ?? "");
   const paid = (r: { sub: Subscription }) => isPaidRenewalQuote(r.sub, quoteOf(r.sub));
-  const groups = classifyRenewals(enriched, (r) => renewalRisk(r.sub).level === "high", today, paid);
+  /* R-2818 (review #2): the risk score's "Unpaid balance" reads the one owed rule; null while the documents load */
+  const owedOf = (sub: Subscription) => subscriptionOwedOf(sub, f.docs?.get(sub.id))?.total ?? null;
+  const groups = classifyRenewals(enriched, (r) => renewalRisk(r.sub, { owed: owedOf(r.sub) }).level === "high", today, paid);
   const tabs     = queueTabs(groups);
   const atRiskIds = new Set(groups.atRisk.map((r) => r.sub.id));
   const canQuotes = canOpenQuotes(f.role ?? undefined);
 
   const toItem = (r: { sub: Subscription; daysUntil: number }): QueueItem => {
-    const risk = renewalRisk(r.sub);
+    const risk = renewalRisk(r.sub, { owed: owedOf(r.sub) });
     const docs = f.docs?.get(r.sub.id);
     /* R-2728: a renewal quote / part bill with the customer, unpaid → "Renewal quote sent" (stays listed). */
     const status = renewalRowStatus(r.sub, r.daysUntil, { tenantGraceDays: f.graceDays, today, renewalPaid: paid(r), quoteSent: docs?.sent ?? null });
@@ -108,7 +115,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
         /* R-2756: a Won't renew / stopped row is not a renewal to chase — no at-risk flag on it. */
         atRisk: atRiskIds.has(r.sub.id) && riskChased(r.sub) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
         vendorHold: vendorHoldState(r.sub, today),
-        priorTermUnpaid: priorTermDueText(r.sub),
+        priorTermUnpaid: priorTermOwedText(r.sub, docs),   // R-2818: the one owed rule, never outstanding_amount alone
         promiseBroken: followup.promiseBroken ? { promisedOn: followup.promisedOn } : null,
         followUpDue: followup.followUpDue ? { nextFollowUpOn: followup.nextFollowUpOn } : null,
         renewalHeld: f.holds?.get(r.sub.id) ?? null,
@@ -118,6 +125,8 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
     return {
       stage,
       payHref: stage ? stagePayHref(stage, docs, canQuotes) : null,
+      prior: priorTermOwedOf(r.sub, docs),
+      owed: subscriptionOwedOf(r.sub, docs),
       sub: r.sub,
       daysUntil: r.daysUntil,
       status,

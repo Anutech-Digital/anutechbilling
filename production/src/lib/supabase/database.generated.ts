@@ -12147,6 +12147,7 @@ export type Database = {
           customer_id: string | null
           customer_name: string
           domain: string | null
+          bill_group_id: string | null
           billed_externally_until: string | null
           external_ref: string | null
           external_ref_date: string | null
@@ -12200,6 +12201,7 @@ export type Database = {
           customer_id?: string | null
           customer_name: string
           domain?: string | null
+          bill_group_id?: string | null
           billed_externally_until?: string | null
           external_ref?: string | null
           external_ref_date?: string | null
@@ -12253,6 +12255,7 @@ export type Database = {
           customer_id?: string | null
           customer_name?: string
           domain?: string | null
+          bill_group_id?: string | null
           billed_externally_until?: string | null
           external_ref?: string | null
           external_ref_date?: string | null
@@ -16976,6 +16979,16 @@ export type Database = {
       salary_expense_date: {
         Args: { p_pay_date: string; p_period: string }
         Returns: string
+      }
+      salary_tds_lock: {
+        Args: { p_salary_id: string }
+        Returns: {
+          o_href: string
+          o_kind: string
+          o_month: string
+          o_name: string
+          o_what: string
+        }[]
       }
       _salary_in_force_gross: {
         Args: { p_employee_id: string; p_period: string }

@@ -49,7 +49,6 @@ import { canOpenInvoices } from "@/lib/invoices/access";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { notRenewingDialog, type PrimaryContext, type PrimaryKind, type RenewalStage } from "@/lib/renewals/stage";
 import { stageButtons, STAGE_MENU_LABEL, type StageMenuItem, type StageRunKind } from "./stage-actions";
-import { Skeleton } from "@/components/ui/skeleton";
 import { BillNextPartDialog, type BillNextChoice } from "./bill-next-part-dialog";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { createClient } from "@/lib/supabase/client";
@@ -167,7 +166,7 @@ function LazyRenewalActions(props: RenewalActionsProps) {
   return (
     <StageActions
       stage={stage ?? null} name={sub.customer_name ?? "this customer"} layout={layout} strong={strong}
-      busy={false} disabled={!viewer}
+      busy={false} disabled={!viewer} pending={!viewer}
       ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices}
       /* follow-up needs nothing of the full component — no reason to mount it for that */
       onRun={(kind, from) => (kind === "follow-up" ? onFollowup?.() : setArmed({ kind, from }))}
@@ -528,7 +527,7 @@ function RenewalActionsLive({ sub: raw, daysUntil, layout, strong = false, onFol
           <StageActions
             stage={stage} name={name} layout={layout} strong={strong}
             busy={busy !== null || renewAnyway.busy || setNonRenewing.isPending}
-            disabled={busy !== null || factsLoading}
+            disabled={busy !== null || factsLoading} pending={factsLoading}
             ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices}
             onRun={onRun}
           />
@@ -638,7 +637,7 @@ const MENU_TITLE: Partial<Record<StageMenuItem, string>> = {
   "open-quote": "The renewal quote is closed — open it to revise it, or to release it before a new renewal",
 };
 
-function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, canQuotes, canPay, canInvoices, onRun }: {
+function StageActions({ stage, sub, name, layout, strong, busy, disabled, pending = false, ctx, canQuotes, canPay, canInvoices, onRun }: {
   stage: RenewalStage | null;
   sub: RenewalActionsSub;
   name: string;
@@ -646,6 +645,8 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, c
   strong: boolean;
   busy: boolean;
   disabled: boolean;
+  /** R-2825: `disabled` only because the viewer / facts are still being read — says so (aria-busy + title). */
+  pending?: boolean;
   ctx: PrimaryContext;
   canQuotes: boolean;
   canPay: boolean;
@@ -653,7 +654,15 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, c
   onRun: (kind: StageRunKind, from: StageRunFrom) => void;
 }) {
   /* Documents still loading: a placeholder — never a button that could act on a half-known row. */
-  if (!stage) return <Skeleton className="h-8 w-28" aria-label="Loading the next step" data-testid="stage-action-loading" />;
+  /* R-2825: a visibly disabled "Loading…" button (aria-busy + title) — not a grey block that looks like nothing and eats the click. */
+  if (!stage) {
+    return (
+      <Button variant="default" size="sm" className={cn("shrink-0", layout === "card" && "w-full", layout === "table" && "gap-1.5 px-2")}
+        loading disabled aria-busy="true" title="Loading the next step — this button works in a moment" data-testid="stage-action-loading">
+        Loading…
+      </Button>
+    );
+  }
   const { primary, menu } = stageButtons(stage, sub, ctx, { canQuotes, canPay, canInvoices });
   const grow = layout === "card" ? "flex-1" : undefined;
   /* R-2764 (R-2759 spec, 14 Nov): in the table the longest label ("Record payment") + ⋯ ran 4px past the
@@ -668,8 +677,9 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, c
           className={cn("shrink-0", grow, tight && "gap-1.5 px-2")}
           loading={busy}
           disabled={disabled}
+          aria-busy={pending || undefined}
           onClick={() => onRun(primary.kind, "primary")}
-          title={PRIMARY_TITLE[primary.kind]}
+          title={pending ? "Loading… this button works in a moment" : PRIMARY_TITLE[primary.kind]}
           data-testid="stage-primary"
         >
           <Icon name={PRIMARY_ICON[primary.kind]} size={12} />

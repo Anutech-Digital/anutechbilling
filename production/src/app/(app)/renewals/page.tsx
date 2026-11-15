@@ -65,7 +65,7 @@ import {
   type RenewalRowLike,
 } from "./reminders";
 import { renewalRisk, topRiskPick, topRiskReasons } from "./risk";
-import { priorTermDue } from "./prior-due";
+import { subscriptionOwedOf } from "./prior-due";
 import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
 import { renewalRowAction, type RowAction } from "./row-action";
 import { GraceOverCard } from "./grace-over-card";
@@ -79,7 +79,7 @@ import {
 } from "./queue";
 import { buildQueueItems, firstRows, QUEUE_PAGE_ROWS, type QueueItem } from "./queue-items";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
-import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
+import { monthOf, renewalTiles, tileMatches, renewedRowMatches, reconcileWindows, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
 import { RenewalReminderDialog, type ReminderDialogState } from "./reminder-dialog";
 import { RenewalTileRow, TileViewBar } from "./tiles-card";
 import { ForecastPanel } from "./forecast-panel";
@@ -108,8 +108,13 @@ import {
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
+import { dueCellFacts } from "./due-anchor";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
+import { BillTogetherGroups, tickedOf, useBillTogether } from "@/components/features/renewals/bill-together";
+import { BILL_TOGETHER, useBillTogetherAvailable } from "@/components/features/renewals/bill-together-dialog";
+import { canOfferBillTogether } from "@/lib/renewals/bill-together";
+import { groupsShown, togetherIndex, togetherRowOf } from "./bill-together-rows";
 
 // ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
 
@@ -332,9 +337,11 @@ interface RenewalQueueProps {
   docsState: { loading: boolean; failed: boolean };
   /** R-2740: open the row drawer — from the product name, a real button (no mouse-only row click, R-1658). */
   onOpen: (subId: string) => void;
+  /** R-2808: billed together last cycle → the row's "Bills with <other plan>" (opens Bill together); null = none. */
+  togetherOf?: (subId: string) => { text: string; onClick: () => void } | null;
 }
 
-function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen }: RenewalQueueProps) {
+function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen, togetherOf }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -401,15 +408,25 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
     return (
       <>
         {keepActionLine && <RowActionLine action={action} canQuotes={canQuotes} className={className} />}
-        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} priorDue={priorTermDue(item.sub)} className={className} />
+        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} prior={item.prior} className={className} />
       </>
     );
   };
-  const sentDue = (item: QueueItem, className?: string) => (
-    item.status.key === "quote-sent" && item.docs?.sent
-      ? <SentDueLines sent={item.docs.sent} daysUntil={item.daysUntil} todayIst={todayIst} className={className} />
-      : null
-  );
+  /* R-2817: the Due date / day count = the chip's own anchor (stage.ts rowAnchor); renewal_date while the stage loads. */
+  const dueMemo = new Map<QueueItem, ReturnType<typeof dueCellFacts>>();
+  const dueOf = (item: QueueItem) => {
+    let f = dueMemo.get(item);
+    if (!f) { f = dueCellFacts(item.stage, item.sub, item.daysUntil); dueMemo.set(item, f); }
+    return f;
+  };
+  /* R-2817: once the stage is read, the line under the date counts from the same anchor as the chip
+     (the part's own date is then already in the anchor — not counted a second time). */
+  const sentDue = (item: QueueItem, className?: string) => {
+    const sent = item.docs?.sent;
+    if (item.status.key !== "quote-sent" || !sent) return null;
+    const anchored = item.stage?.days != null;
+    return <SentDueLines sent={anchored ? { ...sent, dueDate: null, kind: item.stage!.anchorKind === "part" ? "part" : "renewal" } : sent} daysUntil={anchored ? item.stage!.days! : item.daysUntil} todayIst={todayIst} className={className} />;
+  };
 
   return (
     <>
@@ -441,6 +458,16 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   {subscriptionDomain(sub) && (
                     <p className="mt-0.5 truncate text-2xs text-ink-2" title={subscriptionDomain(sub) ?? undefined} data-testid="renewal-card-domain">{subscriptionDomain(sub)}</p>
                   )}
+                  {/* R-2808: billed together last cycle — opens Bill together */}
+                  {(() => {
+                    const t = togetherOf?.(sub.id);
+                    return t ? (
+                      <button type="button" onClick={t.onClick} data-testid="renewal-bills-with"
+                        className="mt-0.5 block max-w-full truncate rounded-sm text-left text-2xs font-medium text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                        {t.text}
+                      </button>
+                    ) : null;
+                  })()}
                   <ContactLine contact={contact} />
                   {lastPaidFor(item, "mt-0.5")}
                 </div>
@@ -453,7 +480,8 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   <FollowupLine followup={followup} names={names} />
                 </div>
                 <div className="shrink-0 text-right">
-                  <p className="text-xs text-ink-2">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
+                  {/* R-2817: the row's ONE anchor date — the chip's own date (due-anchor.ts) */}
+                  <p className="text-xs text-ink-2" title={dueOf(item).title ?? undefined}>{dueOf(item).date ? formatDate(dueOf(item).date!) : "—"}</p>
                   {sentDue(item)}
                 </div>
               </div>
@@ -485,7 +513,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
           <thead>
             <tr className="border-b border-hairline bg-muted/30">
               {QUEUE_TABLE_COLS.map((c) => c.key === "select" ? (
-                <th key={c.key} className="px-2 py-2.5">
+                <th key={c.key} className="px-1.5 py-2">
                   <input
                     type="checkbox"
                     aria-label="Select all renewals on screen"
@@ -496,7 +524,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   />
                 </th>
               ) : (
-                <th key={c.key} className={cn("px-2 py-2.5 text-xs font-medium text-ink-3", c.align === "right" ? "text-right" : "text-left")}>{c.label}</th>
+                <th key={c.key} className={cn("px-1.5 py-2 text-xs font-medium text-ink-3", c.align === "right" ? "text-right" : "text-left")}>{c.label}</th>
               ))}
             </tr>
           </thead>
@@ -505,7 +533,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
               const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
               return (
                 <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
-                  <td className="px-2 py-2.5">
+                  <td className="px-1.5 py-1.5">
                     <input
                       type="checkbox"
                       aria-label={`Select ${sub.customer_name} — ${sub.plan}`}
@@ -514,20 +542,20 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                       onChange={(e) => onSelect([sub.id], e.target.checked)}
                     />
                   </td>
-                  <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
-                  <td className="min-w-0 px-2 py-2.5">
-                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} />
+                  <td className="min-w-0 px-1.5 py-1.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
+                  <td className="min-w-0 px-1.5 py-1.5">
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null} />
                   </td>
-                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
-                  <td className="px-2 py-2.5 text-right">
+                  <td className="px-1.5 py-1.5" title={dueOf(item).title ?? undefined}><DueCell date={dueOf(item).date} days={dueOf(item).days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
+                  <td className="px-1.5 py-1.5 text-right">
                     <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
                     <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteShort ? `${amount.gst} · ${amount.quoteShort}` : amount.gst}</p>
                   </td>
-                  <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
-                  <td className="min-w-0 px-2 py-2.5">
-                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} priorDue={priorTermDue(sub)} />
+                  <td className="min-w-0 px-1.5 py-1.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
+                  <td className="min-w-0 px-1.5 py-1.5">
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} />
                   </td>
-                  <td className="min-w-0 px-2 py-2.5">
+                  <td className="min-w-0 px-1.5 py-1.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
                   </td>
                 </tr>
@@ -566,12 +594,6 @@ export default function RenewalsPage() {
   /* R-2562: "unread" = failed with nothing to show — a failed background refetch keeps the last good
      figure, as on Companies (collectLineState) and the dashboard (loadView). */
   const projectsUnread = projRecvQ.isError && projRecvQ.data === undefined;
-  const duesLine = React.useMemo(() => {
-    if (!subs || projRecvQ.isPending) return null;
-    // The page's own rows (onRenewalsPage) — what their "Unpaid balance" badges add up to.
-    const renewalDues = subs.filter(onRenewalsPage).reduce((t, s) => t + subscriptionDue(s), 0);
-    return subscriptionDuesLine(toChaseSummary(subs, projRecvQ.data ?? {}), renewalDues, projectsUnread);
-  }, [subs, projRecvQ.data, projRecvQ.isPending, projectsUnread]);
   const qc = useQueryClient();
   const router = useRouter();
   /* R-118 / R-2403: ?bucket= holds the tab; the old values (urgent / upcoming / future / risk —
@@ -636,6 +658,15 @@ export default function RenewalsPage() {
   }) : null), [subs, openRenewalMap, quoteInfo, quoteStatusMap, lastDocsQ.data, docsLoadingAll, fuData, contacts, me?.role, graceDays, todayDate, todayIst, holds]);
   /* The tab from ?bucket= (old values map through resolveBucket) and every tab's narrowed rows —
      kept until the search / filters / sort / data change, so a tab click only swaps the list shown. */
+  /* R-2741 (audit 14 Nov: "₹4,82,128 unpaid" matched nothing): the header's figure is the rows' OWN owed amounts
+     (R-2818's rule — invoices still due + an instalment not invoiced yet) added up, not subscriptions.outstanding_amount.
+     Nothing shows while the documents are still being read, so the figure never flips after load. */
+  const duesLine = React.useMemo(() => {
+    if (!subs || projRecvQ.isPending || !built || docsLoadingAll) return null;
+    const renewalDues = subs.filter(onRenewalsPage).reduce((t, s) => t + subscriptionDue(s), 0);
+    const rowsOwed = built.allItems.reduce((t, i) => t + (i.owed?.total ?? 0), 0);
+    return subscriptionDuesLine(toChaseSummary(subs, projRecvQ.data ?? {}), renewalDues, projectsUnread, rowsOwed);
+  }, [subs, built, docsLoadingAll, projRecvQ.data, projRecvQ.isPending, projectsUnread]);
   const counts = React.useMemo(
     () => (built ? Object.fromEntries(QUEUE_TABS.map((t) => [t, built.tabs[t].length])) as Record<QueueTab, number> : null),
     [built],
@@ -662,6 +693,18 @@ export default function RenewalsPage() {
     const c = (f: Partial<FollowupFilters>) => filterByFollowup(built.allItems, { ...NO_FOLLOWUP_FILTERS, ...f }, me?.userId).length;
     return { mine: c({ mine: true }), due: c({ followUpDue: true }), broken: c({ promiseBroken: true }) };
   }, [built, me?.userId]);
+  /* R-2808 Bill together: only once R-2807's route answers (404 before it lands → nothing shows). */
+  const togetherOn = useBillTogetherAvailable(!!built?.allItems.some((i) => i.stage?.split));
+  const billTogether = useBillTogether({ canQuotes: canOpenQuotes(me?.role) });
+  /* the groups + hints, once per data change (R-2764) — not on every tick / keystroke */
+  const togetherIdx = React.useMemo(() => (togetherOn && built ? togetherIndex(built.allItems) : null), [togetherOn, built]);
+  /* the group subscriptions the user unticked (every group starts all ticked — Pardeep 14 Nov) */
+  const [togetherOff, setTogetherOff] = React.useState<Set<string>>(() => new Set());
+  const toggleTogether = (id: string, on: boolean) => setTogetherOff((o) => {
+    const n = new Set(o);
+    if (on) n.delete(id); else n.add(id);
+    return n;
+  });
 
   if (isLoading) {
     return (
@@ -701,9 +744,9 @@ export default function RenewalsPage() {
   // subscriptions get created (a paid quote converts a lead into a subscription).
   if (all.length === 0) {
     return (
-      <div className="mx-auto max-w-[1800px] px-4 md:px-8 pb-20 pt-7">
+      <div className="mx-auto max-w-[1800px] px-4 2xl:px-8 pb-20 pt-4">
         <div className="mb-6">
-          <h1 className="font-serif text-2xl md:text-3xl text-ink">Renewals</h1>
+          <h1 className="font-serif text-2xl text-ink">Renewals</h1>
           <p className="text-sm text-ink-3 mt-1">Stay ahead of every subscription renewal — before service lapses.</p>
         </div>
         <Card>
@@ -753,13 +796,18 @@ export default function RenewalsPage() {
   /* R-2751: this month's Forecast bar = the Renewed tile's "of ₹X due in <month>" (paid + still due, before GST). */
   const forecast = forecastWithThisMonth(forecastByDate, tileFigures.renewedMonth, month);
   const paidSubs = new Set(paidRenewalsInMonth(monthQuotes ?? [], month).map((q) => q.renewal_subscription_id ?? ""));
+  /* R-2741: each tile's tab rows = tile rows + the closed rows it leaves out (tiles.ts reconcileWindows). */
+  const windows = reconcileWindows([...tileRowOf.values()], month);
 
   const bucketTab = resolved.tab;
   const shown = narrowed.tabs;
   /* R-2405: a pressed tile lists its rows from every tab (search / filters / sort still apply). */
   /* R-2586: Later rows are not tile rows (no tileRowOf entry) — a pressed tile never lists them. */
+  /* R-2741: the Renewed tile lists every renewed row — also one whose date moved on into Later (no tile row for it). */
+  const renewedRowOf = (i: QueueItem): TileRow => ({ id: i.sub.id, tab: "later", statusKey: i.status.key, amount: 0, renewalDate: i.sub.renewal_date });
   const tileShown = narrowed.narrow(tile ? allItems.filter((i) => {
     const tr = tileRowOf.get(i.sub.id);
+    if (tile === "renewedMonth") return renewedRowMatches(renewedRowOf(i), month, paidSubs);
     return !!tr && tileMatches(tile, tr, month, paidSubs);
   }) : []);
 
@@ -807,11 +855,12 @@ export default function RenewalsPage() {
       toast.info("No renewals to export in the next 90 days");
       return;
     }
+    const owedById = new Map(allItems.map((i) => [i.sub.id, i.owed?.total ?? null]));   // R-2818: the one owed rule, blank while not read
     const rows = upcoming90
       .slice()
       .sort((a, b) => a.daysUntil - b.daysUntil)
       .map(({ sub, daysUntil }) => {
-        const risk = renewalRisk(sub);
+        const risk = renewalRisk(sub, { owed: owedById.get(sub.id) ?? null });
         const amount = renewalAmount(sub, quoteOf(sub));
         return [
           sub.customer_name,
@@ -823,7 +872,7 @@ export default function RenewalsPage() {
           amount.value,   // R-2431: the row's renewal amount (the tiles' money), not mrr × 12
           sub.renewal_date ? formatDate(sub.renewal_date) : "",
           daysUntil,
-          sub.outstanding_amount,
+          owedById.get(sub.id) ?? "",
           risk.label,
           /* R-2431: new columns at the END, so a template reading by position still lines up. */
           "Term amount, + GST",   // R-2751: one basis — a renewal quote never changes the amount
@@ -847,6 +896,18 @@ export default function RenewalsPage() {
   const queueStrong = tile ? tile === "overdue" || tile === "due30" : bucketTab === "overdue" || bucketTab === "due7";
   /* only ticked rows still on screen — a tick hidden by a later search / filter is not reminded */
   const tickedShown = visibleRows.filter((i) => selected.has(i.sub.id));
+  /* R-2808: subscriptions billed together last cycle — a group per customer, ticked by default (Pardeep
+     14 Nov), and each row's "Bills with <other plan>"; ticked rows of one customer → "Bill together". */
+  const togetherGroups = togetherIdx ? groupsShown(togetherIdx, new Set(visibleRows.map((i) => i.sub.id))) : [];
+  /* the hint opens the group as the box above shows it (an unticked one stays out) */
+  const togetherOf = togetherIdx
+    ? (id: string) => {
+        const h = togetherIdx.hintOf.get(id);
+        return h ? { text: h.text, onClick: () => billTogether.open(tickedOf(h.group, togetherOff), h.group.customerName) } : null;
+      }
+    : undefined;
+  /* only ticked rows still on screen (as the reminder) — a tick hidden by a search is never billed */
+  const offerTicked = togetherOn && canOfferBillTogether(tickedShown.map(togetherRowOf));
   const scope = reminderScope(tickedShown.length, tile ? TILE_LABEL[tile] : QUEUE_TAB_LABEL[bucketTab], visibleRows.length);
   /* undefined = contacts not read yet (the send route still checks); null = no email on file. */
   const emailOf = (i: QueueItem): string | null | undefined =>
@@ -948,14 +1009,12 @@ export default function RenewalsPage() {
     : "No subscriptions in this window.";
 
   return (
-    <div className="mx-auto max-w-[1800px] px-4 md:px-8 pb-20 pt-7">
+    <div className="mx-auto max-w-[1800px] px-4 2xl:px-8 pb-20 pt-4">
       {/* ── Page header ── */}
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-3 flex items-start justify-between gap-4">
         <div>
-          <p className="mb-0.5 text-xs font-medium uppercase tracking-widest text-ink-3">
-            Revenue
-          </p>
-          <h1 className="font-serif text-3xl text-ink">Renewals</h1>
+          {/* R-2821: no "Revenue" eyebrow — the breadcrumb above already says Billing › Renewals (20px back for the rows) */}
+          <h1 className="font-serif text-2xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
             {queueCount} subscription{queueCount !== 1 ? "s" : ""} in the queue
             {shownCount !== queueCount && <> · {shownCount} match the search / filters</>}
@@ -1010,7 +1069,7 @@ export default function RenewalsPage() {
       </div>
 
       {/* R-2405: the tiles — count + renewal ₹ in the table's own money; a press lists those rows. */}
-      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} />
+      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} windows={windows} narrowed={filtered || search.trim() !== ""} />
 
       {/* R-2266: ONE strip, closed by default (remembered per user). R-2405: the tiles above carry
           the money and counts (one fact, one place) — the strip keeps the forecast and the
@@ -1054,7 +1113,13 @@ export default function RenewalsPage() {
       <Card flush>
         <div className="px-3 pt-3 sm:px-4">
           {tile ? (
-            <TileViewBar tile={tile} count={tileShown.length} onClear={() => pickTile(tile)} />
+            <TileViewBar
+              tile={tile}
+              count={tileShown.length}
+              note={tile === "renewedMonth" && !(filtered || search.trim()) && tileFigures.renewedMonth.count > tileShown.length
+                ? `· ${tileFigures.renewedMonth.count - tileShown.length} more renewed (paid, no longer on the list)` : undefined}
+              onClear={() => pickTile(tile)}
+            />
           ) : (
             <TabBar
               value={bucketTab}
@@ -1074,7 +1139,7 @@ export default function RenewalsPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search customer or domain"
               aria-label="Search renewals by customer or domain"
-              className="w-full sm:w-56"
+              wrapperClassName="w-full sm:w-56"
             />
             <select value={sort} onChange={(e) => setSort(e.target.value as QueueSort)} aria-label="Sort renewals" className={SELECT_CLS}>
               <option value="date">Sort: renewal date</option>
@@ -1146,6 +1211,10 @@ export default function RenewalsPage() {
           )}
         </div>
         <div className="border-t border-hairline">
+          {togetherIdx && (
+            <BillTogetherGroups groups={togetherGroups} onBill={billTogether.open} subOf={(id) => togetherIdx.subOf.get(id)}
+              off={togetherOff} onToggle={toggleTogether} />
+          )}
           <RenewalQueue
             key={tile ?? bucketTab}   /* R-2764: a new tab / tile starts at 50 rows again */
             rows={tile ? tileShown : shown[bucketTab]}
@@ -1160,9 +1229,11 @@ export default function RenewalsPage() {
             lastPaid={lastPaid}
             docsState={docsState}
             onOpen={openDrawer}
+            togetherOf={togetherOf}
           />
         </div>
       </Card>
+      {billTogether.dialog}
 
       {/* R-2740: the row drawer — every quote + invoice, payments, follow-ups, flags explained (read-only). */}
       {(() => {
@@ -1170,7 +1241,7 @@ export default function RenewalsPage() {
         /* the same filled / outline button as the row it came from */
         return (
           <RenewalDrawer
-            item={drawerItem}
+            item={drawerItem && { ...drawerItem, contact: drawerItem.sub.customer_id ? contacts?.get(drawerItem.sub.customer_id) : undefined }}
             open={!!drawerSub}
             onClose={closeDrawer}
             names={names}
@@ -1191,8 +1262,9 @@ export default function RenewalsPage() {
           ownerId={followupFor.customerOwnerId}
           items={[{ kind: "subscription", id: followupFor.sub.id, label: `${followupFor.sub.plan ?? "subscription"} · renews ${followupFor.sub.renewal_date ? formatDate(followupFor.sub.renewal_date) : "—"}`, quoteId: followupFor.sub.renewal_quote_id }]}
           stillOwes={followupFor.status.key !== "renewed"}
-          amountDue={followupFor.amount.value}
+          amountDue={subscriptionOwedOf(followupFor.sub, followupFor.docs)?.total ?? 0}   /* R-2818: what its documents still owe — never the renewal's price */
           renewal={{ subscriptionId: followupFor.sub.id }}
+          contact={contacts?.get(followupFor.sub.customer_id)}
         />
       )}
       <AssignOwnerDialog
@@ -1207,6 +1279,12 @@ export default function RenewalsPage() {
       {/* R-2403: tick rows → the existing send-now route, after the existing kind of confirm.
           R-2753: the reminder for ticked rows is the header's one button ("Remind N selected"). */}
       <BulkActionBar count={selectedRows.length} noun="renewal" onClear={() => setSelected(new Set())}>
+        {/* R-2808: 2+ ticked rows of ONE customer, billed in parts → one proforma for all of them */}
+        {offerTicked && (
+          <BulkBarButton icon="plus" onClick={() => billTogether.open(tickedShown.map((i) => i.sub.id), tickedShown[0].sub.customer_name ?? "")}>
+            {BILL_TOGETHER}
+          </BulkBarButton>
+        )}
         <BulkBarButton icon="mail" onClick={() => void handleSelectedQuote()} disabled={bulkSending}>
           Send renewal
         </BulkBarButton>

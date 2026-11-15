@@ -114,6 +114,13 @@ describe("R-2758 code-review fixes", () => {
     const i = inv({ id: "INV-D", dueDate: "2026-12-15", part: { start: "2026-12-01", endExclusive: "2027-01-01" } });
     const input = stageInputFor(facts({ sub: monthly, todayIst: "2026-12-05", docs: docs({ invoice: i, invoices: [i] }) }))!;
     expect(input.invoice?.dueDate).toBe("2026-12-15");
-    expect(renewalStage(input).label).toBe("Invoiced · ₹1,180 due");
+    /* the bill is inside its own terms → "due" (as the Last invoice cell). R-2817: the row's day count is from the
+       earlier date (renewal_date 30 Nov, 5d ago — the Due column's), and the note names the invoice's own due date
+       (15 Dec, not the part start 1 Dec). */
+    const s = renewalStage(input);
+    expect(s.label).toBe("Invoiced · ₹1,180 due");
+    expect(s.days).toBe(-5);
+    expect(s.note).toMatch(/Renewal date 5d ago · part due 15 Dec 2026$/);
+    expect(s.partDueDate).toBe("2026-12-15");
   });
 });

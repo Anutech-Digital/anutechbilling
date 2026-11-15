@@ -42,6 +42,7 @@
  * drawer-r2740.test.ts.
  */
 import { rupee } from "@/lib/utils";
+import { toIstDate } from "@/lib/dates/ist";
 import { shownQuoteStatus, validityDaysLeft } from "@/lib/quotes/quote-expiry";
 import { lineServicePeriod, quoteLinePeriodContext, addDaysIso, periodDate, type LinePeriodLine } from "@/lib/quotes/service-period";
 import { invoiceIsOverdue, invoiceOverdueDays } from "@/lib/invoices/overdue";
@@ -49,6 +50,7 @@ import { invoicePaymentState, fullyCredited } from "@/lib/invoices/payment-state
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { foreignEquivalent, formatForeign, isForeignCurrency } from "@/lib/currency";
 import type { NoteTotals } from "@/lib/invoices/note-totals";
+import type { SubscriptionOwed } from "@/lib/renewals/owed";
 
 export interface DocQuote {
   id: string;
@@ -68,6 +70,22 @@ export interface DocQuote {
   amount?: number | null;
   currency?: string | null;
   exchange_rate?: number | null;
+  /**
+   * R-2830: only on the part proformas read (last-docs-data.ts PART_COLS). "Bill together" makes ONE proforma
+   * for several subscriptions: subscription_billing_id is the LEAD part, each line's billing_id names its part.
+   */
+  line_items?: unknown;
+}
+
+/** R-2830: the part ids a proforma names on its lines (line_items[].billing_id), in line order; [] = none / not read. */
+export function lineBillingIds(q: Pick<DocQuote, "line_items">): string[] {
+  if (!Array.isArray(q.line_items)) return [];
+  const out: string[] = [];
+  for (const l of q.line_items) {
+    const id = l && typeof l === "object" ? (l as { billing_id?: unknown }).billing_id : null;
+    if (typeof id === "string" && id && !out.includes(id)) out.push(id);
+  }
+  return out;
 }
 
 export interface DocBilling {
@@ -122,6 +140,8 @@ export interface LastDocsInput {
     id: string; quote_id: string | null; renewal_quote_id: string | null; start_date: string | null;
     /** R-2737: how a quote line is matched to this subscription (the sale files plan = line name, domain = line domain). */
     plan?: string | null; domain?: string | null;
+    /** R-2822: with start_date, tells where a renewal quote's next term starts (billing's followingTermStart) — the quote page's own rule. */
+    term_months?: number | null;
   }>;
   quotes: readonly DocQuote[];
   billings: readonly DocBilling[];
@@ -195,6 +215,11 @@ export interface DrawerQuote extends LastQuote {
   amount: number | null;
   currency: string | null;
   fxRate: number | null;
+  /**
+   * R-2822: when the app emailed it (quote_send_log, newest "sent" row), as a timestamp. null = the log was read
+   * and no email went (a quote marked sent by hand); undefined = the log was not read.
+   */
+  sentAt?: string | null;
 }
 
 export interface LastDocs {
@@ -209,6 +234,12 @@ export interface LastDocs {
   allQuotes?: DrawerQuote[];
   /** R-2740 (`{ all: true }` only): every issued linked invoice (void ones too), newest first. */
   allInvoices?: LastInvoice[];
+  /** R-2818: every linked invoice with money still due (not void), newest first — the owed rule's invoices (lib/renewals/owed.ts). */
+  owedInvoices?: LastInvoice[];
+  /** R-2818: the quotes any linked invoice was raised from (void / draft ones too, as on the customer page). */
+  invoicedQuoteIds?: string[];
+  /** R-2818 (review #3): invoices of the renewal term's own billed parts (newest term, not the first) — this renewal's money, not "previous term". */
+  renewalPartInvoiceIds?: string[];
 }
 
 /** Never sent to the customer, or taken back. */
@@ -239,9 +270,19 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     if (s.quote_id) add(quoteSubs, s.quote_id, s.id);
     if (s.renewal_quote_id) add(quoteSubs, s.renewal_quote_id, s.id);
   }
+  /* R-2830: quote id → subscription id → the part of that subscription the quote bills (lead part + each line's part) */
+  const quotePart = new Map<string, Map<string, string>>();
   for (const q of input.quotes) {
     for (const sid of [q.renewal_subscription_id, q.add_seats_subscription_id, billingById.get(q.subscription_billing_id ?? "")?.subscription_id]) {
       if (sid && subIds.has(sid)) add(quoteSubs, q.id, sid);
+    }
+    for (const bid of [q.subscription_billing_id, ...lineBillingIds(q)]) {
+      const b = bid ? billingById.get(bid) : undefined;
+      if (!b || !subIds.has(b.subscription_id)) continue;
+      add(quoteSubs, q.id, b.subscription_id);
+      const m = quotePart.get(q.id) ?? new Map<string, string>();
+      if (!m.has(b.subscription_id)) m.set(b.subscription_id, b.id);
+      quotePart.set(q.id, m);
     }
   }
   /* R-2740 (`all`): a revised-away quote lost its subscription link to its revision (R-2368), and an
@@ -285,11 +326,13 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     const b = billingId ? billingById.get(billingId) : undefined;
     return b ? { start: b.period_start ?? null, endExclusive: b.period_end ?? null } : null;
   };
+  /** R-2830: the quote's part for THIS subscription (a together proforma has one per member). */
+  const partFor = (q: DocQuote, sid: string) => partOf(quotePart.get(q.id)?.get(sid) ?? q.subscription_billing_id);
   for (const [sid, q] of bestQuote) {
     out.get(sid)!.quote = {
       id: q.id, date: (q.created_date ?? q.created_at).slice(0, 10), status: q.status,
       payment_status: q.payment_status, expires_date: q.expires_date, invoice_id: q.invoice_id,
-      part: partOf(q.subscription_billing_id), period: null,
+      part: partFor(q, sid), period: null,
     };
   }
 
@@ -299,6 +342,10 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
   const bestOwed = new Map<string, DocInvoice>();
   const seenInv = new Set<string>();
   const allOfSub = new Map<string, DocInvoice[]>();   // R-2748: every issued linked invoice, per subscription
+  const owedOfSub = new Map<string, DocInvoice[]>();   // R-2818: every one with money still due
+  const invoicedQuotesOfSub = new Map<string, Set<string>>();   // R-2818: its quotes that have an invoice (any status)
+  for (const qq of input.quotes) if (qq.invoice_id) for (const sid of quoteSubs.get(qq.id) ?? []) add(invoicedQuotesOfSub, sid, qq.id);
+  for (const i of input.invoices) if (i.quote_id) for (const sid of invoiceSubs.get(i.id) ?? []) add(invoicedQuotesOfSub, sid, i.quote_id);
   const atOf = (i: DocInvoice) => ({ at: `${i.invoice_date ?? ""}|${i.created_at ?? ""}`, id: i.id });
   for (const i of input.invoices) {
     if (seenInv.has(i.id) || DRAFT_INVOICE.has(i.status)) continue;
@@ -314,6 +361,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
       if (!cur || newer(atOf(i), atOf(cur))) bestInvoice.set(sid, i);
       const curOwed = bestOwed.get(sid);
       if (owed && (!curOwed || newer(atOf(i), atOf(curOwed)))) bestOwed.set(sid, i);
+      if (owed) { const ol = owedOfSub.get(sid); if (ol) ol.push(i); else owedOfSub.set(sid, [i]); }
     }
   }
   for (const [sid, i] of bestInvoice) {
@@ -321,6 +369,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     if (VOID_INVOICE.has(i.status) && owed) bestInvoice.set(sid, owed);
   }
   for (const [sid, i] of bestOwed) out.get(sid)!.owedInvoiceId = i.id;
+  for (const [sid, qs] of invoicedQuotesOfSub) out.get(sid)!.invoicedQuoteIds = [...qs].sort();
   /* invoice → the quotes raised it, per subscription (a combined invoice can carry several subscriptions' quotes) */
   const quotesOfInvoice = new Map<string, string[]>();
   for (const qq of input.quotes) if (qq.invoice_id) quotesOfInvoice.set(qq.invoice_id, [...(quotesOfInvoice.get(qq.invoice_id) ?? []), qq.id]);
@@ -372,6 +421,11 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     d.invoice = d.invoices.find((x) => x.id === i.id)!;
   }
 
+  /* R-2818: the owed rule's invoices, newest first — every linked one with money due, shown or not */
+  for (const [sid, xs] of owedOfSub) {
+    out.get(sid)!.owedInvoices = [...xs].sort((a, b) => (newer(atOf(a), atOf(b)) ? -1 : newer(atOf(b), atOf(a)) ? 1 : 0)).map((x) => toLast(x, sid));
+  }
+
   /* R-2740: the drawer's full lists — the same links as above, nothing left out (a draft, a revised-away
      or a cancelled quote is listed with its own status, so the history has no gaps). */
   if (opts.all) {
@@ -390,7 +444,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
           return {
             id: q.id, date: (q.created_date ?? q.created_at).slice(0, 10), status: q.status,
             payment_status: q.payment_status, expires_date: q.expires_date, invoice_id: q.invoice_id,
-            part: partOf(q.subscription_billing_id), period: null,
+            part: partFor(q, s.id), period: null,
             supersededBy: q.superseded_by ?? null,
             amount: q.amount == null ? null : Number(q.amount),
             currency: q.currency ?? null,
@@ -418,6 +472,13 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
   }
   for (const s of input.subs) {
     const d = out.get(s.id)!;
+    /* R-2818 (review #3): the renewal term's own billed parts — the newest term, when it is not the first
+       (the original sale) — once invoiced are this renewal's money, never "previous term" */
+    const renTerm = newestTerm.get(s.id);
+    if (renTerm && !(s.start_date && renTerm <= s.start_date.slice(0, 10))) {
+      const ids = input.billings.filter((b) => b.subscription_id === s.id && b.term_start === renTerm && b.invoice_id).map((b) => b.invoice_id as string);
+      if (ids.length) d.renewalPartInvoiceIds = [...new Set(ids)].sort();
+    }
     const ren = s.renewal_quote_id ? quoteById.get(s.renewal_quote_id) : undefined;
     if (ren && isOpenUnpaid(ren)) {
       d.sent = { quoteId: ren.id, kind: "renewal", expiresDate: ren.expires_date, status: ren.status };
@@ -428,7 +489,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     let part: DocQuote | null = null;
     let partBill: DocBilling | null = null;
     for (const q of input.quotes) {
-      const b = billingById.get(q.subscription_billing_id ?? "");
+      const b = billingById.get(quotePart.get(q.id)?.get(s.id) ?? q.subscription_billing_id ?? "");
       if (!b || b.subscription_id !== s.id || b.term_start !== term || (b.period_index ?? 0) !== firstIndex.get(s.id) || !isOpenUnpaid(q)) continue;
       if (!part || newer({ at: q.created_at, id: q.id }, { at: part.created_at, id: part.id })) { part = q; partBill = b; }
     }
@@ -556,15 +617,16 @@ export function invoiceStatusWords(i: LastInvoice, todayIst: string): { text: st
 }
 
 /**
- * R-2747 — a row says "Previous term ₹x still unpaid" (prior-due.ts) but shows no unpaid invoice:
- * say plainly why, never invent one. null = nothing owed, or the shown invoice already says it.
- * Only invoices LINKED to the subscription (its quotes / billed parts) are known here, so the words
- * say "linked" — an invoice raised by hand for the customer, or imported, may still exist.
- * (Seen on SCN Kochi Hosting / SCN Delhi Traders: the balance is only on
- * subscriptions.outstanding_amount — no quote, no invoice linked to the subscription.)
+ * R-2747 — a row says "Previous term ₹x still unpaid" but its shown invoice does not: say plainly
+ * which document owes it, never invent one. null = nothing owed, or the shown invoice already says it.
+ * R-2818: `prior` is the owed rule's previous-term part (prior-due.ts priorTermOwedOf, built on
+ * lib/renewals/owed.ts) — an older linked invoice with money due, or the subscription's own quote not
+ * invoiced yet (T-V4: accepted on credit, part paid). The old "Balance on the subscription — no unpaid
+ * invoice linked to it" is gone: a balance no document asks for is not owed (the customer page's
+ * rule — SCN Kochi says All clear there).
  */
-export function priorDueInvoiceGap(docs: LastDocs | undefined, priorDue: number, todayIst: string): string | null {
-  if (!(priorDue > 0)) return null;
+export function priorDueInvoiceGap(docs: LastDocs | undefined, prior: SubscriptionOwed | null | undefined, todayIst: string): string | null {
+  if (!prior || !(prior.total > 0)) return null;
   const invoice = docs?.invoice ?? null;
   const shown = docs?.invoices ?? [];
   if (invoice) {
@@ -572,13 +634,11 @@ export function priorDueInvoiceGap(docs: LastDocs | undefined, priorDue: number,
     if (tone === "warn" || tone === "danger") return null;
   }
   /* an older linked invoice still has money due: on screen (R-2748) its own line says so; else name it */
-  const owed = docs?.owedInvoiceId ?? null;
+  const owed = prior.invoices[0]?.id ?? null;
   if (owed && shown.some((i) => i.id === owed)) return null;
   if (owed) return `Older invoice ${owed} still has money due`;
-  /* R-2752: the balance is subscriptions.outstanding_amount and no unpaid invoice LINKED to the
-     subscription carries it (a hand-raised / imported invoice for the customer may) — true whether the
-     row shows a Paid / Cancelled invoice or none */
-  return "Balance on the subscription — no unpaid invoice linked to it";
+  if (prior.notInvoiced) return `${prior.notInvoiced.quoteId} not invoiced yet`;
+  return null;
 }
 
 /**
@@ -628,7 +688,7 @@ export function partPeriodWords(start: string | null | undefined, endExclusive: 
 const norm = (v: unknown) => (typeof v === "string" ? v.trim().toLowerCase() : "");
 
 type MatchLine = LinePeriodLine & { plan_change?: { subscription_id?: string } | null };
-type SubMatch = { id: string; plan?: string | null; domain?: string | null };
+type SubMatch = { id: string; plan?: string | null; domain?: string | null; start_date?: string | null; term_months?: number | null };
 
 /**
  * Which of a quote's lines belong to THIS subscription (Pardeep, 13 Nov: one invoice can carry
@@ -676,7 +736,10 @@ export function linesForSubscription<L extends MatchLine>(lines: readonly L[], s
  * renewal quote with no renewal_term_date, …) or no line matches — never a guess.
  */
 export function quoteLinesPeriod(q: DocQuoteDetail, sub?: SubMatch | null): string | null {
-  const ctx = quoteLinePeriodContext(q);
+  /* R-2822: a renewal / extension quote's next term starts ON renewal_date for an app-made subscription (R-2727,
+     billing's followingTermStart). Without the subscription's start + term the context fell back to "the day
+     after renewal_term_date" — every period on Renewals read one day later than the quote's own page. */
+  const ctx = quoteLinePeriodContext(q, sub?.start_date ? { domain: sub.domain ?? null, start_date: sub.start_date, term_months: sub.term_months ?? null } : null);
   const all = (Array.isArray(q.line_items) ? (q.line_items as MatchLine[]) : []).filter((l) => !!l && typeof l === "object");
   const withP = all.map((line) => ({ line, p: lineServicePeriod(line, ctx) }));
   /* lines that can be a subscription: a certain period, or a renewing commitment (a one-off fee is never one) */
@@ -745,4 +808,34 @@ export function detailQuoteIds(docs: Map<string, LastDocs>): string[] {
 /** R-2737: the invoices whose credit / debit notes the status needs. */
 export function shownInvoiceIds(docs: Map<string, LastDocs>): string[] {
   return [...new Set([...docs.values()].flatMap((d) => [...(d.invoices ?? []), ...(d.allInvoices ?? [])].map((i) => i.id)).filter((x): x is string => !!x))].sort();
+}
+
+/** R-2822: a quote_send_log row, as far as the drawer needs it. */
+export interface SendLogRow { quote_id: string; status: string; sent_at: string }
+
+/** R-2822: each drawer quote's send time from the log (newest "sent" row; none → null, "marked sent by hand"). */
+export function attachSendTimes(docs: Map<string, LastDocs>, rows: readonly SendLogRow[]): Map<string, LastDocs> {
+  const last = new Map<string, string>();
+  for (const r of rows) if (r.status === "sent" && r.sent_at && r.sent_at > (last.get(r.quote_id) ?? "")) last.set(r.quote_id, r.sent_at);
+  const out = new Map<string, LastDocs>();
+  for (const [sid, d] of docs) out.set(sid, d.allQuotes ? { ...d, allQuotes: d.allQuotes.map((q) => ({ ...q, sentAt: last.get(q.id) ?? null })) } : d);
+  return out;
+}
+
+/** R-2822: the quotes whose send log the drawer needs — the ones with the customer (sent / viewed). */
+export function sendLogQuoteIds(docs: Map<string, LastDocs>): string[] {
+  const ids = new Set<string>();
+  for (const d of docs.values()) for (const q of d.allQuotes ?? []) if (q.status === "sent" || q.status === "viewed") ids.add(q.id);
+  return [...ids].sort();
+}
+
+/** R-2822: "4 Nov 2026" — a timestamp's IST day, in the paper's own words. */
+export function sentDayWords(ts: string): string {
+  return dayMonYear(toIstDate(ts));
+}
+
+/** R-2822: "valid till 19 Nov 2026" — validity runs through expires_date (R-1679). null = none set. */
+export function validTillWords(expiresDate: string | null | undefined): string | null {
+  const d = isoOrNull(expiresDate);
+  return d ? `valid till ${dayMonYear(d)}` : null;
 }

@@ -25,7 +25,8 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { noteTotalsByInvoice, type NoteAmountRow } from "@/lib/invoices/note-totals";
 import {
-  attachDocDetails, detailQuoteIds, lastDocsBySubscription, shownInvoiceIds,
+  attachDocDetails, attachSendTimes, detailQuoteIds, lastDocsBySubscription, sendLogQuoteIds, shownInvoiceIds,
+  type SendLogRow,
   type DocBilling, type DocInvoice, type DocQuote, type DocQuoteDetail, type LastDocs, type LastDocsInput,
 } from "./last-docs";
 
@@ -35,6 +36,8 @@ type SubRef = LastDocsInput["subs"][number];
 const inList = (ids: readonly string[]) => `(${ids.map((x) => `"${x.replace(/["\\]/g, "")}"`).join(",")})`;
 
 const QUOTE_COLS = "id, status, payment_status, created_at, created_date, expires_date, invoice_id, renewal_subscription_id, add_seats_subscription_id, subscription_billing_id, superseded_by, revision_of, amount, currency, exchange_rate";
+/** R-2830: the part proformas also carry their lines — a together proforma names every member's part there (same query, no read per row). */
+const PART_COLS = `${QUOTE_COLS}, line_items`;
 const INVOICE_COLS = "id, quote_id, invoice_date, status, amount, paid_amount, currency, created_at, due_date, net_payable, adjusted_advances, written_off_at, fx_rate";
 const DETAIL_COLS = "id, line_items, is_renewal, is_extension, is_add_seats, is_one_off, extension_months, renewal_term_date, created_date";
 
@@ -43,13 +46,14 @@ export function docRefs(subs: readonly SubRef[]): SubRef[] {
   return [...new Map(subs.map((s) => [s.id, {
     id: s.id, quote_id: s.quote_id, renewal_quote_id: s.renewal_quote_id, start_date: s.start_date,
     plan: s.plan ?? null, domain: s.domain ?? null,   // R-2737: which invoice line is this row's
+    term_months: s.term_months ?? null,               // R-2822: where a renewal quote's period starts
   }])).values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export function useRenewalLastDocs(subs: readonly SubRef[]) {
   const qc = useQueryClient();
   const rows = docRefs(subs);
-  const key = rows.map((s) => `${s.id}:${s.quote_id ?? ""}:${s.renewal_quote_id ?? ""}:${s.plan ?? ""}:${s.domain ?? ""}`);
+  const key = rows.map((s) => `${s.id}:${s.quote_id ?? ""}:${s.renewal_quote_id ?? ""}:${s.plan ?? ""}:${s.domain ?? ""}:${s.term_months ?? ""}:${s.start_date ?? ""}`);
   return useQuery({
     queryKey: ["quotes", "renewal-last-docs", key],
     enabled: rows.length > 0,
@@ -157,7 +161,7 @@ export async function readRenewalDocRows(
   const [parts, byQuote, byId] = await Promise.all([
     fetchAllRowsIn<DocQuote, string>(billings.map((b) => b.id), (run, from, to) => loose
       .from("quotes")
-      .select(QUOTE_COLS)
+      .select(PART_COLS)
       .in("subscription_billing_id", run)
       .order("id", { ascending: true })
       .range(from, to), c),
@@ -214,5 +218,27 @@ export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, o
     return attachDocDetails(docs, null, rows);
   }
   const [details, credits, debits] = read;
-  return attachDocDetails(docs, { quotes: details, notes: noteTotalsByInvoice(credits, debits) }, rows);
+  const withDetails = attachDocDetails(docs, { quotes: details, notes: noteTotalsByInvoice(credits, debits) }, rows);
+  return opts.all ? withSendTimes(withDetails) : withDetails;
+}
+
+/**
+ * R-2822 (drawer only): when the app emailed each quote with the customer — quote_send_log, one read for all of
+ * them. A failed read leaves the time unknown ("Sent", never "Marked sent by hand": that would be a guess).
+ */
+async function withSendTimes(docs: Map<string, LastDocs>): Promise<Map<string, LastDocs>> {
+  const ids = sendLogQuoteIds(docs);
+  if (!ids.length) return docs;
+  try {
+    const log = await fetchAllRowsIn<SendLogRow, string>(ids, (run, from, to) => (createClient() as unknown as SupabaseClient)
+      .from("quote_send_log")
+      .select("quote_id, status, sent_at")
+      .in("quote_id", run)
+      .order("sent_at", { ascending: true })
+      .range(from, to));
+    return attachSendTimes(docs, log);
+  } catch (e) {
+    console.warn("R-2822: renewal drawer send log not read", e);
+    return docs;
+  }
 }

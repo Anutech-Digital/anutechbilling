@@ -61,8 +61,9 @@ describe("R-2738 renewalStage — one chip, first match wins", () => {
     /* Bill next part no longer moves renewal_date: the date passed, partsDue still counts the part by date. */
     const sub = flex({ renewal_date: "2026-11-10" });
     const s = stage(sub, { doc: { kind: "part", quoteId: "Q-P1", status: "sent", dueDate: "2026-11-11", period: "Nov 2026" } });
-    expect(s).toMatchObject({ key: "sent", label: "Renewal quote sent · Nov 2026", days: -3, quoteId: "Q-P1" });
-    expect(s.note).toMatch(/^Overdue 3d · part due /);
+    /* R-2817: the row's anchor is the earlier of renewal_date (10 Nov) and the part's due date (11 Nov). */
+    expect(s).toMatchObject({ key: "sent", label: "Renewal quote sent · Nov 2026", days: -4, quoteId: "Q-P1" });
+    expect(s.note).toMatch(/^Overdue 4d · part due /);
   });
 
   it("stale 'renewed' state (rolled on raise before R-2735) + unpaid part → sent, not Renewed", () => {
@@ -164,7 +165,8 @@ describe("R-2738 renewalPrimary — ONE button + ⋯", () => {
     const ws = stage(w, { doc: { kind: "renewal", quoteId: "Q-W", status: "draft" } });
     /* userAudit14Nov: a whole-term draft (made by opening the editor) stays "due" — Send renewal reopens THAT quote */
     expect(ws).toMatchObject({ key: "due", label: "Due in 16d", quoteId: "Q-W", quoteStatus: "draft" });
-    expect(act(ws, w).primary).toMatchObject({ kind: "send-renewal", label: SEND_RENEWAL, quoteId: "Q-W", opensEditor: true });
+    /* R-2822: the owner's button says Continue (Draft ready under the chip); a role without the editor still sends that draft */
+    expect(act(ws, w).primary).toMatchObject({ kind: "continue", label: CONTINUE, quoteId: "Q-W", opensEditor: true });
     expect(act(ws, w, billing).primary).toMatchObject({ kind: "send-renewal", quoteId: "Q-W", opensEditor: false });
   });
 
@@ -283,8 +285,14 @@ describe("R-2738 review fixes", () => {
   it("grace and Won't-renew vs Cancel are judged on renewal_date, not a part's due date", () => {
     const sub = flex({ renewal_date: "2026-10-25" });   // 20 days past, grace 3
     const s = stage(sub, { doc: { kind: "part", quoteId: "Q-P", status: "sent", dueDate: "2026-11-19" } });
-    expect(s.days).toBe(5);
+    /* R-2817: the chip counts from the earlier date (renewal_date here); grace stays on renewal_date */
+    expect(s.days).toBe(-20);
     expect(s.renewalDays).toBe(-20);
+    /* a part due long before renewal_date: the chip says 44d, grace still reads renewal_date (2d — in grace) */
+    const early = flex({ renewal_date: "2026-11-12" });
+    const e = stage(early, { doc: { kind: "part", quoteId: "Q-P", status: "sent", dueDate: "2026-10-01" } });
+    expect(e.days).toBe(-44);
+    expect(act(e, early, { ...owner, vendorHold: "hold" }).graceOver).toBe(false);
     const a = act(s, sub, { ...owner, vendorHold: "hold" });
     expect(a.graceOver).toBe(true);
     expect(a.menu).toContain("renew-anyway");

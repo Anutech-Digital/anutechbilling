@@ -21,7 +21,7 @@ import { addDaysIso } from "@/lib/quotes/service-period";
 import type { FlagKey, StageFlag } from "@/lib/renewals/stage";
 import { VENDOR_HOLD_TITLE } from "@/lib/renewals/vendor-hold";
 import {
-  docMoney, invoiceStatusWords, invoiceTotalWords, periodWords, quoteExpiryText, quoteStateLabel,
+  docMoney, invoiceStatusWords, invoiceTotalWords, periodWords, quoteStateLabel, sentDayWords, validTillWords,
   type DocTone, type DrawerQuote, type LastDocs, type LastInvoice,
 } from "./last-docs";
 import { lastPaidSummary, type LastPaid } from "./last-paid";
@@ -75,8 +75,13 @@ export function drawerQuoteRow(q: DrawerQuote, todayIst: string): DrawerDocRow {
   const tone: DocTone = state === "Paid" ? "ok" : state === "Draft" || state === "Expired" || state === "Rejected" ? "muted" : "warn";
   /* R-2767: the row shows a quote's validity only at 3 days or less — the drawer always says it while the
      quote is with the customer (sent / viewed) */
-  const waiting = (q.status === "sent" || q.status === "viewed") && state !== "Expired" && !!q.expires_date;
-  const status = waiting ? `${state} · ${quoteExpiryText(q.expires_date, todayIst).toLowerCase()}` : state;
+  const waiting = (q.status === "sent" || q.status === "viewed") && state !== "Expired";
+  /* R-2822 (audit 14 Nov): always "Sent <date> · valid till <date>" or "Marked sent by hand" — the date the app emailed it
+     (quote_send_log), the last day it can be accepted. The quote's own days-left is on its page; rows stay quiet (R-2767). */
+  const sentWords = q.sentAt ? `Sent ${sentDayWords(q.sentAt)}` : q.sentAt === null ? "Marked sent by hand" : "Sent";
+  const head = state === "Viewed" ? `Viewed · ${sentWords.charAt(0).toLowerCase()}${sentWords.slice(1)}` : sentWords;
+  const till = validTillWords(q.expires_date);
+  const status = waiting ? (till ? `${head} · ${till}` : head) : state;
   return { ...base, status, tone };
 }
 
@@ -124,12 +129,33 @@ export interface DrawerPaymentRow {
   shared: string | null;
 }
 
-/** Every captured payment on this subscription's documents, newest first (last-paid.ts history). */
-export function drawerPaymentRows(paid: LastPaid | undefined): DrawerPaymentRow[] {
-  return (paid?.history ?? []).map((p) => {
+/** R-2818: the method words of an invoice's money with no receipt row behind it. */
+export const NO_RECEIPT_METHOD = "Paid on the invoice — no receipt in the app";
+const NOT_ISSUED_INVOICE = new Set(["void", "cancelled", "draft"]);
+
+/**
+ * Every captured payment on this subscription's documents, newest first (last-paid.ts history).
+ * R-2818 (USD Plan, audit 14 Nov): the invoice said "Part paid · $700 due" while this list said "No
+ * payment recorded" — its $500 is on the invoice (paid_amount) with no receipt row linked (imported /
+ * older data). Each linked invoice whose money in is more than the receipts listed for it gets one
+ * more line for the difference, in the invoice's own currency, so a part payment is always listed;
+ * an invoice whose receipt IS listed gets none (never counted twice). `docs` = the drawer's
+ * `{ all: true }` documents.
+ */
+export function drawerPaymentRows(paid: LastPaid | undefined, docs?: LastDocs): DrawerPaymentRow[] {
+  const rows: DrawerPaymentRow[] = (paid?.history ?? []).map((p) => {
     const s = lastPaidSummary(p);
     return { id: p.paymentId, date: s.date, amount: s.amount, method: s.method, doc: s.doc, docKind: s.docKind, shared: s.shared };
   });
+  const receipted = new Map<string, number>();
+  for (const p of paid?.history ?? []) if (p.invoiceId) receipted.set(p.invoiceId, (receipted.get(p.invoiceId) ?? 0) + p.amount);
+  for (const i of docs?.allInvoices ?? docs?.invoices ?? []) {
+    if (NOT_ISSUED_INVOICE.has(i.status)) continue;
+    const gap = Math.round((i.paidAmount - (receipted.get(i.id) ?? 0)) * 100) / 100;
+    if (!(gap >= 1)) continue;   // under ₹1 is rounding
+    rows.push({ id: `invoice-paid:${i.id}`, date: "", amount: docMoney(i, gap), method: NO_RECEIPT_METHOD, doc: i.id, docKind: "invoice", shared: null });
+  }
+  return rows;
 }
 
 // ─── Terms ──────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
    Pure rules behind the one shared row menu + the Pay salary form in edit mode. */
 import { describe, expect, it, vi } from "vitest";
 import {
-  salaryRowActionState, salaryEditPrefill, arrearsWhileEditing, loanOutstandingWhileEditing, rebookSalary, revisedSinceBookedInfo,
+  salaryRowActionState, salaryGuardNext, salaryEditPrefill, arrearsWhileEditing, loanOutstandingWhileEditing, rebookSalary, revisedSinceBookedInfo,
   type BookedSalary,
 } from "./salary-edit";
 import { arrearsSummary } from "./salary-revision";
@@ -50,6 +50,46 @@ describe("salaryRowActionState — which actions a booked month offers", () => {
     const s = salaryRowActionState(booked({ paid_amount: 27232, paid_status: "paid" }), false);
     expect(s).toMatchObject({ edit: false, undo: false, adjustLop: false });
     expect(s.lockReason).not.toBeNull();
+  });
+  /* R-2812: the database refuses Undo (and Edit's Undo half) once the government has the TDS. */
+  it("TDS month deposited by challan: no Edit / Undo, says which challan, links to it", () => {
+    const s = salaryRowActionState(booked({ tds: 2000 }), true, {
+      tdsLock: { kind: "deposited", what: "TDS challan CH-OCT of ₹2000 paid on 06 Nov 2026 for Oct 2026", href: "/accounting/banking/acct-hdfc" },
+    });
+    expect(s).toMatchObject({ edit: false, undo: false, adjustLop: false, editNote: null, lockHref: "/accounting/banking/acct-hdfc" });
+    expect(s.lockReason).toBe("TDS already deposited (TDS challan CH-OCT of ₹2000 paid on 06 Nov 2026 for Oct 2026) — Undo / Edit would leave the challan without this TDS. A wrong TDS: put the difference into a later month's TDS");
+    expect(s.lockLinkLabel).toBe("Open challan bank line →");
+  });
+  it("24Q of the quarter marked filed: no Edit / Undo, says so, links to Compliance", () => {
+    const s = salaryRowActionState(booked({ tds: 2000, period: "2026-08" }), true, {
+      tdsLock: { kind: "filed", what: "The 24Q for Q2 FY 2026-27 (Jul – Sep 2026) is marked filed (30 Oct 2026)", href: "/compliance" },
+    });
+    expect(s).toMatchObject({ edit: false, undo: false, adjustLop: false, lockHref: "/compliance", lockLinkLabel: "Open Compliance →" });
+    expect(s.lockReason).toBe("The 24Q for Q2 FY 2026-27 (Jul – Sep 2026) is marked filed (30 Oct 2026) — Undo / Edit would change a filed return");
+  });
+  it("a lock on a salary with no TDS, or for a viewer, changes nothing", () => {
+    const lock = { kind: "deposited" as const, what: "x", href: "/accounting/banking" };
+    expect(salaryRowActionState(booked({ tds: 0 }), true, { tdsLock: lock })).toEqual({ edit: true, undo: true, adjustLop: false, lockReason: null, editNote: null });
+    expect(salaryRowActionState(booked({ tds: 2000 }), false, { tdsLock: lock })).toEqual({ edit: false, undo: false, adjustLop: false, lockReason: null, editNote: null });
+  });
+  it("while the lock is being read: no Edit / Undo yet (the answer could take them away), says it is checking", () => {
+    const s = salaryRowActionState(booked({ tds: 2000 }), true, { tdsLockLoading: true });
+    expect(s).toMatchObject({ edit: false, undo: false, adjustLop: false, editNote: null });
+    expect(s.lockReason).toMatch(/^Checking whether this month's TDS/);
+    expect(salaryRowActionState(booked({ tds: 0 }), true, { tdsLockLoading: true }).undo).toBe(true);
+  });
+  it("salaryGuardNext: the refused Undo's toast button goes to the HINT page", () => {
+    expect(salaryGuardNext("/compliance")).toEqual({ label: "Open Compliance", href: "/compliance" });
+    expect(salaryGuardNext("/accounting/banking/acct-1")).toEqual({ label: "Open Banking", href: "/accounting/banking/acct-1" });
+    expect(salaryGuardNext(null)).toEqual({ label: "Open Banking", href: "/accounting/banking" });
+    expect(salaryGuardNext("not a path")).toEqual({ label: "Open Banking", href: "/accounting/banking" });
+  });
+  it("bank-linked wins over the TDS lock (its own message + bank line link)", () => {
+    const s = salaryRowActionState(booked({ tds: 2000, paid_amount: 27232, paid_status: "paid" }), true, {
+      tdsLock: { kind: "filed", what: "x", href: "/compliance" },
+    });
+    expect(s.lockReason).toBe("Linked to a bank line — un-link it first to edit");
+    expect(s.lockHref).toBeUndefined();
   });
 });
 

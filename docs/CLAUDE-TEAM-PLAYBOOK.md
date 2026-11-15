@@ -421,3 +421,4 @@ Format: `- <date>: what went wrong → the rule it created (card).`
     Run a waiting train with a 35-min timeout or in the background. It is a pre-flight only: a backup that
     starts while the deploy-db script is still importing can still give 409 → start the DB step before 09:00
     or after 10:05 IST.
+- **14 Nov 2026 (R-2826) — a brief line does not fix a lock; the tool must.** Four workers claimed renewals `page.tsx` at the start (claim lists every file, `check` counts the live diff) and a ready 4-line card waited an hour, although every brief said "claim hot files only at push". Now `worker-lock-hot.mjs` has the `HOT_FILES` list: `claim`/`check` skip a hot file ("hot file — taken at push"), `push` takes it with a FIFO wait and frees it after. A new hot file = one line in `HOT_FILES`, not a new rule in a brief.

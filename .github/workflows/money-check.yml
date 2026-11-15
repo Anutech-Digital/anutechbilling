@@ -61,7 +61,8 @@ permissions:
 
 jobs:
   money-check:
-    runs-on: ubuntu-latest
+    # R-2828: pinned — ubuntu-latest moved to 26.04 (14 Nov 2026), Playwright has no chromium build there; revisit when Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:

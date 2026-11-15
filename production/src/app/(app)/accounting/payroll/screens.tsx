@@ -53,6 +53,7 @@ import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { toastError } from "@/lib/errors/toast-error";
 import { periodLabel } from "@/lib/payroll/period-label";
 import { salaryInForce, revisionMonth, revisionsByEmployee, arrearsPayableIn } from "@/lib/payroll/salary-revision";
+import { employeeBasicFill, employeeBasicToSave, employeeSaveBlockedReason, type BasicRuleInput } from "@/lib/payroll/basic-rule";
 import { SalaryStatusCell } from "./salary-status-cell";
 import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
@@ -674,8 +675,12 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   /* R-2722 review: a CTC typed and then cleared is no CTC — editing the gross / Basic / DA after
      that works on the form's own figures again (not the pre-CTC ones). */
   const ctcCleared = ctcTyped && annualCtc.trim() === "";
-  const policyQ = usePayrollPolicy();
+  /* R-2773 review F3: re-read on open / window focus so a % changed in another tab is the one used. */
+  const policyQ = usePayrollPolicy({ fresh: true });
   const policy = policyQ.data ?? DEFAULT_PAYROLL_POLICY;
+  /* R-2773 review F1: the policy is "in" only once it was read for THIS dialog — a default 50% while
+     it loads / failed is never used for a new employee's Basic (Save waits, see saveBlocked). */
+  const policyReady = policyQ.isSuccess && policyQ.isFetchedAfterMount;
   const [isMetro, setIsMetro] = React.useState(false);
   const [basicPct, setBasicPct] = React.useState<number>(DEFAULT_PAYROLL_POLICY.basicPct / 100);
   const [customBasic, setCustomBasic] = React.useState<string>("");
@@ -696,20 +701,32 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   /* A Basic typed in Statutory & Access is used by the CTC split (it is not overwritten). */
   const [basicByHand, setBasicByHand] = React.useState(false);
   React.useEffect(() => {
-    if (policyApplied || !policyQ.data) return;
+    if (policyApplied || !policyReady || !policyQ.data) return;
     setPolicyApplied(true);
     const d = newEmployeeDefaults(policyQ.data, false);
     if (!gratuityTouched) setIncludeGratuity(d.includeGratuity);
     if (!basicPctTouched) setBasicPct(d.basicPct);
     if (!employee && !pfTouched) { setPfApplicable(d.pfApplicable); setPfFullWage(d.pfFullWage); }
-  }, [policyApplied, policyQ.data, employee, pfTouched, basicPctTouched, gratuityTouched]);
+  }, [policyApplied, policyReady, policyQ.data, employee, pfTouched, basicPctTouched, gratuityTouched]);
+
+  /* R-2773: ONE Basic rule (lib/payroll/basic-rule.ts) — what the Basic box fills, what Save stores,
+     and what the CTC tab / Net Pay preview read (review F4: an empty box shows the Basic Save writes). */
+  const savedSalary = employee && employee.monthly_gross > 0
+    ? { monthly_gross: employee.monthly_gross, basic_monthly: employee.basic_monthly, da_monthly: employee.da_monthly ?? 0 }
+    : null;
+  const basicRule = (grossText: string, daText: string, daFixed: boolean): BasicRuleInput => ({
+    savedSalary, grossText, daText, daFixed, basicText: basicMonthly,
+    policyBasicPct: policy.basicPct, policyReady,
+    pctPicked: basicPctTouched ? Math.round(basicPct * 100) : null,
+  });
+  const basicForCalc = employeeBasicToSave(basicRule(gross, daMonthly, true));
 
   /* R-2698: the breakdown follows the Statutory switches — PF / ESI off means none here. */
   const ctcBreakdown = React.useMemo(() => ctcTabBreakdown({
     ctcTyped,
     annualCtc: Number(annualCtc) || 0,
     gross: Number(gross) || 0,
-    basic: basicMonthly.trim() !== "" ? Number(basicMonthly) || 0 : null,
+    basic: basicForCalc,
     da: Number(daMonthly) || 0,
     pfApplicable, esiApplicable, pfFullWage, includeGratuity,
     ctcIncludesEmployer: policy.ctcIncludesEmployer,
@@ -733,7 +750,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       customSpecialMonthly: Number(customSpecial) || undefined,
       customPtMonthly: 0, // R-2733: PT does not apply (owner)
     },
-  }), [employee, ctcBase, ctcTyped, annualCtc, gross, basicMonthly, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial]);
+  }), [employee, ctcBase, ctcTyped, annualCtc, gross, basicMonthly, basicForCalc, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial]);
   /* R-2700: a typed CTC fills Monthly Gross + Basic at once (no Apply press) unless the gross was
      typed by hand afterwards, or the salary is set by revisions (R-2699 — gross locked). */
   /* Review M2 + code review: a split that is over budget, an empty CTC, or the CTC the saved salary
@@ -763,7 +780,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
     [employee, revisionsQ.data]);
   const formNet = (!employee || salaryHistoryQ.isSuccess) ? monthNetPay({
     monthly_gross: Math.round(Number(gross) || 0),
-    basic_monthly: basicMonthly.trim() === "" ? null : Math.round(Number(basicMonthly) || 0),
+    basic_monthly: basicForCalc,
     da_monthly: Math.round(Number(daMonthly) || 0),
     pf_applicable: pfApplicable, esi_applicable: esiApplicable, pf_full_wage: pfFullWage,
   }, salaryByRevision ? myRevisions : [], netPeriod, salaryHistoryQ.data ?? []) : null;
@@ -783,16 +800,51 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   /* Code review: a Basic set from a % follows the gross typed after it (never a Basic above it). */
   const [basicPctOfGross, setBasicPctOfGross] = React.useState<number | null>(null);
   const [basicBeforeCustom, setBasicBeforeCustom] = React.useState<string | null>(null);
-  function setBasicFromPct(pct: number, grossText = gross) {
+  function setBasicFromPct(pct: number, grossText = gross, daText = daMonthly) {
     if (!noCtc || basicLocked) return;
     // Review LOW 3: a % picked before any gross is remembered and applied when the gross is typed.
     setBasicPctOfGross(pct);
-    const b = basicFromPct(pct, Number(grossText) || 0, Number(daMonthly) || 0);
+    const b = basicFromPct(pct, Number(grossText) || 0, Number(daText) || 0);
     if (b === null) return;
     // A CTC typed then cleared is no CTC — leave the CTC fill rule so it cannot put the old Basic back.
     if (ctcCleared) setCtcTyped(false);
     setBasicMonthly(String(b)); setBasicByHand(false);
   }
+  /* R-2773 (Hitesh 14 Nov, feedback 043e6753): a gross typed with no CTC brings its Basic along —
+     ONE rule with Revise salary (salary-revision.ts structureForGross): a NEW employee gets the
+     company policy Basic % (the box used to stay empty → saved as "not set" → payroll took the
+     whole gross as Basic, 100%); an existing employee keeps their own Basic share (not set stays
+     not set). A Basic typed by hand in this dialog (basicByHand), or a Basic % picked, wins; an
+     emptied Basic box follows the rule again. Basic is re-capped when DA changes (≤ gross − DA). */
+  /* An existing employee's DA follows its share too (as in Revise salary) until DA is typed here. */
+  const [daByHand, setDaByHand] = React.useState(false);
+  function fillBasicFor(grossText: string, daText: string, daFixed: boolean) {
+    if (!noCtc || basicLocked || basicByHand) return;
+    const f = employeeBasicFill(basicRule(grossText, daText, daFixed));
+    // Review F4: gross cleared → the auto-filled Basic goes too (also after a picked %).
+    if (f && f.basic === "" && !savedSalary) { if (ctcCleared) setCtcTyped(false); setBasicMonthly(""); return; }
+    if (basicPctOfGross !== null) { setBasicFromPct(basicPctOfGross, grossText, daText); return; }
+    if (f === null) return; // no salary yet and the policy is not in — Save says it is waiting
+    if (ctcCleared) setCtcTyped(false);
+    setBasicMonthly(f.basic);
+    if (f.da !== daText) setDaMonthly(f.da);
+  }
+  function basicForTypedGross(grossText: string) { fillBasicFor(grossText, daMonthly, daByHand); }
+  /* The policy can arrive after the gross of an employee with no salary yet was typed — the Basic follows it then. */
+  const policyBasicPct = policyQ.data?.basicPct;
+  React.useEffect(() => {
+    if (savedSalary || !policyReady) return;
+    fillBasicFor(gross, daMonthly, true);
+    // Only when the policy arrives / changes — typing goes through basicForTypedGross.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policyReady, policyBasicPct]);
+  /* Review F1: Save waits for the policy for an employee with no salary yet, unless the Basic was
+     typed by hand or a Basic % was picked (as Revise salary waits — policyReady there). */
+  const saveBlocked = salaryByRevision ? null : employeeSaveBlockedReason({
+    hasSalary: Boolean(savedSalary), grossText: gross,
+    basicByHand, pctPicked: basicPctTouched,
+    policyReady, policyFailed: policyQ.isError,
+  });
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves — only when the company is ESI-registered (R-2700 policy).
   // Existing employees keep their saved value.
@@ -803,7 +855,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const pinValid = pin === "" || /^[0-9]{4,6}$/.test(pin);
 
   async function submit() {
-    if (!name.trim() || !pinValid) return;
+    if (!name.trim() || !pinValid || saveBlocked) return;
     const id = await save.mutateAsync({
       id: employee?.id, name: name.trim(),
       monthly_gross: salaryByRevision && employee ? employee.monthly_gross : Math.round(Number(gross) || 0),
@@ -813,7 +865,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       emergency_contact_name: ecName.trim() || null, emergency_contact_phone: ecPhone.trim() || null,
       pan: pan.trim().toUpperCase() || null, pf_no: pfNo.trim() || null, esi_no: esiNo.trim() || null,
       esi_applicable: esiApplicable, pf_applicable: pfApplicable, pf_full_wage: pfFullWage,
-      basic_monthly: salaryByRevision && employee ? employee.basic_monthly : basicMonthly.trim() === "" ? null : Math.round(Number(basicMonthly) || 0),
+      basic_monthly: salaryByRevision && employee ? employee.basic_monthly : basicForCalc,
       da_monthly: salaryByRevision && employee ? (employee.da_monthly ?? 0) : Math.round(Number(daMonthly) || 0),
     });
     if (pin && id && canSetPin) await setPin.mutateAsync({ employeeId: id, pin });
@@ -939,7 +991,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
               </div>
 
               <Field htmlFor="payroll-monthly-gross-salary-base" label="Monthly Gross Salary (₹, Base for Pay Slip)">
-                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => { if (ctcCleared) setCtcTyped(false); else if (ctcTyped) setGrossByHand(true); setGross(e.target.value); if (basicPctOfGross !== null) setBasicFromPct(basicPctOfGross, e.target.value); }} placeholder="e.g. 46997" />
+                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => { if (ctcCleared) setCtcTyped(false); else if (ctcTyped) setGrossByHand(true); setGross(e.target.value); basicForTypedGross(e.target.value); }} placeholder="e.g. 46997" />
                 {/* R-2700: one line — how this gross comes from the CTC (or that it is the saved / hand-typed one). */}
                 <p data-testid="ctc-formula" className="mt-1 text-xs text-ink-2">{ctcFormulaText(ctcBreakdown, salaryByRevision ? undefined : Number(gross) || 0)}{salaryByRevision && ctcTyped ? " This employee's gross is set by salary revisions — use Revise salary to change it." : ""}</p>
                 {/* R-2699: an increment from a month goes through Revise salary (history + old salary for earlier months). */}
@@ -1312,11 +1364,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label htmlFor="payroll-basic-month" className="block text-xs font-medium text-ink-2 mb-1">Basic (₹/month)</label>
-                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setBasicPctOfGross(null); setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
+                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setBasicPctOfGross(null); setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={savedSalary ? "Not set — PF on the whole gross" : (employeeBasicFill(basicRule(gross, daMonthly, true))?.basic || "e.g. 15000")} />
                       </div>
                       <div>
                         <label htmlFor="payroll-da-month" className="block text-xs font-medium text-ink-2 mb-1">DA (₹/month)</label>
-                        <Input id="payroll-da-month" type="number" min={0} value={daMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setDaMonthly(e.target.value); }} />
+                        <Input id="payroll-da-month" type="number" min={0} value={daMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setDaMonthly(e.target.value); setDaByHand(true); fillBasicFor(gross, e.target.value, true); }} />
                       </div>
                     </div>
                     {basicMonthly.trim() !== "" && (Number(basicMonthly) || 0) + (Number(daMonthly) || 0) > (Number(gross) || 0) && (
@@ -1366,7 +1418,8 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={save.isPending || setPin.isPending}>Cancel</Button>
-          <Button variant="primary" loading={save.isPending || setPin.isPending} disabled={!name.trim() || !pinValid} onClick={submit}>Save</Button>
+          {saveBlocked && <p data-testid="employee-save-blocked" className="mr-auto self-center text-xs text-amber-ink">{saveBlocked}</p>}
+          <Button variant="primary" loading={save.isPending || setPin.isPending} disabled={!name.trim() || !pinValid || Boolean(saveBlocked)} onClick={submit}>Save</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

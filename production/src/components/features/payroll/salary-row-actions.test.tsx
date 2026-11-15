@@ -7,6 +7,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const undoMutate = vi.fn();
 let revState: Record<string, unknown> = { data: [], isSuccess: true };
+let tdsLockState: Record<string, unknown> = { data: null };
+const tdsLockCalls: unknown[][] = [];
 const toastErr = vi.fn();
 vi.mock("@/lib/errors/toast-error", () => ({ toastError: (...a: unknown[]) => toastErr(...a) }));
 const confirmFn = vi.fn(async () => true);
@@ -17,6 +19,7 @@ vi.mock("@/components/providers/confirm-provider", () => ({ useConfirm: () => co
 vi.mock("@/lib/queries/payroll", () => ({
   useDeleteSalaryPayment: () => ({ mutate: undoMutate, isPending: false }),
   useSalaryRevisions: () => revState,
+  useSalaryTdsLock: (...a: unknown[]) => { tdsLockCalls.push(a); return tdsLockState; },
 }));
 vi.mock("@/app/(app)/accounting/payroll/screens", () => ({
   PaySalaryDialog: ({ editing, period, onClose }: { editing?: { id: string }; period: string; onClose: () => void }) => (
@@ -29,7 +32,7 @@ vi.mock("@/components/features/payroll/adjust-salary-lop-dialog", () => ({
 
 import { SalaryRowActions } from "./salary-row-actions";
 
-afterEach(() => { cleanup(); undoMutate.mockReset(); confirmFn.mockClear(); toastErr.mockReset(); revState = { data: [], isSuccess: true }; });
+afterEach(() => { cleanup(); undoMutate.mockReset(); confirmFn.mockClear(); toastErr.mockReset(); revState = { data: [], isSuccess: true }; tdsLockState = { data: null }; tdsLockCalls.length = 0; });
 
 const emp = { id: "emp-1", name: "RAHUL KUMAR" } as never;
 const sal = (o: Record<string, unknown> = {}) => ({
@@ -140,5 +143,40 @@ describe("SalaryRowActions (R-2771)", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /Edit salary$/ }));
     fireEvent.click(screen.getByRole("dialog", { name: "pay-dialog" }));
     expect(rowClick).not.toHaveBeenCalled();
+  });
+
+  /* R-2812: the government already has the TDS → the database refuses Undo (and Edit's Undo half). */
+  it("TDS month deposited: menu reads the lock on open, offers no Edit / Undo, says which challan and links to it", () => {
+    tdsLockState = { data: { kind: "deposited", what: "TDS challan CH-OCT of ₹2000 paid on 06 Nov 2026 for Oct 2026", href: "/accounting/banking/acct-1" } };
+    render(<SalaryRowActions employee={emp} p={sal({ tds: 2000 })} canWrite />);
+    expect(tdsLockCalls.at(-1)).toEqual(["sal-oct", false]);
+    openMenu();
+    expect(tdsLockCalls.at(-1)).toEqual(["sal-oct", true]);
+    expect(screen.queryByRole("menuitem", { name: /Edit salary$/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /Undo salary/ })).toBeNull();
+    expect(screen.getByText(/TDS already deposited \(TDS challan CH-OCT/)).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Open challan bank line/ }).getAttribute("href")).toBe("/accounting/banking/acct-1");
+  });
+
+  it("while the lock is read: Edit / Undo held back, says it is checking", () => {
+    tdsLockState = { data: undefined, isFetching: true };
+    render(<SalaryRowActions employee={emp} p={sal({ tds: 2000 })} canWrite />);
+    openMenu();
+    expect(screen.queryByRole("menuitem", { name: /Edit salary$/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /Undo salary/ })).toBeNull();
+    expect(screen.getByText(/Checking whether this month's TDS/)).toBeTruthy();
+  });
+
+  it("24Q filed: says so and links to Compliance; a TDS-0 salary never asks", () => {
+    tdsLockState = { data: { kind: "filed", what: "The 24Q for Q3 FY 2026-27 (Oct – Dec 2026) is marked filed (10 Jan 2027)", href: "/compliance" } };
+    render(<SalaryRowActions employee={emp} p={sal({ tds: 2000 })} canWrite />);
+    openMenu();
+    expect(screen.getByText(/is marked filed .* would change a filed return/)).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Open Compliance/ }).getAttribute("href")).toBe("/compliance");
+    cleanup(); tdsLockCalls.length = 0;
+    render(<SalaryRowActions employee={emp} p={sal({ tds: 0 })} canWrite />);
+    openMenu();
+    expect(tdsLockCalls.every((c) => c[1] === false)).toBe(true);
+    expect(screen.getByRole("menuitem", { name: /^Undo salary$/ })).toBeTruthy();
   });
 });
