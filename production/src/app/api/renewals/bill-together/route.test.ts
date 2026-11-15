@@ -22,8 +22,12 @@ const st = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ client: string; ids: string[] }>,
   rpc: { data: null as unknown, error: null as null | { code?: string; message: string } },
   layError: null as Error | null,
-  ready: true,
+  ready: { ok: true } as { ok: true } | { ok: false; status: number; error: string },
   fillCalls: 0,
+  invoiced: null as null | { quoteId: string; invoiceId: string; subscriptionIds: string[] },
+  invoicedCalls: 0,
+  invoicedOpts: null as unknown,
+  quoteInvoice: null as string | null,
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -54,6 +58,10 @@ vi.mock("@/lib/renewals/bill-together.server", async (orig) => {
     },
     fillNextParts: async (_db: unknown, facts: unknown[]) => { st.fillCalls++; return facts; },
     billTogetherReady: async () => st.ready,
+    findInvoicedTogether: async (db: { __kind: string }, _t: string, _f: unknown, opts: unknown) => {
+      expect(db.__kind).toBe("cookie"); st.invoicedCalls++; st.invoicedOpts = opts; return st.invoiced;
+    },
+    quoteInvoiceId: async (db: { __kind: string }) => { expect(db.__kind).toBe("cookie"); return st.quoteInvoice; },
     billPartsTogether: async (db: { __kind: string }, ids: string[]) => {
       st.rpcCalls.push({ client: db.__kind, ids: [...ids] });
       return st.rpc;
@@ -83,7 +91,8 @@ const post = (body: unknown) => POST(new NextRequest("http://localhost/api/renew
 
 beforeEach(() => {
   st.role = "owner"; st.signedIn = true; st.facts = [fact(A), fact(B)];
-  st.readCalls = []; st.layCalls = []; st.rpcCalls = []; st.layError = null; st.ready = true; st.fillCalls = 0;
+  st.readCalls = []; st.layCalls = []; st.rpcCalls = []; st.layError = null; st.ready = { ok: true }; st.fillCalls = 0;
+  st.invoiced = null; st.invoicedCalls = 0; st.quoteInvoice = null;
   st.rpc = { data: { action: "request", quote_id: "PI-F588-27-0101", already_existed: false, subscription_ids: [A, B] }, error: null };
 });
 
@@ -149,7 +158,8 @@ describe("POST /api/renewals/bill-together", () => {
   it("happy path: lays each part at the PREVIEW's period with the admin client, then ONE RPC call via the signed-in client", async () => {
     const res = await post({ ids: [A, B] });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ quoteId: "PI-F588-27-0101", href: "/quotes/PI-F588-27-0101", alreadyExisted: false, subscriptionIds: [A, B] });
+    expect(await res.json()).toEqual({ quoteId: "PI-F588-27-0101", href: "/quotes/PI-F588-27-0101", alreadyExisted: false, subscriptionIds: [A, B],
+      action: "request", invoiceId: null });
     expect(st.layCalls).toEqual([
       { client: "admin", tenantId: TENANT, sub: A, periodStart: "2026-10-12" },
       { client: "admin", tenantId: TENANT, sub: B, periodStart: "2026-10-12" },
@@ -193,7 +203,8 @@ describe("POST /api/renewals/bill-together", () => {
     st.facts = [fact(A, { together: t(A), periodStart: "2026-11-12" }), fact(B, { together: t(B) })];
     const res = await post({ ids: [A, B] });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ quoteId: "PI-F588-27-0101", href: "/quotes/PI-F588-27-0101", alreadyExisted: true, subscriptionIds: [A, B] });
+    expect(await res.json()).toEqual({ quoteId: "PI-F588-27-0101", href: "/quotes/PI-F588-27-0101", alreadyExisted: true, subscriptionIds: [A, B],
+      action: "request", invoiceId: null });
     expect(st.fillCalls).toBe(0);   // decided from the cheap read — no previews worked out
     expect(st.layCalls).toHaveLength(0);
     expect(st.rpcCalls).toHaveLength(0);
@@ -218,7 +229,7 @@ describe("POST /api/renewals/bill-together", () => {
   });
 
   it("RPC not deployed yet → 503 BEFORE anything is laid (review F2)", async () => {
-    st.ready = false;
+    st.ready = { ok: false, status: 503, error: "Bill together is not ready on this server yet — bill each part with Bill next part for now." };
     const res = await post({ ids: [A, B] });
     expect(res.status).toBe(503);
     expect((await res.json()).error).toMatch(/Bill next part/);
@@ -243,6 +254,93 @@ describe("POST /api/renewals/bill-together", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/changed while billing/);
     expect(st.rpcCalls).toHaveLength(0);
+  });
+});
+
+describe("R-2831 POST: invoice answers, retry after an invoice, login refused before laying", () => {
+  it("retry after an 'invoice' answer: the same invoice (action invoice, href /invoices), nothing laid, no previews, no RPC", async () => {
+    st.invoiced = { quoteId: "PI-F588-27-0101", invoiceId: "INV-F588-27-0042", subscriptionIds: [A, B] };
+    const res = await post({ ids: [A, B] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ quoteId: "PI-F588-27-0101", href: "/invoices/INV-F588-27-0042", alreadyExisted: true,
+      subscriptionIds: [A, B], action: "invoice", invoiceId: "INV-F588-27-0042" });
+    expect(st.fillCalls).toBe(0);
+    expect(st.layCalls).toHaveLength(0);
+    expect(st.rpcCalls).toHaveLength(0);
+  });
+
+  it("a live together proforma (double submit) is answered before the invoiced-retry read", async () => {
+    const t = (id: string) => [{ quoteId: "PI-1", status: "sent", withPlans: [id === A ? "Business Starter" : "Business Standard"],
+      subscriptionIds: [A, B], partPeriodStart: "2026-10-12", earliestOpen: true }];
+    st.facts = [fact(A, { together: t(A) }), fact(B, { together: t(B) })];
+    expect(await (await post({ ids: [A, B] })).json()).toMatchObject({ quoteId: "PI-1", action: "request" });
+    expect(st.invoicedCalls).toBe(0);
+  });
+
+  it("the RPC answers 'invoice' (pool paid the started group) → action invoice + invoiceId, href opens the invoice", async () => {
+    st.rpc = { data: { action: "invoice", quote_id: "PI-2", already_existed: false, invoice_id: "INV-7", subscription_ids: [A, B] }, error: null };
+    expect(await (await post({ ids: [A, B] })).json()).toEqual({ quoteId: "PI-2", href: "/invoices/INV-7", alreadyExisted: false,
+      subscriptionIds: [A, B], action: "invoice", invoiceId: "INV-7" });
+  });
+
+  it("'invoice' with no invoice_id is a fault (500), never a quote link pretending it billed", async () => {
+    st.rpc = { data: { action: "invoice", quote_id: "PI-2", already_existed: false, subscription_ids: [A, B] }, error: null };
+    expect((await post({ ids: [A, B] })).status).toBe(500);
+  });
+
+  it("the RPC's already-existing request that was paid + invoiced since → its invoice; still open → the proforma", async () => {
+    st.rpc = { data: { action: "request_open", quote_id: "PI-3", already_existed: true, subscription_ids: [A, B] }, error: null };
+    st.quoteInvoice = "INV-9";
+    expect(await (await post({ ids: [A, B] })).json()).toMatchObject({ quoteId: "PI-3", href: "/invoices/INV-9", action: "invoice", invoiceId: "INV-9", alreadyExisted: true });
+    st.quoteInvoice = null;
+    expect(await (await post({ ids: [A, B] })).json()).toMatchObject({ quoteId: "PI-3", href: "/quotes/PI-3", action: "request", invoiceId: null });
+  });
+
+  it("the probe says the login may not bill together (42501 / 28000) → 403 / 401 BEFORE anything is laid", async () => {
+    st.ready = { ok: false, status: 403, error: "Your login may not bill subscriptions together — ask the workspace owner." };
+    let res = await post({ ids: [A, B] });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/may not bill subscriptions together/);
+    st.ready = { ok: false, status: 401, error: "You are not signed in — sign in again and try again." };
+    res = await post({ ids: [A, B] });
+    expect(res.status).toBe(401);
+    expect(st.layCalls).toHaveLength(0);
+    expect(st.rpcCalls).toHaveLength(0);
+  });
+
+  it("periods the screen showed: passed to the retry check; same as now → billed", async () => {
+    const res = await post({ ids: [A, B], periods: [{ subscriptionId: A, periodStart: "2026-10-12" }, { subscriptionId: B, periodStart: "2026-10-12" }] });
+    expect(res.status).toBe(200);
+    expect(st.invoicedOpts).toEqual({ periods: new Map([[A, "2026-10-12"], [B, "2026-10-12"]]) });
+    expect(st.rpcCalls).toHaveLength(1);
+  });
+
+  it("periods moved since the screen showed them (a retry after its parts were billed) → 409 in words, nothing laid, no RPC", async () => {
+    st.facts = [fact(A, { periodStart: "2026-11-12" }), fact(B, { periodStart: "2026-11-12" })];
+    const res = await post({ ids: [A, B], periods: [{ subscriptionId: A, periodStart: "2026-10-12" }, { subscriptionId: B, periodStart: "2026-10-12" }] });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/changed since you opened it — you saw Business Standard's part from 12 Oct 2026, now it would bill the part from 12 Nov 2026/);
+    expect(st.layCalls).toHaveLength(0);
+    expect(st.rpcCalls).toHaveLength(0);
+  });
+
+  it("malformed periods → 400, nothing read or laid", async () => {
+    const res = await post({ ids: [A, B], periods: [{ subscriptionId: A, periodStart: "Oct" }] });
+    expect(res.status).toBe(400);
+    expect(st.readCalls).toHaveLength(0);
+    expect(st.layCalls).toHaveLength(0);
+  });
+
+  it("first part of a sale / R-2092 sibling reasons from the preview → 409 before laying", async () => {
+    const fa = fact(A); fa.sale = { quoteId: "Q-1", startDate: "2025-10-12", termMonths: 12, firstTermStart: "2025-10-12",
+      atNext: { periodIndex: 1, termStart: "2025-10-12" , credited: false }, siblings: [] };
+    fa.next = { ...fa.next!, periodStart: "2025-10-12" };
+    st.facts = [fa, fact(B)];
+    const res = await post({ ids: [A, B] });
+    expect(res.status).toBe(409);
+    expect((await res.json()).reasons).toEqual([{ subscriptionId: A, code: "first_part_of_sale",
+      text: "Its first part is billed by its sale quote Q-1 — bill it from there; later parts can be billed together." }]);
+    expect(st.layCalls).toHaveLength(0);
   });
 });
 
