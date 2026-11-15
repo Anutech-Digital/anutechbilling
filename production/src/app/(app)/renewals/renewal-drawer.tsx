@@ -33,7 +33,8 @@ import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 import { vendorHoldState, vendorTermEndOf, vendorTermWords } from "@/lib/renewals/vendor-hold";
 import { useRenewalDrawerData } from "./drawer-data";
 import { useRenewalDrawerCatalog } from "./drawer-cost-data";
-import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, mayShowRenewalCost, renewalCostForSub, type DrawerMoney } from "./drawer-money";
+import { useRenewalDrawerSeatCuts } from "./drawer-seat-cut-data";
+import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, drawerSeatPlan, mayShowRenewalCost, renewalCostForSub, type DrawerMoney } from "./drawer-money";
 import {
   currentTermWords, drawerSubFromSearch, withDrawerSub, drawerDocRows, drawerFlagRows, drawerFollowupRows, drawerPage, drawerPaymentRows,
   remindersWords, termLengthWords, type DrawerDocRow,
@@ -152,6 +153,14 @@ function CostFacts({ money }: { money: DrawerMoney }) {
   if (money.kind === "unread") {
     return <Fact label="Our cost"><span className="text-ink-3" data-testid="renewal-drawer-cost">Couldn&apos;t read the catalogue — close and open again.</span></Fact>;
   }
+  if (money.kind === "termUnknown") {
+    return (
+      <>
+        <Fact label="Our cost"><span className="text-ink-3" data-testid="renewal-drawer-cost">Cost unknown — check term</span></Fact>
+        <Fact label="Margin"><span className="text-ink-3" data-testid="renewal-drawer-margin">Unknown — no cost</span></Fact>
+      </>
+    );
+  }
   if (money.kind === "costMissing") {
     return (
       <>
@@ -167,7 +176,9 @@ function CostFacts({ money }: { money: DrawerMoney }) {
   }
   return (
     <>
-      <Fact label="Our cost"><span className="tabular-nums" data-testid="renewal-drawer-cost">{money.cost}</span> <span className="text-ink-3">from catalogue</span></Fact>
+      <Fact label="Our cost"><span className="tabular-nums" data-testid="renewal-drawer-cost">{money.cost}</span> <span className="text-ink-3">from catalogue</span>
+        {money.seatNote ? <span className="block text-xs text-ink-3" data-testid="renewal-drawer-seat-note">{money.seatNote[0].toUpperCase() + money.seatNote.slice(1)}</span> : null}
+      </Fact>
       <Fact label="Margin">
         {money.kind === "noAmount"
           ? <span className="text-ink-3" data-testid="renewal-drawer-margin">Unknown — no renewal amount set</span>
@@ -230,11 +241,18 @@ export function RenewalDrawer({ item, open, onClose, names, followupRows, onFoll
   /* R-2819: cost is internal — only a role that may open the catalogue sees it; nobody else's drawer reads it. */
   const showCost = mayShowRenewalCost(me?.role);
   const catalog = useRenewalDrawerCatalog(sub?.tenant_id ?? null, open && !!sub && showCost);
-  const cost = React.useMemo(
-    () => (!sub || catalog.isError ? null : catalog.data ? renewalCostForSub(catalog.data, sub) : undefined),
-    [sub, catalog.data, catalog.isError],
+  /* R-2835: price the seats the next quote bills — a cut scheduled for this renewal is applied the way the quote does (same loader + rule) */
+  const seatCuts = useRenewalDrawerSeatCuts(sub?.tenant_id ?? null, sub?.id ?? null, open && !!sub && showCost);
+  const seatCutsLoading = seatCuts.data === undefined && !seatCuts.isError;
+  const seatPlan = React.useMemo(
+    () => (sub ? drawerSeatPlan(sub, seatCuts.isError ? null : seatCuts.data ?? []) : null),
+    [sub, seatCuts.data, seatCuts.isError],
   );
-  const money = item ? drawerMoney(item.amount, cost, sub?.term_months) : ({ kind: "loading" } as const);
+  const cost = React.useMemo(
+    () => (!sub || catalog.isError ? null : catalog.data && !seatCutsLoading ? renewalCostForSub(catalog.data, { ...sub, seats: seatPlan?.seats ?? sub.seats }) : undefined),
+    [sub, catalog.data, catalog.isError, seatCutsLoading, seatPlan],
+  );
+  const money = item ? drawerMoney(item.amount, cost, sub?.term_months, seatPlan ?? undefined) : ({ kind: "loading" } as const);
   const booksLine = item ? booksRupeeLine(item.amount, sub?.term_months) : null;
   const fu = item?.followup;
   const owner = fu?.ownerId ? nameOf(fu.ownerId) ?? "a colleague" : "Nobody yet";
