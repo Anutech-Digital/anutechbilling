@@ -47,6 +47,8 @@ import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { togetherTemplateFields, type TogetherQuote } from "@/lib/renewals/together-reminder";
+import { readTogetherQuotes, type TogetherReadClient } from "@/lib/renewals/together-reminder.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -205,6 +207,21 @@ export async function POST(req: Request) {
   };
   const lineItems: QuoteLineItem[] = quoteResult.lineItems ?? [];
 
+  /* R-2852: a renewal quote billed TOGETHER (R-2847) — whichever member was pressed, ONE email for the
+     quote: every plan · seats · period and the quote total (never the whole amount against this one
+     plan). It is logged on every member below, so the nightly run does not mail it again today. */
+  let together: TogetherQuote | null = null;
+  try {
+    together = (await readTogetherQuotes(supabase as unknown as TogetherReadClient, [renewalQuoteId])).get(renewalQuoteId) ?? null;
+  } catch {
+    return NextResponse.json(
+      { error: "Could not read which subscriptions this renewal quote covers, so no reminder was sent. Try again in a minute." },
+      { status: 503 }
+    );
+  }
+  if (together && !together.members.some((m) => m.subscriptionId === sub.id)) together = null;
+  const togetherText = together ? togetherTemplateFields(together) : null;
+
   // Public accept-link token (SEC-1) — the link needs the quote's opaque token.
   let renewalToken: string | null = null;
   if (renewalQuoteId) {
@@ -244,9 +261,10 @@ export async function POST(req: Request) {
     tenantName:      tenant.name,
     tenantEmail:     tenant.email,
     tenantPhone:     tenant.phone,
-    planName:        sub.plan,
-    seats:           sub.seats,
+    planName:        togetherText?.planName ?? sub.plan,
+    seats:           togetherText?.seats ?? sub.seats,
     amount:          renewalQuote.amount,
+    planLines:       togetherText?.planLines,   // R-2852: plan · seats · period per member + the quote total
     renewalDate:     formatIstDate(sub.renewal_date),
     daysUntil:       Math.abs(decision.daysUntilRenewal),
     graceDays,
@@ -321,16 +339,19 @@ export async function POST(req: Request) {
   });
 
   // ── Log + update sub ────────────────────────────────────────────
-  await supabase.from("renewal_email_log").insert({
+  /* R-2852: a together quote's one email is logged on EVERY member (the nightly run's "already
+     attempted today" check is per subscription and step). Only the pressed row's state moves. */
+  const loggedOn = together ? together.members.map((m) => m.subscriptionId) : [sub.id];
+  await supabase.from("renewal_email_log").insert(loggedOn.map((subscriptionId) => ({
     tenant_id:       sub.tenant_id,
-    subscription_id: sub.id,
+    subscription_id: subscriptionId,
     cadence_step:    step,
     recipient_email: recipient,
     subject:         tpl.subject,
     status:          sendResult.status,
     provider_id:     sendResult.providerId,
     error_message:   sendResult.errorMessage,
-  });
+  })));
 
   if (sendResult.status === "sent" || sendResult.status === "stubbed") {
     await supabase
