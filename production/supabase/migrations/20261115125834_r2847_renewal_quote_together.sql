@@ -123,8 +123,8 @@ set search_path = public
 as $$
   select false;
 $$;
-revoke all on function public.r2847_together_payment_ready() from public, anon, authenticated;
-grant execute on function public.r2847_together_payment_ready() to service_role;
+revoke all on function public.r2847_together_payment_ready() from public, anon;
+grant execute on function public.r2847_together_payment_ready() to authenticated, service_role;
 
 -- ── 4. create_renewal_quote_together ──────────────────────────────────────────────────────────────
 create or replace function public.create_renewal_quote_together(
@@ -719,6 +719,7 @@ $$;
 -- Every login that can update a quote runs the guard below (server logins too), so it is callable by all; a login
 -- with no company (anon, a stray authenticated) always gets false.
 grant execute on function public.r2847_is_together_quote(text) to public;
+grant execute on function public.r2847_is_together_quote(text) to authenticated, service_role;
 
 create or replace function public.tg_quotes_renewal_together_guarded()
 returns trigger
