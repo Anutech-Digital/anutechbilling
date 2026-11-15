@@ -236,7 +236,8 @@ describe("R-2818 wiring: every screen reads the one rule", () => {
     expect(page).not.toMatch(/amountDue=\{followupFor\.amount\.value\}/);
     const drawer = read("src/app/(app)/renewals/renewal-drawer.tsx");
     /* R-2838: the drawer lists payments through History — historyTabs keeps R-2818's no-receipt lines */
-    expect(drawer).toMatch(/historyTabs\(docs, paid, \{ subQuoteId, todayIst \}\)/);
+    /* R-2843 added `tds` to the options — further options are fine; docs + paid + subQuoteId + todayIst must stay */
+    expect(drawer).toMatch(/historyTabs\(docs, paid, \{ subQuoteId, todayIst(?:, \w+)* \}\)/);
     expect(drawer).not.toMatch(/priorTermDue\(/);
     /* review #2: the at-risk reason and the CSV's "Outstanding (₹)" read it too — never sub.outstanding_amount */
     expect(items).toMatch(/renewalRisk\(r\.sub, \{ owed: owedOf\(r\.sub\) \}\)/);

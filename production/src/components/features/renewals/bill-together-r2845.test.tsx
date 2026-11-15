@@ -55,6 +55,15 @@ function Harness({ ids = ["a", "b", "c"], canQuotes = true, canInvoices = true }
   const bt = useBillTogether({ canQuotes, canInvoices });
   return <><button type="button" onClick={() => bt.open(ids, "ITBUZZ Technologies")}>go</button>{bt.dialog}</>;
 }
+/* CI red 15 Nov (2nd): the lines show one render BEFORE the dialog's effect ticks them, so Create is still disabled
+   for that moment (a probe saw disabled=true the instant the lines appeared, every run). findAllByTestId usually
+   resolves after that effect, but on a loaded runner the click landed in the gap — a no-op, so no POST ever came.
+   Wait for Create to be enabled (all lines ticked), as a person clicking it would. */
+async function readyCreate() {
+  const b = screen.getByRole("button", { name: "Create proforma" }) as HTMLButtonElement;
+  await waitFor(() => expect(b.disabled).toBe(false), { timeout: 20_000 });
+  return b;
+}
 const posts = () => fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "POST");
 const bodyOf = (i: number) => JSON.parse(String((posts()[i][1] as RequestInit).body)) as { ids: string[]; periods?: unknown };
 
@@ -64,8 +73,9 @@ async function openAndCreate(answer: unknown, opts: { untick?: string; canQuotes
   fireEvent.click(screen.getByRole("button", { name: "go" }));
   /* generous waits: on a loaded laptop the first render can pass 1 s (a flaky red, not a bug) */
   await screen.findAllByTestId("bill-together-line", {}, { timeout: 20_000 });
+  const create = await readyCreate();
   if (opts.untick) fireEvent.click(screen.getByLabelText(opts.untick));
-  fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
+  fireEvent.click(create);
   await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 20_000 });
 }
 
@@ -148,7 +158,8 @@ describe("R-2845 (3) — every reason the preview gives is shown", () => {
     expect(shown).toHaveLength(4);
     expect(shown[1]).toMatch(/Won't renew/);
     expect((screen.getByLabelText("Business Starter") as HTMLInputElement).disabled).toBe(true);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Create proforma" })); });
+    const create = await readyCreate();
+    await act(async () => { fireEvent.click(create); });
     expect(bodyOf(0).ids).toEqual(["a", "c"]);
   });
 });
@@ -182,7 +193,7 @@ describe("R-2845 review fixes", () => {
     wrap(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "go" }));
     await screen.findAllByTestId("bill-together-line", {}, { timeout: 20_000 });
-    fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
+    fireEvent.click(await readyCreate());
     await waitFor(() => expect(toastError).toHaveBeenCalled(), { timeout: 20_000 });
     act(() => { focusManager.setFocused(false); focusManager.setFocused(true); });
     await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
@@ -203,7 +214,7 @@ describe("R-2845 review fixes", () => {
     wrap(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "go" }));
     await screen.findAllByTestId("bill-together-line", {}, { timeout: 20_000 });
-    fireEvent.click(screen.getByRole("button", { name: "Create proforma" }));
+    fireEvent.click(await readyCreate());
     await waitFor(() => expect(toastError).toHaveBeenCalled(), { timeout: 20_000 });
     const opts = toastError.mock.calls[0][1] as { action?: unknown } | undefined;
     expect(opts?.action).toBeUndefined();
