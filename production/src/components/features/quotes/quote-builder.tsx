@@ -123,7 +123,7 @@ import { CatalogMatchSuggestion } from "./catalog-match-suggestion";
 import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice, markOneTimeLines } from "@/lib/quotes/line-commit-choice";
 import { leadLinePrice } from "./lead-line-commitment";
 import { leadSeatCount } from "@/lib/quotes/seat-lines";
-import { isTermLine, lineForYears } from "./domain-term";
+import { isTermLine, lineForCommitment, lineForYears } from "./domain-term";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
@@ -1364,8 +1364,9 @@ function QuoteBuilderBody() {
     }
     if (refuseMixedTerm(lineItems.map((l) => (l.id === id ? { ...l, commitment } : l)))) return;
     setLineItems((s) =>
-      s.map((l) => {
-        if (l.id !== id) return l;
+      s.map((l0) => {
+        if (l0.id !== id) return l0;
+        const l = lineForCommitment(l0, commitment);   // R-2723: Flexible has no "Register for N years"
 
         // If this line came from the catalog, recalc rate based on new commitment tier
         if (l.item_id && catalog) {
