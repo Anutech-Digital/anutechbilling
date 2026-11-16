@@ -1,5 +1,5 @@
 -- R-2816 — DB guard: an empty Basic never means the whole gross (fills the company policy Basic %).
--- Migration: 20261114112800_r2816_basic_from_policy_guard.sql
+-- Migration: 20261116211326_r2816_basic_from_policy_guard.sql
 -- FAILS without the migration (A: Basic stays empty), PASSES with it.
 --
 --   A  insert with a gross and no Basic → policy % (40% company: 12,000; no-settings company: 50%;
@@ -12,6 +12,8 @@
 --      salary column leaves it alone.
 --   E  undo_salary_revision restoring an empty prev Basic → filled with the policy % (never empty).
 --   F  app.r2815_undo = 'on' (the R-2815 repair's logged undo) → the empty Basic is put back as asked.
+--   H  another tenant's policy is never used (tenant with 70%, tenant with none = 50%); service_role / import insert fills too;
+--      an issued payslip (salary_payments) of an employee that already had a Basic is untouched by guard-firing edits.
 --   G  grants: the trigger functions are not executable by anon / authenticated.
 --
 -- Run: node scripts/test-sql.mjs --local r2816_basic_guard
@@ -139,6 +141,40 @@ begin
   raise notice 'PASS E undo revision';
 end $$;
 reset role;
+
+-- H: tenant policy isolation, service role (import path), issued payslips untouched
+insert into public.tenants (id, name, email, state_code, doc_code) values
+  ('c2816000-0000-0000-0000-0000000000f2', 'R2816 Seventy', 'r2816c@example.test', '07', 'R2816C');
+insert into public.attendance_settings (tenant_id, payroll_basic_pct) values ('c2816000-0000-0000-0000-0000000000f2', 70);
+insert into public.salary_payments (tenant_id, employee_id, period, pay_date, gross, net)
+values ('c2816000-0000-0000-0000-0000000000f0', 'c2816000-0000-4000-8000-0000000000e3', '2026-09', '2026-09-30', 30000, 27000);
+set local role service_role;
+insert into public.employees (id, tenant_id, name, monthly_gross, basic_monthly, da_monthly, joining_date) values
+  ('c2816000-0000-4000-8000-0000000000e9', 'c2816000-0000-0000-0000-0000000000f2', 'R2816 Hari', 20000, null, 0, '2025-01-01'),
+  ('c2816000-0000-4000-8000-0000000000ea', 'c2816000-0000-0000-0000-0000000000f0', 'R2816 Indu', 20000, null, 0, '2025-01-01'),
+  ('c2816000-0000-4000-8000-0000000000eb', 'c2816000-0000-0000-0000-0000000000f1', 'R2816 Jai',  20000, null, 0, '2025-01-01');
+reset role;
+do $$
+declare v_pay record;
+begin
+  if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000e9') is distinct from 14000 then
+    raise exception 'FAIL H1: 70%% tenant, service-role insert, Basic not 14,000'; end if;
+  if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000ea') is distinct from 8000 then
+    raise exception 'FAIL H2: 40%% tenant took another tenant policy'; end if;
+  if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000eb') is distinct from 10000 then
+    raise exception 'FAIL H3: tenant with no policy row did not get the 50%% default'; end if;
+  -- guard-firing edit on an employee that already has a Basic: Basic and issued payslip stay the same
+  update public.employees set monthly_gross = monthly_gross, basic_monthly = basic_monthly, da_monthly = da_monthly
+   where id = 'c2816000-0000-4000-8000-0000000000e3';
+  if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000e3') is distinct from 12000 then
+    raise exception 'FAIL H4: employee with a Basic changed by the guard'; end if;
+  select gross, net into v_pay from public.salary_payments where employee_id = 'c2816000-0000-4000-8000-0000000000e3' and period = '2026-09';
+  if v_pay.gross is distinct from 30000 or v_pay.net is distinct from 27000 then
+    raise exception 'FAIL H5: an issued payslip changed'; end if;
+  if (select count(*) from pg_trigger where tgname like '%basic_from_policy' and not tgisinternal) <> 2 then
+    raise exception 'FAIL H6: guard triggers are not exactly the two expected'; end if;
+  raise notice 'PASS H tenant isolation / service role / payslips';
+end $$;
 
 -- G
 do $$

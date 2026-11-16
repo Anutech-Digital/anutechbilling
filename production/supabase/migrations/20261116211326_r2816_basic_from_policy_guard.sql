@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_trigger where tgname = 'trg_employee_zz_basic_from_policy' and tgrelid = to_regclass('public.employees') and not tgisinternal) and exists(select 1 from pg_trigger where tgname = 'trg_salary_revision_basic_from_policy' and tgrelid = to_regclass('public.employee_salary_revisions') and not tgisinternal) and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_employee_basic_from_policy()') and prosrc like '%R-2816%')
 -- deploy-key: r2816basicfrompolicyguard
--- 20261114112800_r2816_basic_from_policy_guard.sql
+-- 20261116211326_r2816_basic_from_policy_guard.sql
 --
 -- R-2816 (14 Nov 2026, owner OK: Pardeep 16:40 IST "haan dono pe haan", ownerDecision on R-2773) —
 -- DB guard: an empty Basic never means the whole gross again.
