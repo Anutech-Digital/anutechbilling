@@ -61,7 +61,7 @@ const STEPS: readonly { n: string; icon: LucideIcon; title: string; body: string
 
 /** "IT for your office" — the licence/hosting catalogue, email first. */
 const IT_CARDS = [
-  { name: "Business email", href: "/email", from: "₹79", unit: "from · /mailbox/mo", gst: "+ GST 18%", body: "Google Workspace, Microsoft 365, Zoho or Anutech Mail — priced side by side, migrated free.", tags: [PARTNER_BADGE.toUpperCase(), "FREE MIGRATION"], cta: "See email plans", icon: "mail" as const, img: "/googleworkspace-inbox.png" },
+  { name: "Business email", href: "/email", from: "₹79", unit: "from · /mailbox/mo", gst: "+ GST 18%", body: "Google Workspace, Microsoft 365, Zoho or Anutech Mail — priced side by side, migrated free.", tags: [PARTNER_BADGE.toUpperCase(), "FREE MIGRATION"], cta: "See email plans", icon: "mail" as const, img: "/email-card.webp" }, // owner's photo, 16 Nov 2026 (1400×788)
   // Owner, 16 Nov 2026: the home Domains card shows the laptop-and-globe domain-search photo
   // (public/domain-card.webp, 960×540); other uses of the catalogue keep /domain-search.jpg.
   ...CATALOGUE_V2.filter((c) => c.name !== "Reseller program")

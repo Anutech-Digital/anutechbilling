@@ -476,7 +476,9 @@
   /* Featured: Business email */
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) { grid-row: 1 / span 2; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-img { flex: 1 1 auto; height: auto; min-height: 300px; }
-  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-img img { object-position: left top; }
+  /* The photo is landscape in a tall frame: keep the laptop, the secured envelope and the chat
+     bubbles in view (they sit right of centre; the left third is sky). */
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-img img { object-position: 62% center; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-name { font-size: 26px; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-price span { font-size: 40px; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-body { flex: 0 0 auto; font-size: 15.5px; max-width: 420px; }
