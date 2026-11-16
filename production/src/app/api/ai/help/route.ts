@@ -164,12 +164,12 @@ ${what}` };
        refs). Flag off or any other role → the R-421 path exactly as before. */
     const v2 = helpAiV2Enabled(me?.role);
     const results: HelpToolResult[] = v2
-      ? await Promise.resolve().then(() => runHelpDataToolsV2(openHelpSession(), { tenantId, role: me?.role ?? null }, wanted)).catch((err: unknown) => {
+      ? await Promise.resolve().then(() => runHelpDataToolsV2(openHelpSession(), { userId: user.id, tenantId, role: me?.role ?? null }, wanted)).catch((err: unknown) => {
           /* A refused session / tenant reads nothing: say "could not be read" per tool, never a 500. */
           console.error("[ai/help] v2 tools refused:", (err as Error)?.message);
           return wanted.map((tool): HelpToolResult => ({ tool, ok: false, text: `${tool}: could not be read just now — try again in a minute.`, href: null, label: null }));
         })
-      : await runHelpDataTools(supabase, { tenantId, role: me?.role ?? null }, wanted);
+      : await runHelpDataTools(supabase, { userId: user.id, tenantId, role: me?.role ?? null }, wanted);
     if (v2) sources = results.flatMap((r) => r.sources ?? []);
     const second = await ask(HELP_TOOL_RESULTS_RULE, toolResultsForPrompt(results));
     /* A second call that fails still answers with the numbers — they were read already. */

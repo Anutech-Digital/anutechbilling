@@ -72,7 +72,7 @@ export interface HelpDb {
 }
 
 /** Filter methods passed through as (column, ...values) — the column is checked first. */
-const FILTERS = ["eq", "neq", "in", "is", "lt", "lte", "gt", "gte", "ilike"] as const;
+const SCALAR_FILTERS = ["eq", "neq", "lt", "lte", "gt", "gte"] as const;
 
 /** Most rows one limit() / range() may ask for (one fetchAllRows page). */
 export const HELP_READ_PAGE_MAX = 1000;
@@ -109,6 +109,85 @@ function rowIndex(table: string, what: string, n: unknown): number {
   return n;
 }
 
+/* ── R-2879 / H-01b finding 4: filter VALUES ────────────────────────────────────────────────
+   postgrest-js does not escape a double quote inside an in() value (`in("stage", ['a",b'])` was
+   sent as stage=in.("a",b") — one more list item), and not(col, "in", text) passed any text
+   through. So: a value is a plain string / number / boolean; a LIST item may also not hold
+   " ( ) , \ ; or a control character (refused, not escaped — ids and enum values never need
+   them); lists are copied item by item, so what was checked is what is sent. */
+
+/** Longest plain filter value / list item / ilike pattern, and most items in one list. */
+export const HELP_VALUE_MAX = 500;
+export const HELP_LIST_ITEM_MAX = 200;
+export const HELP_LIST_MAX = 200;
+export const HELP_PATTERN_MAX = 200;
+
+type Scalar = string | number | boolean;
+
+function hasControlChar(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+  return false;
+}
+
+/** A plain comparison value: string (bounded), finite number or boolean — never an object, array or null. */
+function filterScalar(table: string, what: string, v: unknown): Scalar {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.length <= HELP_VALUE_MAX && !hasControlChar(v)) return v;
+  throw new HelpReadRefused(`${table}: ${what}() value must be a plain string (at most ${HELP_VALUE_MAX} characters), number or true / false`);
+}
+
+function filterIs(table: string, v: unknown): null | boolean {
+  if (v === null || typeof v === "boolean") return v;
+  throw new HelpReadRefused(`${table}: is() takes only null, true or false`);
+}
+
+const LIST_UNSAFE = /["(),\\;]/;
+
+function listItem(table: string, v: unknown): Scalar {
+  const s = filterScalar(table, "in", v);
+  if (typeof s === "string" && (!s.length || s.length > HELP_LIST_ITEM_MAX || LIST_UNSAFE.test(s))) {
+    throw new HelpReadRefused(`${table}: a list value may not be empty, longer than ${HELP_LIST_ITEM_MAX} characters, or hold " ( ) , \\ ;`);
+  }
+  return s;
+}
+
+/** in(): a real array of at most HELP_LIST_MAX checked items, copied (each item is read exactly once). May be empty. */
+function filterList(table: string, values: unknown): Scalar[] {
+  if (!Array.isArray(values)) throw new HelpReadRefused(`${table}: in() takes an array of values`);
+  const out: Scalar[] = [];
+  for (const v of values) {
+    if (out.length >= HELP_LIST_MAX) throw new HelpReadRefused(`${table}: in() takes at most ${HELP_LIST_MAX} values`);
+    out.push(listItem(table, v));
+  }
+  return out;
+}
+
+/** One item of a not-in list written as text: an id, a number or an enum word — nothing else. */
+const LIST_TOKEN = /^[A-Za-z0-9_.:-]+$/;
+
+/**
+ * not(col, "in", …): an array (checked like in()) or the text "(a,b,c)" of plain tokens. Returns the
+ * text sent, or null for an empty array ("not in nothing" filters nothing out).
+ */
+function notInList(table: string, value: unknown): string | null {
+  if (Array.isArray(value)) {
+    const items = filterList(table, value);
+    return items.length ? `(${items.join(",")})` : null;
+  }
+  if (typeof value !== "string" || value.length > HELP_LIST_MAX * 40 || !value.startsWith("(") || !value.endsWith(")")) {
+    throw new HelpReadRefused(`${table}: not(…, "in", …) takes an array or "(a,b,c)"`);
+  }
+  const items = value.slice(1, -1).split(",");
+  if (items.length > HELP_LIST_MAX || items.some((t) => t.length > HELP_LIST_ITEM_MAX || !LIST_TOKEN.test(t))) {
+    throw new HelpReadRefused(`${table}: not(…, "in", …) list items must be plain ids, numbers or words`);
+  }
+  return `(${items.join(",")})`;
+}
+
 /** The postgrest builder calls the closures make — never handed to a tool. */
 type Builder = Record<string, (...a: unknown[]) => Builder> & PromiseLike<unknown>;
 
@@ -118,19 +197,41 @@ type Builder = Record<string, (...a: unknown[]) => Builder> & PromiseLike<unknow
  * url, fetch, headers or method (review M1). Each call checks its arguments and wraps the next
  * builder the same way.
  */
-function restrict<Row>(table: string, builder: Builder): HelpQuery<Row> {
-  const next = (b: Builder) => restrict<Row>(table, b);
+function restrict<Row>(table: string, builder: Builder, nothing = false): HelpQuery<Row> {
+  /* `nothing`: an in() list was empty, so no row can match — the query still checks every later
+     call, but answers with an empty result and sends no request. */
+  const next = (b: Builder, none = nothing) => restrict<Row>(table, b, none);
   const q: Record<string, unknown> = Object.create(null);
-  for (const m of FILTERS) {
+  /* R-2879: values are checked as well as columns — only plain scalars reach the builder. */
+  for (const m of SCALAR_FILTERS) {
     q[m] = (column: unknown, value: unknown) => {
       assertReadableColumn(table, column);
-      return next(builder[m](column, value));
+      return next(builder[m](column, filterScalar(table, m, value)));
     };
   }
+  q.in = (column: unknown, values: unknown) => {
+    assertReadableColumn(table, column);
+    const list = filterList(table, values);
+    return list.length ? next(builder.in(column, list)) : next(builder, true);
+  };
+  q.is = (column: unknown, value: unknown) => {
+    assertReadableColumn(table, column);
+    return next(builder.is(column, filterIs(table, value)));
+  };
+  q.ilike = (column: unknown, pattern: unknown) => {
+    assertReadableColumn(table, column);
+    if (typeof pattern !== "string" || pattern.length > HELP_PATTERN_MAX || hasControlChar(pattern)) throw new HelpReadRefused(`${table}: ilike() pattern must be a string of at most ${HELP_PATTERN_MAX} characters`);
+    return next(builder.ilike(column, pattern));
+  };
   q.not = (column: unknown, operator: unknown, value: unknown) => {
     assertReadableColumn(table, column);
     if (typeof operator !== "string" || !NOT_OPERATORS.has(operator)) throw new HelpReadRefused(`${table}: not() operator '${String(operator)}'`);
-    return next(builder.not(column, operator, value));
+    /* The reader writes the list itself — free text never becomes `not.in.(…)` (R-2879 finding 4). */
+    const checked = operator === "in" ? notInList(table, value)
+      : operator === "is" ? filterIs(table, value)
+      : filterScalar(table, `not ${operator}`, value);
+    if (operator === "in" && checked === null) return next(builder);
+    return next(builder.not(column, operator, checked));
   };
   /* Only ascending / nullsFirst — no referencedTable / foreignTable (review L5). */
   q.order = (column: unknown, options?: unknown) => {
@@ -150,7 +251,9 @@ function restrict<Row>(table: string, builder: Builder): HelpQuery<Row> {
     if (t < f) throw new HelpReadRefused(`${table}: range ${f}-${t}`);
     return next(builder.range(f, Math.min(t, f + HELP_READ_PAGE_MAX - 1)));
   };
-  q.then = (onOk?: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) => builder.then(onOk, onErr);
+  q.then = (onOk?: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) => (nothing
+    ? Promise.resolve({ success: true, error: null, data: [], count: 0, status: 200, statusText: "OK" }).then(onOk, onErr)
+    : builder.then(onOk, onErr));
   return Object.freeze(q) as unknown as HelpQuery<Row>;
 }
 
@@ -165,9 +268,11 @@ export function scopedReader(client: SupabaseClient<Database>, tenantId: string,
       assertReadableTable(table);
       const checked = assertReadableColumns(table, columns);
       const selectOpts = options ? { ...(options.count ? { count: "exact" as const } : {}), ...(options.head ? { head: true } : {}) } : undefined;
-      type Q = { eq: (c: string, v: string) => Q; abortSignal?: (s: AbortSignal) => Q };
+      type Q = { eq: (c: string, v: string) => Q; limit: (n: number) => Q; abortSignal?: (s: AbortSignal) => Q };
+      /* R-2879 (finding 7 of R-2774): every read asks for at most HELP_READ_PAGE_MAX rows even
+         when the tool forgets limit() / range() — those only replace this with something smaller. */
       let q = (client.from(table) as unknown as { select: (c: string, o?: object) => Q })
-        .select(checked, selectOpts).eq("tenant_id", tenantId);
+        .select(checked, selectOpts).eq("tenant_id", tenantId).limit(HELP_READ_PAGE_MAX);
       /* Aborted when the runner's timeout fires, so a slow read does not keep paging. */
       if (opts.signal && typeof q.abortSignal === "function") q = q.abortSignal(opts.signal);
       return restrict<Row>(table, q as unknown as Builder);

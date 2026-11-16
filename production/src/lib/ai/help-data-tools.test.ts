@@ -12,6 +12,8 @@ import {
 } from "./help-data-tools";
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
+/** R-2879: the signed-in person — every tool call is counted for them. */
+const U = "11111111-0000-4000-8000-00000000000a";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
 /** 7 Oct 2026, 10:00 IST */
 const NOW = new Date("2026-10-07T04:30:00Z");
@@ -78,7 +80,7 @@ function fakeClient(tables: Record<string, Row[]>, opts: { failTable?: string } 
 
 const one = async (tables: Record<string, Row[]>, tool: Parameters<typeof runHelpDataTools>[2][number], role = "owner") => {
   const f = fakeClient(tables);
-  const [r] = await runHelpDataTools(f.client, { tenantId: A, role, now: NOW }, [tool]);
+  const [r] = await runHelpDataTools(f.client, { userId: U, tenantId: A, role, now: NOW }, [tool]);
   return { r, log: f.log };
 };
 
@@ -175,7 +177,7 @@ describe("todays_followups / open_quotes / leads_by_stage", () => {
 describe("role gate", () => {
   it("a role that cannot open the page gets 'not allowed' and nothing is read", async () => {
     const f = fakeClient({ subscriptions: [{ id: "1", tenant_id: A, status: "active", mrr: 100 }] });
-    const res = await runHelpDataTools(f.client, { tenantId: A, role: "sales", now: NOW }, ["active_subscriptions", "overdue_invoices"]);
+    const res = await runHelpDataTools(f.client, { userId: U, tenantId: A, role: "sales", now: NOW }, ["active_subscriptions", "overdue_invoices"]);
     expect(res.map((r) => r.ok)).toEqual([false, false]);
     expect(res[0].text).toContain(NOT_ALLOWED);
     expect(res[0].href).toBeNull();
@@ -198,7 +200,7 @@ describe("failures and plumbing", () => {
   it("a failed read is reported, never thrown", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const f = fakeClient({}, { failTable: "invoices" });
-    const [r] = await runHelpDataTools(f.client, { tenantId: A, role: "owner", now: NOW }, ["overdue_invoices"]);
+    const [r] = await runHelpDataTools(f.client, { userId: U, tenantId: A, role: "owner", now: NOW }, ["overdue_invoices"]);
     expect(r.ok).toBe(false);
     expect(r.text).toContain("could not be read");
     err.mockRestore();

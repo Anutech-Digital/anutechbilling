@@ -24,9 +24,11 @@ import type { HelpAction, HelpAnswer } from "@/lib/ai/app-help";
 import { isUserRole } from "@/lib/auth/roles";
 import { canOpenRoute } from "@/lib/nav";
 import { DATA_TOOLS } from "@/lib/ai/help-tools/data-tools";
-import { runHelpTools, runOneTool, HELP_NOT_ALLOWED } from "@/lib/ai/help-tools/runner";
+import { runHelpTools, runOneTool, HELP_NOT_ALLOWED, HELP_RATE_LIMITED } from "@/lib/ai/help-tools/runner";
 import type { HelpSession } from "@/lib/ai/help-tools/session";
 import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
+import { helpToolRateOk } from "@/lib/ai/help-tools/limits";
+import { wrapUntrusted, newUntrustedId, cleanHelpBlock, HELP_UNTRUSTED_RULE } from "@/lib/ai/help-tools/untrusted";
 
 type Client = SupabaseClient<Database>;
 type OpenAction = Extract<HelpAction, { kind: "open" }>;
@@ -98,15 +100,21 @@ export function parseToolRequest(raw: unknown): HelpDataToolName[] {
   return out;
 }
 
-/** Run the requested tools with the person's own client. Never throws. */
+/**
+ * Run the requested tools with the person's own client. Never throws.
+ * R-2879: `userId` (the signed-in person, from the route's session) counts EVERY call — also one
+ * refused for the role — against the same per-person tool limit as the registry path; over it, or
+ * with no user id, nothing is read.
+ */
 export async function runHelpDataTools(
   client: Client,
-  ctx: { tenantId: string; role: string | null | undefined; now?: Date },
+  ctx: { userId: string; tenantId: string; role: string | null | undefined; now?: Date },
   names: readonly HelpDataToolName[],
 ): Promise<HelpToolResult[]> {
   const now = ctx.now ?? new Date();
   return Promise.all(names.slice(0, HELP_TOOLS_MAX).map(async (tool): Promise<HelpToolResult> => {
     const def = TOOLS[tool];
+    if (!helpToolRateOk(ctx.userId)) return { tool, ok: false, text: `${tool}: ${HELP_RATE_LIMITED}.`, href: null, label: null };
     if (!helpToolAllowed(ctx.role, tool)) return { tool, ok: false, text: `${tool}: ${NOT_ALLOWED}.`, href: null, label: null };
     if (!isUserRole(ctx.role)) return { tool, ok: false, text: `${tool}: ${NOT_ALLOWED}.`, href: null, label: null };
     /* R-2774: same checked runner as the registry path (tenant-scoped reader, strict input,
@@ -123,7 +131,7 @@ export async function runHelpDataTools(
  */
 export async function runHelpDataToolsV2(
   session: HelpSession,
-  ctx: { tenantId: string; role: string | null | undefined; now?: Date },
+  ctx: { userId: string; tenantId: string; role: string | null | undefined; now?: Date },
   names: readonly HelpDataToolName[],
 ): Promise<HelpToolResult[]> {
   const list = names.slice(0, HELP_TOOLS_MAX);
@@ -149,11 +157,31 @@ export function helpDataToolsPrompt(): string {
 
 /** The second-pass rule: answer from the results, number first. */
 export const HELP_TOOL_RESULTS_RULE =
-  "DATA TOOL RESULTS are in the message: live numbers just read with the person's own login. Answer from them ONLY: the number first, then at most one short line. Do not ask for tools again and do not send them to a page instead of the number. If a result says '" + NOT_ALLOWED + "', say plainly that their role cannot see that number. Copy ₹ amounts exactly as written (Indian grouping). Add one action {\"kind\":\"open\"} to the link given with each result.";
+  "DATA TOOL RESULTS are in the message: live numbers just read with the person's own login. Answer from them ONLY: the number first, then at most one short line. Do not ask for tools again and do not send them to a page instead of the number. If a result says '" + NOT_ALLOWED + "', say plainly that their role cannot see that number. Copy ₹ amounts exactly as written (Indian grouping). Add one action {\"kind\":\"open\"} to the link given with each result. " + HELP_UNTRUSTED_RULE;
 
-/** The results as one block for the model's user turn. */
+/** The route's user turn keeps at most 4,000 characters of tool results (helpUserTurn) — the block must fit whole. */
+export const HELP_TOOL_RESULTS_MAX = 3900;
+
+/**
+ * The results as one block for the model's user turn — both paths (R-421 and HELP_AI_V2).
+ * R-2879 (L6): per result, the app's own line (`[tool] (link: …)`) stays OUTSIDE and the tool's
+ * text — which can hold names and notes typed by anyone — goes INSIDE the UNTRUSTED DATA markers
+ * (one one-time id for the request, body cleaned so it cannot hold a marker). A refusal ("not
+ * allowed for your role") is the app's own sentence and stays outside too. Everything is cut to
+ * fit HELP_TOOL_RESULTS_MAX with every end marker kept: each text gets an equal share, and if
+ * there are far too many results, whole results are dropped from the end. HELP_TOOL_RESULTS_RULE
+ * tells the model that what is inside the markers is data, never instructions.
+ */
 export function toolResultsForPrompt(results: readonly HelpToolResult[]): string {
-  return results.map((r) => `[${r.tool}]${r.href ? ` (link: ${r.href})` : ""}\n${r.text}`).join("\n\n");
+  const id = newUntrustedId();
+  const head = (r: HelpToolResult) => `[${r.tool}]${r.ok && r.href ? ` (link: ${r.href})` : ""}`;
+  const refusal = (r: HelpToolResult) => `${head(r)} ${cleanHelpBlock(r.text, 300).replace(/\n/g, " ")}`;
+  const fixed = results.reduce((n, r) => n + (r.ok ? head(r).length + 3 : refusal(r).length + 2), 0);
+  const okCount = results.filter((r) => r.ok).length;
+  const share = Math.floor((HELP_TOOL_RESULTS_MAX - fixed) / Math.max(1, okCount));
+  const parts = results.map((r) => (r.ok ? `${head(r)}\n${wrapUntrusted(r.text, { max: share, nonce: id })}` : refusal(r)));
+  while (parts.length > 1 && parts.join("\n\n").length > HELP_TOOL_RESULTS_MAX) parts.pop();
+  return parts.join("\n\n");
 }
 
 /** The link buttons for these results — open actions to the page each number came from. */

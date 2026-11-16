@@ -14,6 +14,8 @@ type Filter = [string, string, unknown];
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
+/** R-2879: the signed-in person's id — the runner needs it for the per-user tool limit. */
+const U = "11111111-0000-4000-8000-00000000000a";
 const NOW = new Date("2026-10-07T04:30:00Z");
 
 /** A JWT-shaped key with this role claim (not a real key). */
@@ -96,7 +98,7 @@ const subs: Row[] = [
 describe("session: own login only", () => {
   it("openHelpSession uses the cookie client; the runner reads through it", async () => {
     const { s, log } = session({ subscriptions: subs });
-    const [r] = await runHelpTools(s, { tenantId: A, role: "owner", now: NOW }, [{ name: "active_subscriptions" }]);
+    const [r] = await runHelpTools(s, { userId: U, tenantId: A, role: "owner", now: NOW }, [{ name: "active_subscriptions" }]);
     expect(r.ok).toBe(true);
     expect(r.text).toBe("Active subscriptions: 2. MRR: ₹3,50,000 a month.");
     expect(log.length).toBeGreaterThan(0);
@@ -120,15 +122,15 @@ describe("session: own login only", () => {
 
   it("a session object not made by openHelpSession is refused before any read", async () => {
     const forged = Object.freeze(Object.create(null)) as Parameters<typeof runHelpTools>[0];
-    await expect(runHelpTools(forged, { tenantId: A, role: "owner" }, [{ name: "active_subscriptions" }])).rejects.toThrow(HelpSessionRefused);
+    await expect(runHelpTools(forged, { userId: U, tenantId: A, role: "owner" }, [{ name: "active_subscriptions" }])).rejects.toThrow(HelpSessionRefused);
     const client = fakeClient({}).client;
-    await expect(runHelpTools(client as never, { tenantId: A, role: "owner" }, [{ name: "active_subscriptions" }])).rejects.toThrow(HelpSessionRefused);
+    await expect(runHelpTools(client as never, { userId: U, tenantId: A, role: "owner" }, [{ name: "active_subscriptions" }])).rejects.toThrow(HelpSessionRefused);
     expect(() => sessionClient({} as never)).toThrow(HelpSessionRefused);
   });
 
   it("no tenant → nothing runs", async () => {
     const { s, log } = session({ subscriptions: subs });
-    await expect(runHelpTools(s, { tenantId: "", role: "owner" }, [{ name: "active_subscriptions" }])).rejects.toThrow(HelpReadRefused);
+    await expect(runHelpTools(s, { userId: U, tenantId: "", role: "owner" }, [{ name: "active_subscriptions" }])).rejects.toThrow(HelpReadRefused);
     expect(log).toHaveLength(0);
   });
 });
@@ -288,7 +290,7 @@ describe("runner rules", () => {
   it("role fail-closed: unknown/none/non-owner role → not allowed, nothing read", async () => {
     for (const role of [null, undefined, "hacker", "sales", "manager", "accountant"]) {
       const { s, log } = session({ subscriptions: subs });
-      const [r] = await runHelpTools(s, { tenantId: A, role }, [{ name: "active_subscriptions" }]);
+      const [r] = await runHelpTools(s, { userId: U, tenantId: A, role }, [{ name: "active_subscriptions" }]);
       expect(r.ok, String(role)).toBe(false);
       expect(r.refusal).toBe("not_allowed");
       expect(log).toHaveLength(0);
@@ -299,7 +301,7 @@ describe("runner rules", () => {
 
   it("unknown tool, extra input keys, wrong types → refused, nothing read", async () => {
     const { s, log } = session({ subscriptions: subs });
-    const res = await runHelpTools(s, { tenantId: A, role: "owner" }, [
+    const res = await runHelpTools(s, { userId: U, tenantId: A, role: "owner" }, [
       { name: "drop_table" },
       { name: "active_subscriptions", input: { tenant_id: B } },
       { name: "active_subscriptions", input: "x" },
@@ -321,7 +323,7 @@ describe("runner rules", () => {
   it("rows are cut to the cap with 'showing N of M'; a source ref is always there", async () => {
     const { s } = session({});
     const reg = buildRegistry([tool(), tool({ name: "test_rows_cap5", maxRows: 5 })]);
-    const [a, b, c] = await runHelpTools(s, { tenantId: A, role: "owner" }, [
+    const [a, b, c] = await runHelpTools(s, { userId: U, tenantId: A, role: "owner" }, [
       { name: "test_rows", input: { n: 120 } }, { name: "test_rows_cap5", input: { n: 9 } }, { name: "test_rows", input: { n: 3 } },
     ], reg);
     expect(a.rows).toHaveLength(50);
@@ -354,7 +356,7 @@ describe("runner rules", () => {
     ]);
     aborts.length = 0;
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const res = await runHelpTools(s, { tenantId: A, role: "owner" },
+    const res = await runHelpTools(s, { userId: U, tenantId: A, role: "owner" },
       ["t_confirm", "t_safe", "t_bad", "t_throw", "t_slow"].map((name) => ({ name, input: { n: 1 } })), reg, { timeoutMs: 20 });
     err.mockRestore();
     expect(res.map((r) => r.refusal)).toEqual(["tier_not_enabled", "tier_not_enabled", "bad_output", "failed", "timeout"]);
@@ -366,7 +368,7 @@ describe("runner rules", () => {
 
   it(`more than ${HELP_CALLS_MAX} calls in one go → the extra ones are refused`, async () => {
     const { s } = session({ subscriptions: subs });
-    const res = await runHelpTools(s, { tenantId: A, role: "owner" }, Array.from({ length: HELP_CALLS_MAX + 2 }, () => ({ name: "leads_by_stage" })));
+    const res = await runHelpTools(s, { userId: U, tenantId: A, role: "owner" }, Array.from({ length: HELP_CALLS_MAX + 2 }, () => ({ name: "leads_by_stage" })));
     expect(res.slice(HELP_CALLS_MAX).map((r) => r.refusal)).toEqual(["too_many_calls", "too_many_calls"]);
   });
 });
@@ -387,10 +389,10 @@ describe("the 6 R-421 tools on the registry", () => {
 
   it("same text as the old path for every tool, tenant-filtered, with sources", async () => {
     const legacy = fakeClient(tables);
-    const old = await runHelpDataTools(legacy.client as never, { tenantId: A, role: "owner", now: NOW }, HELP_DATA_TOOL_NAMES.slice(0, 3));
-    const old2 = await runHelpDataTools(legacy.client as never, { tenantId: A, role: "owner", now: NOW }, HELP_DATA_TOOL_NAMES.slice(3));
+    const old = await runHelpDataTools(legacy.client as never, { userId: U, tenantId: A, role: "owner", now: NOW }, HELP_DATA_TOOL_NAMES.slice(0, 3));
+    const old2 = await runHelpDataTools(legacy.client as never, { userId: U, tenantId: A, role: "owner", now: NOW }, HELP_DATA_TOOL_NAMES.slice(3));
     const { s, log } = session(tables);
-    const v2 = await runHelpTools(s, { tenantId: A, role: "owner", now: NOW }, HELP_DATA_TOOL_NAMES.map((name) => ({ name })));
+    const v2 = await runHelpTools(s, { userId: U, tenantId: A, role: "owner", now: NOW }, HELP_DATA_TOOL_NAMES.map((name) => ({ name })));
     expect(v2.map((r) => r.text)).toEqual([...old, ...old2].map((r) => r.text));
     expect(v2.every((r) => r.ok && r.sources.length > 0)).toBe(true);
     expect(v2.map((r) => r.text).join("\n")).not.toMatch(/OtherCo|Other\b|9,99,999/);
@@ -406,9 +408,9 @@ describe("the 6 R-421 tools on the registry", () => {
 
   it("runHelpDataToolsV2 keeps the R-421 shape and the 'not allowed' wording", async () => {
     const { s } = session(tables);
-    const [ok] = await runHelpDataToolsV2(s, { tenantId: A, role: "owner", now: NOW }, ["open_quotes"]);
+    const [ok] = await runHelpDataToolsV2(s, { userId: U, tenantId: A, role: "owner", now: NOW }, ["open_quotes"]);
     expect(ok).toMatchObject({ tool: "open_quotes", ok: true, href: "/quotes", label: "Open Quotes" });
-    const [no] = await runHelpDataToolsV2(s, { tenantId: A, role: "sales", now: NOW }, ["todays_followups"]);
+    const [no] = await runHelpDataToolsV2(s, { userId: U, tenantId: A, role: "sales", now: NOW }, ["todays_followups"]);
     expect(no).toMatchObject({ ok: false, text: "todays_followups: not allowed for your role.", href: null });
   });
 
