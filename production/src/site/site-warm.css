@@ -212,56 +212,63 @@
 .anutech-site[data-site-theme="warm"] .hc .hc-form :is(input, textarea):focus { outline: 3px solid var(--w-marigold); outline-offset: 1px; border-color: var(--w-teal); }
 .anutech-site[data-site-theme="warm"] .hc .hc-form .hc-btn { width: 100%; }
 
-/* ── Automation: intro + photo on the left, the six jobs as a 2×3 card grid on the right ──
-   The intro column used to leave a tall empty gap beside a floating photo, and the jobs were
-   bare ruled rows; now both columns carry weight and each job reads as one card. */
-/* The soft mint glow behind the cards is part of the band's own background — a positioned
-   pseudo-element poking past the edge made the band scrollable sideways (scrollIntoView /
-   find-in-page shifted it 150px even under overflow:hidden). */
+/* ── Automation — as the design draws it (canvas artboard Main, "Office automation") ────────
+   Intro (eyebrow, heading, line; 12px apart) beside a 16:10 photo (max 480px), then the six jobs
+   as ruled rows three across (8px × 40px), icon chip left of each. Chips: mint/teal on 1-3-5,
+   marigold-soft on 2-4, solid marigold on the sixth (AI). Hover: the chip tips (scale 1.1, -6deg).
+   The photo drops under the intro where the design's flex row wraps (~860px). */
 .anutech-site[data-site-theme="warm"] .hc #software {
-  background: radial-gradient(circle at 88% 12%, var(--w-mint-soft), transparent 42%), var(--w-surface);
-  border: 0; padding-block: clamp(40px, 5vw, 76px);
+  --sw-amber-ink: #9A6200;
+  background: var(--w-surface); border: 0; padding-block: clamp(30px, 3.84vw, 54px);
 }
+/* Rows: 1fr | eyebrow | heading | line | 1fr | jobs — the outer 1fr rows centre the intro block
+   beside the photo (which spans 1–5) and keep its three lines 12px apart, as the design's flex
+   column does, however tall the photo is. */
 .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap {
-  display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.18fr); column-gap: clamp(32px, 4.5vw, 64px);
-  grid-template-rows: auto auto auto 1fr; align-items: start;
+  display: grid; grid-template-columns: minmax(0, 760px) minmax(0, 480px); justify-content: space-between;
+  grid-template-rows: 1fr auto auto auto 1fr auto; column-gap: 40px; row-gap: 12px; align-items: start;
 }
-.anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > :not(ul) { grid-column: 1; }
-.anutech-site[data-site-theme="warm"] .hc #software .hc-h2 { margin: 12px 0 0; }
-.anutech-site[data-site-theme="warm"] .hc #software .hc-sub { margin: 18px 0 0; line-height: 1.65; }
+.anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > :not(ul) { grid-column: 1; margin: 0; }
+.anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > .hc-eyebrow { grid-row: 2; }
+.anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > .hc-h2 { grid-row: 3; }
+.anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > .hc-sub { grid-row: 4; }
 .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap::after {
-  content: ""; grid-column: 1; grid-row: 4; align-self: start; width: 100%; aspect-ratio: 4 / 3; margin-top: 32px;
+  content: ""; grid-column: 2; grid-row: 1 / span 5; align-self: center; width: 100%; aspect-ratio: 16 / 10;
   background: url(/site/warm/6964da8db4221a1b70da13bf31e10eff.jpg) 65% center / cover no-repeat;
   border-radius: 24px; box-shadow: 0 24px 60px rgba(18,49,42,0.16);
 }
 .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 {
-  grid-column: 2; grid-row: 1 / span 4; align-self: center;
-  grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0;
+  grid-column: 1 / -1; grid-row: 6; margin: 23px 0 0; /* + the 12px row gap = the design's 35px */
+  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 40px;
 }
 .anutech-site[data-site-theme="warm"] .hc #software .hc-tile {
-  display: flex; flex-direction: column; gap: 8px; height: 100%;
-  background: var(--w-bg); border: 1px solid var(--w-line); border-radius: var(--w-radius-card); box-shadow: none;
-  padding: 24px 22px 22px;
+  background: transparent; border: 0; border-top: 1px solid var(--w-line); border-radius: 0; box-shadow: none;
+  padding: 22px 0 6px; display: grid; grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: auto 1fr;
+  column-gap: 16px; row-gap: 6px; align-items: start; /* rows stretch to their neighbour: the slack goes under the text */
 }
-.anutech-site[data-site-theme="warm"] .hc #software .hc-tile .hc-ico {
-  width: 48px; height: 48px; border-radius: 14px; margin: 0 0 8px; background: var(--w-mint); color: var(--w-teal);
-}
-/* Alternate the chips teal / marigold so the grid does not read as one flat block. */
-.anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 li:nth-child(4n+2) .hc-ico,
-.anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 li:nth-child(4n+3) .hc-ico { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
-.anutech-site[data-site-theme="warm"] .hc #software .hc-tile b {
-  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; color: var(--w-ink);
-}
-.anutech-site[data-site-theme="warm"] .hc #software .hc-tile span:last-child { font-size: 15px; line-height: 1.6; color: var(--w-muted); }
 .anutech-site[data-site-theme="warm"] .hc #software .hc-tile:hover { transform: none; box-shadow: none; }
-/* Hover lift — mouse devices only, and never for visitors who asked for reduced motion. */
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-tile { transition: opacity .55s ease, transform .25s ease, box-shadow .25s ease, background-color .25s ease, border-color .25s ease; }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-tile .hc-ico { transition: background-color .25s ease, color .25s ease; }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-tile:hover {
-    transform: translateY(-4px); background: var(--w-surface); border-color: var(--w-line-strong); box-shadow: var(--w-shadow);
-  }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 li.hc-tile:hover .hc-ico { background: var(--w-teal); color: var(--w-on-teal); }
+.anutech-site[data-site-theme="warm"] .hc #software .hc-tile .hc-ico {
+  grid-row: 1 / span 2; width: 44px; height: 44px; border-radius: 12px; margin: 0; background: var(--w-mint); color: var(--w-teal);
+}
+.anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 li:nth-child(even) .hc-ico { background: var(--w-marigold-soft); color: var(--sw-amber-ink); }
+.anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 li:nth-child(6) .hc-ico { background: var(--w-marigold); color: var(--w-on-marigold); }
+.anutech-site[data-site-theme="warm"] .hc #software .hc-tile b {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 18px; font-weight: 700; letter-spacing: normal; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] .hc #software .hc-tile span:last-child { font-size: 15.5px; line-height: 1.5; color: var(--w-muted); }
+@media (prefers-reduced-motion: no-preference) {
+  .anutech-site[data-site-theme="warm"] .hc #software .hc-tile .hc-ico { transition: transform .25s ease; }
+  .anutech-site[data-site-theme="warm"] .hc #software .hc-tile:hover .hc-ico { transform: scale(1.1) rotate(-6deg); }
+}
+@media (max-width: 1000px) {
+  .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  /* The design's flex row wraps here: photo under the intro, left-aligned, up to 480px. */
+  .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > :is(.hc-eyebrow, .hc-h2, .hc-sub) { grid-row: auto; }
+  .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap::after { grid-column: 1; grid-row: auto; max-width: 480px; margin-top: 11px; }
+  .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 { grid-row: auto; order: 1; } /* after the photo (::after is last in the DOM) */
 }
 
 /* ── Proof: mint band, a wide photo on top, then the text beside the list ──────────────── */
@@ -372,10 +379,7 @@
   .anutech-site[data-site-theme="warm"] .hc .hc-hero-text { padding-bottom: 0; }
   .anutech-site[data-site-theme="warm"] .hc .hc-hero-form { justify-self: stretch; max-width: none; padding-bottom: 40px; }
   .anutech-site[data-site-theme="warm"] .hc .hc-hero-visual { max-width: 640px; padding-top: 32px; }
-  /* One column: intro → photo → cards (2 across; 1 below 560px). */
-  .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
-  .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap::after { grid-column: 1; grid-row: auto; align-self: auto; aspect-ratio: 16 / 9; margin-top: 24px; }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 { grid-column: 1; grid-row: auto; order: 1; margin-top: 24px; }  .anutech-site[data-site-theme="warm"] .hc .hc-proof { grid-template-columns: minmax(0, 1fr); }
+  .anutech-site[data-site-theme="warm"] .hc .hc-proof { grid-template-columns: minmax(0, 1fr); }
   .anutech-site[data-site-theme="warm"] .hc .hc-proof > * { grid-row: auto; }
 }
 @media (max-width: 640px) {
@@ -383,15 +387,9 @@
   .anutech-site[data-site-theme="warm"] .hc .hc-hero .hc-eyebrow { align-self: center; }
   .anutech-site[data-site-theme="warm"] .hc :is(.hc-ticks, .hc-actions) { justify-content: center; }
   .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap > :is(.hc-eyebrow, .hc-h2, .hc-sub) { text-align: center; }
-  /* Phone: one column, icon beside the title so six cards do not become a 2,000px scroll. */
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-tile {
-    display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 14px; row-gap: 4px; align-items: start; padding: 18px;
-  }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-tile .hc-ico { grid-row: 1 / span 2; width: 44px; height: 44px; border-radius: 12px; margin: 0; }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-tile b { align-self: center; min-height: 0; }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 li:nth-child(n) .hc-ico { background: var(--w-mint); color: var(--w-teal); }
-  .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 li:nth-child(even) .hc-ico { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
+  /* Design ≤640px: intro centred (above), rows one per line and still left-aligned, photo full width. */
+  .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 { grid-template-columns: minmax(0, 1fr); }
+  .anutech-site[data-site-theme="warm"] .hc #software > .hc-wrap::after { max-width: none; }
   .anutech-site[data-site-theme="warm"] .hc .hc-final-in .hc-btn { width: 100%; }
 }
 
@@ -451,6 +449,7 @@
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] svg [stroke="#1668E3"] { stroke: #5ED0B3; }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] svg [fill="#1668E3"] { fill: #5ED0B3; }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hc :is(.hc-card, .hc-tile) { background: var(--w-surface); }
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hc #software { --sw-amber-ink: var(--w-marigold-ink); }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] :is(.pk-win, .pk-float) { background: var(--w-surface); }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] :is(.pk-green, .pk-float-ico) { background: var(--w-mint); }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { border-bottom-color: #3F6157; }
@@ -510,6 +509,7 @@
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] svg [stroke="#1668E3"] { stroke: #5ED0B3; }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] svg [fill="#1668E3"] { fill: #5ED0B3; }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hc :is(.hc-card, .hc-tile) { background: var(--w-surface); }
+  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hc #software { --sw-amber-ink: var(--w-marigold-ink); }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] :is(.pk-win, .pk-float) { background: var(--w-surface); }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] :is(.pk-green, .pk-float-ico) { background: var(--w-mint); }
   :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { border-bottom-color: #3F6157; }
