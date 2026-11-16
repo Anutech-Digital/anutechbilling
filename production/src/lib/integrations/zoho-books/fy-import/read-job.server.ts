@@ -10,6 +10,8 @@ import { dropZohoAccessToken, readConnection, zohoAccessToken, type ZohoCaller }
 import { zohoReceiptFacts } from "../receipts-import/normalise";
 import { runBackgroundRead, type PassResult, type ZohoAccess } from "./background-read";
 import { supabaseBgStore } from "./bg-store";
+import { releaseZohoReader, takeZohoReader, tenantDayMeter } from "../day-calls-store";
+import { zohoFyReaderName } from "../zoho-day-budget";
 import { supabaseScanStore, type FyImportDb } from "./store";
 import type { ScanFacts } from "./scan";
 
@@ -37,6 +39,7 @@ export async function companyReadPass(
   const toFacts = BACKGROUND_READ_KINDS[kind];
   if (!toFacts) return null;
   const db = admin as unknown as FyImportDb;
+  const readerName = zohoFyReaderName(kind === "customerpayments" ? "receipts" : kind === "invoices" ? "sales" : "purchase", fy);
   return runBackgroundRead({
     store: supabaseScanStore(db, tenantId, kind),
     bg: supabaseBgStore(db, tenantId, kind),
@@ -44,5 +47,12 @@ export async function companyReadPass(
     access: zohoAccessFor(admin, tenantId),
     budgetMs: opts.budgetMs,
     requireRequest: opts.requireRequest,
+    /* R-2661: stop before Zoho's daily limit; the cron makes no call while the day is spent. */
+    dayBudget: tenantDayMeter(admin, tenantId),
+    /* R-2661: one Zoho reader at a time per company (the cron too) — the lease on the day row. */
+    reader: {
+      take: (untilMs) => takeZohoReader(admin, tenantId, readerName, untilMs),
+      release: () => releaseZohoReader(admin, tenantId, readerName),
+    },
   });
 }

@@ -16,6 +16,16 @@
  *     run (bg_pace) and the next pass — cron or dialog — starts from them;
  *   - Zoho busy / rate limit (429) → the pass stops, a full minute is marked as used (the next pass
  *     waits it out), the request stays;
+ *   - R-2661: the company's Zoho DAY budget (zoho-day-budget.ts) is checked before every step and
+ *     bounds each step's calls; used up → outcome "day-limit": no Zoho call is made, the saved page /
+ *     pending details stay exactly where they are, bg_error says "Zoho calls today: N of N … carries
+ *     on after 12:00 am IST on <date>", and the REQUEST STAYS — the next day's first pass (cron) carries
+ *     on from there (no re-list, no detail read twice); a cron tick while spent writes nothing new;
+ *   - R-2661: one Zoho reader at a time per company — after the run's own lease the pass takes the
+ *     company's READER lease (`reader`); another read holds it → outcome "other-reader": no Zoho call,
+ *     bg_error names the running read, the REQUEST STAYS (the cron carries on once that read is done).
+ *     The pass renews it with every step and ALWAYS lets it go when it ends (finally — also after an
+ *     error); a pass that died leaves a lease that runs out by itself;
  *   - access token (R-1757 cache) asked for before every step, so one that expires mid-run is
  *     re-minted; a 401 drops it and retries once; a second 401 in a row stops with "reconnect";
  *   - Zoho down / slow / network / token endpoint busy (5xx, network, token_error) → kept, retried;
@@ -25,9 +35,11 @@
  * Zoho is only READ. Nothing is imported here — Check + Import stay the owner's buttons (R-2501).
  * The store (bg-store.ts) filters every read / write by tenant + kind + FY (CLAUDE.md §17c).
  */
-import { ZohoApiError } from "../api";
+import { isZohoDayLimit, ZohoApiError } from "../api";
 import { FY_CALLS_PER_REQUEST } from "../config";
 import type { FyReadKind, ZohoFyDocDetail } from "../fy-fetch";
+import type { DayMeter } from "../zoho-day-budget";
+import { zohoDayLimitMessage, zohoReaderBusyMessage } from "../zoho-limit";
 import { PACE_WINDOW_MS, ZOHO_CALLS_PER_MIN, type PaceEntry } from "../zoho-pace";
 import { scanStep, type ScanFacts, type ScanStore } from "./scan";
 
@@ -68,7 +80,7 @@ export type ZohoAccess =
   | { orgId: string; token: () => Promise<string>; dropToken: () => Promise<void> }
   | { error: string };
 
-export type PassOutcome = "complete" | "busy" | "time" | "stopped" | "retry" | "locked" | "lost" | "not-requested";
+export type PassOutcome = "complete" | "busy" | "time" | "stopped" | "retry" | "locked" | "lost" | "not-requested" | "day-limit" | "other-reader";
 
 export interface PassResult { outcome: PassOutcome; listed: number; detailed: number; calls: number; error: string | null }
 
@@ -87,6 +99,11 @@ export interface PassDeps<F extends ScanFacts> {
   /** Only run a pass when the read was asked for (cron). The dialog's own pass asks first. */
   requireRequest?: boolean;
   log?: (msg: string) => void;
+  /** R-2661: the company's Zoho day budget — checked before every step; absent = no day limit (tests). */
+  dayBudget?: Pick<DayMeter, "check" | "remaining">;
+  /** R-2661: the company's one-reader lease — take(untilMs) answers null (ours) or the holder's name;
+   *  release() never throws. Absent = no reader lock (tests). */
+  reader?: { take(untilMs: number): Promise<string | null>; release(): Promise<void> };
 }
 
 /** Zoho trouble that passes by itself (down, slow, network, token endpoint busy): retry, keep the request. */
@@ -112,9 +129,32 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
   const before = await d.bg.readBg(d.fy);
   if (d.requireRequest !== false && !before?.requestedAt) return counted("not-requested", 0, before?.error ?? null);
   const start = now();
+  /* R-2661: the day's budget is used — no Zoho call, no lease churn: say so once (bg_error) and keep the
+     request, so the next IST day's first pass carries on from the saved page / pending details. */
+  const spentNow = d.dayBudget ? await d.dayBudget.check(start) : null;
+  if (spentNow) {
+    const msg = zohoDayLimitMessage(spentNow, start);
+    if (before?.error === msg && !before.leaseUntil) return counted("day-limit", 0, msg);
+    const until = start + 1_000;
+    if (!(await d.bg.takeLease(d.fy, until, start))) return counted("locked", 0, null);
+    await d.bg.release(d.fy, { finished: false, error: msg, nowMs: now(), leaseUntilMs: until, pace: recentPace(before?.pace, start) });
+    return counted("day-limit", 0, msg);
+  }
   const deadline = start + Math.max(1_000, d.budgetMs);
   let lease = start + Math.max(1_000, d.budgetMs) + LEASE_EXTRA_MS;
   if (!(await d.bg.takeLease(d.fy, lease, start))) return counted("locked", 0, null);
+  /* R-2661: one Zoho reader at a time. AFTER the run's own lease (only the pass that holds the run can
+     hold — and let go of — this read's name), BEFORE any Zoho call. Another read is running → say which
+     (bg_error), keep the request, give the run back at once. */
+  if (d.reader) {
+    let holder: string | null = null;
+    try { holder = await d.reader.take(lease); } catch (e) { log(`[zoho-fy-read] reader lease: ${(e as Error)?.message ?? e}`); }
+    if (holder) {
+      const msg = zohoReaderBusyMessage(holder);
+      await d.bg.release(d.fy, { finished: false, error: msg, nowMs: now(), leaseUntilMs: lease, pace: recentPace(before?.pace, start) });
+      return counted("other-reader", 0, msg);
+    }
+  }
 
   let calls = 0;
   let outcome: PassOutcome = "time";
@@ -129,11 +169,15 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
     } else {
       let retried401 = false;
       while (now() < deadline) {
+        /* R-2661: never a step the day budget cannot pay for — and never more calls than are left today. */
+        const spent = d.dayBudget ? await d.dayBudget.check(now()) : null;
+        if (spent) { outcome = "day-limit"; error = zohoDayLimitMessage(spent, now()); break; }
+        const leftToday = d.dayBudget ? await d.dayBudget.remaining(now()) : Number.MAX_SAFE_INTEGER;
         let r;
         try {
           const token = await z.token();
           /* Fewer calls near the deadline, so the last step ends close to it. */
-          const maxCalls = Math.max(1, Math.min(FY_CALLS_PER_REQUEST, Math.floor((deadline - now()) / 1_000)));
+          const maxCalls = Math.max(1, Math.min(FY_CALLS_PER_REQUEST, Math.floor((deadline - now()) / 1_000), leftToday));
           r = await scanStep(d.store, d.kind, d.toFacts, z.orgId, token, d.fy,
             { history, maxCalls, now: d.now, sleep: d.sleep }, d.fetch ?? fetch);
         } catch (e) {
@@ -152,12 +196,18 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
         const next = t + LEASE_EXTRA_MS;
         if (!(await d.bg.touch(d.fy, { nowMs: t, pace: recentPace(history, t), fromMs: lease, toMs: next }))) { lost = true; outcome = "lost"; break; }
         lease = next;
+        /* R-2661: the reader lease goes on with the run's (a refusal here cannot happen while ours is fresh). */
+        if (d.reader) await d.reader.take(lease).catch(() => null);
         if (r.complete) { outcome = "complete"; finished = true; break; }
         if (r.busy) { outcome = "busy"; break; }
       }
     }
   } catch (e) {
-    if (e instanceof ZohoApiError && !isTransientZoho(e)) {
+    if (isZohoDayLimit(e)) {
+      /* R-2661: the meter refused the next call (none was made): the request stays; the next IST day's
+         first pass carries on from the saved page / pending details. */
+      outcome = "day-limit"; error = e.message;
+    } else if (e instanceof ZohoApiError && !isTransientZoho(e)) {
       /* The owner must act (reconnect, scope, Zoho refused): stop the read with the reason. */
       outcome = "stopped"; finished = true;
       error = e.status === 401 || e.code === "reconnect" ? RECONNECT_MESSAGE : (e.message || "Zoho Books refused the read.").slice(0, 400);
@@ -175,6 +225,8 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
       }
     }
   } finally {
+    /* R-2661: the reader lease is let go whatever happened (done, time, busy, day limit, error, lost). */
+    if (d.reader) await d.reader.release().catch(() => {});
     if (!lost) await d.bg.release(d.fy, { finished, error, nowMs: now(), leaseUntilMs: lease, pace: recentPace(history, now()) });
   }
   return counted(outcome, calls, error);
