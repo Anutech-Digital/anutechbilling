@@ -138,6 +138,10 @@ describe("site-warm.css never hides page content", () => {
      below"). Nothing is lost — the same pages are in the drawer (nav "Mobile"), and the test below
      fails if the drawer button is not shown in that same range. */
   const HEADER_MENUS = '.anutech-site[data-site-theme="warm"] > header .hdr-row > nav[aria-label="Main"]';
+  /* Two decorations of the home's ResellerOS drawing (ProductPeek, aria-hidden — its caption is
+     the text alternative): the grey placeholder bars and the pulsing dot, which the design does
+     not draw. No words, no meaning. */
+  const PEEK_DECOR = ['.anutech-site[data-site-theme="warm"] .hc .pk-skel', '.anutech-site[data-site-theme="warm"] .hc .pk-dot'];
 
   it("only ::before / ::after are ever hidden", () => {
     const offenders = rules
@@ -147,8 +151,20 @@ describe("site-warm.css never hides page content", () => {
       // The theme's OWN controls (class prefix .w-, e.g. .w-to-top's "hidden until you scroll")
       // are not page content; anything else hidden is.
       .filter((s) => !/\.w-[a-z0-9-]+(\[[^\]]*\])*\s*$/.test(s))
-      .filter((s) => s !== HEADER_MENUS);
+      .filter((s) => s !== HEADER_MENUS)
+      .filter((s) => !PEEK_DECOR.includes(s));
     expect(offenders).toEqual([]);
+  });
+
+  it("the ProductPeek decorations it hides are inside the aria-hidden drawing and carry no words", () => {
+    const src = readFileSync(path.join(root, "src/site/components/home/ProductPeek.tsx"), "utf8");
+    expect(src).toMatch(/<div className="pk-win" aria-hidden="true">/);
+    // empty elements only: <span className="pk-skel" /> and <span className="pk-dot" />
+    for (const cls of ["pk-skel", "pk-dot"]) {
+      const tags = [...src.matchAll(new RegExp(`<span className="${cls}[^"]*"[^>]*?(/?)>`, "g"))];
+      expect(tags.length).toBeGreaterThan(0);
+      for (const t of tags) expect(t[1]).toBe("/");
+    }
   });
 
   it("the header menus are hidden only at 980–1339px, and only with the drawer button shown there", () => {

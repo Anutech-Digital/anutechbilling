@@ -175,6 +175,84 @@
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-visual::before {
   content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: var(--w-bg);
 }
+
+/* ── ResellerOS "Today" preview (ProductPeek) — as the design draws it (artboard Main,
+   "ResellerOS preview"): a white window with 24px corners, a grey title bar with traffic-light
+   dots, a forest sidebar with a solid teal "Today", soft grey rows with colour-coded type tags
+   (no placeholder bars), a marigold "✓ Quote → GST invoice" pill on the bottom-right corner, and
+   the caption centred. The drawing is aria-hidden (the caption is its text alternative). */
+.anutech-site[data-site-theme="warm"] .hc .pk { max-width: 1100px; margin: 0 auto; }
+.anutech-site[data-site-theme="warm"] .hc .pk-win {
+  background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 24px;
+  box-shadow: 0 30px 70px rgba(18, 49, 42, 0.10);
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-bar {
+  gap: 8px; padding: 12px 18px; background: #EEF2EE; border-bottom: 1px solid var(--w-line); border-radius: 24px 24px 0 0;
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-bar i { width: 11px; height: 11px; }
+.anutech-site[data-site-theme="warm"] .hc .pk-bar i:nth-of-type(1) { background: #E9A89B; }
+.anutech-site[data-site-theme="warm"] .hc .pk-bar i:nth-of-type(2) { background: #F4D27A; }
+.anutech-site[data-site-theme="warm"] .hc .pk-bar i:nth-of-type(3) { background: #9FD3B5; }
+.anutech-site[data-site-theme="warm"] .hc .pk-url {
+  margin-left: 12px; padding: 0; border: 0; background: none; border-radius: 0;
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--w-muted);
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-body { grid-template-columns: 220px minmax(0, 1fr); min-height: 0; }
+.anutech-site[data-site-theme="warm"] .hc .pk-menu {
+  background: var(--w-forest); color: var(--w-on-forest); border-right: 0; border-radius: 0 0 0 24px;
+  padding: 20px 14px; gap: 4px;
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-menu li { font-size: 14px; font-weight: 500; color: var(--w-on-forest); padding: 9px 12px; border-radius: 10px; }
+.anutech-site[data-site-theme="warm"] .hc .pk-menu li.on { background: var(--w-teal); color: #FFFFFF; font-weight: 500; }
+.anutech-site[data-site-theme="warm"] .hc .pk-main { padding: 24px 28px; }
+.anutech-site[data-site-theme="warm"] .hc .pk-head { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 0; margin-bottom: 12px; }
+.anutech-site[data-site-theme="warm"] .hc .pk-head b {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif; font-size: 22px; font-weight: 700; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-live {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 14px; letter-spacing: 0; text-transform: none; color: var(--w-muted-2);
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-rows { gap: 12px; }
+.anutech-site[data-site-theme="warm"] .hc .pk-rows li {
+  grid-template-columns: auto minmax(0, 1fr); gap: 14px; padding: 14px 16px; border: 0; border-radius: 14px; background: var(--w-bg);
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-tag {
+  min-width: 64px; box-sizing: border-box; padding: 3px 10px; border-radius: 8px;
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: none;
+}
+/* One colour per type, in PEEK_ROWS order: Lead, Quote, Invoice, Renewal, Banking. */
+.anutech-site[data-site-theme="warm"] .hc .pk-rows li:nth-child(1) .pk-tag { background: #DCEFE8; color: #0A4F44; }
+.anutech-site[data-site-theme="warm"] .hc .pk-rows li:nth-child(2) .pk-tag { background: #FDF1D6; color: #7A4B00; }
+.anutech-site[data-site-theme="warm"] .hc .pk-rows li:nth-child(3) .pk-tag { background: #E1ECFA; color: #1E4B8F; }
+.anutech-site[data-site-theme="warm"] .hc .pk-rows li:nth-child(4) .pk-tag { background: #FBE5D8; color: #8A3B12; }
+.anutech-site[data-site-theme="warm"] .hc .pk-rows li:nth-child(5) .pk-tag { background: #ECE8FA; color: #4A3A8C; }
+.anutech-site[data-site-theme="warm"] .hc .pk-text { font-size: 15px; color: var(--w-ink); }
+/* The design has no grey placeholder bars and no pulsing dot (decoration only — allowed by name
+   in site-warm-scope.test.ts). */
+.anutech-site[data-site-theme="warm"] .hc .pk-skel,
+.anutech-site[data-site-theme="warm"] .hc .pk-dot { display: none; }
+.anutech-site[data-site-theme="warm"] .hc .pk-float {
+  right: 24px; bottom: -18px; gap: 6px; padding: 8px 18px; border: 0; border-radius: 999px;
+  background: var(--w-marigold); color: var(--w-on-marigold); box-shadow: 0 8px 20px rgba(18, 49, 42, 0.15); animation: none;
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-float b { font-size: 14px; font-weight: 700; color: var(--w-on-marigold); }
+.anutech-site[data-site-theme="warm"] .hc .pk-float-ico {
+  width: auto; height: auto; border-radius: 0; background: none; color: var(--w-on-marigold); font-size: 14px; font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] .hc .pk-cap { margin-top: 28px; text-align: center; font-size: 14px; color: var(--w-muted-2); }
+/* Phone (design ≤640px): the sidebar becomes one scrolling strip with every entry. */
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] .hc .pk-body { grid-template-columns: minmax(0, 1fr); }
+  .anutech-site[data-site-theme="warm"] .hc .pk-menu {
+    flex-direction: row; overflow-x: auto; white-space: nowrap; padding: 10px; border-radius: 0; border-bottom: 0;
+  }
+  .anutech-site[data-site-theme="warm"] .hc .pk-menu li { flex: none; overflow: visible; text-overflow: clip; }
+  .anutech-site[data-site-theme="warm"] .hc .pk-menu li:nth-child(n+4) { display: block; }
+  .anutech-site[data-site-theme="warm"] .hc .pk-main { padding: 20px 16px 28px; }
+  .anutech-site[data-site-theme="warm"] .hc .pk-rows li { grid-template-columns: auto minmax(0, 1fr); }
+  .anutech-site[data-site-theme="warm"] .hc .pk-float { position: absolute; right: 16px; bottom: -18px; margin: 0; }
+  .anutech-site[data-site-theme="warm"] .hc .pk-cap { margin-top: 30px; }
+}
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-text { padding-top: 16px; padding-bottom: 54px; display: flex; flex-direction: column; gap: 22px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-text > * { margin: 0; }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero .hc-eyebrow {
