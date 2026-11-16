@@ -89,6 +89,9 @@
    (it holds nothing focusable, so Tab order is unchanged). */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer {
   background: var(--w-surface); border-top: 1px solid var(--w-line); margin-top: 0; color: var(--w-muted);
+  /* above the page band of /about, /privacy, /terms (.prose-resellersos::before reaches 100px below the
+     text): it painted over the footer's top padding, so the links sat on the footer's top edge */
+  position: relative; z-index: 1;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div {
   max-width: 1240px; padding: clamp(24px, 3vw, 36px) clamp(16px, 4vw, 24px);
