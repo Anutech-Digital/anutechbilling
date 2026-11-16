@@ -111,6 +111,7 @@ import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/c
 import { type RenewalStage, type StageKey } from "@/lib/renewals/stage";
 import { StageFlagLine } from "./stage-flag";
 import { RenewalQuoteLine } from "./row-quote";
+import { useRowQuotePeek } from "./quote-peek-dialog";
 import { dueCellFacts } from "./due-anchor";
 import { AmountTableCell, CustomerCell, ProductCell, DueCell, HistoryButton, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
@@ -354,6 +355,8 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
   const table = useTableLayout();
   /* R-2764: 50 rows, then "Show N more" (the parent remounts this per tab / tile, so it starts at 50 again). */
   const [limit, setLimit] = React.useState(QUEUE_PAGE_ROWS);
+  /* R-2866: the quote number opens a pop-up here; its hover lists the quote's products (ONE read for the rows on screen) */
+  const quotePeek = useRowQuotePeek(firstRows(rows, limit).shown, canQuotes);
   if (rows.length === 0) {
     return (
       <div className="py-10 text-center text-sm text-ink-3">
@@ -547,7 +550,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   <td className="min-w-0 px-1.5 py-1.5 leading-[1.125rem]"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
                   <td className="min-w-0 px-1.5 py-1.5 leading-[1.125rem]">
                     <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} period={item.period} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null}
-                      quoteLine={<RenewalQuoteLine docs={item.docs} stage={stage} loading={docsState.loading || (!stage && !docsState.failed)} failed={docsState.failed} canQuotes={canQuotes} todayIst={todayIst} />} />
+                      quoteLine={<RenewalQuoteLine docs={item.docs} stage={stage} loading={docsState.loading || (!stage && !docsState.failed)} failed={docsState.failed} canQuotes={canQuotes} todayIst={todayIst} lines={quotePeek.linesOf} onPeek={quotePeek.open} linesFailed={quotePeek.failed} />} />
                   </td>
                   <td className="px-1.5 py-1.5"><DueCell date={dueOf(item).date} days={dueOf(item).days} title={dueOf(item).title} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-1.5 py-1.5 text-right">
@@ -572,6 +575,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
       </div>
       )}
       {showMore}
+      {quotePeek.dialog}
     </>
   );
 }
