@@ -508,8 +508,60 @@
 .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller a:hover { color: var(--w-teal-dark); text-decoration: underline; }
 
 /* ── Facts: white band ─────────────────────────────────────────────────────────────────── */
-.anutech-site[data-site-theme="warm"] .hc .hc-band:has(.hc-facts) { background: var(--w-surface); border-color: var(--w-line); }
-.anutech-site[data-site-theme="warm"] .hc .hc-facts .hc-fact-ico { display: flex; margin: 0 auto 10px; background: var(--w-mint); border: 0; color: var(--w-teal); }
+/* Owner, 16 Nov 2026: "Improve this section design. Something good." The four facts were loose
+   centred words on a white band with tiny mono labels. Now one forest card on the ground, edges on
+   the navbar's content edges: four stats split by hairlines, each an icon tile (marigold on glass)
+   beside its figure (white, heading font) and its label (plain text, soft mint). Same words. */
+.anutech-site[data-site-theme="warm"] .hc .hc-band:has(.hc-facts) { background: transparent; border: 0; padding-block: clamp(8px, 1vw, 16px) clamp(36px, 4vw, 56px); }
+.anutech-site[data-site-theme="warm"] .hc .hc-band > .hc-wrap.hc-facts {
+  position: relative; isolation: isolate; overflow: hidden;
+  max-width: var(--w-card); box-sizing: border-box; margin-inline: auto;
+  padding: clamp(24px, 2.6vw, 34px) clamp(20px, 2.6vw, 36px);
+  background: radial-gradient(120% 140% at 0% 0%, #1A4A3F 0%, var(--w-forest) 55%, #0E2822 100%);
+  border-radius: 24px; box-shadow: 0 24px 60px -30px rgba(18, 49, 42, 0.55);
+  grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; text-align: left;
+}
+/* a soft marigold glow in the far corner */
+.anutech-site[data-site-theme="warm"] .hc .hc-band > .hc-wrap.hc-facts::after {
+  content: ""; position: absolute; z-index: -1; right: -120px; bottom: -160px; width: 360px; height: 360px; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(244, 183, 64, 0.18), rgba(244, 183, 64, 0));
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-facts > div {
+  display: grid; grid-template-columns: 46px minmax(0, 1fr); column-gap: 14px; align-content: center; align-items: center;
+  padding: 6px clamp(14px, 1.5vw, 22px);
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-facts > div + div { border-left: 1px solid rgba(255, 255, 255, 0.12); }
+.anutech-site[data-site-theme="warm"] .hc .hc-facts > div:first-child { padding-left: 0; }
+.anutech-site[data-site-theme="warm"] .hc .hc-facts > div:last-child { padding-right: 0; }
+.anutech-site[data-site-theme="warm"] .hc .hc-facts .hc-fact-ico {
+  grid-row: 1 / span 2; display: flex; width: 46px; height: 46px; margin: 0; border-radius: 14px;
+  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.14); color: var(--w-marigold);
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-facts b {
+  grid-column: 2; align-self: end; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif;
+  font-size: clamp(16px, 1.3vw, 20px); font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; color: #FFFFFF;
+  overflow-wrap: normal; /* never split a word (the GSTIN broke as "…H1 / ZP") */
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-facts span:not(.hc-fact-ico) {
+  grid-column: 2; align-self: start; margin-top: 3px; font-family: var(--font-site-body), "Inter", sans-serif;
+  font-size: 13.5px; letter-spacing: 0; text-transform: none; color: #B5CBC2;
+}
+/* Under 1100px: two by two (four across left the GSTIN too little room at 1000px), hairlines
+   between the columns and the rows. */
+@media (max-width: 1099px) {
+  .anutech-site[data-site-theme="warm"] .hc .hc-band > .hc-wrap.hc-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .anutech-site[data-site-theme="warm"] .hc .hc-facts > div { padding: 16px 20px; border-left: 0 !important; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-facts > div:nth-child(even) { border-left: 1px solid rgba(255, 255, 255, 0.12) !important; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-facts > div:nth-child(n+3) { border-top: 1px solid rgba(255, 255, 255, 0.12); }
+  .anutech-site[data-site-theme="warm"] .hc .hc-facts > div:nth-child(odd) { padding-left: 0; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-facts > div:nth-child(even) { padding-right: 0; }
+}
+/* Phone: one column, hairlines between the rows. */
+@media (max-width: 560px) {
+  .anutech-site[data-site-theme="warm"] .hc .hc-band > .hc-wrap.hc-facts { grid-template-columns: minmax(0, 1fr); }
+  .anutech-site[data-site-theme="warm"] .hc .hc-facts > div { padding: 14px 0 !important; border-left: 0 !important; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-facts > div + div { border-top: 1px solid rgba(255, 255, 255, 0.12); }
+}
 
 /* ── FAQ: white band, 860px column, bolder questions ───────────────────────────────────── */
 .anutech-site[data-site-theme="warm"] .hc .hc-faq { position: relative; isolation: isolate; max-width: 860px; padding-block: clamp(30px, 3.84vw, 54px); }
