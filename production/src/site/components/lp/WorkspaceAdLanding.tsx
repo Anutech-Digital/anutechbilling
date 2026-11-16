@@ -26,6 +26,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
+import "@/site/motion.css";
 import { WHATSAPP_NUMBER, WHATSAPP_READY, COMPANY } from "@/site/lib/config";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { pickAdParams, withAdParams, rememberLanding } from "@/site/lib/ad-attribution";
@@ -373,7 +374,7 @@ export function WorkspaceAdLanding({
           <h3 className="gw-h3">{t.faq.h3}</h3>
           <div className="gw-faq">
             {faqs.map(([q, a]) => (
-              <details key={q} className="gw-card"><summary>{q}</summary><p>{a}</p></details>
+              <details key={q} className="gw-card s-details"><summary>{q}</summary><p>{a}</p></details>
             ))}
           </div>
         </section>

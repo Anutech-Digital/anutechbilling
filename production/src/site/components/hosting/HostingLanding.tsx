@@ -21,6 +21,7 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Collapse } from "@/site/components/ui/Collapse";
 import {
   CircleCheck, Database, EyeOff, FileText, IndianRupee, List, Lock, MessageCircle, ShieldCheck, Tag, User, Wrench, Zap,
   type LucideIcon,
@@ -546,7 +547,7 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
                   {f.q}
                   <span style={{ fontFamily: MONO, fontSize: 20, color: C.accent, flexShrink: 0 }}>{openFaq === i ? "−" : "+"}</span>
                 </button>
-                {openFaq === i && <p style={{ padding: "0 40px 24px 4px", fontSize: 16, lineHeight: 1.62, color: C.ink2, textWrap: "pretty" } as React.CSSProperties}>{f.a}</p>}
+                <Collapse open={openFaq === i}><p style={{ padding: "0 40px 24px 4px", margin: 0, fontSize: 16, lineHeight: 1.62, color: C.ink2, textWrap: "pretty" } as React.CSSProperties}>{f.a}</p></Collapse>
               </div>
             ))}
           </div>

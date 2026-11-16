@@ -21,6 +21,7 @@ import {
   MonitorPlay, Phone, ReceiptIndianRupee, Rocket, Server, ShieldCheck, Sparkles, Target, Users,
 } from "lucide-react";
 import Link from "@/site/components/ui/SiteLink";
+import { Collapse } from "@/site/components/ui/Collapse";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { reportLeadConversion } from "@/site/lib/google-ads";
 import { WHATSAPP_URL, WHATSAPP_READY, COMPANY, PARTNER_BADGE, PARTNER_SHORT, SHOW_PREMIER_PARTNER } from "@/site/lib/config";
@@ -217,7 +218,7 @@ export function HomeCompany({ emailFrom, domainTeaser }: { emailFrom?: number; d
               <button type="button" onClick={() => setOpenFaq(open ? -1 : i)} aria-expanded={open}>
                 <span>{f.q}</span><span aria-hidden>{open ? "−" : "+"}</span>
               </button>
-              {open && <p>{f.a}</p>}
+              <Collapse open={open}><p>{f.a}</p></Collapse>
             </div>
           );
         })}

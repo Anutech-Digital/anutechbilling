@@ -1,0 +1,67 @@
+/**
+ * Shared motion for the public website (both themes): one easing and one length for anything that
+ * opens and closes, so FAQs and notices glide instead of snapping (owner, 16 Nov 2026: "animation
+ * of toggling and overall animation … can be smoothed out").
+ *
+ *  - .s-collapse  — the React <Collapse> (components/ui/Collapse.tsx): the panel stays in the page
+ *    and its height animates both ways (grid rows 0fr ↔ 1fr), the text fading in just behind it.
+ *  - .s-details   — a native <details>: its content's height animates where the browser can
+ *    (::details-content + interpolate-size); elsewhere it opens at once, exactly as before.
+ *  - in-page links (#start, #faq…) scroll smoothly on website pages.
+ *
+ * Loaded by the website layouts ((marketing), (product), WarmScope) and by each component that
+ * uses .s-collapse / .s-details, so it is there wherever those render.
+ *
+ * Visitors who ask for reduced motion get no movement at all.
+ */
+:root {
+  --s-ease: cubic-bezier(0.22, 0.61, 0.36, 1); /* fast start, soft landing */
+  --s-open: 280ms;
+}
+
+/* ── <Collapse> ─────────────────────────────────────────────────────────────────────────────── */
+.s-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--s-open) var(--s-ease);
+}
+.s-collapse[data-open] { grid-template-rows: 1fr; }
+.s-collapse > .s-collapse-in {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 180ms ease, transform var(--s-open) var(--s-ease);
+}
+.s-collapse[data-open] > .s-collapse-in {
+  opacity: 1;
+  transform: none;
+  transition: opacity 220ms ease 60ms, transform var(--s-open) var(--s-ease);
+}
+
+/* ── <details class="s-details"> ────────────────────────────────────────────────────────────── */
+@supports (interpolate-size: allow-keywords) {
+  .s-details { interpolate-size: allow-keywords; }
+  .s-details::details-content {
+    block-size: 0;
+    overflow: clip;
+    opacity: 0;
+    transition: block-size var(--s-open) var(--s-ease), opacity 200ms ease, content-visibility var(--s-open) allow-discrete;
+  }
+  .s-details[open]::details-content { block-size: auto; opacity: 1; }
+}
+
+/* ── In-page links glide instead of jumping (website pages only — the app has no .anutech-site /
+   .anutech-product / .w-scope wrapper), landing below the sticky header rather than under it. */
+html:has(.anutech-site, .anutech-product, .w-scope) {
+  scroll-behavior: smooth;
+  scroll-padding-top: 84px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.anutech-site, .anutech-product, .w-scope) { scroll-behavior: auto; }
+  .s-collapse,
+  .s-collapse > .s-collapse-in,
+  .s-details::details-content { transition: none !important; }
+  .s-collapse > .s-collapse-in { transform: none; }
+}

@@ -8,6 +8,7 @@ import { Icon } from "@/components/ui/icon";
 import { SLA } from "@/site/lib/config";
 import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
 import React from "react";
+import "@/site/motion.css";
 
 /* ───────────────────────────────────────────────────────────────
    Hero
@@ -374,7 +375,7 @@ export function PricingFAQ({ faqItems }: { faqItems: FaqItem[] }) {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.3, delay: i * 0.05 }}
-            className="group rounded-lg border border-hairline/80 bg-paper px-5 py-4 shadow-sm hover:shadow-md transition-shadow [&_summary::-webkit-details-marker]:hidden"
+            className="s-details group rounded-lg border border-hairline/80 bg-paper px-5 py-4 shadow-sm hover:shadow-md transition-shadow [&_summary::-webkit-details-marker]:hidden"
           >
             <summary className="flex cursor-pointer items-start justify-between gap-4 font-serif text-base tracking-tight text-ink hover:text-amber-ink transition-colors">
               <span>{item.q}</span>
@@ -385,8 +386,9 @@ export function PricingFAQ({ faqItems }: { faqItems: FaqItem[] }) {
                 />
               </span>
             </summary>
-            {/* We use standard CSS animation for details open since Framer Motion doesn't work out of the box with <details> unless we rebuild an accordion component */}
-            <div className="overflow-hidden animate-accordion-down">
+            {/* Opens and closes smoothly via .s-details (src/site/motion.css). The old Tailwind
+                accordion keyframe here needed a Radix height variable this page never set. */}
+            <div>
               <p
                 className="mt-4 text-sm leading-relaxed text-ink-2 pt-3 border-t border-hairline/40"
                 dangerouslySetInnerHTML={{ __html: item.a }}

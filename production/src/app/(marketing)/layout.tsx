@@ -18,6 +18,7 @@ import { archivoSans as archivo, plexMono, siteWarmBody, siteWarmHeading } from 
 import "@/site/site.css";
 import "@/site/site-warm.css";
 import "@/site/warm-only.css";
+import "@/site/motion.css";
 /* Warm theme, one file per page group (only match under data-site-theme="warm"). */
 import "@/site/warm/chrome.css";
 import "@/site/warm/email.css";

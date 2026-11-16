@@ -15,6 +15,7 @@
  */
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "@/site/components/ui/SiteLink";
+import "@/site/motion.css";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS, offerPercentOff } from "@/site/lib/workspace-offer";
 import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-policy";
@@ -324,7 +325,7 @@ export function WorkspacePricing({ plans, head, intro }: {
       <section className="wp-faq" data-avoid-floating="" aria-labelledby="wp-faq-h">
         <h2 id="wp-faq-h">Questions about pricing</h2>
         {FAQ.map(([qq, a]) => (
-          <details key={qq}><summary>{qq}</summary><p>{a}</p></details>
+          <details key={qq} className="s-details"><summary>{qq}</summary><p>{a}</p></details>
         ))}
       </section>
     </div>

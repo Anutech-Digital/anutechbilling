@@ -13,6 +13,7 @@ import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { AFTER_PAY_STEPS } from "./plans";
 import { stateName, whatsappHref, type BuyBrand, type BuyContact } from "./brand";
 import { TenantLogo } from "./tenant-logo";
+import { Collapse } from "@/site/components/ui/Collapse";
 
 const H2 = "font-serif font-normal text-[clamp(30px,3.6vw,42px)] leading-[1.1]";
 
@@ -127,7 +128,7 @@ export function Faq({ brand }: { brand: BuyBrand | null }) {
                 >
                   <span>{f.q}</span><span aria-hidden className="text-xl text-ink-3 shrink-0">{isOpen ? "−" : "+"}</span>
                 </button>
-                {isOpen && <p id={`${base}-${i}`} className="px-5 pb-5 m-0 text-[15px] text-ink-2 leading-relaxed">{f.a}</p>}
+                <Collapse open={isOpen}><p id={`${base}-${i}`} className="px-5 pb-5 m-0 text-[15px] text-ink-2 leading-relaxed">{f.a}</p></Collapse>
               </div>
             );
           })}

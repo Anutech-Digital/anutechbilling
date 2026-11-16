@@ -13,6 +13,7 @@ import { getWebsiteTheme } from "@/lib/website-theme.server";
 import "@/site/warm/product.css";
 import "@/site/warm/whatsapp.css";
 import "@/site/warm-only.css";
+import "@/site/motion.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(PRODUCT_ORIGIN),

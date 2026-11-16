@@ -19,6 +19,7 @@ import {
   ADULT_OR_BUSINESS_LINE, DATA_NOTICE, MARKETING_OPT_IN_HINT, MARKETING_OPT_IN_LABEL,
   PRIVACY_GRIEVANCE_HREF, PRIVACY_POLICY_HREF, PRIVACY_RIGHTS_HREF, type DataNoticePurpose,
 } from "@/lib/consent/data-notice";
+import "@/site/motion.css";
 
 export interface DataNoticeProps {
   purpose: DataNoticePurpose;
@@ -65,7 +66,7 @@ export function DataNotice({ purpose, optIn, onOptIn, adultLine, idPrefix = "dn"
           <b>How we use your data:</b> we collect {n.collects} {n.use}. <Links />
         </p>
       ) : (
-        <details data-testid="data-notice-details" style={{ margin: 0 }}>
+        <details data-testid="data-notice-details" className="s-details" style={{ margin: 0 }}>
           <summary style={{ display: "list-item", fontWeight: 600, cursor: "pointer", width: "fit-content", padding: "2px 0" }}>
             How we use your data
           </summary>

@@ -37,6 +37,7 @@
  * default-on hosting selection legitimate.
  */
 import { useEffect, useMemo, useState } from "react";
+import { Collapse } from "@/site/components/ui/Collapse";
 import {
   ArrowRight, EyeOff, Forward, Globe, Layers, Link2, Lock, Mail, Receipt, RefreshCw, Scale, Search, Server,
   ShieldCheck, Signpost, Wrench, Zap, type LucideIcon,
@@ -590,7 +591,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
                   <span style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em", color: open ? C.accent : C.ink }}>{f.q}</span>
                   <span style={{ fontFamily: MONO, fontSize: 19, color: C.accent }}>{open ? "−" : "+"}</span>
                 </button>
-                {open && <p style={{ fontSize: 15, lineHeight: 1.65, color: C.ink2, padding: "0 40px 20px 0", margin: 0 }}>{f.a}</p>}
+                <Collapse open={open}><p style={{ fontSize: 15, lineHeight: 1.65, color: C.ink2, padding: "0 40px 20px 0", margin: 0 }}>{f.a}</p></Collapse>
               </div>
             );
           })}

@@ -25,6 +25,7 @@ import { mobileDigits } from "./form-state";
 import { licences } from "./plans-step";
 import type { Intent, MobileTier } from "./url-state";
 import type { Billing } from "../_parts/plans";
+import { Collapse } from "@/site/components/ui/Collapse";
 
 export type SheetKind = "help" | "quote" | "trial";
 
@@ -80,7 +81,7 @@ export function HelpSheet({ brand, contact, onClose, onQuote }: { brand: BuyBran
               className="w-full min-h-12 px-3.5 py-2.5 flex justify-between items-center gap-3 text-left text-[15px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-[12px]">
               {q}<span aria-hidden className="text-ink-3">{open === i ? "−" : "+"}</span>
             </button>
-            {open === i && <p className="px-3.5 pb-3 text-sm text-ink-2 m-0">{a}</p>}
+            <Collapse open={open === i}><p className="px-3.5 pb-3 text-sm text-ink-2 m-0">{a}</p></Collapse>
           </div>
         ))}
       </div>

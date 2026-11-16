@@ -41,6 +41,7 @@ import { HOME_FAQS } from "@/site/lib/data/home-faqs";
 import { MAIL_OPTIONS } from "@/site/lib/data/copy";
 import { MAIL_RATES } from "@/site/lib/data/catalog";
 import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-policy";
+import { Collapse } from "@/site/components/ui/Collapse";
 
 /* Warm theme only (class w-only, hidden on Classic by warm-only.css): the icon chip at the top of
    each edition card in the design (artboard Email) — mail, folder, shield, by card position.
@@ -670,7 +671,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                 <span style={{ fontSize: 16.5, fontWeight: 600, color: open ? C.blue : C.ink }}>{f.q}</span>
                 <span style={{ fontFamily: MONO, fontSize: 19, color: C.blue }}>{open ? "−" : "+"}</span>
               </button>
-              {open && <p style={{ fontSize: 15, lineHeight: 1.6, color: C.body, padding: "0 0 20px", margin: 0 }}>{f.a}</p>}
+              <Collapse open={open}><p style={{ fontSize: 15, lineHeight: 1.6, color: C.body, padding: "0 0 20px", margin: 0 }}>{f.a}</p></Collapse>
             </div>
           );
         })}

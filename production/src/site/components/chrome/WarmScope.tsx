@@ -15,6 +15,7 @@ import { websiteTenantId } from "@/lib/website-tenant";
 import { getWebsiteTheme } from "@/lib/website-theme.server";
 import { WarmSiteChrome } from "@/site/components/chrome/WarmSiteChrome";
 import "@/site/warm-only.css";
+import "@/site/motion.css";
 import "@/site/site-warm.css";
 // One file per page group, each scoped under .w-scope[data-site-theme="warm"] (site-warm-scope.test.ts).
 import "@/site/warm/extra-checkout.css";
