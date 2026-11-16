@@ -746,8 +746,13 @@
    stays the page's own (inline), so "Down" still reads red and "Operational" green.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section:first-child { padding: clamp(22px, 2.88vw, 40px) 0 clamp(25px, 3.2vw, 45px); }
+/* Content box = the footer's (1240px, 24px sides), so the title, banner and service list line up
+   with the CTA band and footer below — it was a 948px column (owner, 16 Nov 2026: "too narrow"). */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap {
-  max-width: 948px !important; display: flex; flex-direction: column;
+  max-width: 1240px !important; display: flex; flex-direction: column;
+}
+@media (min-width: 980px) {
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap { padding-left: 24px; padding-right: 24px; }
 }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > h1 {
   order: 1; margin: 0 0 14px !important; font-size: clamp(2.4rem, 5vw, 3.06rem); line-height: 1.06; color: var(--w-ink);
