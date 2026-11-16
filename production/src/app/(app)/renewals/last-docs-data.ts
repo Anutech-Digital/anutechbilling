@@ -32,9 +32,6 @@ import {
 
 type SubRef = LastDocsInput["subs"][number];
 
-/** PostgREST `in.(…)` list — quoted so a comma or dot never splits an id. */
-const inList = (ids: readonly string[]) => `(${ids.map((x) => `"${x.replace(/["\\]/g, "")}"`).join(",")})`;
-
 const QUOTE_COLS = "id, status, payment_status, created_at, created_date, expires_date, invoice_id, renewal_subscription_id, add_seats_subscription_id, subscription_billing_id, superseded_by, revision_of, amount, currency, exchange_rate";
 /** R-2830: the part proformas also carry their lines — a together proforma names every member's part there (same query, no read per row). */
 const PART_COLS = `${QUOTE_COLS}, line_items`;
@@ -59,7 +56,7 @@ export function useRenewalLastDocs(subs: readonly SubRef[]) {
     enabled: rows.length > 0,
     staleTime: 60_000,
     /* R-2765: rounds 1–2 come from the ONE shared read (Last paid uses the same rows) */
-    queryFn: async () => docsFromRows(rows, await fetchRenewalDocRows(qc, rows)),
+    queryFn: async () => docsFromRows(rows, await fetchRenewalDocRows(qc, rows), { concurrency: RENEWALS_READ_CONCURRENCY }),   // R-2855: round 3 side by side too
   });
 }
 
@@ -72,6 +69,8 @@ export function useRenewalLastDocs(subs: readonly SubRef[]) {
  */
 /** R-2765: id chunks in flight at once per read on the Renewals page (browser → PostgREST). */
 export const RENEWALS_READ_CONCURRENCY = 4;
+/** R-2855: subscription ids per "quotes linked to these subscriptions" request — one id list in the URL (~6k chars; 8k is the proxy's limit). */
+const VIA_SUB_CHUNK = 150;
 
 /** What rounds 1–2 read from each subscription. */
 export interface DocRowRef { id: string; quote_id: string | null; renewal_quote_id: string | null }
@@ -129,13 +128,21 @@ export async function readRenewalDocRows(
   const subIds = rows.map((s) => s.id);
   const ownQuoteIds = [...new Set(rows.flatMap((s) => [s.quote_id, s.renewal_quote_id]).filter((x): x is string => !!x))];
 
-  const [viaSub, own, billings] = await Promise.all([
+  /* R-2855: the quotes linked by subscription id are two plain .in() reads (renewal / add-seats), side by side.
+     One .or() put the id list in the URL twice, so only 60 ids fit a request (R-2841: 100 ids = ~8.2k chars, local
+     Kong answers 414 → whole column "Couldn't load") — staging's 786 subscriptions = 14 requests, 4 trips before
+     round 2 could start. Now 150 ids a request (~6k chars, well under the limit) = 2 trips. Same rows: the two
+     answers joined, a quote linked both ways kept once, in id order as before. */
+  const viaSubBy = (col: "renewal_subscription_id" | "add_seats_subscription_id") =>
     fetchAllRowsIn<DocQuote, string>(subIds, (run, from, to) => loose
       .from("quotes")
       .select(QUOTE_COLS)
-      .or(`renewal_subscription_id.in.${inList(run)},add_seats_subscription_id.in.${inList(run)}`)
+      .in(col, run)
       .order("id", { ascending: true })
-      .range(from, to), { chunkSize: 60, ...c }),   // the id list is in the URL twice — R-2841: 100 ids = ~8.2k chars, local Kong answers 414 (no CORS) → whole column "Couldn't load"
+      .range(from, to), { chunkSize: VIA_SUB_CHUNK, ...c });
+  const [viaRenewal, viaSeats, own, billings] = await Promise.all([
+    viaSubBy("renewal_subscription_id"),
+    viaSubBy("add_seats_subscription_id"),
     fetchAllRowsIn<DocQuote, string>(ownQuoteIds, (run, from, to) => loose
       .from("quotes")
       .select(QUOTE_COLS)
@@ -149,6 +156,8 @@ export async function readRenewalDocRows(
       .order("id", { ascending: true })
       .range(from, to), c),
   ]);
+  const viaSub = [...new Map([...viaRenewal, ...viaSeats].map((q) => [q.id, q])).values()]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   /* R-2740 drawer: the other revisions of these quotes (drawer-data.ts readRevisions) join round 1. */
   const more = opts.moreQuotes ? await opts.moreQuotes([...viaSub, ...own], QUOTE_COLS) : [];
   const round1 = [...viaSub, ...own, ...more];
@@ -182,8 +191,14 @@ export async function readRenewalDocRows(
 }
 
 /** R-2765: the rows' documents from rounds 1–2, then round 3 (only for what the rows show). */
-export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, opts: { all?: boolean } = {}): Promise<Map<string, LastDocs>> {
+export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, opts: { all?: boolean; concurrency?: number } = {}): Promise<Map<string, LastDocs>> {
   const supabase = createClient();
+  /* R-2855: round 3 read its id chunks one after another (R-2765 only did rounds 1–2) — on staging's 786
+     subscriptions that was 16 requests in a row for the quote lines alone, and the Status chip waits for them.
+     With `concurrency` (the page: 4) the notes go 4 at a time and the quote lines 8 (twice as many, half-size
+     chunks: line_items can be long). The drawer's one-subscription read passes none — one chunk, as before. */
+  const c = { concurrency: opts.concurrency };
+  const cDetails = { chunkSize: 100, concurrency: opts.concurrency ? opts.concurrency * 2 : undefined };
   const loose = supabase as unknown as SupabaseClient;
   const { viaSub, own, more, billings, parts, byQuote, byId } = r;
   const quotes = [...new Map([...viaSub, ...own, ...more, ...parts].map((q) => [q.id, q])).values()];
@@ -198,19 +213,19 @@ export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, o
         .select(DETAIL_COLS)
         .in("id", run)
         .order("id", { ascending: true })
-        .range(from, to), { chunkSize: 100 }),   // line_items can be long; smaller pages
+        .range(from, to), cDetails),   // line_items can be long; smaller pages
       fetchAllRowsIn<NoteAmountRow, string>(shownInvoices, (run, from, to) => supabase
         .from("credit_notes")
         .select("invoice_id, amount")
         .in("invoice_id", run)
         .order("id", { ascending: true })
-        .range(from, to)),
+        .range(from, to), c),
       fetchAllRowsIn<NoteAmountRow, string>(shownInvoices, (run, from, to) => supabase
         .from("debit_notes")
         .select("invoice_id, amount")
         .in("invoice_id", run)
         .order("id", { ascending: true })
-        .range(from, to)),
+        .range(from, to), c),
     ]);
   } catch (e) {
     /* only the period / credit-note words are lost — the rows keep their documents and states */

@@ -16,6 +16,7 @@ import { displayPhone } from "@/components/features/renewals/renewal-contact-rul
 import type { RenewalQuoteInfo } from "./queue";
 import type { RenewalFollowupRow } from "./followup";
 import type { RenewalQuotePayment } from "./tiles";
+import { RENEWALS_READ_CONCURRENCY } from "./last-docs-data";
 
 export interface RowContact {
   name: string | null;
@@ -82,24 +83,34 @@ export function useRenewalContacts(customerIds: readonly string[]) {
   });
 }
 
+/**
+ * The linked quotes' facts (total, status, paid?) for the listed renewals — the row's Status waits for them.
+ * R-2855: the id chunks are read 4 at a time (R-2765's RENEWALS_READ_CONCURRENCY). They ran one after
+ * another: staging's 786 subscriptions = ~1,570 quote ids = 8 requests in a row before any Status chip
+ * could show. Same rows, same order (fetchAllRowsIn returns them in chunk order).
+ */
+export async function readRenewalQuoteInfo(quoteIds: readonly (string | null)[]): Promise<Map<string, RenewalQuoteInfo>> {
+  const ids = [...new Set(quoteIds.filter((x): x is string => !!x))].sort();
+  const supabase = createClient();
+  const rows = await fetchAllRowsIn<RenewalQuoteInfo, string>(
+    ids,
+    (run, from, to) => supabase
+      .from("quotes")
+      .select("id, amount, status, payment_status, currency, exchange_rate")   // R-2767: currency for foreign customers
+      .in("id", run)
+      .order("id", { ascending: true })
+      .range(from, to),
+    { concurrency: RENEWALS_READ_CONCURRENCY },
+  );
+  return new Map(rows.map((q) => [q.id, q]));
+}
+
 export function useRenewalQuoteInfo(quoteIds: readonly (string | null)[]) {
   const ids = [...new Set(quoteIds.filter((x): x is string => !!x))].sort();
   return useQuery({
     queryKey: ["quotes", "renewal-amounts", ids],
     enabled: ids.length > 0,
-    queryFn: async (): Promise<Map<string, RenewalQuoteInfo>> => {
-      const supabase = createClient();
-      const rows = await fetchAllRowsIn<RenewalQuoteInfo, string>(
-        ids,
-        (run, from, to) => supabase
-          .from("quotes")
-          .select("id, amount, status, payment_status, currency, exchange_rate")   // R-2767: currency for foreign customers
-          .in("id", run)
-          .order("id", { ascending: true })
-          .range(from, to),
-      );
-      return new Map(rows.map((q) => [q.id, q]));
-    },
+    queryFn: () => readRenewalQuoteInfo(ids),
   });
 }
 

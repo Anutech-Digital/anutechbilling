@@ -36,8 +36,9 @@ export const NAV_BADGE_VIEWS: Readonly<Record<NavBadgeKey, NavBadgeView>> = {
   deals:     { href: "/deals",                       meaning: (n) => `${n} deal${s(n)} in All deals` },
   /* task-groups.ts taskGroupOf → "overdue": open, and its due time has passed. */
   tasks:     { href: drillHref("tasksOverdue"),      meaning: (n) => `${n} overdue task${s(n)}` },
-  /* lib/renewals/buckets.ts — renews within 7 days, or already lapsed. */
-  renewals:  { href: drillHref("renewalsUrgent"),    meaning: (n) => `${n} renewal${s(n)} due within 7 days or lapsed` },
+  /* lib/renewals/buckets.ts — renews within 7 days, or already lapsed. R-2855: the hover says it in the Renewals
+     page's own words (its "Overdue" and "≤7 days" tabs) — "lapsed" is on no screen. */
+  renewals:  { href: drillHref("renewalsUrgent"),    meaning: (n) => `${n} renewal${s(n)} overdue or due within 7 days` },
   /* lib/invoices/kpis.ts invoiceInFocus "unpaid" — pending / overdue with a balance left. */
   invoices:  { href: drillHref("invoicesUnpaid"),    meaning: (n) => `${n} unpaid invoice${s(n)}` },
   /* lib/inbound/folders.ts inboxUnread — the red number on the Inbox folder. */

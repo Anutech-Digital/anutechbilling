@@ -3,11 +3,14 @@
  * R-2405 — the tiles at the top of Renewals (maths in tiles.ts). Each tile is a button: pressing
  * it shows exactly the rows it adds up in the queue below; pressing it again (or "Back to tabs")
  * goes back to the time-window tabs.
+ * R-2855: every word a tile shows comes from tiles.ts tileText; what the number IS sits under it on
+ * screen (not only in the tooltip); while the page's data is still being read the tiles are
+ * placeholders — a number is drawn once, from the final data, and never changes after that.
  */
 import * as React from "react";
-import { cn, rupee } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { Icon } from "@/components/ui/icon";
-import { TILE_KEYS, TILE_LABEL, TILE_VIEW_LABEL, windowExtraNote, type MonthRange, type RenewalTiles, type TileKey, type WindowKey, type WindowReconcile } from "./tiles";
+import { TILE_KEYS, TILE_LABEL, TILE_VIEW_LABEL, TILES_BASIS_NOTE, tileText, type MonthRange, type RenewalTiles, type TileKey, type WindowKey, type WindowReconcile } from "./tiles";
 
 const TONE: Record<TileKey, string> = {
   overdue: "text-rose-600",
@@ -20,29 +23,11 @@ const TONE: Record<TileKey, string> = {
 
 const plural = (n: number) => `${n} renewal${n === 1 ? "" : "s"}`;
 
-function tileLines(key: TileKey, t: RenewalTiles, month: MonthRange, windows: Partial<Record<WindowKey, WindowReconcile>>): { value: string; full: string; sub: string; hint: string } {
-  if (key === "renewedMonth") {
-    const f = t.renewedMonth;
-    return {
-      value: rupee(f.amount, { compact: true }),
-      full: rupee(f.amount),
-      sub: f.pct == null ? `Nothing due in ${month.label}` : `${f.pct}% of ${rupee(f.dueAmount, { compact: true })} due in ${month.label}`,
-      hint: f.stillDue.count > 0 ? `${rupee(f.stillDue.amount, { compact: true })} still due (Overdue + Due tiles)` : "Nothing left to chase",
-    };
-  }
-  const f = t[key];
-  const w = key in windows ? windows[key as WindowKey] : undefined;
-  const extra = w ? windowExtraNote(w) : "";   // R-2741: "(+1 won't renew)" — the tab lists it, the tile does not
-  return {
-    value: rupee(f.amount, { compact: true }),
-    full: rupee(f.amount),
-    sub: extra ? `${plural(f.count)} ${extra}` : plural(f.count),
-    hint: key === "wontRenew" ? "Revenue leaving" : "Renewal amount",
-  };
-}
+const TILE_BOX = "min-w-0 rounded-lg border bg-paper px-3 py-2 text-left";
+const TILE_LABEL_CLS = "truncate text-3xs font-semibold uppercase tracking-wider text-ink-3";
 
 export function RenewalTileRow({
-  tiles, month, active, onPick, windows = {}, narrowed = false,
+  tiles, month, active, onPick, windows = {}, narrowed = false, loading = false,
 }: {
   tiles: RenewalTiles;
   month: MonthRange;
@@ -52,42 +37,72 @@ export function RenewalTileRow({
   windows?: Partial<Record<WindowKey, WindowReconcile>>;
   /** R-2741: a search / filter is on — the tiles still count ALL renewals, and say so. */
   narrowed?: boolean;
+  /**
+   * R-2855: the quotes / documents the rows' statuses come from are still being read. A row can read
+   * "Renewed" until its part bill is seen, so a tile drawn now would change (staging: Due in 30 days
+   * ₹2.9L · 6, then ₹5.4L · 11). Placeholders of the same size until the final data — no number, no press.
+   */
+  loading?: boolean;
 }) {
   return (
     <div className="mb-3">
-    <div className="grid grid-cols-2 gap-2 md:grid-cols-3 min-[1260px]:grid-cols-6" role="group" aria-label="Renewal totals — press one to list its renewals">
+    <div
+      className="grid grid-cols-2 gap-2 md:grid-cols-3 min-[1260px]:grid-cols-6"
+      role="group"
+      aria-label="Renewal totals — press one to list its renewals"
+      aria-busy={loading ? true : undefined}
+    >
       {TILE_KEYS.map((key) => {
-        const l = tileLines(key, tiles, month, windows);
+        if (loading) {
+          return (
+            <button key={key} type="button" disabled data-testid="renewal-tile-loading" className={cn(TILE_BOX, "cursor-default border-hairline")}>
+              <p className={TILE_LABEL_CLS}>{TILE_LABEL[key]}</p>
+              {/* the same two lines as a loaded tile (same height — nothing jumps when the numbers arrive) */}
+              <p className="relative">
+                <span className="font-serif text-lg font-bold">&nbsp;</span>
+                <span aria-hidden className="skeleton-shimmer absolute inset-y-1.5 left-0 w-24 rounded" />
+              </p>
+              <p className="relative text-3xs">
+                &nbsp;
+                <span aria-hidden className="skeleton-shimmer absolute inset-y-0.5 left-0 w-28 rounded" />
+              </p>
+              <span className="sr-only">Loading</span>
+            </button>
+          );
+        }
+        const l = tileText(key, tiles, month, windows);
         return (
           <button
             key={key}
             type="button"
             aria-pressed={active === key}
             onClick={() => onPick(key)}
-            title={`${TILE_LABEL[key]}: ${l.full} — ${l.sub} — ${l.hint}. Press to list them.`}
+            title={l.title}
             className={cn(
-              "min-w-0 rounded-lg border bg-paper px-3 py-2 text-left transition-colors cursor-pointer",
+              TILE_BOX, "transition-colors cursor-pointer",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
               active === key ? "border-amber bg-amber-soft" : "border-hairline hover:border-amber/60",
             )}
           >
-            <p className="truncate text-3xs font-semibold uppercase tracking-wider text-ink-3">{TILE_LABEL[key]}</p>
-            {/* R-2821: ONE compact row — label, then the amount with its count beside it; the hint sits in the tooltip */}
+            <p className={TILE_LABEL_CLS}>{TILE_LABEL[key]}</p>
+            {/* R-2821: ONE compact row — label, then the amount with its count beside it */}
             <p className="flex min-w-0 items-baseline gap-1.5">
               <span className={cn("shrink-0 font-serif text-lg font-bold tabular-nums", TONE[key])}>{l.value}</span>
               <span className="truncate text-2xs text-ink-2">{l.sub}</span>
             </p>
-            {/* the hint is kept for screen readers (the tooltip is the sighted way) */}
-            <span className="sr-only">{l.hint}</span>
+            {/* R-2855: what the number is — on screen, under it (it was screen-reader / tooltip only) */}
+            <p className="truncate text-3xs text-ink-3" data-testid={`renewal-tile-caption-${key}`}>{l.caption}</p>
           </button>
         );
       })}
     </div>
-    {narrowed && (
-      <p className="mt-1 text-2xs text-ink-3" data-testid="renewal-tiles-all-note">
-        These totals are for all renewals — the search and filters only narrow the list below.
-      </p>
-    )}
+    {/* R-2855: the tiles' basis, once — so "₹4.5L overdue" is not read as "₹4.5L of unpaid bills" (that is the header line) */}
+    <p className="mt-1 text-2xs text-ink-3" data-testid="renewal-tiles-basis-note">
+      {TILES_BASIS_NOTE}
+      {narrowed && (
+        <span data-testid="renewal-tiles-all-note">{" "}These totals are for all renewals — the search and filters only narrow the list below.</span>
+      )}
+    </p>
     </div>
   );
 }
