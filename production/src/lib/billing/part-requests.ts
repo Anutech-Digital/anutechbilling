@@ -143,9 +143,10 @@ export function requestReminderText(a: {
   /* R-2519: a PI- number is a Proforma Invoice — Zoho's wording ("Urgent: Service renewal"). */
   const pi = /^PI-/.test(a.quoteId);
   /* R-2865: a group request's part is its short label ("Payment for Q2 · …"; older "Advance payment for
-     Q2 · …"). After "the payment for" only what it is for is said — never "the payment for Payment for …",
-     and no mail sentence calls a renewal part an advance. */
-  const what = a.part.trim().replace(/^(?:Advance payment|Payment) for /, "");
+     Q2 · …"). After "the payment for" only what it is for is said — never "the payment for Payment for …"
+     or "the payment for Advance payment for …". (The first mail of a non-PI request quotes the request's
+     own stored line as it is.) */
+  const what = PART_SHORT_LABEL.exec(a.part.trim())?.[1] ?? a.part.trim();
   const lead: Record<RequestReminderStep | "new", string> = {
     new:           pi ? `Here is your proforma invoice ${a.quoteId} for ${what}. It is due on ${a.dueOn}.`
                       : `Here is your payment request: ${a.part}. It is due on ${a.dueOn}.`,
@@ -254,8 +255,10 @@ export const PART_REQUEST_BADGE = "Payment request";
 
 /* R-2865 (16 Nov 2026, Pardeep: "advance payment ka renewal quote kaise ja sakta hai"): a part request's
    short label is "Payment for Q2 · 28 Jan–27 Apr 2027" — a payment for the service period, not an advance.
-   Requests issued before that keep their stored "Advance payment for Q2 · …", so every reader takes BOTH. */
-const PART_SHORT_LABEL = /^(?:Advance payment|Payment) for (.+)$/;
+   Requests issued before that keep their stored "Advance payment for Q2 · …", so every reader takes BOTH.
+   ONE pattern for every reader. The new text counts only in the label's own shape — month 3 / Q2 / H1 /
+   part 3 — so a product line that merely starts "Payment for …" is never taken for a label. */
+const PART_SHORT_LABEL = /^(?:Advance payment for |Payment for (?=(?:month|part) \d|[QH]\d))(.+)$/;
 
 /** True for a part request's short label — the new "Payment for …" or the older "Advance payment for …". */
 export function isPartShortLabel(text: string | null | undefined): boolean {
@@ -268,8 +271,8 @@ export function isPartShortLabel(text: string | null | undefined): boolean {
  *  → "part 1 of 12". */
 export function partLabelOf(lineName: string | null | undefined): string | null {
   const name = (lineName ?? "").trim();
-  const m = /^(?:Advance payment|Payment) for (.+?)(?: · .*)?$/.exec(name);
-  if (m) return m[1].trim();
+  const m = PART_SHORT_LABEL.exec(name);
+  if (m) return m[1].split(" · ")[0].trim();
   const n = /\((part \d+(?: of \d+)?)\)$/.exec(name);
   return n ? n[1] : null;
 }

@@ -1,5 +1,5 @@
-/* R-2846 card test — Record payment on a part payment request (advance proforma) says it is the
-   ADVANCE for its month / period and that the tax invoice is raised on confirm; a normal quote's
+/* R-2846 card test — Record payment on a part payment request says what its payment is FOR (its
+   month / period — R-2865: never "advance") and that the tax invoice is raised on confirm; a normal quote's
    sheet is unchanged; a part request past its pay-by date reads "Pay-by date passed — still
    payable", not "Expired". Read-only: it opens the sheet and closes it, nothing is saved.
    Run: node scripts/ops/card-tests.mjs R-2846 (localhost only). */
@@ -8,7 +8,7 @@ import { CARD_TESTS_ON, E2E_TENANT_SQL, localDb, onlyInCardTests, openAppPage, p
 
 const db = () => localDb("R-2846");
 
-/** An unpaid advance request of E2E Test Co ("Advance payment for month N · …"); pastDue = its
+/** An unpaid part request of E2E Test Co with an old one-line name ("Advance payment for month N · …"); pastDue = its
  *  pay-by date (subscription_billings due_on, else bill_on — use-part-due.ts) is before today. */
 function partRequestId(pastDue = false): string {
   return db().one(`select q.id from public.quotes q
@@ -34,7 +34,7 @@ test.describe("R-2846 card test", () => {
   onlyInCardTests();
   test.describe.configure({ mode: "serial" });
 
-  test("Step 1: advance request → Record payment says 'Record advance payment', month · period, Part x of y, invoice on confirm, 'Advance due'", async ({ browser, baseURL }) => {
+  test("Step 1: part request → Record payment says 'Payment for <month · period>' (R-2865: never 'advance'), Part x of y, invoice on confirm, 'Amount due'", async ({ browser, baseURL }) => {
     test.setTimeout(240_000);
     if (!CARD_TESTS_ON) return;
     const id = partRequestId();
@@ -44,10 +44,11 @@ test.describe("R-2846 card test", () => {
     const btn = page.getByRole("button", { name: /^Record payment/ }).first();
     await expect(btn).toBeVisible({ timeout: 60_000 });
     await btn.click();
-    const sheet = page.getByRole("dialog", { name: "Record advance payment" });
+    const sheet = page.getByRole("dialog", { name: "Record payment received" });
     await expect(sheet).toBeVisible({ timeout: 60_000 });
-    await expect(sheet.getByText(/^Advance for .+ \(Part \d+( of \d+)?\) from .+\. The tax invoice is raised when you confirm the full advance\.$/)).toBeVisible({ timeout: 60_000 });
-    await expect(sheet.getByText("Advance due", { exact: true })).toBeVisible();
+    await expect(sheet.getByText(/^Payment for .+ \(Part \d+( of \d+)?\) from .+\. The tax invoice is raised when you confirm the full payment\.$/)).toBeVisible({ timeout: 60_000 });
+    await expect(sheet.getByText("Amount due", { exact: true })).toBeVisible();
+    await expect(sheet.getByText(/Record advance payment|Advance due|Advance for /)).toHaveCount(0);
     await expect(sheet.getByText(/Log a payment against quote|Expected this payment|Quote total/)).toHaveCount(0);
     await page.context().close();
   });
@@ -79,7 +80,7 @@ test.describe("R-2846 card test", () => {
     const sheet = page.getByRole("dialog", { name: /Record payment received|Record additional payment/ });
     await expect(sheet).toBeVisible({ timeout: 60_000 });
     await expect(sheet.getByText(/Log a payment against quote/)).toBeVisible();
-    await expect(sheet.getByText("Advance due", { exact: true })).toHaveCount(0);
+    await expect(sheet.getByText("Amount due", { exact: true })).toHaveCount(0);
     await page.context().close();
   });
 });

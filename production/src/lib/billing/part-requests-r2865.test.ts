@@ -17,6 +17,10 @@ describe("R-2865 the part's short label — new and old text", () => {
     expect(isPartShortLabel("  Payment for Q2 · 28 Jan–27 Apr 2027 ")).toBe(true);
     expect(isPartShortLabel(NAME)).toBe(false);
     expect(isPartShortLabel("Payment received")).toBe(false);
+    // a product whose own name starts "Payment for …" is a product line, not a label
+    expect(isPartShortLabel("Payment for gateway setup · acme.in · 2 seats · 1 Nov–30 Nov 2026 (part 1 of 12)")).toBe(false);
+    expect(isPartShortLabel("Payment for H1 · 1 Oct–31 Mar 2027")).toBe(true);
+    expect(isPartShortLabel("Payment for part 3")).toBe(true);
     expect(isPartShortLabel("")).toBe(false);
     expect(isPartShortLabel(null)).toBe(false);
   });
@@ -30,6 +34,8 @@ describe("R-2865 the part's short label — new and old text", () => {
     expect(partLabelOf("Payment for part 3")).toBe("part 3");
     expect(partLabelOf(NAME)).toBe("part 1 of 1");
     expect(partLabelOf("Workspace Starter")).toBeNull();
+    expect(partLabelOf("Payment for gateway setup · acme.in · 2 seats · 1 Nov–30 Nov 2026 (part 1 of 12)")).toBe("part 1 of 12");
+    expect(partLabelOf("Advance payment for month 3")).toBe("month 3");
   });
 
   it("requestMailPart: one line → its product line; a group → its short label, new or old", () => {
