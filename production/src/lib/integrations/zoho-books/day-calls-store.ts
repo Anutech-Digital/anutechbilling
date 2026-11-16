@@ -1,5 +1,5 @@
 /**
- * R-2661 — zoho_api_day_calls (migration 20261116143421) through the server's admin client: the sink
+ * R-2661 — zoho_api_day_calls (migration 20261116153859) through the server's admin client: the sink
  * behind each tenant's day meter (zoho-day-budget.ts) and the read the dialogs' "Zoho calls today"
  * line uses. The admin client bypasses RLS, so EVERY read and write is filtered by `tenantId` — the
  * signed-in user's own row (routes) or the run row (cron), never a browser (CLAUDE.md §17c).
