@@ -17,6 +17,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { queryKeys } from "@/lib/queries/keys";
 import { BillTogetherHttpError, createTogetherProforma, type BillTogetherCreated, type BillTogetherGroup, type BillTogetherPeriod } from "@/lib/renewals/bill-together";
 import { BILL_TOGETHER, BillTogetherDialog } from "./bill-together-dialog";
+import type { TogetherRowAction } from "./stage-actions";
 
 interface Target { ids: string[]; customerName: string }
 
@@ -142,6 +143,35 @@ export function togetherHint(
   const how = `Tick at least two subscriptions of ${group.customerName} in the Bill together box above to ${one}.`;
   /* the instruction first — a long hint is cut at its end (truncate); the plan names stay in the tooltip */
   return { text: `Tick at least two — ${hint.text.charAt(0).toLowerCase()}${hint.text.slice(1)}`, title: `${hint.text}. ${how}`, onClick: () => toast.info(how) };
+}
+
+/**
+ * R-2859: the row's ONE button for a subscription the box suggests billing with others — "Bill together", the same
+ * dialog with the subscriptions still ticked (as the box and the "Bills with …" hint open it). null when THIS row
+ * is unticked or under two are ticked: the row keeps its own button (one alone is billed with Bill next part /
+ * Send renewal — the same action sits in ⋯ while the button is Bill together).
+ */
+export function togetherRowButton(
+  hint: { group: BillTogetherGroup } | null | undefined,
+  subId: string,
+  off: ReadonlySet<string>,
+  open: (ids: string[], customerName: string) => void,
+  pending = false,
+): TogetherRowAction | null {
+  /* this row unticked in the box → it is billed alone, with its own button (never a bill for the OTHERS from its row) */
+  if (!hint || off.has(subId)) return null;
+  const { group } = hint;
+  const on = tickedOf(group, off);
+  if (on.length < 2) return null;
+  const renewal = group.kind === "renewal";
+  return {
+    kind: renewal ? "renewal" : "parts",
+    label: BILL_TOGETHER,
+    /* the count only (the ticked ones) — never the hint's plan names, which include an unticked one */
+    title: `${BILL_TOGETHER} — one ${renewal ? "renewal quote" : "proforma"} for ${on.length} subscriptions of ${group.customerName} (you check the lines first). To bill only this one, use ${renewal ? "Send renewal" : "Bill next part"} in More actions (⋯).`,
+    onClick: () => open(on, group.customerName),
+    pending,
+  };
 }
 
 /**

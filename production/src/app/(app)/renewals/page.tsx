@@ -114,7 +114,8 @@ import { dueCellFacts } from "./due-anchor";
 import { CustomerCell, ProductCell, DueCell, HistoryButton, LastInvoiceCell, LastPaidRowLine, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 import type { DrawerView } from "./drawer";
-import { BillTogetherGroups, togetherHint, useBillTogether } from "@/components/features/renewals/bill-together";
+import { BillTogetherGroups, togetherHint, togetherRowButton, useBillTogether } from "@/components/features/renewals/bill-together";
+import type { TogetherRowAction } from "@/components/features/renewals/stage-actions";
 import { BILL_TOGETHER, useBillTogetherProbe } from "@/components/features/renewals/bill-together-dialog";
 import { canOfferBillTogether } from "@/lib/renewals/bill-together";
 import { groupsShown, togetherIndex, togetherRowOf } from "./bill-together-rows";
@@ -331,9 +332,11 @@ interface RenewalQueueProps {
   onOpen: (subId: string, view?: DrawerView) => void;
   /** R-2808: billed together last cycle → the row's "Bills with <other plan>" (opens Bill together); null = none. */
   togetherOf?: (subId: string) => { text: string; title?: string; onClick: () => void } | null;
+  /** R-2859: such a row (2+ of its group still ticked) → its ONE button is Bill together, not its own Bill next part; null = its own button. */
+  togetherButtonOf?: (subId: string) => TogetherRowAction | null;
 }
 
-function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen, togetherOf }: RenewalQueueProps) {
+function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen, togetherOf, togetherButtonOf }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -487,7 +490,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
               <HistoryButton onOpen={() => onOpen(sub.id, lastPaid.data?.get(sub.id) ? "payments" : "history")} name={`${sub.customer_name} · ${sub.plan}`} className="mb-2 block" />
 
               <div className="pt-2 border-t border-hairline/60">
-                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
+                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} together={togetherButtonOf?.(sub.id) ?? null} />
               </div>
             </li>
           );
@@ -556,7 +559,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                     <HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5">
-                    <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
+                    <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} together={togetherButtonOf?.(sub.id) ?? null} />
                   </td>
                 </tr>
               );
@@ -913,6 +916,11 @@ export default function RenewalsPage() {
         return h ? togetherHint(h, togetherOff, billTogether.open) : null;
       }
     : undefined;
+  /* R-2859: the same group, as the row’s ONE button — never Bill next part beside a box that bills the pair */
+  /* from the first paint the box shows (check still out → shown, not pressable): the button never swaps under a click */
+  const togetherButtonOf = togetherVisible && togetherIdx
+    ? (id: string) => togetherRowButton(togetherIdx.hintOf.get(id), id, togetherOff, billTogether.open, !togetherOn)
+    : undefined;
   /* only ticked rows still on screen (as the reminder) — a tick hidden by a search is never billed */
   const offerTicked = togetherOn && canOfferBillTogether(tickedShown.map(togetherRowOf));
   const scope = reminderScope(tickedShown.length, tile ? TILE_LABEL[tile] : QUEUE_TAB_LABEL[bucketTab], visibleRows.length);
@@ -1229,6 +1237,7 @@ export default function RenewalsPage() {
             docsState={docsState}
             onOpen={openDrawer}
             togetherOf={togetherOf}
+            togetherButtonOf={togetherButtonOf}
           />
         </div>
       </Card>
@@ -1247,6 +1256,7 @@ export default function RenewalsPage() {
             names={names}
             followupRows={fuData?.rows ?? []}
             onFollowup={drawerItem?.sub.customer_id ? () => setFollowupFor(drawerItem) : undefined}
+            together={drawerItem ? togetherButtonOf?.(drawerItem.sub.id) ?? null : null}
             strong={queueStrong}
           />
         );

@@ -27,6 +27,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
+import type { TogetherRowAction } from "@/components/features/renewals/stage-actions";
 import { RenewalContact } from "@/components/features/renewals/renewal-contact";
 import type { Subscription } from "@/lib/supabase/database.types";
 import type { RenewalStage } from "@/lib/renewals/stage";
@@ -217,7 +218,7 @@ function CostFacts({ money }: { money: DrawerMoney }) {
   );
 }
 
-export function RenewalDrawer({ item, open, view = null, onClose, names, followupRows, onFollowup, strong }: {
+export function RenewalDrawer({ item, open, view = null, onClose, names, followupRows, onFollowup, strong, together = null }: {
   /** The row it is about; null while ?sub= names a renewal not on this page. */
   item: DrawerItem | null;
   open: boolean;
@@ -228,6 +229,8 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
   /** The page's payment_followups rows (already read) — this renewal's are picked here. */
   followupRows: readonly RenewalFollowupRow[];
   onFollowup?: () => void;
+  /** R-2859: the row's Bill together button (the queue's) — the drawer shows the same ONE button; null = its own. */
+  together?: TogetherRowAction | null;
   strong: boolean;
 }) {
   const { data: me } = useCurrentUser();
@@ -330,7 +333,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
                   <p className="mt-1 text-xs text-ink-3 tabular-nums" data-testid="renewal-drawer-renews">{renewsWords(dueCellFacts(item.stage, sub, item.daysUntil).title, sub.renewal_date)}</p>
                 </div>
                 <div className="shrink-0">
-                  <RenewalActions sub={sub} daysUntil={item.daysUntil} layout="card" strong={strong} onFollowup={onFollowup} messaging stage={item.stage} payHref={item.payHref} />
+                  <RenewalActions sub={sub} daysUntil={item.daysUntil} layout="card" strong={strong} onFollowup={onFollowup} messaging stage={item.stage} payHref={item.payHref} together={together} />
                 </div>
               </div>
             </SheetHeader>
