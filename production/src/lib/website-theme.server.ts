@@ -26,8 +26,16 @@ export const WEBSITE_THEME_TTL_MS = 30_000;
 export const WEBSITE_THEME_READ_BUDGET_MS = 3_000;
 
 interface Cached { at: number; theme: WebsiteTheme }
-const fresh = new Map<string, Cached>();
-const lastGood = new Map<string, Cached>();
+
+/* ONE cache per server process, held on globalThis (same pattern as server/db/auth-store.ts).
+   Next bundles the switch route (api/settings/website-theme) and the website pages as separate
+   module instances, so module-level Maps were two caches: the switch's rememberWebsiteTheme()
+   updated only the route's copy and the pages kept the old theme until their own TTL ran out —
+   measured on localhost 16 Nov 2026: Classic for 30.2 s after switching to Warm, and back. */
+const holder = globalThis as unknown as { __rosWebsiteTheme?: { fresh: Map<string, Cached>; lastGood: Map<string, Cached> } };
+const store = (holder.__rosWebsiteTheme ??= { fresh: new Map<string, Cached>(), lastGood: new Map<string, Cached>() });
+const fresh = store.fresh;
+const lastGood = store.lastGood;
 
 export function forgetWebsiteThemeForTests(): void {
   fresh.clear();

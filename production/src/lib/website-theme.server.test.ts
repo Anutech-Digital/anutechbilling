@@ -102,4 +102,19 @@ describe("getWebsiteTheme", () => {
     expect(await getWebsiteTheme(T, 2_001)).toBe("warm");
     expect(db.calls).toHaveLength(1);
   });
+
+  /* Next loads the switch route and the website pages as separate copies of this module. A
+     switch must reach the pages' copy too — before, the site showed the old theme for ~30 s. */
+  it("a switch made through one copy of this module is seen by another copy at once", async () => {
+    db.result = { data: { website_theme: "classic" }, error: null };
+    vi.resetModules();
+    const pages = await import("./website-theme.server");
+    vi.resetModules();
+    const route = await import("./website-theme.server");
+    expect(pages).not.toBe(route);
+    expect(await pages.getWebsiteTheme(T, 1_000)).toBe("classic");
+    route.rememberWebsiteTheme(T, "warm", 2_000);
+    expect(await pages.getWebsiteTheme(T, 2_001)).toBe("warm");
+    expect(db.calls).toHaveLength(1);
+  });
 });
