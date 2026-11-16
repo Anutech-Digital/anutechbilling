@@ -16,7 +16,8 @@ import { displayPhone } from "@/components/features/renewals/renewal-contact-rul
 import type { RenewalQuoteInfo } from "./queue";
 import type { RenewalFollowupRow } from "./followup";
 import { togetherMemberPayments, type RenewalQuotePayment } from "./tiles";
-import { RENEWALS_READ_CONCURRENCY, TOGETHER_LINK_COLS } from "./last-docs-data";
+import { RENEWALS_READ_CONCURRENCY } from "./last-docs-data";
+import { TOGETHER_LINK_COLS } from "./together-links-data";
 import { liveTogetherLinks, type TogetherLink } from "./last-docs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 

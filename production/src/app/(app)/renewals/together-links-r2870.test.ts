@@ -100,3 +100,26 @@ describe("R-2870 Renewed this month counts each together member once, at its own
     expect(togetherMemberPayments(links, [], month)).toEqual([]);
   });
 });
+
+describe("R-2870 readTogetherLinks (the batched read)", () => {
+  const fake = (rows: unknown[] | Error) => {
+    const b = { select: () => b, in: () => b, order: () => b, range: () => (rows instanceof Error ? Promise.reject(rows) : Promise.resolve({ data: rows, error: null })) };
+    return { from: () => b } as never;
+  };
+  it("returns the live links and their embedded quotes once; a released link and an unreadable quote are left out", async () => {
+    const { readTogetherLinks } = await import("./together-links-data");
+    const q = { id: "QT-1" };
+    const r = await readTogetherLinks(fake([
+      { ...link({ subscription_id: A }), quotes: q }, { ...link({ subscription_id: B }), quotes: q },
+      { ...link({ subscription_id: "s-c", released_at: "2026-11-01T00:00:00Z" }), quotes: { id: "QT-X" } },
+      { ...link({ subscription_id: "s-d", quote_id: "QT-9" }), quotes: null },
+    ]), [A, B, "s-c", "s-d"], "id", { chunkSize: 150 });
+    expect(r.links.map((l) => l.subscription_id)).toEqual([A, B, "s-d"]);
+    expect(r.links.every((l) => !("quotes" in l))).toBe(true);
+    expect(r.quotes.map((x) => x.id)).toEqual(["QT-1"]);
+  });
+  it("a failed read changes nothing", async () => {
+    const { readTogetherLinks } = await import("./together-links-data");
+    expect(await readTogetherLinks(fake(new Error("relation missing")), [A], "id", { chunkSize: 150 })).toEqual({ links: [], quotes: [] });
+  });
+});

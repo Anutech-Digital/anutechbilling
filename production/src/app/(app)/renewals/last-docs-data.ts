@@ -21,13 +21,13 @@
  */
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readTogetherLinks } from "./together-links-data";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { noteTotalsByInvoice, type NoteAmountRow } from "@/lib/invoices/note-totals";
 import {
   attachDocDetails, attachSendTimes, detailQuoteIds, lastDocsBySubscription, sendLogQuoteIds, shownInvoiceIds,
   type SendLogRow,
-  liveTogetherLinks,
   type DocBilling, type DocInvoice, type DocQuote, type DocQuoteDetail, type LastDocs, type LastDocsInput, type TogetherLink,
 } from "./last-docs";
 
@@ -37,9 +37,6 @@ const QUOTE_COLS = "id, status, payment_status, created_at, created_date, expire
 /** R-2830: the part proformas also carry their lines — a together proforma names every member's part there (same query, no read per row). */
 const PART_COLS = `${QUOTE_COLS}, line_items`;
 const INVOICE_COLS = "id, quote_id, invoice_date, status, amount, paid_amount, currency, created_at, due_date, net_payable, adjusted_advances, written_off_at, fx_rate";
-/** R-2870: renewal_quote_subscriptions (R-2847) — which subscriptions a together renewal quote renews. */
-export const TOGETHER_LINK_COLS = "quote_id, subscription_id, renewal_term_date, subtotal, renewed_at, released_at";
-
 const DETAIL_COLS = "id, line_items, is_renewal, is_extension, is_add_seats, is_one_off, extension_months, renewal_term_date, created_date";
 
 /** The read's own copy of each subscription (deduped, sorted — a stable query key). */
@@ -146,7 +143,8 @@ export async function readRenewalDocRows(
       .in(col, run)
       .order("id", { ascending: true })
       .range(from, to), { chunkSize: VIA_SUB_CHUNK, ...c });
-  const [viaRenewal, viaSeats, own, billings] = await Promise.all([
+  /* R-2870: the together-quote links (+ their quotes) ride in this same round — see together-links-data.ts */
+  const [viaRenewal, viaSeats, own, billings, { links, quotes: linkQuotes }] = await Promise.all([
     viaSubBy("renewal_subscription_id"),
     viaSubBy("add_seats_subscription_id"),
     fetchAllRowsIn<DocQuote, string>(ownQuoteIds, (run, from, to) => loose
@@ -161,23 +159,8 @@ export async function readRenewalDocRows(
       .in("subscription_id", run)
       .order("id", { ascending: true })
       .range(from, to), c),
+    readTogetherLinks(loose, subIds, QUOTE_COLS, { chunkSize: VIA_SUB_CHUNK, ...c }),
   ]);
-  /* R-2870: a quote billed together names its members in renewal_quote_subscriptions (the quote's own renewal_subscription_id
-     is empty, and paying clears the subscription's renewal_quote_id) — one more batched read, then the quotes not read yet. A failed
-     link read leaves the rows as they were (the table is older than this read on a server without R-2847). */
-  const links = liveTogetherLinks(await fetchAllRowsIn<TogetherLink, string>(subIds, (run, from, to) => loose
-    .from("renewal_quote_subscriptions")
-    .select(TOGETHER_LINK_COLS)
-    .in("subscription_id", run)
-    .order("id", { ascending: true })
-    .range(from, to), c).catch((e: unknown) => { console.warn("R-2870: together links not read", e); return [] as TogetherLink[]; }));
-  const known = new Set([...viaRenewal, ...viaSeats, ...own].map((q) => q.id));
-  const linkQuotes = await fetchAllRowsIn<DocQuote, string>([...new Set(links.map((l) => l.quote_id))].filter((id) => !known.has(id)), (run, from, to) => loose
-    .from("quotes")
-    .select(QUOTE_COLS)
-    .in("id", run)
-    .order("id", { ascending: true })
-    .range(from, to), c);
   const viaSub = [...new Map([...viaRenewal, ...viaSeats, ...linkQuotes].map((q) => [q.id, q])).values()]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   /* R-2740 drawer: the other revisions of these quotes (drawer-data.ts readRevisions) join round 1. */
