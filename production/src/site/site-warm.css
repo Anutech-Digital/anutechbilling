@@ -407,13 +407,60 @@
 .anutech-site[data-site-theme="warm"] .hc .hc-step-body span { font-size: 15px; color: var(--w-muted); }
 .anutech-site[data-site-theme="warm"] .hc .hc-step-body { gap: 6px; }
 
-/* ── IT for your office: cards on the ground, 20px corners, taller photos ──────────────── */
-.anutech-site[data-site-theme="warm"] .hc .hc-it { padding-block: clamp(30px, 3.84vw, 54px); }
-.anutech-site[data-site-theme="warm"] .hc .hc-grid4 { gap: 20px; margin-top: 8px; }
-.anutech-site[data-site-theme="warm"] .hc .hc-card { border-radius: 20px; padding: 0 22px 18px; border-color: var(--w-line); box-shadow: none; }
-.anutech-site[data-site-theme="warm"] .hc .hc-card-img { margin: 0 -22px 14px; aspect-ratio: auto; height: 170px; border-bottom-color: var(--w-line); }
-.anutech-site[data-site-theme="warm"] .hc .hc-card-name { font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 20px; font-weight: 700; }
-.anutech-site[data-site-theme="warm"] .hc .hc-card-cta { color: var(--w-teal); border-top-color: var(--w-line); }
+/* ── IT for your office ───────────────────────────────────────────────────────────────────
+   Owner, 16 Nov 2026: "Improve this section … make the UI/UX overall better". The heading got room
+   to breathe; each card now reads top to bottom as photo → icon (sitting on the photo's edge) →
+   name → price → what it is → link. Prices are in the heading font, big, with their "from · /mo"
+   line under them in plain text (they were small mono capitals beside the figure, and "Live price"
+   broke over two lines). The whole card lifts on hover and its arrow nudges forward. */
+.anutech-site[data-site-theme="warm"] .hc .hc-it { padding-block: clamp(40px, 5vw, 72px); }
+.anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-h2 { margin: 12px 0 14px; }
+.anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-sub { max-width: 640px; margin: 0 0 clamp(24px, 3vw, 36px); line-height: 1.65; }
+.anutech-site[data-site-theme="warm"] .hc .hc-grid4 { gap: 20px; margin-top: 0; align-items: stretch; }
+.anutech-site[data-site-theme="warm"] .hc .hc-card {
+  position: relative; border-radius: 22px; padding: 0 24px 20px; border-color: var(--w-line);
+  box-shadow: 0 1px 2px rgba(18, 49, 42, 0.04);
+  transition: transform .3s cubic-bezier(.22,.61,.36,1), box-shadow .3s cubic-bezier(.22,.61,.36,1), border-color .3s ease;
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-card:hover {
+  transform: translateY(-4px); border-color: #C8DDD4; box-shadow: 0 22px 44px -22px rgba(18, 49, 42, 0.28);
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-card:focus-visible { outline: 3px solid var(--w-teal); outline-offset: 3px; }
+.anutech-site[data-site-theme="warm"] .hc .hc-card-img { margin: 0 -24px 0; aspect-ratio: auto; height: 176px; border-bottom-color: var(--w-line); }
+.anutech-site[data-site-theme="warm"] .hc .hc-card-img img { transition: transform .5s cubic-bezier(.22,.61,.36,1); }
+.anutech-site[data-site-theme="warm"] .hc .hc-card:hover .hc-card-img img { transform: scale(1.04); }
+.anutech-site[data-site-theme="warm"] .hc .hc-card-name {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 20px; font-weight: 800; letter-spacing: -0.01em;
+}
+/* Price: the figure big, its unit on its own line below — same words, plain text. */
+.anutech-site[data-site-theme="warm"] .hc .hc-card .hc-card-price { flex-direction: column; align-items: flex-start; gap: 2px; margin-top: 12px; }
+.anutech-site[data-site-theme="warm"] .hc .hc-card .hc-card-price span {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 30px; font-weight: 800; line-height: 1.1;
+  letter-spacing: -0.02em; white-space: nowrap; color: var(--w-ink);
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-card .hc-card-price small {
+  font-family: var(--font-site-body), "Inter", sans-serif; font-size: 13px; letter-spacing: 0; text-transform: none;
+  color: var(--w-muted); line-height: 1.45;
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-card .hc-card-gst { margin-top: 2px; font-size: 12.5px; color: var(--w-muted-2); }
+.anutech-site[data-site-theme="warm"] .hc .hc-card .hc-card-body { margin: 14px 0 18px; font-size: 14.5px; line-height: 1.6; color: var(--w-muted); }
+.anutech-site[data-site-theme="warm"] .hc .hc-card-cta {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 16px;
+  color: var(--w-teal); border-top-color: var(--w-line); font-size: 15px; font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-card-cta > span {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--w-mint); color: var(--w-teal-dark); transition: transform .3s cubic-bezier(.22,.61,.36,1), background-color .3s ease, color .3s ease;
+}
+.anutech-site[data-site-theme="warm"] .hc .hc-card:hover .hc-card-cta > span { transform: translateX(3px); background: var(--w-teal); color: var(--w-on-teal); }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] .hc .hc-card:hover, .anutech-site[data-site-theme="warm"] .hc .hc-card:hover .hc-card-img img,
+  .anutech-site[data-site-theme="warm"] .hc .hc-card:hover .hc-card-cta > span { transform: none; }
+}
+/* "Resell licences yourself?" — a quiet line under the cards with the two links as text buttons. */
+.anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller { margin: 24px 0 0; font-size: 15px; color: var(--w-muted); }
+.anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller a { color: var(--w-teal); font-weight: 700; text-underline-offset: 3px; }
+.anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller a:hover { color: var(--w-teal-dark); text-decoration: underline; }
 
 /* ── Facts: white band ─────────────────────────────────────────────────────────────────── */
 .anutech-site[data-site-theme="warm"] .hc .hc-band:has(.hc-facts) { background: var(--w-surface); border-color: var(--w-line); }
@@ -583,10 +630,12 @@
   .anutech-site[data-site-theme="warm"] .hc .hc-w-dots span::after { animation: none; }
   .anutech-site[data-site-theme="warm"] .hc .hc-w-dots span:first-child::after { transform: none; }
 }
-/* IT cards: an icon chip under the photo — mint/teal and marigold, alternating as drawn. */
+/* IT cards: an icon chip sitting on the photo's bottom edge (a white ring separates it from the
+   photo) — mint/teal and marigold, alternating as drawn. */
 .anutech-site[data-site-theme="warm"] .hc .hc-w-card-ico {
-  display: flex; align-items: center; justify-content: center; flex: none; width: 48px; height: 48px; border-radius: 14px;
-  margin: 4px 0 12px; background: var(--w-mint); color: var(--w-teal);
+  position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; flex: none;
+  width: 52px; height: 52px; border-radius: 16px; margin: -26px 0 14px; box-sizing: border-box;
+  border: 4px solid var(--w-surface); background: var(--w-mint); color: var(--w-teal);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-card:nth-child(even) .hc-w-card-ico { background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
 @media (max-width: 640px) {
