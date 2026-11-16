@@ -77,7 +77,8 @@ export interface CommitmentDueRow {
   quoteId: string;
   customerId: string | null;
   customerName: string;
-  /** The part line as on the request: "Advance payment for Q2 · 28 Oct–27 Jan 2027". */
+  /** The part line as on the request: "Starter · acme.in · 2 seats · 28 Oct–27 Jan 2027 (part 2 of 4)"
+   *  (the oldest requests: "Advance payment for Q2 · 28 Oct–27 Jan 2027"). */
   period: string;
   /** The request's amount incl. GST, as on the quote. */
   amount: number;

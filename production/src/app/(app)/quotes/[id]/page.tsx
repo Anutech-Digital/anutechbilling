@@ -2406,8 +2406,8 @@ export default function QuoteDetailPage() {
         }}
         quoteId={quote.id}
         customerName={quote.customer_name}
-        /* R-2846: a part payment request is the ADVANCE for its month / period — the sheet says
-           so (and that the tax invoice is raised on confirm). Part = the header stamp's part. */
+        /* R-2846: a part payment request is the payment for its month / period — the sheet says
+           so (and that the tax invoice is raised on confirm; R-2865: never "advance"). Part = the header stamp's part. */
         partAdvance={partRequest && !quote.invoice_id ? partAdvanceOf({
           lines: items as readonly { name?: string | null; description?: string | null; period_start?: string | null; period_end?: string | null }[],
           partShort: kindStamp?.partShort,
