@@ -10,8 +10,8 @@ import { identityFromHeaders } from "@/server/postgrest/identity";
 import { gatewayEnabled } from "@/server/postgrest/fetch";
 import { PgrstError } from "@/server/postgrest/parse";
 import {
-  addGatewayRows, embeddedRowsInBody, gatewayGuard, gatewayRole, isGatewayLimitedRole, isPersonalCaller, logRefusal,
-  refusalResponse, rowsFromContentRange, selectHasEmbeds,
+  addGatewayRows, embeddedRowsInBody, gatewayGuard, gatewayRole, isGatewayLimitedRole, isPersonalCaller, isRowListRpc, logRefusal,
+  refusalResponse, rowsFromContentRange, rpcRowsInBody, selectHasEmbeds,
 } from "@/server/postgrest/gateway-limits";
 import { checkPersonalRequest } from "@/server/postgrest/personal-allowlist";
 import { BodyTooLargeError, bodyTooLargeJson, readBodyCapped } from "@/server/postgrest/body-limit";
@@ -108,6 +108,8 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       if (selectHasEmbeds(req.nextUrl.searchParams)) {
         rows += embeddedRowsInBody(req.nextUrl.searchParams, await res.clone().text());
       }
+      // R-2876: an RPC that answers with row lists in one JSON object has no Content-Range — count its rows too.
+      if (isRowListRpc(joined)) rows += rpcRowsInBody(joined, await res.clone().text());
       if (rows > 0) await addGatewayRows(limitedUser, rows);
     }
     return res;
