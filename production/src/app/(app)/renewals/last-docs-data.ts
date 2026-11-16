@@ -151,7 +151,7 @@ export async function readRenewalDocRows(
       .range(from, to), c),
     fetchAllRowsIn<DocBilling, string>(subIds, (run, from, to) => loose
       .from("subscription_billings")
-      .select("id, subscription_id, invoice_id, term_start, period_index, due_on, period_start, period_end")
+      .select("id, subscription_id, invoice_id, term_start, period_index, due_on, period_start, period_end, taxable_amount")
       .in("subscription_id", run)
       .order("id", { ascending: true })
       .range(from, to), c),
