@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.subscription_term_follows_line()') and prosrc like '%app.r2723_quote_line%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%app.r2723_quote_line%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%app.r2723_quote_line%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.file_invoiced_quote_subscriptions(text,integer)') and prosrc like '%app.r2723_quote_line%')
 -- deploy-key: r2723quotelinehint
--- 20261116143715_r2723_quote_line_hint.sql
+-- 20261116155537_r2723_quote_line_hint.sql
 --
 -- R-2723 (follow-up of R-2712's independent review, 13 Nov 2026): a subscription filed from a
 -- quote takes its term from ITS quote line — the filer now says which line that is.
