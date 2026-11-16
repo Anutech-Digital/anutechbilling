@@ -25,7 +25,9 @@
  *     company's READER lease (`reader`); another read holds it → outcome "other-reader": no Zoho call,
  *     bg_error names the running read, the REQUEST STAYS (the cron carries on once that read is done).
  *     The pass renews it with every step and ALWAYS lets it go when it ends (finally — also after an
- *     error); a pass that died leaves a lease that runs out by itself;
+ *     error; not a pass that LOST its run lease — the one that took over holds the same name); a pass
+ *     that died leaves a lease that runs out by itself. Time spent waiting (day budget / another
+ *     reader) is never counted as "no progress for 30 minutes";
  *   - access token (R-1757 cache) asked for before every step, so one that expires mid-run is
  *     re-minted; a 401 drops it and retries once; a second 401 in a row stops with "reconnect";
  *   - Zoho down / slow / network / token endpoint busy (5xx, network, token_error) → kept, retried;
@@ -39,7 +41,7 @@ import { isZohoDayLimit, ZohoApiError } from "../api";
 import { FY_CALLS_PER_REQUEST } from "../config";
 import type { FyReadKind, ZohoFyDocDetail } from "../fy-fetch";
 import type { DayMeter } from "../zoho-day-budget";
-import { zohoDayLimitMessage, zohoReaderBusyMessage } from "../zoho-limit";
+import { isZohoWaitMessage, zohoDayLimitMessage, zohoReaderBusyMessage } from "../zoho-limit";
 import { PACE_WINDOW_MS, ZOHO_CALLS_PER_MIN, type PaceEntry } from "../zoho-pace";
 import { scanStep, type ScanFacts, type ScanStore } from "./scan";
 
@@ -219,14 +221,23 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
       outcome = "retry";
       error = RETRY_MESSAGE;
       const movedAt = Date.parse(before?.lastStepAt ?? before?.requestedAt ?? "");
-      if (calls === 0 && Number.isFinite(movedAt) && now() - movedAt > STUCK_MS) {
+      /* R-2661 (review): a read that was WAITING — for the next IST day (day budget) or behind another
+         Zoho read — made no step on purpose; that time is not "no progress". The first error after such
+         a wait is only a retry, and the 30-minute clock starts now (lastStepAt), so one passing error on
+         the next morning can never end the request. */
+      const waited = isZohoWaitMessage(before?.error);
+      if (waited) {
+        const t = now();
+        await d.bg.touch(d.fy, { nowMs: t, pace: recentPace(history, t), fromMs: lease, toMs: lease }).catch(() => false);
+      } else if (calls === 0 && Number.isFinite(movedAt) && now() - movedAt > STUCK_MS) {
         outcome = "stopped"; finished = true;
         error = `The read stopped: no progress for 30 minutes (${why.slice(0, 200)}). Press Read from Zoho to try again.`;
       }
     }
   } finally {
-    /* R-2661: the reader lease is let go whatever happened (done, time, busy, day limit, error, lost). */
-    if (d.reader) await d.reader.release().catch(() => {});
+    /* R-2661: the reader lease is let go whatever happened (done, time, busy, day limit, error) — but NOT
+       by a pass that lost its run lease: the pass that took over holds the same name and is reading. */
+    if (d.reader && !lost) await d.reader.release().catch(() => {});
     if (!lost) await d.bg.release(d.fy, { finished, error, nowMs: now(), leaseUntilMs: lease, pace: recentPace(history, now()) });
   }
   return counted(outcome, calls, error);

@@ -468,3 +468,70 @@ describe("R-2661 one Zoho reader at a time — the background read (cron + the d
     expect(rl.takes).toHaveLength(0);
   });
 });
+
+describe("R-2661 checker fixes — waiting is not 'stuck', a lost pass keeps off the reader lease", () => {
+  const DAY1 = Date.parse("2026-11-13T10:00:00Z");
+  const spent = { check: async (nowMs: number) => ({ day: "2026-11-13", calls: 900, budget: 900, limitHitAt: null, spent: true, retryAt: nowMs + 1000 }), remaining: async () => 0 };
+
+  it("day-limit pass, clock +20 h, the next pass meets a 503: outcome retry and the REQUEST STAYS (not 'no progress for 30 minutes'); a second 503 a minute later still only retries; the pass after that reads the year", async () => {
+    const scan = memoryScan(); const b = memoryBg(); const c = clock(DAY1);
+    b.s.lastStepAt = new Date(DAY1 - 60_000).toISOString();           /* its last good step, a minute before the budget ran out */
+    const base = { store: scan.store, bg: b.bg, kind: "customerpayments" as const, toFacts: zohoReceiptFacts, fy: "2025-26",
+      access: access().a, budgetMs: 600_000, now: c.now, sleep: c.sleep, log: () => {}, requireRequest: true };
+    const z0 = fakeZoho(7);
+    const r1 = await runBackgroundRead({ ...base, fetch: z0.f, dayBudget: spent });
+    expect(r1.outcome).toBe("day-limit");
+    expect(z0.calls()).toBe(0);
+    /* The next IST day, 20 hours later: Zoho is down for a moment. */
+    c.set(DAY1 + 20 * 3_600_000);
+    const down = fakeZoho(7, 3, () => j({}, 503));
+    const r2 = await runBackgroundRead({ ...base, fetch: down.f });
+    expect(r2.outcome).toBe("retry");
+    expect(b.s.requestedAt).not.toBeNull();
+    expect(b.s.finishedAt).toBeNull();
+    expect(b.s.leaseUntil).toBeNull();
+    /* A minute later, down again: still a retry — the 30-minute clock started when the wait ended. */
+    c.set(c.get() + 60_000);
+    const r3 = await runBackgroundRead({ ...base, fetch: down.f });
+    expect(r3.outcome).toBe("retry");
+    expect(b.s.requestedAt).not.toBeNull();
+    /* Zoho is back: the read carries on to the end. */
+    c.set(c.get() + 60_000);
+    const r4 = await runBackgroundRead({ ...base, fetch: fakeZoho(7).f });
+    expect(r4).toMatchObject({ outcome: "complete", listed: 7, detailed: 7 });
+  });
+
+  it("the same after waiting behind another Zoho read for hours: one 503 is a retry, the request stays", async () => {
+    const holder = { name: "Reconcile from Zoho" as string | null };
+    const reader = { take: async () => holder.name, release: async () => {} };
+    const { d, b, c } = deps({ reader, requireRequest: true });
+    b.s.lastStepAt = "2026-11-08T09:59:00Z";
+    expect((await runBackgroundRead(d)).outcome).toBe("other-reader");
+    holder.name = null;
+    c.set(c.get() + 5 * 3_600_000);
+    const r = await runBackgroundRead({ ...d, fetch: fakeZoho(7, 3, () => j({}, 503)).f });
+    expect(r.outcome).toBe("retry");
+    expect(b.s.requestedAt).not.toBeNull();
+  });
+
+  it("a read that really made no progress for 30 minutes (no waiting state) still stops with the reason — R-2607 unchanged", async () => {
+    const { d, b, c } = deps({ requireRequest: true });
+    b.s.lastStepAt = "2026-11-08T09:59:00Z"; b.s.error = "Zoho Books did not answer.";
+    c.set(c.get() + 40 * 60_000);
+    const r = await runBackgroundRead({ ...d, fetch: fakeZoho(7, 3, () => j({}, 503)).f });
+    expect(r.outcome).toBe("stopped");
+    expect(r.error).toContain("no progress for 30 minutes");
+    expect(b.s.requestedAt).toBeNull();
+  });
+
+  it("a pass that LOST its run lease (taken over) does not release the reader lease — the pass that took over holds the same name", async () => {
+    let releases = 0;
+    const reader = { take: async () => null, release: async () => { releases += 1; } };
+    const { d, b } = deps({ reader });
+    /* The first Zoho answer arrives after another pass has taken the run over. */
+    const z = fakeZoho(7, 3, (call) => { if (call === 1) b.s.leaseUntil = new Date(Date.parse("2026-11-08T12:00:00Z")).toISOString(); return null; });
+    const r = await runBackgroundRead({ ...d, fetch: z.f });
+    expect(r.outcome).toBe("lost");
+    expect(releases).toBe(0);
+  });
+});

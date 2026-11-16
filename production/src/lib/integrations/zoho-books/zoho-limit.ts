@@ -37,10 +37,13 @@ export interface ZohoLimitHit {
   reason?: "refused" | "budget";
   calls?: number;
   budget?: number;
+  /** R-2661: with reason "budget" — Zoho ITSELF refused for the day (its own daily limit) while our count is under the budget. */
+  zohoRefused?: boolean;
 }
 
-/** R-2661: what a read route answers when the day's budget is used (the dialog stops at once). */
-export interface DayLimitAnswer { calls: number; budget: number; retryAt: number; day?: string }
+/** R-2661: what a read route answers when the day's budget is used (the dialog stops at once).
+ *  `limitHitAt` = Zoho itself refused for the day at that time (the count may be far under the budget). */
+export interface DayLimitAnswer { calls: number; budget: number; retryAt: number; day?: string; limitHitAt?: string | null }
 
 /** The next 00:00 in India after `now` (ms since epoch). */
 export function nextIstMidnight(now: number): number {
@@ -52,7 +55,10 @@ export function zohoLimitHit(now: number, budget?: DayLimitAnswer): ZohoLimitHit
   const retryAt = budget?.retryAt && Number.isFinite(budget.retryAt) ? budget.retryAt : nextIstMidnight(now);
   const day = istToday(new Date(retryAt));
   const hit: ZohoLimitHit = { at: now, retryAt, retryLabel: `12:00 am IST on ${formatDate(day)}` };
-  if (budget) { hit.reason = "budget"; hit.calls = budget.calls; hit.budget = budget.budget; }
+  if (budget) {
+    hit.reason = "budget"; hit.calls = budget.calls; hit.budget = budget.budget;
+    if (budget.limitHitAt && budget.calls < budget.budget) hit.zohoRefused = true;
+  }
   return hit;
 }
 
@@ -61,6 +67,14 @@ export function zohoLimitText(hit: ZohoLimitHit): { title: string; body: string 
   if (hit.reason === "budget") {
     /* R-2661: the app stopped BEFORE Zoho's limit — the per-day budget (zoho-day-budget.ts) is used. */
     const n = (x: number | undefined) => (x ?? 0).toLocaleString("en-IN");
+    if (hit.zohoRefused) {
+      /* Zoho's own daily limit (another app may share the organization): our count is under the budget. */
+      return {
+        title: "Zoho's daily limit is reached",
+        body: `Zoho calls today: ${n(hit.calls)} of ${n(hit.budget)} — Zoho itself refused more reads for today (its own daily limit), so reading has stopped. ` +
+          `It carries on after ${hit.retryLabel}. Nothing was changed — what was read so far is kept, and Try again carries on from there.`,
+      };
+    }
     return {
       title: "Zoho's daily limit is reached",
       body: `Zoho calls today: ${n(hit.calls)} of ${n(hit.budget)} — the day's budget is used, so reading has stopped before Zoho refuses. ` +
@@ -77,6 +91,15 @@ export function zohoLimitText(hit: ZohoLimitHit): { title: string; body: string 
 /** R-2661: the server's own words for a read stopped by the day budget (bg_error, route messages). */
 export function zohoDayLimitMessage(d: DayLimitAnswer, now: number = Date.now()): string {
   return zohoLimitText(zohoLimitHit(now, d)).body;
+}
+
+/** R-2661: a saved read message (bg_error) that means the read is WAITING — for the next IST day (day
+ *  budget / Zoho's daily refusal) or for another read to finish — not failing. Waiting time is never
+ *  "no progress", and the receipts dialog stops polling on it. Matches zohoDayLimitMessage and
+ *  zohoReaderBusyMessage (tested against both). */
+export function isZohoWaitMessage(message: string | null | undefined): boolean {
+  const m = message ?? "";
+  return m.startsWith("Zoho calls today: ") || m.startsWith("Another Zoho read is running");
 }
 
 /** R-2661: a second Zoho read was started while `holder` is reading (one reader at a time per company). */

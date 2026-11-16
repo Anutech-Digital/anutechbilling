@@ -38,7 +38,7 @@ export class ZohoApiError extends Error {
  */
 export class ZohoDayLimitError extends ZohoApiError {
   constructor(readonly day: DayBudgetState) {
-    super(zohoDayLimitMessage({ calls: day.calls, budget: day.budget, retryAt: day.retryAt, day: day.day }), "day_limit");
+    super(zohoDayLimitMessage({ calls: day.calls, budget: day.budget, retryAt: day.retryAt, day: day.day, limitHitAt: day.limitHitAt }), "day_limit");
     this.name = "ZohoDayLimitError";
   }
 }

@@ -151,7 +151,10 @@ export async function POST(req: NextRequest) {
 
   let zohoCalls = 0;
   const counted: typeof fetch = (input, init) => { zohoCalls += 1; return fetch(input, init); };
-  let token = await zohoAccessToken(caller, conn.refreshToken, creds);
+  let token: string;
+  /* R-2661 (review): a token that cannot be had ends this request — the lease is let go first. */
+  try { token = await zohoAccessToken(caller, conn.refreshToken, creds); }
+  catch (e) { await releaseZohoReader(caller.admin, caller.tenantId, ZOHO_RECONCILE_READER); throw e; }
   const deps = (): ZohoReadDeps => ({ orgId: conn.orgId!, token, fetch: counted });
 
   const out: BulkMatchRow[] = [];
@@ -200,10 +203,12 @@ export async function POST(req: NextRequest) {
     try {
       const rows = await attachCustomerFacts(out, caller, createClient() as unknown as Parameters<typeof attachCustomerFacts>[2], appCustomers);
       /* R-2661: dayLimit = the app's own day budget is used (no call was made) — the sheet stops at once. */
-      const day = dayLimit ? { dayLimit: { calls: dayLimit.day.calls, budget: dayLimit.day.budget, retryAt: dayLimit.day.retryAt, day: dayLimit.day.day } } : {};
+      const day = dayLimit ? { dayLimit: { calls: dayLimit.day.calls, budget: dayLimit.day.budget, retryAt: dayLimit.day.retryAt, day: dayLimit.day.day, limitHitAt: dayLimit.day.limitHitAt } } : {};
       const stop = dayLimit ? { stopped: { code: "day_limit", message: dayLimit.message } } : stopped ? { stopped: { code: "busy", message: "Zoho is busy — waiting a minute, then it carries on." } } : {};
       return NextResponse.json({ ok: true, rows, skipped, zohoCalls, ...stop, ...day });
     } catch (e) {
+      /* R-2661 (review): the page failed — let the lease go (Continue takes it again). */
+      await releaseZohoReader(caller.admin, caller.tenantId, ZOHO_RECONCILE_READER);
       const what = e instanceof FactsReadError ? e.message : "the app's records";
       return fail(500, "read_failed", `Could not read ${what} for these customers.`,
         "Without them the plan cannot tell a new sale from a payment already booked, so nothing is planned.", { label: "Press Continue to try again" });
