@@ -142,6 +142,25 @@ export interface DocPart {
   taxable?: number | null;
 }
 
+/**
+ * R-2870: one row of renewal_quote_subscriptions (R-2847) — a renewal quote billed TOGETHER names each member
+ * subscription here (the quote's own renewal_subscription_id / renewal_term_date stay empty, and paying clears the
+ * subscription's renewal_quote_id). released_at = closed with no money on it (the term is free again, history only).
+ */
+export interface TogetherLink {
+  quote_id: string;
+  subscription_id: string;
+  renewal_term_date: string;
+  /** ₹ before GST — this member's own share of the together quote. */
+  subtotal: number;
+  renewed_at: string | null;
+  released_at: string | null;
+}
+
+/** R-2870: the link rows that still tie a quote to a subscription (a released one is history). One rule for every reader. */
+export const liveTogetherLinks = <L extends Pick<TogetherLink, "released_at">>(links: readonly L[] | undefined): L[] =>
+  (links ?? []).filter((l) => !l.released_at);
+
 export interface LastDocsInput {
   subs: ReadonlyArray<{
     id: string; quote_id: string | null; renewal_quote_id: string | null; start_date: string | null;
@@ -153,6 +172,8 @@ export interface LastDocsInput {
   quotes: readonly DocQuote[];
   billings: readonly DocBilling[];
   invoices: readonly DocInvoice[];
+  /** R-2870: renewal_quote_subscriptions rows of these subscriptions — a together quote belongs to each member. */
+  links?: readonly TogetherLink[];
 }
 
 export interface LastQuote {
@@ -314,6 +335,8 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     if (s.quote_id) add(quoteSubs, s.quote_id, s.id);
     if (s.renewal_quote_id) add(quoteSubs, s.renewal_quote_id, s.id);
   }
+  /* R-2870: a quote billed together belongs to every member subscription (even after paying cleared renewal_quote_id) */
+  for (const l of liveTogetherLinks(input.links)) if (subIds.has(l.subscription_id)) add(quoteSubs, l.quote_id, l.subscription_id);
   /* R-2830: quote id → subscription id → the part of that subscription the quote bills (lead part + each line's part) */
   const quotePart = new Map<string, Map<string, string>>();
   for (const q of input.quotes) {

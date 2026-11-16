@@ -21,13 +21,14 @@
  */
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readTogetherLinks } from "./together-links-data";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { noteTotalsByInvoice, type NoteAmountRow } from "@/lib/invoices/note-totals";
 import {
   attachDocDetails, attachSendTimes, detailQuoteIds, lastDocsBySubscription, sendLogQuoteIds, shownInvoiceIds,
   type SendLogRow,
-  type DocBilling, type DocInvoice, type DocQuote, type DocQuoteDetail, type LastDocs, type LastDocsInput,
+  type DocBilling, type DocInvoice, type DocQuote, type DocQuoteDetail, type LastDocs, type LastDocsInput, type TogetherLink,
 } from "./last-docs";
 
 type SubRef = LastDocsInput["subs"][number];
@@ -96,6 +97,8 @@ export interface RenewalDocRows {
   /** round 1, drawer only: the revisions of those quotes (opts.moreQuotes) */
   more: DocQuote[];
   billings: DocBilling[];
+  /** R-2870: the together-quote links of the listed subscriptions (released ones left out); their quotes are in `viaSub`. */
+  links: TogetherLink[];
   /** the billed parts' proformas (quotes.subscription_billing_id) */
   parts: DocQuote[];
   /** invoices raised from the round-1 quotes (every status) */
@@ -140,7 +143,8 @@ export async function readRenewalDocRows(
       .in(col, run)
       .order("id", { ascending: true })
       .range(from, to), { chunkSize: VIA_SUB_CHUNK, ...c });
-  const [viaRenewal, viaSeats, own, billings] = await Promise.all([
+  /* R-2870: the together-quote links (+ their quotes) ride in this same round — see together-links-data.ts */
+  const [viaRenewal, viaSeats, own, billings, { links, quotes: linkQuotes }] = await Promise.all([
     viaSubBy("renewal_subscription_id"),
     viaSubBy("add_seats_subscription_id"),
     fetchAllRowsIn<DocQuote, string>(ownQuoteIds, (run, from, to) => loose
@@ -155,8 +159,9 @@ export async function readRenewalDocRows(
       .in("subscription_id", run)
       .order("id", { ascending: true })
       .range(from, to), c),
+    readTogetherLinks(loose, subIds, QUOTE_COLS, { chunkSize: VIA_SUB_CHUNK, ...c }),
   ]);
-  const viaSub = [...new Map([...viaRenewal, ...viaSeats].map((q) => [q.id, q])).values()]
+  const viaSub = [...new Map([...viaRenewal, ...viaSeats, ...linkQuotes].map((q) => [q.id, q])).values()]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   /* R-2740 drawer: the other revisions of these quotes (drawer-data.ts readRevisions) join round 1. */
   const more = opts.moreQuotes ? await opts.moreQuotes([...viaSub, ...own], QUOTE_COLS) : [];
@@ -187,7 +192,7 @@ export async function readRenewalDocRows(
       .order("id", { ascending: true })
       .range(from, to), c),
   ]);
-  return { viaSub, own, more, billings, parts, byQuote, byId };
+  return { viaSub, own, more, billings, links, parts, byQuote, byId };
 }
 
 /** R-2765: the rows' documents from rounds 1–2, then round 3 (only for what the rows show). */
@@ -200,9 +205,9 @@ export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, o
      hundred KB, and half the requests). The drawer's one-subscription read passes none — one chunk, as before. */
   const c = { concurrency: opts.concurrency };
   const loose = supabase as unknown as SupabaseClient;
-  const { viaSub, own, more, billings, parts, byQuote, byId } = r;
+  const { viaSub, own, more, billings, links, parts, byQuote, byId } = r;
   const quotes = [...new Map([...viaSub, ...own, ...more, ...parts].map((q) => [q.id, q])).values()];
-  const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId] }, { all: opts.all });
+  const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId], links }, { all: opts.all });
 
   const shownInvoices = shownInvoiceIds(docs);
   let read: [DocQuoteDetail[], NoteAmountRow[], NoteAmountRow[]];

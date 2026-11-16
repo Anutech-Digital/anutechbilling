@@ -112,7 +112,7 @@ export async function lastPaidFromDocRows(
       .order("id", { ascending: true })
       .range(from, to), c),
   ]);
-  const { invoiceSubs } = linkedDocs({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices });
+  const { invoiceSubs } = linkedDocs({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, links: docRows.links });
   const byInvoice = await fetchAllRowsIn<PaymentRow, string>([...invoiceSubs.keys()], (run, from, to) => supabase
     .from("payments")
     .select(PAYMENT_COLS)
@@ -121,5 +121,5 @@ export async function lastPaidFromDocRows(
     .order("id", { ascending: true })
     .range(from, to), c);
   const payments = [...byQuote, ...byInvoice];
-  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments }, opts);
+  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments, links: docRows.links }, opts);
 }
