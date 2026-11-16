@@ -129,7 +129,7 @@ export default function ManageAdAccountsPage() {
                   {account.last_error && <p className="mt-1 text-xs text-rose-ink">{account.last_error}</p>}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-3">
-                  <Button asChild size="sm" variant="outline"><Link href={`/marketing/ads?platform=${account.platform}&account=${account.id}#ad-results` as Route}>View results</Link></Button>
+                  <Button asChild size="sm" variant="outline"><Link href={`/marketing/ads?platform=${account.platform}&account=${account.id}#spend-results` as Route}>View results</Link></Button>
                   <label className="flex items-center gap-2 text-xs text-ink-3"><Switch checked={account.enabled} disabled={toggle.isPending || remove.isPending} onCheckedChange={(enabled) => toggle.mutate({ accountId: account.id, enabled })} aria-label={`Sync ${account.name}`} /> Sync</label>
                   <Button size="sm" variant="ghost" className="text-rose-ink" onClick={() => setRemoveTarget(account)}>Remove</Button>
                 </div>

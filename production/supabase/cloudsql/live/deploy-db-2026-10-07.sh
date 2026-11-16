@@ -547,6 +547,7 @@ MIGS=(
   "r2852togetherrefusesdomainhosting|20261115152217_r2852_together_refuses_domain_hosting.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.create_renewal_quote_together(uuid,jsonb)') and prosrc like '%renew it with Review renewal quote on its row%')"
   "r2860adtablesservicegrants|20261116053500_r2860_ad_tables_service_grants.sql|resellersos_migration|has_table_privilege('service_role', 'public.ad_spend_daily', 'INSERT') and has_table_privilege('service_role', 'public.ad_sync_runs', 'INSERT') and has_table_privilege('service_role', 'public.ad_accounts', 'UPDATE')"
   "r2709socialmarketingapproves|20261116115628_r2709_social_marketing_approves.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_social_content_approval_guard()') and prosrc like '%R-2709%')"
+  "r2868budgetmanagercanask|20261116115905_r2868_budget_manager_can_ask.sql|resellersos_migration|exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'marketing_budgets' and policyname = 'r1792_insert' and with_check ilike '%manager%') and exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'marketing_payment_requests' and policyname = 'r1792_insert' and with_check ilike '%manager%')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

@@ -253,8 +253,8 @@ export default function AdPlatformsPage() {
           </div>
           <p className="text-xs text-ink-3">The owner approves requests in <Link href={"/marketing/budget" as Route} className="underline">Budget &amp; Payments</Link>. Approved amounts appear here automatically.</p>
 
-          {/* Range KPIs + chart */}
-          <Card id="ad-results" className="p-4 scroll-mt-24">
+          {/* Range KPIs + chart. Never give this an "ad-…" id: ad blockers hide #ad-results (16 Nov 2026 — the owner lost the filters). */}
+          <Card id="spend-results" className="p-4 scroll-mt-24">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-ink">Spend &amp; results</p>

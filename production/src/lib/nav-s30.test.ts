@@ -199,6 +199,8 @@ const addedFor = (role: string) => [
   ...(["owner", "manager", "sales", "sales_senior"].includes(role) ? ADDED_19OCT_COLD_CALLING : []),
   ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
   ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),
+  // R-2868 (16 Nov 2026, Abhishek): the marketing login is a Manager, so a manager opens Budget too.
+  ...(role === "manager" ? ADDED_23OCT_BUDGET : []),
   ...(["owner", "manager", "marketing"].includes(role) ? ADDED_25OCT_COPILOT : []),
   ...(TEAM_CHAT_ROLES.includes(role) ? ADDED_31OCT_TEAM_CHAT : []),
   ...(role === "owner" || role === "manager" ? ADDED_2NOV_PRIVACY_REQUESTS : []),

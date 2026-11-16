@@ -519,4 +519,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2852togetherrefusesdomainhosting", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.create_renewal_quote_together(uuid,jsonb)') and prosrc like '%renew it with Review renewal quote on its row%')" },
   { key: "r2860adtablesservicegrants", peek: "has_table_privilege('service_role', 'public.ad_spend_daily', 'INSERT') and has_table_privilege('service_role', 'public.ad_sync_runs', 'INSERT') and has_table_privilege('service_role', 'public.ad_accounts', 'UPDATE')" },
   { key: "r2709socialmarketingapproves", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_social_content_approval_guard()') and prosrc like '%R-2709%')" },
+  { key: "r2868budgetmanagercanask", peek: "exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'marketing_budgets' and policyname = 'r1792_insert' and with_check ilike '%manager%') and exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'marketing_payment_requests' and policyname = 'r1792_insert' and with_check ilike '%manager%')" },
 ];

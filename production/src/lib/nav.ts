@@ -599,8 +599,8 @@ export const APP_NAV: NavSection[] = [
           { id: "cold-calling", href: "/marketing/cold-calling", label: "Cold Calling", icon: "phone", roles: ["owner", "manager", "sales_senior", "sales", "marketing"], hint: "AI agent calls an imported list; interested ones go to Sales & Pipeline" },
           /* R-1793 (23 Oct 2026, Abhishek): marketing asks the owner for a budget, billing pays it.
              A CHILD (not a directory row) so billing / accountant — who do not get the Hub — see the
-             Hub as a heading with just this row. Manager is not in it: only the three people are. */
-          { id: "marketing-budget", href: "/marketing/budget", label: "Budget & Payments", icon: "wallet", roles: ["owner", "marketing", "billing", "accountant"], hint: "Marketing asks for a budget, the owner approves, billing pays up to it" },
+             Hub as a heading with just this row. R-2868 (16 Nov): manager added — the marketing login is a Manager. */
+          { id: "marketing-budget", href: "/marketing/budget", label: "Budget & Payments", icon: "wallet", roles: ["owner", "marketing", "manager", "billing", "accountant"], hint: "Marketing asks for a budget, the owner approves, billing pays up to it" },
         ],
         directory: [
           /* R-1879 (25 Oct 2026, epic R-1874): one line → a Google + Meta ad plan, step by step. */
