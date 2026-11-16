@@ -4,17 +4,21 @@
  * with the reason (reminders.ts reminderPlan). Nothing is sent until "Email N" is pressed. After
  * the send the SAME dialog says who got it and who did not (with the reason) and offers
  * "Retry failed" — the old result was a toast that was easy to miss.
+ * R-2856: the skipped rows are a LIST — one line per subscription under its reason, with how late it
+ * is and its own next step (Open renewal → the row's drawer; Add a contact → the customer page). It
+ * was one comma paragraph per reason, with no way on for the overdue part-billed customers.
  */
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import {
-  groupSkips, reminderDialogTitle, reminderButton, reminderRowName,
+  groupSkips, reminderDialogTitle, reminderButton, reminderRowName, reminderRowWhen, skipNextStep,
   type BulkReminderResult, type BulkReminderSkip, type RenewalRowLike, type ReminderScope,
 } from "./reminders";
 
@@ -67,12 +71,15 @@ export interface ReminderDialogState<T extends RenewalRowLike> {
   skipped: BulkReminderSkip<T>[];
 }
 
+/** R-2856: a skipped row's next-step link / button — 44px tall on a phone (CLAUDE.md §20), a text link from md up. */
+const SKIP_STEP = "inline-flex min-h-11 shrink-0 items-center rounded text-xs font-medium text-ink underline underline-offset-2 hover:text-amber-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber md:min-h-0";
+
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
 export function RenewalReminderDialog<T extends RenewalRowLike>({
-  state, onClose, onSend, emailOf,
+  state, onClose, onSend, emailOf, onOpenRow, customerHref,
 }: {
   /** null = closed. */
   state: ReminderDialogState<T> | null;
@@ -80,6 +87,10 @@ export function RenewalReminderDialog<T extends RenewalRowLike>({
   /** Runs the send-now route for each row; the page refreshes its lists. */
   onSend: (rows: T[]) => Promise<BulkReminderResult<T>>;
   emailOf?: (row: T) => string | null | undefined;
+  /** R-2856: a skipped row's "Open renewal" — the page closes this dialog and opens that row's drawer. */
+  onOpenRow?: (row: T) => void;
+  /** R-2856: the customer page of a skipped "no email on file" row ("Add a contact"); null = no link. */
+  customerHref?: (row: T) => string | null;
 }) {
   const [sending, setSending] = React.useState(false);
   const [result, setResult] = React.useState<{ sent: T[]; failed: BulkReminderResult<T>["failed"]; stub: boolean } | null>(null);
@@ -183,14 +194,47 @@ export function RenewalReminderDialog<T extends RenewalRowLike>({
               {groups.length > 0 && (
                 <section aria-label="Skipped">
                   <p className="mb-1 text-sm text-ink-2">Skipped: <b className="text-ink">{skipped.length}</b></p>
-                  <ul className="max-h-48 overflow-y-auto rounded-md border border-hairline divide-y divide-hairline text-sm">
-                    {groups.map((g) => (
-                      <li key={g.reason} className="px-3 py-2">
-                        <span className="text-ink-2">{g.reason}</span>
-                        <span className="text-ink-3"> ({g.rows.length}): </span>
-                        <span className="font-medium text-ink">{g.rows.map(reminderRowName).join(", ")}</span>
+                  <ul className="max-h-72 overflow-y-auto rounded-md border border-hairline divide-y divide-hairline text-sm">
+                    {groups.map((g) => {
+                      const step = skipNextStep(g.reason);
+                      return (
+                      <li key={g.reason} data-testid="reminder-skip-group">
+                        {/* the reason once, then one line per subscription — never a comma paragraph */}
+                        <p className="bg-paper-2 px-3 py-1.5 text-ink-2">
+                          <span className="inline-block first-letter:uppercase">{g.reason}</span>
+                          <span className="text-ink-3"> ({g.rows.length})</span>
+                          {step.hint && <span className="block text-xs text-ink-3">{step.hint}</span>}
+                        </p>
+                        <ul className="divide-y divide-hairline">
+                          {g.rows.map((r) => {
+                            const name = reminderRowName(r);
+                            const when = reminderRowWhen(r, g.reason);
+                            const href = step.action === "add-contact" ? customerHref?.(r) ?? null : null;
+                            /* no customer page to link → the renewal itself, where its buttons are */
+                            const open = skipNextStep("").label;
+                            return (
+                            <li key={r.sub.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1.5" data-testid="reminder-skip-row">
+                              <span className="min-w-0 flex-1 font-medium text-ink break-words">{name}</span>
+                              {when && <span className={r.daysUntil < 0 ? "text-xs tabular-nums text-rose" : "text-xs tabular-nums text-ink-3"}>{when}</span>}
+                              {href && !sending ? (
+                                <Link href={href as never} aria-label={`${step.label} — ${name}`} className={SKIP_STEP}>
+                                  {step.label}
+                                </Link>
+                              ) : href ? (
+                                /* a send is running: leaving the page now would lose its result (who got it, Retry failed) */
+                                <span className={`${SKIP_STEP} opacity-50`} aria-disabled="true">{step.label}</span>
+                              ) : onOpenRow ? (
+                                <button type="button" disabled={sending} onClick={() => onOpenRow(r)} aria-label={`${open} — ${name}`} className={`${SKIP_STEP} disabled:opacity-50`}>
+                                  {open}
+                                </button>
+                              ) : null}
+                            </li>
+                            );
+                          })}
+                        </ul>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 </section>
               )}

@@ -432,7 +432,7 @@ describe("R-2738 independent review rev-r2738 (UNSAFE d57880c37) fixes", () => {
   });
 
   it("LOW 9: the app's own labels", () => {
-    expect(MENU_LABEL.voice).toBe("Voice note");
+    expect(MENU_LABEL.voice).toBe("Send a WhatsApp voice note");   // R-2856: the item says the action (was "Voice note")
     expect(MENU_LABEL["undo-wont-renew"]).toBe("Undo Won't renew");
   });
 

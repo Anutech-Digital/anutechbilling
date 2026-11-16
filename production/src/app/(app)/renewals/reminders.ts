@@ -14,6 +14,8 @@ import { isFlexNextPart, FLEX_PART_SKIP_REASON } from "@/lib/renewals/buckets";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { toIstDate } from "@/lib/dates/ist";
+import { renewalDueText } from "./last-docs";
+import { BILL_NEXT_PART, FOLLOW_UP, MENU_LABEL } from "@/lib/renewals/stage";
 
 export interface RenewalSubLike {
   id: string;
@@ -34,6 +36,8 @@ export interface RenewalSubLike {
   status?: string | null;
   /** R-2820: the product — named beside the customer in the reminder lists. */
   plan?: string | null;
+  /** R-2856: the customer — a skipped "no email on file" row links to its page. */
+  customer_id?: string | null;
 }
 
 export interface RenewalRowLike {
@@ -242,6 +246,51 @@ function skipWords(skipped: readonly BulkReminderSkip[]): string {
   return skipped.some((s) => DUE_BUT_BLOCKED.has(s.reason)) ? "can't be emailed now" : NOT_DUE_WORDS;
 }
 
+/* ── R-2856: every skipped row gets its own line and its next step ───────────────────────────
+   16 Nov human test on staging: 7 skipped rows were one comma paragraph, and the overdue part-billed
+   customers (46 / 44 days late) had no way on from the dialog. */
+
+/** What the owner does next for a skipped row: open the renewal (its buttons are there) or add a contact. */
+export interface SkipNextStep {
+  action: "open-renewal" | "add-contact";
+  /** The link / button on the row — it says what the click does. */
+  label: string;
+  /** "Next: …" once under the reason — which of the renewal's buttons to use; null = the reason says it all
+      (past grace already reads "use Send renewal quote, or call them"). */
+  hint: string | null;
+}
+
+const OPEN_RENEWAL = "Open renewal";
+/* The hints name the renewal's buttons by their own constants (lib/renewals/stage.ts) — a rename there renames here.
+   Flex reads the same as split: R-2820's button already calls both "need a part bill". */
+/* read at call time, not at module load: stage.ts and this file reach each other through the renewals modules */
+function skipHint(reason: string): string | null {
+  switch (reason) {
+    case REMINDER_SKIP.split:
+    case REMINDER_SKIP.flex: return `Next: ${BILL_NEXT_PART}, or ${FOLLOW_UP} if a part is late`;
+    case REMINDER_SKIP.wontRenew: return `Next: ${MENU_LABEL["undo-wont-renew"]} if they changed their mind`;
+    case REMINDER_SKIP.noDate: return "Next: set the renewal date on the subscription";
+    default: return null;
+  }
+}
+
+export function skipNextStep(reason: string): SkipNextStep {
+  if (reason === REMINDER_SKIP.noEmail) return { action: "add-contact", label: "Add a contact", hint: null };
+  return { action: "open-renewal", label: OPEN_RENEWAL, hint: skipHint(reason) };
+}
+
+/* ended / settled rows: "Overdue 90d" beside "already renewed" or "service stopped" would contradict the reason */
+const NO_WHEN = new Set<string>([REMINDER_SKIP.wontRenew, REMINDER_SKIP.stopped, REMINDER_SKIP.renewed]);
+
+/**
+ * How late / how soon, in the row chip's own words ("Overdue 46d" — last-docs.ts renewalDueText). "" without a
+ * date, and for a row skipped because it is renewed / stopped / won't renew (no live due date to chase).
+ */
+export function reminderRowWhen(r: RenewalRowLike, reason?: string): string {
+  if (!r.sub.renewal_date || (reason && NO_WHEN.has(reason))) return "";
+  return renewalDueText(r.daysUntil);
+}
+
 /** The Remind button's state: label, greyed or not, and the reason (its tooltip / description). */
 export interface ReminderButtonState {
   label: string;
@@ -256,6 +305,9 @@ export interface ReminderButtonState {
  * 30 days" (a pressed tile), "Remind 2 selected" / "Remind 1 of 3 selected". 14 Nov audit: "Remind 9 in Overdue"
  * opened "No reminder to send — skipped 9". At 0 it is greyed and says why:
  * "Remind 0 · 9 need a call or part bill".
+ * R-2856 (16 Nov): "Remind 1 in Overdue" over a tab of 8 looked as if 7 were forgotten — when rows are
+ * left out the label says N of M ("Remind 1 of 8 in Overdue", as "of N selected" already did) and the
+ * tooltip starts "7 not included — …".
  */
 export function reminderButton(
   scope: ReminderScope,
@@ -264,14 +316,15 @@ export function reminderButton(
   const n = plan.send.length;
   const where = scope.kind === "tab" ? viewWords(scope.label) : "";
   if (scope.count === 0) return { label: `Remind 0 ${where}`.trim(), disabled: true, reason: `Nothing ${where} to remind.` };
-  const reason = plan.skipped.length > 0
+  const why = plan.skipped.length > 0
     ? `${groupSkips(plan.skipped).map((g) => `${g.rows.length} ${g.reason}`).join("; ")}.`
     : undefined;
-  if (n === 0) return { label: `Remind 0 · ${plan.skipped.length} ${skipWords(plan.skipped)}`, disabled: true, reason };
+  if (n === 0) return { label: `Remind 0 · ${plan.skipped.length} ${skipWords(plan.skipped)}`, disabled: true, reason: why };
+  const reason = why ? `${plan.skipped.length} not included — ${why}` : undefined;
   if (scope.kind === "selected") {
     return { label: n < scope.count ? `Remind ${n} of ${scope.count} selected` : `Remind ${n} selected`, disabled: false, reason };
   }
-  return { label: `Remind ${n} ${where}`, disabled: false, reason };
+  return { label: n < scope.count ? `Remind ${n} of ${scope.count} ${where}` : `Remind ${n} ${where}`, disabled: false, reason };
 }
 
 /** R-2820: a row as the reminder lists name it — the product beside the customer (one customer, five plans). */

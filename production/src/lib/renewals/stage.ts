@@ -435,6 +435,11 @@ export type MenuItem =
   | "send-as-is" | "bill-part" | "record-payment" | "change-renewal" | "resend" | "resend-invoice"
   | "follow-up" | "nudge" | "voice" | "renew-anyway" | "not-renewing" | "undo-wont-renew" | "view-subscription";
 
+/** R-2856: the ⋯ follow-up item — the row button's own word, then what it does (the older rows' button reads "Follow-up"). */
+export function followUpMenuLabel(buttonLabel: string): string {
+  return `${buttonLabel} — log a call or promise`;
+}
+
 export const MENU_LABEL: Record<MenuItem, string> = {
   "send-as-is": "Send as is (no changes)",
   "bill-part": BILL_NEXT_PART,
@@ -442,9 +447,11 @@ export const MENU_LABEL: Record<MenuItem, string> = {
   "change-renewal": "Change renewal",
   resend: "Resend",
   "resend-invoice": "Resend invoice / link",
-  "follow-up": FOLLOW_UP,
-  nudge: "Nudge",
-  voice: "Voice note",
+  /* R-2856: "Follow up / Nudge / Voice note" were look-alike words — each ⋯ item says what happens. The row's
+     button stays FOLLOW_UP (R-2767 one verb per intention); the item starts with the same words. */
+  "follow-up": followUpMenuLabel(FOLLOW_UP),
+  nudge: "Draft a WhatsApp message (AI)",
+  voice: "Send a WhatsApp voice note",
   "renew-anyway": "Renew anyway",
   "not-renewing": "Customer not renewing",
   "undo-wont-renew": "Undo Won't renew",

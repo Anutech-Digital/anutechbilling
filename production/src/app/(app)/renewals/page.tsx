@@ -1301,7 +1301,12 @@ export default function RenewalsPage() {
       </BulkActionBar>
 
       {/* The dialog's send = the existing send-now route per row (R-1642 reasons per failure). */}
-      <RenewalReminderDialog state={reminder} onClose={() => setReminder(null)} onSend={(rows) => sendAll(rows)} emailOf={emailOf} />
+      <RenewalReminderDialog state={reminder} onClose={() => setReminder(null)} onSend={(rows) => sendAll(rows)} emailOf={emailOf}
+        /* R-2856: a skipped row's next step — its drawer (Bill next part / Send renewal / Follow up), or the customer page for a contact */
+        /* the drawer opens a moment after the dialog has handed focus back to the Remind button (Radix, 0 ms timer) — Esc in the drawer then returns there, not to <body> */
+        onOpenRow={(row) => { setReminder(null); window.setTimeout(() => openDrawer(row.sub.id), 60); }}
+        customerHref={(row) => (row.sub.customer_id ? `/customers/${row.sub.customer_id}` : null)}
+      />
     </div>
   );
 }
