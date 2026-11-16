@@ -283,14 +283,16 @@ function computeTds(quoteAmountInclGst: number, ratePct: number, taxRatePct: num
   return { preGST, tds };
 }
 
-/* ── R-2846: a part payment request (advance proforma) says it is the ADVANCE ─────────────
-   Owner, 15 Nov (Q-F588-27-0059): the request reads "Renewal · Part 1 of 1 · Oct 2026" and
-   "Advance payment for month 1 · 1 Oct–31 Oct 2026", but this sheet said "Log a payment against
-   quote … Quote total / Expected this payment". Wording only — every amount is the same. */
+/* ── R-2846: a part payment request says what its payment is FOR ──────────────────────────
+   Owner, 15 Nov (Q-F588-27-0059): the request reads "Renewal · Part 1 of 1 · Oct 2026", but this
+   sheet said "Log a payment against quote … Quote total / Expected this payment".
+   R-2865 (owner, 16 Nov): it is NOT an advance — an advance is adjusted against a later purchase
+   or refund; this is the payment for that service period. So the sheet says "Payment for month 1 ·
+   1 Oct–31 Oct 2026 …" and "Amount due", under the same title as any quote.
+   Wording only — every amount is the same. */
 
-/** The sheet's title. `advance` = the part request's advance (null on any other quote). */
-export function recordPaymentTitle(hasPriorPayments: boolean, advance: PartAdvance | null): string {
-  if (advance) return hasPriorPayments ? "Record rest of advance" : "Record advance payment";
+/** The sheet's title — the same on a part request as on any quote (R-2865). */
+export function recordPaymentTitle(hasPriorPayments: boolean): string {
   return hasPriorPayments ? "Record additional payment" : "Record payment received";
 }
 
@@ -309,8 +311,8 @@ export function RecordPaymentSubtext({ advance, quoteId, customerName, hasPriorP
   );
 }
 
-/** The totals box: already paid + this payment + remaining. On a part request one "Advance due"
- *  row (then "Already received" / "Remaining" once part of it is paid). */
+/** The totals box: already paid + this payment + remaining. On a part request (`advance`) one
+ *  "Amount due" row (then "Already received" / "Remaining" once part of it is paid). */
 export function PaymentSummaryRows({ split, expectedAmount, alreadyReceived, remaining, advance }: {
   split: SplitExpectation | null; expectedAmount: number; alreadyReceived: number; remaining: number; advance: boolean;
 }) {
@@ -337,7 +339,7 @@ export function PaymentSummaryRows({ split, expectedAmount, alreadyReceived, rem
         </>
       ) : advance && !hasPriorPayments ? null : (
         <div className="flex justify-between items-baseline">
-          <span className="text-ink-3">{advance ? "Advance due" : "Quote total"}</span>
+          <span className="text-ink-3">{advance ? "Amount due" : "Quote total"}</span>
           <span className="font-medium tabular-nums">{rupee(expectedAmount)}</span>
         </div>
       )}
@@ -348,7 +350,7 @@ export function PaymentSummaryRows({ split, expectedAmount, alreadyReceived, rem
         </div>
       )}
       <div className={`flex justify-between items-baseline${advance && !hasPriorPayments && !split ? "" : " pt-1.5 border-t border-hairline"}`}>
-        <span className="text-ink-3">{hasPriorPayments ? "Remaining" : advance ? "Advance due" : "Expected this payment"}</span>
+        <span className="text-ink-3">{hasPriorPayments ? "Remaining" : advance ? "Amount due" : "Expected this payment"}</span>
         <span className="font-serif text-lg tabular-nums text-amber-ink">{rupee(remaining)}</span>
       </div>
     </div>
@@ -357,9 +359,9 @@ export function PaymentSummaryRows({ split, expectedAmount, alreadyReceived, rem
 
 interface RecordPaymentDialogProps {
   /**
-   * R-2846: a part payment request — what its advance is for (part-requests.ts partAdvanceOf).
-   * The title, the line under it and the totals then say "advance". Wording only; null/absent =
-   * any other quote, unchanged.
+   * R-2846: a part payment request — what its payment is for (part-requests.ts partAdvanceOf).
+   * The line under the title and the totals then say so ("Payment for month 1 · …", "Amount due" —
+   * R-2865: never "advance"). Wording only; null/absent = any other quote, unchanged.
    */
   partAdvance?: PartAdvance | null;
   /**
@@ -1370,7 +1372,7 @@ export function RecordPaymentDialog({
           <SheetHeader className="pr-12 pt-4 px-6 pb-3 border-b border-hairline bg-paper-2/40">
             <div className="flex items-center justify-between gap-3">
               <SheetTitle>
-                {recordPaymentTitle(hasPriorPayments, partAdvance)}
+                {recordPaymentTitle(hasPriorPayments)}
               </SheetTitle>
 
               {/* 🐛 Top Header Report Bug Button inside Slider Panel */}

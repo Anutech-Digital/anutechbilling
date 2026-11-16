@@ -2,7 +2,7 @@
  * R-2044 — "Invoice on due date" for one customer (default OFF; Pardeep, 28 Oct 2026).
  *
  * OFF: each part of a subscription billed in parts (monthly / quarterly / half-yearly) is first a
- * payment request — "Advance payment for Q2 · …" — and the tax invoice is raised when it is paid.
+ * payment request — "Payment for Q2 · …" (R-2865) — and the tax invoice is raised when it is paid.
  * ON: the old way for this customer — the tax invoice on each bill date even if unpaid, so GST is
  * owed on it; chased by the invoice reminders. Read by bill_subscription_instalment
  * (customers.invoice_parts_on_due_date). Owner or manager changes it, like Renewal grace.
