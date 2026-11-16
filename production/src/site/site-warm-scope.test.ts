@@ -129,6 +129,12 @@ describe("site-warm.css never hides page content", () => {
     expect(rules.length).toBeGreaterThan(50);
   });
 
+  /* The ONE real element Warm may hide: the inline header menus at 980–1339px, where the design
+     shows the drawer instead (docs/WEBSITE-THEME.md "full nav with dropdowns ≥1340px; drawer
+     below"). Nothing is lost — the same pages are in the drawer (nav "Mobile"), and the test below
+     fails if the drawer button is not shown in that same range. */
+  const HEADER_MENUS = '.anutech-site[data-site-theme="warm"] > header .hdr-row > nav[aria-label="Main"]';
+
   it("only ::before / ::after are ever hidden", () => {
     const offenders = rules
       .filter((r) => HIDES.test(r.body + ";"))
@@ -136,8 +142,19 @@ describe("site-warm.css never hides page content", () => {
       .filter((s) => !/::(before|after)\s*$/.test(s))
       // The theme's OWN controls (class prefix .w-, e.g. .w-to-top's "hidden until you scroll")
       // are not page content; anything else hidden is.
-      .filter((s) => !/\.w-[a-z0-9-]+(\[[^\]]*\])*\s*$/.test(s));
+      .filter((s) => !/\.w-[a-z0-9-]+(\[[^\]]*\])*\s*$/.test(s))
+      .filter((s) => s !== HEADER_MENUS);
     expect(offenders).toEqual([]);
+  });
+
+  it("the header menus are hidden only at 980–1339px, and only with the drawer button shown there", () => {
+    const block = noComments.match(/@media \(min-width: 980px\) and \(max-width: 1339px\) \{((?:[^{}]*\{[^{}]*\})*)[^{}]*\}/g) ?? [];
+    const hidesMenus = block.filter((b) => b.includes(HEADER_MENUS) && /display:\s*none/.test(b));
+    expect(hidesMenus).toHaveLength(1);
+    expect(hidesMenus[0]).toMatch(/> button\.only-mobile \{ display: inline-flex !important/);
+    // …and nowhere else.
+    const everywhere = rules.filter((r) => splitSelectorList(r.sel).includes(HEADER_MENUS) && HIDES.test(r.body + ";"));
+    expect(everywhere).toHaveLength(1);
   });
 });
 

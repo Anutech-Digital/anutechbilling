@@ -24,7 +24,7 @@
   padding: 8px 0 !important;
   line-height: 1.5;
 }
-/* The bar's content box = the header row's at every width (site.css .hdr-row + the 1400px rule
+/* The bar's content box = the header row's at every width (site.css .hdr-row + the 1340px rule
    below), so its text lines up with the logo and its links end where the header ends.
    Under 980px both are the plain .wrap (20px) already. */
 .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
@@ -33,7 +33,7 @@
   .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
   .anutech-site[data-site-theme="warm"] > div:has(+ script + header) > .wrap { padding-left: 16px; padding-right: 16px; }
 }
-@media (min-width: 1200px) and (max-width: 1399px) {
+@media (min-width: 1200px) and (max-width: 1339px) {
   .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
   .anutech-site[data-site-theme="warm"] > div:has(+ script + header) > .wrap { padding-left: 24px; padding-right: 24px; }
 }
@@ -67,7 +67,10 @@
 .anutech-site[data-site-theme="warm"] > header .hdr-row {
   height: 66px !important;
 }
-@media (min-width: 1400px) {
+/* From 1340px — where the design shows the full menus — the design's 1320px row (it was 1400px,
+   leaving 1340–1399px squeezed into the classic 1180px box), with "Why us" (classic hides it
+   below 1400px for lack of room). */
+@media (min-width: 1340px) {
   .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
   .anutech-site[data-site-theme="warm"] > div:has(+ script + header) > .wrap,
   .anutech-site[data-site-theme="warm"] > header .hdr-row {
@@ -75,6 +78,17 @@
     padding-left: 32px;
     padding-right: 32px;
   }
+  .anutech-site[data-site-theme="warm"] > header .nav-item.nav-why { display: inline-flex !important; }
+}
+/* 980–1339px: the design's drawer instead of the inline menus ("Header: full nav with dropdowns
+   ≥1340px; drawer below" — docs/WEBSITE-THEME.md). The row was 140px wider than the screen at
+   1000px (theme switch off-screen, page scrolling sideways) and had no room at all up to ~1340px.
+   The menus' pages stay one tap away in the drawer (nav "Mobile", the same one phones use); Cart,
+   Customer login and the theme switch stay in the row. Allowed by name in site-warm-scope.test.ts. */
+@media (min-width: 980px) and (max-width: 1339px) {
+  .anutech-site[data-site-theme="warm"] > header .hdr-row > nav[aria-label="Main"] { display: none !important; }
+  .anutech-site[data-site-theme="warm"] > header .hdr-row > span.only-mobile { display: block !important; }
+  .anutech-site[data-site-theme="warm"] > header .hdr-row > button.only-mobile { display: inline-flex !important; align-items: center; justify-content: center; }
 }
 
 /* Main nav: centred 44px pills, teal hover, mint when open or on that section's page. */
@@ -136,8 +150,9 @@
   flex: none;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2317241F' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3Cpath d='M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6.2'/%3E%3C/svg%3E") center / contain no-repeat;
 }
-/* The design's thin divider between the menus and the right-hand actions. */
-@media (min-width: 980px) {
+/* The design's thin divider between the menus and the right-hand actions (only where the
+   menus show inline, 1340px+). */
+@media (min-width: 1340px) {
   .anutech-site[data-site-theme="warm"] > header a[href="/cart"]::after {
     content: "";
     position: absolute;
@@ -162,6 +177,17 @@
 .anutech-site[data-site-theme="warm"] > header a[href="/cart"] > .mono:not([style*="border-hairline"]) {
   background: var(--w-teal) !important;
   color: var(--w-on-teal) !important;
+}
+
+/* Breathing room (design artboard SiteHeader): the groups 12px apart (+8px either side of the
+   menus) instead of the classic row's 26px, which at 1440px left the seven menus no slack at all,
+   2px apart. The room goes between the menu items. */
+@media (min-width: 980px) {
+  .anutech-site[data-site-theme="warm"] > header .hdr-row { gap: 12px !important; }
+}
+@media (min-width: 1340px) {
+  .anutech-site[data-site-theme="warm"] > header nav[aria-label="Main"] { margin: 0 8px; gap: 6px !important; }
+  .anutech-site[data-site-theme="warm"] > header a[href="/cart"]::after { left: -10px; }
 }
 
 /* Customer login: the design's outlined-teal button, fills teal on hover. */
