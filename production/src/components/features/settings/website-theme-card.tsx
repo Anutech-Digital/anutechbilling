@@ -91,7 +91,9 @@ export default function WebsiteThemeCard() {
       </div>
 
       <p className="mt-4 text-sm text-ink-3">
-        <a href="/" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-2 hover:text-amber">
+        {/* ?preview=1 (R-1508): only a signed-in owner sees this card, and "/" sends a signed-in
+            user to /dashboard unless the visit is a website preview. */}
+        <a href="/?preview=1" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-2 hover:text-amber">
           Open the website
         </a>{" "}
         to see the theme in use.
