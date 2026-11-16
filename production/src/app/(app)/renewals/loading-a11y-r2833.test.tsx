@@ -14,14 +14,14 @@ afterEach(cleanup);
 
 describe("R-2833 Last bill cell while loading", () => {
   it("is a role=status, aria-busy 'Loading…' with a title", () => {
-    render(<LastInvoiceCell docs={undefined} loading failed={false} canInvoices canQuotes todayIst="2026-11-15" />);
+    render(<LastInvoiceCell docs={undefined} loading failed={false} canInvoices todayIst="2026-11-15" />);
     const el = screen.getByRole("status");
     expect(el.textContent).toBe("Loading…");
     expect(el.getAttribute("aria-busy")).toBe("true");
     expect(el.getAttribute("title")).toBeTruthy();
   });
   it("is not a status once loaded (failed shows the plain message)", () => {
-    render(<LastInvoiceCell docs={undefined} loading={false} failed canInvoices canQuotes todayIst="2026-11-15" />);
+    render(<LastInvoiceCell docs={undefined} loading={false} failed canInvoices todayIst="2026-11-15" />);
     expect(screen.queryByRole("status")).toBeNull();
   });
 });

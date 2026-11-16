@@ -12,9 +12,11 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { primaryContactsFor } from "@/lib/contacts/primary";
+import { displayPhone } from "@/components/features/renewals/renewal-contact-rules";
 import type { RenewalQuoteInfo } from "./queue";
 import type { RenewalFollowupRow } from "./followup";
 import type { RenewalQuotePayment } from "./tiles";
+import { RENEWALS_READ_CONCURRENCY } from "./last-docs-data";
 
 export interface RowContact {
   name: string | null;
@@ -32,16 +34,22 @@ function chunks<T>(xs: readonly T[], n: number): T[][] {
   return out;
 }
 
-/** Primary contact wins; the legacy customers.contact_* columns fill what it leaves empty. */
+/**
+ * Primary contact wins; the legacy customers.contact_* columns fill what it leaves empty.
+ * R-2857: the phone is in the ONE display form ("+91 98765 98765", displayPhone) — the row, the card,
+ * the drawer and the follow-up dialog all print this value, so they can never differ; its tel: /
+ * WhatsApp links read the same digits back (lib/phone). Display only: nothing is written.
+ */
 export function mergeContact(
   primary: { name: string | null; email: string | null; phone: string | null } | undefined,
   legacy: { contact_email: string | null; contact_phone: string | null; country?: string | null } | undefined,
 ): RowContact {
+  const country = legacy?.country?.trim() || null;
   return {
     name: primary?.name ?? null,
     email: primary?.email?.trim() || legacy?.contact_email?.trim() || null,
-    phone: primary?.phone?.trim() || legacy?.contact_phone?.trim() || null,
-    country: legacy?.country?.trim() || null,
+    phone: displayPhone(primary?.phone?.trim() || legacy?.contact_phone?.trim() || null, country),
+    country,
   };
 }
 
@@ -75,24 +83,34 @@ export function useRenewalContacts(customerIds: readonly string[]) {
   });
 }
 
+/**
+ * The linked quotes' facts (total, status, paid?) for the listed renewals — the row's Status waits for them.
+ * R-2855: the id chunks are read 4 at a time (R-2765's RENEWALS_READ_CONCURRENCY). They ran one after
+ * another: staging's 786 subscriptions = ~1,570 quote ids = 8 requests in a row before any Status chip
+ * could show. Same rows, same order (fetchAllRowsIn returns them in chunk order).
+ */
+export async function readRenewalQuoteInfo(quoteIds: readonly (string | null)[]): Promise<Map<string, RenewalQuoteInfo>> {
+  const ids = [...new Set(quoteIds.filter((x): x is string => !!x))].sort();
+  const supabase = createClient();
+  const rows = await fetchAllRowsIn<RenewalQuoteInfo, string>(
+    ids,
+    (run, from, to) => supabase
+      .from("quotes")
+      .select("id, amount, status, payment_status, currency, exchange_rate")   // R-2767: currency for foreign customers
+      .in("id", run)
+      .order("id", { ascending: true })
+      .range(from, to),
+    { concurrency: RENEWALS_READ_CONCURRENCY },
+  );
+  return new Map(rows.map((q) => [q.id, q]));
+}
+
 export function useRenewalQuoteInfo(quoteIds: readonly (string | null)[]) {
   const ids = [...new Set(quoteIds.filter((x): x is string => !!x))].sort();
   return useQuery({
     queryKey: ["quotes", "renewal-amounts", ids],
     enabled: ids.length > 0,
-    queryFn: async (): Promise<Map<string, RenewalQuoteInfo>> => {
-      const supabase = createClient();
-      const rows = await fetchAllRowsIn<RenewalQuoteInfo, string>(
-        ids,
-        (run, from, to) => supabase
-          .from("quotes")
-          .select("id, amount, status, payment_status, currency, exchange_rate")   // R-2767: currency for foreign customers
-          .in("id", run)
-          .order("id", { ascending: true })
-          .range(from, to),
-      );
-      return new Map(rows.map((q) => [q.id, q]));
-    },
+    queryFn: () => readRenewalQuoteInfo(ids),
   });
 }
 

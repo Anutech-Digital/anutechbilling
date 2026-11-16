@@ -76,27 +76,17 @@ describe("rowQuoteNote — review fixes (R-2841)", () => {
 });
 
 const cellProps = { loading: false, failed: false, canInvoices: true, canQuotes: true, todayIst: TODAY };
+const tableProps = { loading: false, failed: false, canInvoices: true, todayIst: TODAY };
 
 describe("table cell + card lines (R-2841)", () => {
-  it("table: the invoice stays, a muted linked quote line is added", () => {
-    render(<LastInvoiceCell {...cellProps} docs={docs(addSeats, [paidInv])} stage={{ quoteId: null, key: "due" }} />);
-    const line = screen.getByTestId("renewal-row-quote-note");
-    expect(line.textContent).toBe("Quote Q-ADD-1Accepted");
-    expect(screen.getByRole("link", { name: "Q-ADD-1" }).getAttribute("href")).toBe("/quotes/Q-ADD-1");
+  /* R-2854 (changed expectation — Pardeep 16 Nov: "Last bill = invoice + payment only"): the TABLE cell names no quote any
+     more — this renewal's quote is the Product column's quote line (row-quote.tsx); an add-seats quote stays on the card
+     layout and in the row drawer / History. */
+  it("table: the invoice stays and the Last bill cell names no quote", () => {
+    render(<LastInvoiceCell {...tableProps} docs={docs(addSeats, [paidInv])} />);
+    expect(screen.queryByTestId("renewal-row-quote-note")).toBeNull();
+    expect(screen.getByTestId("renewal-last-invoice-cell").textContent).not.toMatch(/Q-ADD-1|Quote/);
     expect(screen.getByTestId("renewal-last-invoice-status").textContent).toBe("Paid");
-  });
-  it("table: a 'Quote sent' chip that names the quote → no quote line", () => {
-    render(<LastInvoiceCell {...cellProps} docs={docs(addSeats, [paidInv])} stage={{ quoteId: "Q-ADD-1", key: "sent", quoteStatus: "accepted" }} />);
-    expect(screen.queryByTestId("renewal-row-quote-note")).toBeNull();
-  });
-  it("table: stage still loading → no quote line", () => {
-    render(<LastInvoiceCell {...cellProps} docs={docs(addSeats, [paidInv])} stage={null} />);
-    expect(screen.queryByTestId("renewal-row-quote-note")).toBeNull();
-  });
-  it("table: no quotes permission → the number without a link", () => {
-    render(<LastInvoiceCell {...cellProps} canQuotes={false} docs={docs(addSeats, [paidInv])} stage={CARD_CHIP} />);
-    expect(screen.getByTestId("renewal-row-quote-note").textContent).toBe("Quote Q-ADD-1Accepted");
-    expect(screen.queryByRole("link", { name: "Q-ADD-1" })).toBeNull();
   });
   it("card: the newer not-invoiced quote shows beside the invoice (its chip names no quote number)", () => {
     render(<LastDocsLines {...cellProps} docs={docs(addSeats, [paidInv])} />);

@@ -74,10 +74,10 @@ describe("R-2741 Renewed tile opens exactly the renewals it counts", () => {
 describe("R-2741 header owed line", () => {
   it("leads with the rows' own owed total (R-2818), not outstanding_amount", () => {
     const line = subscriptionDuesLine(toChaseSummary([]), 482_128, false, 12_500);
-    expect(line).toBe("₹12,500 still owed on these renewals");
+    expect(line).toBe("Bills and instalments due: ₹12,500 unpaid on these renewals");   // R-2855: names what is owed
   });
   it("nothing owed on the rows: says so, even when outstanding_amount is stale", () => {
-    expect(subscriptionDuesLine(toChaseSummary([]), 482_128, false, 0)).toBe("No renewal owed");
+    expect(subscriptionDuesLine(toChaseSummary([]), 482_128, false, 0)).toBe("No bill or instalment unpaid on these renewals");
   });
   it("without the new figure the old line is unchanged", () => {
     expect(subscriptionDuesLine(toChaseSummary([]), 2000, false)).toMatch(/^₹2,000 unpaid on these renewals/);

@@ -31,6 +31,8 @@ import { netAfterNotes, type NoteTotals } from "@/lib/invoices/note-totals";
    due_date instead — see the header of lib/invoices/overdue.ts for why not a cron. */
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
+import { invoicePeriodLine, partRowsByInvoice } from "@/lib/invoices/invoice-period";
+import { useInvoicePartRows } from "@/lib/queries/invoice-part-periods";
 import { toInvoiceAgeDays } from "./to-invoice-age";
 import { istToday } from "@/lib/dates/ist";
 import {
@@ -161,6 +163,11 @@ function InvoicesPageInner() {
     [invoices],
   );
   const networkChips = useNetworkChips(issuedIds);
+  /* R-2853: the subscription period under each invoice number — the stored line periods come with the
+     invoices (select *); the billed parts ("Part 2 of 12 · 1–31 Oct 2026") are ONE paged read for the list. */
+  const { data: partRows } = useInvoicePartRows({ all: true });
+  const partsByInvoice = React.useMemo(() => partRowsByInvoice(partRows), [partRows]);
+  const periodOf = React.useCallback((inv: Invoice) => invoicePeriodLine(inv, partsByInvoice.get(inv.id)), [partsByInvoice]);
   const { data: pending } = useQuotesAwaitingInvoice();
   const generateInvoice = useGenerateInvoice();
   /* R-2057: a sale billed in parts — Generate issues the due PART's invoice (the billing job's path),
@@ -971,7 +978,7 @@ function InvoicesPageInner() {
             </>
           }
           mobileCard={(inv) => (
-            <MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} network={networkChips.get(inv.id)} />
+            <MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} network={networkChips.get(inv.id)} period={periodOf(inv)} />
           )}
           renderRow={(inv, ctx) => (
             <InvoiceRow
@@ -980,6 +987,7 @@ function InvoicesPageInner() {
               notes={noteTotals?.get(inv.id)}
               network={networkChips.get(inv.id)}
               isProject={projectInvoiceIds?.has(inv.id) ?? false}
+              period={periodOf(inv)}
             />
           )}
           empty={
@@ -1062,7 +1070,7 @@ function InvoiceNoteLines({ notes, net }: { notes?: NoteTotals; net: number }) {
 // ============================================================
 // Mobile Invoice Card — phones only
 // ============================================================
-function MobileInvoiceCard({ inv, notes, network }: { inv: Invoice; notes?: NoteTotals; network?: NetworkStatusView }) {
+function MobileInvoiceCard({ inv, notes, network, period }: { inv: Invoice; notes?: NoteTotals; network?: NetworkStatusView; period?: string | null }) {
   const net = netAfterNotes(inv.amount, notes);
 
   /* R-086: a real link to the invoice's own page (was a sheet over the list). */
@@ -1075,6 +1083,8 @@ function MobileInvoiceCard({ inv, notes, network }: { inv: Invoice; notes?: Note
         <div className="flex items-start justify-between gap-3 mb-1.5">
           <div className="min-w-0 flex-1">
             <p className="font-mono text-xs font-semibold text-ink">{inv.id}</p>
+            {/* R-2853: which subscription term this invoice covers. */}
+            {period && <p className="text-3xs text-ink-3 break-words" data-testid="invoice-period">{period}</p>}
             {isOpeningInvoice(inv) && <Badge kind="info" size="sm" className="mt-0.5">Imported from Zoho</Badge>}
             <p className="text-sm font-medium text-ink mt-0.5 truncate">{cleanDisplayName(inv.customer_name)}</p>
           </div>
@@ -1123,6 +1133,7 @@ function InvoiceRow({
   notes,
   network,
   isProject = false,
+  period,
 }: {
   inv: Invoice;
   /** From DataTable — carries the selection checkbox cell. */
@@ -1133,6 +1144,8 @@ function InvoiceRow({
   network?: NetworkStatusView;
   /** Invoice came from a project milestone (vs a subscription quote). */
   isProject?: boolean;
+  /** R-2853: the subscription period it covers (invoice-period.ts); null = not a subscription invoice. */
+  period?: string | null;
 }) {
   const router = useRouter();
   const waSender = useWhatsAppSender();
@@ -1171,6 +1184,8 @@ function InvoiceRow({
       {/* Full invoice number (mono) + type badge — never truncated. */}
       <td className="px-3 py-2.5 align-top">
         <div className="font-mono text-[12px] font-semibold text-ink break-all leading-snug">{inv.id}</div>
+        {/* R-2853: under the number — the subscription term this invoice covers. */}
+        {period && <div className="text-3xs text-ink-3 break-words leading-snug mt-0.5" data-testid="invoice-period">{period}</div>}
         {/* R-1739: an invoice imported from Zoho Books says so wherever invoices list. */}
         {opening
           ? <Badge kind="info" size="sm" className="mt-1">Imported from Zoho</Badge>

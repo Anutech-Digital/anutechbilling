@@ -100,14 +100,17 @@ export function noRenewalDate<T extends { status: string; renewal_date: string |
  * one of them): Overdue = expired + service stopped; the windows = Next 7 days / upcoming /
  * future + the Won't-renew rows still running, split by date. R-2422: a flex (monthly-commitment)
  * subscription is a renewal like any other (R-2232's exclusion reversed by the owner, 3 Nov).
+ * R-2858: the window is the Due column's own day count (`dueDays` — a part due before the renewal date
+ * counts from ITS date; absent = the renewal date), so a Won't renew row with a late part is in Overdue.
  */
-export function queueTabs<T extends { daysUntil: number }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
+export function queueTabs<T extends { daysUntil: number; dueDays?: number | null }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
   const out: Record<QueueTab, T[]> = { overdue: [], due7: [], d30: [], d60: [], d90: [], later: [] };
   out.overdue.push(...g.expired, ...g.stopped);
   /* R-2586: g.later = chased renewals past 90 days (classify.ts); a far Won't renew row lands in later too. */
   for (const r of [...g.due7, ...g.upcoming, ...g.future, ...g.later, ...g.nonRenewing]) {
-    const t = windowTab(r.daysUntil);
-    if (t !== "overdue") out[t].push(r);
+    const t = windowTab(r.dueDays ?? r.daysUntil);
+    /* by the renewal date alone a row here is never overdue (classify.ts) — only a late part (dueDays) makes it so */
+    if (t !== "overdue" || r.dueDays != null) out[t].push(r);
   }
   return out;
 }
@@ -309,7 +312,7 @@ export interface RenewalAmount {
   gst: string;
   /** R-2751: "Quote ₹92,040 incl. GST" once the renewal quote is sent / viewed / accepted; null otherwise (a draft adds nothing). */
   quoteNote: string | null;
-  /** The same quote in the table's narrow second line: "quote ₹92K" (incl. GST; the full note is the cell's title). */
+  /** The same quote, short: "quote ₹92,040" (incl. GST; R-2854: full figure, no "K" — not printed in the table's Amount column any more). */
   quoteShort: string | null;
 }
 
@@ -345,7 +348,9 @@ export function renewalAmount(
   const qfx = q ? foreignOf(q) : null;
   const qForeign = q && qfx ? foreignAmount(qfx.currency, Number(q.amount ?? 0), qfx.rate) : null;
   const quoteNote = !q ? null : qForeign ? `Quote ${qForeign}` : `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST`;
-  const quoteShort = !q ? null : qForeign ? `quote ${qForeign}` : `quote ${rupee(Math.round(q.amount ?? 0), { compact: true })}`;
+  /* R-2854 (from R-2857): the full Indian figure "₹92,040", never "₹92.0K". The TABLE no longer prints it in the Amount
+     column — the quote's total is said once, on the row's quote line (row-quote.tsx). */
+  const quoteShort = !q ? null : qForeign ? `quote ${qForeign}` : `quote ${rupee(Math.round(q.amount ?? 0))}`;
   const fx = foreignOf(saleQuote);
   const foreign = fx ? foreignAmount(fx.currency, v, fx.rate) : null;
   if (foreign) {
@@ -523,19 +528,64 @@ export function bulkQuoteConfirm(
    each (names wrap to 2 lines), so Status / Last invoice are 92px and wrap (chip text, "Overdue 12d · ₹…"). Eight
    columns, every cell at most two lines:
    ☐ · Customer · Product & period · Due · Amount · Status · Last bill · Action. R-2840: Last bill has a 3rd line (last payment). */
+/* R-2854 (Chrome human test on staging, 16 Nov — a 1920 window): the fixed 92px Status / Last bill made every row
+   119–161px tall while Customer and Product stretched to 518px each, half empty; "₹63,855/mo" broke as "…/m" + "o"
+   and "INV-A378-…" was cut. Now every column but Product has a width that GROWS with the window — `width` at a
+   1260 window up to `max` at 1920 (queueColCss: a CSS clamp() on vw, so no breakpoint list to keep in step) — and
+   Product & period, which also carries the renewal's quote line, takes what is left (never under QUEUE_FLEX_MIN_PX).
+   At 1260–1280 the 968px budget still holds with no sideways scroll: Last bill is 128px so a full invoice number
+   ("INV-A378-27-0046", 16 mono characters ≈ 115px + 12px cell padding) shows uncut, and Amount is 100px so "₹63,855/mo" is one line
+   — paid for by Customer (152px; names wrap to two lines, R-2821). Measured boxes: 968–988px at 1260–1280,
+   1614px at 1920 (the page's side padding is 32px from 2xl, queueTableBoxPx). */
 export const QUEUE_TABLE_MIN_VIEWPORT_PX = 1260;
 export const QUEUE_TABLE_BUDGET_PX = 968;
-export const QUEUE_FLEX_MIN_PX = 200;
+/** Product & period — the one flexible column — never gets less than this. */
+export const QUEUE_FLEX_MIN_PX = 188;
+/** The window widths the column widths grow between (`width` → `max`). */
+export const QUEUE_SCALE_FROM_PX = 1260;
+export const QUEUE_SCALE_TO_PX = 1920;
 export type QueueColKey = "select" | "customer" | "product" | "due" | "amount" | "status" | "invoice" | "actions";
-export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: QueueColKey; label: string; width: number | null; align?: "right" }> = [
+export interface QueueCol {
+  key: QueueColKey;
+  label: string;
+  /** px at a 1260 window; null = takes the rest */
+  width: number | null;
+  /** px from a 1920 window on (absent = the same at every width) */
+  max?: number;
+  align?: "right";
+}
+export const QUEUE_TABLE_COLS: ReadonlyArray<QueueCol> = [
   { key: "select", label: "", width: 28 },
-  { key: "customer", label: "Customer", width: null },
+  { key: "customer", label: "Customer", width: 152, max: 320 },
   { key: "product", label: "Product & period", width: null },
-  { key: "due", label: "Due", width: 80 },
-  { key: "amount", label: "Amount", width: 88, align: "right" },
-  { key: "status", label: "Status", width: 92 },
-  /* R-2840: "Last bill" — invoice state / number · period / last payment (3 lines; money wraps) */
-  { key: "invoice", label: "Last bill", width: 92 },
+  { key: "due", label: "Due", width: 76, max: 96 },
+  { key: "amount", label: "Amount", width: 100, max: 128, align: "right" },
+  /* 112px: "Hold at Google — unpaid" is two lines at a 1280 laptop (three at 104px, measured) */
+  { key: "status", label: "Status", width: 112, max: 200 },
+  /* R-2840 / R-2854: "Last bill" — the invoice number (never cut) · period / its state or the last payment / History */
+  { key: "invoice", label: "Last bill", width: 128, max: 260 },
   /* "Record payment" + ⋯ on one line (the card spec checks no cell overflows) */
   { key: "actions", label: "Action", width: 184 },
 ];
+
+/** A column's width in px at a window width (the same line the CSS clamp() draws). null = the flexible column. */
+export function queueColPx(col: Pick<QueueCol, "width" | "max">, viewportPx: number): number | null {
+  if (col.width == null) return null;
+  if (col.max == null) return col.width;
+  const t = Math.min(1, Math.max(0, (viewportPx - QUEUE_SCALE_FROM_PX) / (QUEUE_SCALE_TO_PX - QUEUE_SCALE_FROM_PX)));
+  return col.width + (col.max - col.width) * t;
+}
+
+/** The `<col>` width as CSS: fixed px, or clamp(width, width + (100vw − 1260px) × slope, max). undefined = the flexible column. */
+export function queueColCss(col: Pick<QueueCol, "width" | "max">): string | undefined {
+  if (col.width == null) return undefined;
+  if (col.max == null) return `${col.width}px`;
+  const slope = Math.round(((col.max - col.width) / (QUEUE_SCALE_TO_PX - QUEUE_SCALE_FROM_PX)) * 10000) / 10000;
+  return `clamp(${col.width}px, calc(${col.width}px + (100vw - ${QUEUE_SCALE_FROM_PX}px) * ${slope}), ${col.max}px)`;
+}
+
+/** The table box at a window width, worst case: a classic 17px scrollbar, the sidebar open, 32px more side padding
+    from 2xl (measured: 968 at 1260; 1614 at 1920 with an overlay scrollbar). */
+export function queueTableBoxPx(viewportPx: number): number {
+  return viewportPx - 17 - 275 - (viewportPx >= 1536 ? 32 : 0);
+}

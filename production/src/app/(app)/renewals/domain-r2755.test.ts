@@ -34,7 +34,8 @@ describe("R-2755 the row's domain", () => {
   it("the domain truncates with its full text on hover; the period gives way, never the money / status", () => {
     expect(cells).toMatch(/data-testid="renewal-row-domain"[^>]*title=\{domain\}|title=\{domain\}[^>]*data-testid="renewal-row-domain"/);
     /* one line: the period wraps out of sight (it is in the tooltip; the Due column shows its start) */
-    expect(cells).toMatch(/className="mt-0\.5 flex max-h-\[1lh\] flex-wrap gap-x-1 overflow-hidden text-2xs"/);
+    /* R-2854: the small line sits on a 16px line (leading-4) */
+    expect(cells).toMatch(/className="mt-0\.5 flex max-h-\[1lh\] flex-wrap gap-x-1 overflow-hidden text-2xs leading-4"/);
   });
 });
 

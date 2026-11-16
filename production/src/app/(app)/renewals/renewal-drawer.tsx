@@ -27,6 +27,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
+import type { TogetherRowAction } from "@/components/features/renewals/stage-actions";
 import { RenewalContact } from "@/components/features/renewals/renewal-contact";
 import type { Subscription } from "@/lib/supabase/database.types";
 import type { RenewalStage } from "@/lib/renewals/stage";
@@ -51,6 +52,7 @@ import { dueCellFacts } from "./due-anchor";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
 import type { RowContact } from "./queue-data";
+import { planSeatsWords } from "./plan-seats";
 
 /** R-2762: reminders shown before "Show all N". */
 const REMINDERS_PAGE = 5;
@@ -216,7 +218,7 @@ function CostFacts({ money }: { money: DrawerMoney }) {
   );
 }
 
-export function RenewalDrawer({ item, open, view = null, onClose, names, followupRows, onFollowup, strong }: {
+export function RenewalDrawer({ item, open, view = null, onClose, names, followupRows, onFollowup, strong, together = null }: {
   /** The row it is about; null while ?sub= names a renewal not on this page. */
   item: DrawerItem | null;
   open: boolean;
@@ -227,6 +229,8 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
   /** The page's payment_followups rows (already read) — this renewal's are picked here. */
   followupRows: readonly RenewalFollowupRow[];
   onFollowup?: () => void;
+  /** R-2859: the row's Bill together button (the queue's) — the drawer shows the same ONE button; null = its own. */
+  together?: TogetherRowAction | null;
   strong: boolean;
 }) {
   const { data: me } = useCurrentUser();
@@ -316,7 +320,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
                   : sub.customer_name}
               </SheetTitle>
               <SheetDescription>
-                {[sub.plan, sub.seats != null ? `${sub.seats} seats` : null, sub.vendor ? sub.vendor[0].toUpperCase() + sub.vendor.slice(1) : null, subscriptionDomain(sub)].filter(Boolean).join(" · ")}
+                {[planSeatsWords(sub.plan, sub.seats) || null, sub.vendor ? sub.vendor[0].toUpperCase() + sub.vendor.slice(1) : null, subscriptionDomain(sub)].filter(Boolean).join(" · ")}
               </SheetDescription>
               <RenewalContact contact={item.contact} customerId={sub.customer_id} loading={!item.contact} />
               <div className="mt-2 flex flex-wrap items-start justify-between gap-3" data-testid="renewal-drawer-head">
@@ -329,7 +333,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
                   <p className="mt-1 text-xs text-ink-3 tabular-nums" data-testid="renewal-drawer-renews">{renewsWords(dueCellFacts(item.stage, sub, item.daysUntil).title, sub.renewal_date)}</p>
                 </div>
                 <div className="shrink-0">
-                  <RenewalActions sub={sub} daysUntil={item.daysUntil} layout="card" strong={strong} onFollowup={onFollowup} messaging stage={item.stage} payHref={item.payHref} />
+                  <RenewalActions sub={sub} daysUntil={item.daysUntil} layout="card" strong={strong} onFollowup={onFollowup} messaging stage={item.stage} payHref={item.payHref} together={together} />
                 </div>
               </div>
             </SheetHeader>
@@ -404,7 +408,8 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
                   <ul className="space-y-2">
                     {flags.map((f) => (
                       <li key={f.key} className="text-sm" data-testid="renewal-drawer-flag" data-flag={f.key}>
-                        <p className="font-medium text-ink">{f.title} <span className="font-normal text-ink-2">— {f.reason}</span></p>
+                        {/* R-2857: the reason only when it adds to the title (was "At risk — At risk") */}
+                        <p className="font-medium text-ink">{f.title}{f.reason ? <> <span className="font-normal text-ink-2">— {f.reason}</span></> : null}</p>
                         <p className="text-xs text-ink-3">{f.explain}</p>
                       </li>
                     ))}

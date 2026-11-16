@@ -14,6 +14,7 @@
  *   Timeline  (R-2844, H9) everything on one list, newest first: quotes, invoices
  *             raised, payments, follow-ups logged (calls, promises) and reminders sent — drawer-history.ts
  *             historyTimeline; the other tabs are its filters
+ *   R-2857    the five tabs stay on one line in the drawer (compact padding / count)
  *   footer    "All history for <customer> →" = the customer page's Transactions → Payments (R-2837)
  */
 import * as React from "react";
@@ -254,11 +255,15 @@ export function DrawerHistory({ initialTab = "all", tabs, timeline, loading, fai
         </dl>
       )}
       <Tabs value={tab} onValueChange={(v) => { setTab(v as SectionTab); setShowAll(false); }}>
-        <TabsList aria-label="History" className="flex-wrap">
+        {/* R-2857: all five tabs on ONE line in the 480px drawer (they wrapped, Timeline alone on line two) —
+            no gap between tabs, tighter padding in each tab and its count. flex-wrap stays only as the
+            fallback for a narrow phone / very large counts: every tab stays in sight, nothing is clipped
+            (a sideways scroll would hide Timeline and cut the focus ring) */}
+        <TabsList aria-label="History" className="flex-wrap gap-0" data-testid="renewal-drawer-history-tabs">
           {TABS.map((t) => (
-            <TabsTrigger key={t.key} value={t.key} className="gap-1 px-2.5">
+            <TabsTrigger key={t.key} value={t.key} className="gap-1 whitespace-nowrap px-1">
               {t.label}
-              {ready && <span className={cn("rounded-full px-1.5 text-xs tabular-nums", t.key === tab ? "bg-amber-soft text-amber-ink" : "bg-paper-2 text-ink-3")}>{counts[t.key]}</span>}
+              {ready && <span className={cn("rounded-full px-1 text-2xs leading-4 tabular-nums", t.key === tab ? "bg-amber-soft text-amber-ink" : "bg-paper-2 text-ink-3")}>{counts[t.key]}</span>}
             </TabsTrigger>
           ))}
         </TabsList>

@@ -226,7 +226,8 @@ describe("R-2728 wiring — one batched read, table still fits 1280", () => {
     expect(data).not.toMatch(/\.single\(\)|\.maybeSingle\(\)/);
   });
   it("column budget still fits (R-2759: the ~924px card at 1260)", () => {
+    /* R-2854 (changed expectation): ONE flexible column now — Product & period; Customer has its own width */
     const fixed = QUEUE_TABLE_COLS.reduce((s, c) => s + (c.width ?? 0), 0);
-    expect(fixed + 2 * QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
+    expect(fixed + QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
   });
 });

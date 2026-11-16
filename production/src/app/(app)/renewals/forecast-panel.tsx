@@ -13,9 +13,15 @@ import { rupee } from "@/lib/utils";
 import type { RenewalForecast } from "@/lib/renewals/forecast";
 
 export function ForecastPanel({
-  forecast, atRiskCount, atRiskArr, topName, topCustomerId, topReasons,
+  forecast, atRiskCount, atRiskArr, topName, topCustomerId, topReasons, loading = false,
 }: {
   forecast: RenewalForecast;
+  /**
+   * R-2855: the reads behind the Renewed tile are still out. This month's bar and the total are made from that
+   * tile (R-2751), so they show "…" until it is final — like the tiles, a number here never changes while the
+   * page loads. Later months come from the renewal dates alone and show at once.
+   */
+  loading?: boolean;
   atRiskCount: number;
   atRiskArr: number;
   /** R-2756: null = no chased renewal at risk (only Won't renew / stopped ones) — no pick, no "call this week". */
@@ -32,10 +38,16 @@ export function ForecastPanel({
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Renewal forecast · next 6 months</p>
           {/* R-2431: one total, in term amounts before GST (the tiles' amount without a quote); monthly (flex) parts are in it. */}
-          <p className="text-xs text-ink-3">Renewals {rupee(forecast.totalAmount, { compact: true })} + GST ({forecast.totalCount} {forecast.totalCount === 1 ? "renewal" : "renewals"}){forecast.flexCount > 0 ? <> · incl. {forecast.flexCount} monthly (flex) {forecast.flexCount === 1 ? "subscription" : "subscriptions"}, one part each month</> : null}</p>
+          <p className="text-xs text-ink-3" aria-busy={loading ? true : undefined}>{loading ? "Renewals …" : <>Renewals {rupee(forecast.totalAmount, { compact: true })} + GST ({forecast.totalCount} {forecast.totalCount === 1 ? "renewal" : "renewals"})</>}{forecast.flexCount > 0 ? <> · incl. {forecast.flexCount} monthly (flex) {forecast.flexCount === 1 ? "subscription" : "subscriptions"}, one part each month</> : null}</p>
         </div>
         <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
-          {forecast.months.map((m) => (
+          {forecast.months.map((m, i) => (loading && i === 0 ? (
+            <div key={m.key} className="text-center" data-testid="forecast-month-loading">
+              <div className="h-16" />
+              <p className="mt-1 text-3xs text-ink-3">{m.label.slice(0, 3)}</p>
+              <p className="text-2xs text-ink-3">…</p>
+            </div>
+          ) : (
             <div key={m.key} className="text-center">
               <div className="h-16 flex items-end justify-center">
                 <div
@@ -47,7 +59,7 @@ export function ForecastPanel({
               <p className="mt-1 text-3xs text-ink-3">{m.label.slice(0, 3)}</p>
               <p className="text-2xs tabular-nums text-ink-2">{m.amount > 0 ? rupee(m.amount, { compact: true }) : "—"}</p>
             </div>
-          ))}
+          )))}
         </div>
         {/* R-2751: one basis with the rows and tiles; this month's bar is the Renewed tile's "due in <month>". */}
         <p className="mt-1.5 text-3xs text-ink-3">Before GST, like the rows and tiles. {forecast.months[0]?.label.slice(0, 3)}: paid + still due (the Renewed this month tile); later months: term amounts of the renewals due then. Estimate — excludes churn and expansion.</p>

@@ -25,6 +25,7 @@
 import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 import { SAAS_GST_RATE } from "@/lib/gst/hsn";
 import type { RenewalForecast } from "@/lib/renewals/forecast";
+import { rupee } from "@/lib/utils";
 import type { QueueTab, RowStatusKey } from "./queue";
 
 export const TILE_KEYS = ["overdue", "due30", "due60", "due90", "wontRenew", "renewedMonth"] as const;
@@ -37,6 +38,20 @@ export const TILE_LABEL: Record<TileKey, string> = {
   due90: "Due in 61–90 days",
   wontRenew: "Won't renew",
   renewedMonth: "Renewed this month",
+};
+
+/**
+ * R-2855: what each tile's ₹ IS, in plain words, printed under the number (it was only in the tooltip).
+ * The work tiles add up renewal VALUE (the next term's bill, before GST) — not unpaid bills; the header
+ * line carries those ("Bills and instalments due: ₹X unpaid on these renewals"). The Renewed tile's
+ * caption is worked out (tileText): the % and the month's ₹ it divides by.
+ */
+export const TILE_CAPTION: Record<Exclude<TileKey, "renewedMonth">, string> = {
+  overdue: "Renewal value overdue",
+  due30: "Renewal value due",
+  due60: "Renewal value due",
+  due90: "Renewal value due",
+  wontRenew: "Renewal value leaving",
 };
 
 /** What the table shows when a tile is pressed. R-2741: the Renewed tile lists the renewals it counts. */
@@ -194,6 +209,10 @@ export interface RenewedFigure extends TileFigure {
   pct: number | null;
   /** What the tile's click shows: renewals of this month not paid yet. */
   stillDue: TileFigure;
+  /** R-2855: `stillDue` split by where those rows sit — past their date (in the Overdue tile) … */
+  stillDueOverdue: TileFigure;
+  /** … and not due yet (in the Due in 30 days tile). stillDueOverdue + stillDueLater = stillDue, always. */
+  stillDueLater: TileFigure;
 }
 
 export type RenewalTiles = Record<Exclude<TileKey, "renewedMonth">, TileFigure> & { renewedMonth: RenewedFigure };
@@ -223,6 +242,12 @@ export function renewalTiles(rows: readonly TileRow[], quotes: readonly RenewalQ
   const renewedAmount = paid.reduce((s, q) => s + quoteAmountBeforeGst(q), 0)
     + renewedRows.reduce((s, r) => s + Math.round(r.amount), 0);
   const stillDue = sum("renewedMonth");
+  /* R-2855: the month's unpaid renewals, split by tab — the same rows, so the two parts add up to stillDue */
+  const stillDueOverdue: TileFigure = { count: 0, amount: 0 };
+  for (const r of rows) {
+    if (r.tab === "overdue" && tileMatches("renewedMonth", r, month, paidSubs)) { stillDueOverdue.count += 1; stillDueOverdue.amount += Math.round(r.amount); }
+  }
+  const stillDueLater: TileFigure = { count: stillDue.count - stillDueOverdue.count, amount: stillDue.amount - stillDueOverdue.amount };
   const dueAmount = renewedAmount + stillDue.amount;
   return {
     overdue: sum("overdue"),
@@ -236,7 +261,68 @@ export function renewalTiles(rows: readonly TileRow[], quotes: readonly RenewalQ
       dueAmount,
       pct: dueAmount > 0 ? Math.round((renewedAmount / dueAmount) * 100) : null,
       stillDue,
+      stillDueOverdue,
+      stillDueLater,
     },
+  };
+}
+
+export interface TileText {
+  /** The big number, compact ("₹4.5L"). */
+  value: string;
+  /** Beside it: how many renewals. */
+  sub: string;
+  /** R-2855: under it, what the number is — always on screen. */
+  caption: string;
+  /** The tooltip: full rupees and how the number is made. */
+  title: string;
+}
+
+/** "1 renewal" / "3 renewals" — one wording for the tiles and the tile-view bar. */
+export const plural = (n: number) => `${n} renewal${n === 1 ? "" : "s"}`;
+
+/**
+ * R-2855 — every word a tile shows, in one pure place (tiles-card.tsx only draws it).
+ *
+ * Renewed this month: "₹P · N renewals" and under it "N% of <month>'s ₹X", where ₹X = that month's
+ * renewals, paid + not paid (before GST) — the base of the % is on the tile itself. The old helper said
+ * "₹3.4L still due (Overdue + Due tiles)", read as "= those tiles added up" (4.5L + 5.4L): those tiles
+ * also hold other months' renewals. The tooltip says how ₹X is made and which part of the unpaid rest
+ * sits in Overdue and which in Due in 30 days (the two parts add up — renewalTiles).
+ * Every branch reads the AMOUNTS (pct / stillDue.amount), so a ₹0 renewal never gives "₹0 of it not paid".
+ */
+export function tileText(key: TileKey, t: RenewalTiles, month: MonthRange, windows: Partial<Record<WindowKey, WindowReconcile>>): TileText {
+  if (key === "renewedMonth") {
+    const f = t.renewedMonth;
+    const due = rupee(f.dueAmount, { compact: true });
+    /* on the tile: short enough for one line of a 160px tile (1280 screen); the tooltip keeps "N% of ₹X due in <month>" */
+    const caption = f.pct == null ? `Nothing due in ${month.label}` : `${f.pct}% of ${month.label}'s ${due}`;
+    const long = f.pct == null ? caption : `${f.pct}% of ${due} due in ${month.label}`;
+    const base = `"Due in ${month.label}" = renewals dated in ${month.label}, paid + not paid, before GST (${rupee(f.dueAmount)})`;
+    const parts = [
+      f.stillDueOverdue.amount > 0 ? `${rupee(f.stillDueOverdue.amount)} of it is in Overdue` : "",
+      f.stillDueLater.amount > 0 ? `${rupee(f.stillDueLater.amount)} is not due yet (in ${TILE_LABEL.due30})` : "",
+    ].filter(Boolean);
+    const unpaid = f.stillDue.amount > 0
+      ? `Not paid yet: ${rupee(f.stillDue.amount)} (${plural(f.stillDue.count)}) — ${parts.join(", ")}`
+      : f.pct == null ? `No renewal value dated in ${month.label}` : `All of ${month.label}'s renewals are paid`;
+    return {
+      value: rupee(f.amount, { compact: true }),
+      sub: plural(f.count),
+      caption,
+      title: `${TILE_LABEL[key]}: ${rupee(f.amount)} paid (${plural(f.count)}) — ${long}. ${base}. ${unpaid}. Press to list the renewed ones.`,
+    };
+  }
+  const f = t[key];
+  const w = key in windows ? windows[key as WindowKey] : undefined;
+  const extra = w ? windowExtraNote(w) : "";   // R-2741: "(+1 won't renew)" — the tab lists it, the tile does not
+  const sub = extra ? `${plural(f.count)} ${extra}` : plural(f.count);
+  const caption = TILE_CAPTION[key];
+  return {
+    value: rupee(f.amount, { compact: true }),
+    sub,
+    caption,
+    title: `${TILE_LABEL[key]}: ${rupee(f.amount)} — ${sub}. ${caption}, before GST (each renewal's next-term bill; not unpaid bills). Press to list them.`,
   };
 }
 

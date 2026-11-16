@@ -85,8 +85,9 @@ describe("R-2401 RenewalActions", () => {
     expect(buttons[1]).toMatch(/More renewal actions for REDOQ — Workspace Business/);
     openMenu();
     const items = screen.getAllByRole("menuitem").map((i) => i.textContent?.trim());
-    expect(items).toEqual(["Send as is (no changes)", "Follow-up", "Nudge", "Voice note", "Customer not renewing"]);
-    fireEvent.click(screen.getByRole("menuitem", { name: /Follow-up/ }));
+    /* R-2856: the three say their action (lib/renewals/stage.ts MENU_LABEL) — were "Follow-up", "Nudge", "Voice note"; these older rows' button reads "Follow-up", so the item starts with it */
+    expect(items).toEqual(["Send as is (no changes)", "Follow-up — log a call or promise", "Draft a WhatsApp message (AI)", "Send a WhatsApp voice note", "Customer not renewing"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: /Follow-up — log a call or promise/ }));
     expect(onFollowup).toHaveBeenCalledTimes(1);
   });
 

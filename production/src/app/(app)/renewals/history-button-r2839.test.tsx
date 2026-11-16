@@ -69,7 +69,7 @@ describe("R-2839 — the History button", () => {
   } as LastInvoice);
   it("table Last bill: '+N earlier' is gone from line 2 (History replaces it); the earlier invoice stays in the tooltip", () => {
     const docs: LastDocs = { quote: null, invoice: inv(), invoices: [inv(), inv({ id: "INV-1", date: "2026-04-01", period: "Apr 2026" })], sent: null };
-    render(<LastInvoiceCell docs={docs} loading={false} failed={false} canInvoices canQuotes todayIst="2026-11-15" />);
+    render(<LastInvoiceCell docs={docs} loading={false} failed={false} canInvoices todayIst="2026-11-15" />);
     const cell = screen.getByTestId("renewal-last-invoice-cell");
     expect(cell.textContent).not.toMatch(/earlier/);
     expect(cell.getAttribute("title")).toContain("Earlier invoice INV-1");

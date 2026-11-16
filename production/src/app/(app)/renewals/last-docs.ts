@@ -240,6 +240,26 @@ export interface LastDocs {
   invoicedQuoteIds?: string[];
   /** R-2818 (review #3): invoices of the renewal term's own billed parts (newest term, not the first) — this renewal's money, not "previous term". */
   renewalPartInvoiceIds?: string[];
+  /** R-2854: this renewal's own quote — the linked renewal quote (any status, a draft too), else the open (unpaid)
+      proforma of the renewal term's first part; absent = none. An id into `linkedQuotes`. */
+  renewalQuoteId?: string | null;
+  /** R-2854: every linked quote not replaced by a revision, newest first — what the row's quote line reads (row-quote.ts; no extra query). */
+  linkedQuotes?: RowQuote[];
+}
+
+/** R-2854: a linked quote as the table row's "Quote Q-… · Sent 3 Oct · ₹3,823" line needs it. */
+export interface RowQuote {
+  id: string;
+  /** YYYY-MM-DD — the quote's date. */
+  date: string;
+  status: string;
+  payment_status: string | null;
+  expires_date: string | null;
+  invoice_id: string | null;
+  /** ₹ incl. GST as stored; null = not read. */
+  amount: number | null;
+  currency: string | null;
+  fxRate: number | null;
 }
 
 /** Never sent to the customer, or taken back. */
@@ -455,6 +475,22 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     }
   }
 
+  /* R-2854: every linked quote not replaced by a revision, per subscription, newest first — the row's quote line */
+  for (const q of quoteById.values()) {
+    if (q.superseded_by) continue;
+    const fx = Number(q.exchange_rate);
+    const row: RowQuote = {
+      id: q.id, date: (q.created_date ?? q.created_at).slice(0, 10), status: q.status, payment_status: q.payment_status,
+      expires_date: q.expires_date, invoice_id: q.invoice_id, amount: q.amount == null ? null : Number(q.amount),
+      currency: q.currency ?? null, fxRate: Number.isFinite(fx) && fx > 0 ? fx : null,
+    };
+    for (const sid of quoteSubs.get(q.id) ?? []) {
+      const d = out.get(sid);
+      if (d) (d.linkedQuotes ??= []).push(row);
+    }
+  }
+  for (const d of out.values()) d.linkedQuotes?.sort((a, b) => (a.date === b.date ? (a.id > b.id ? -1 : 1) : a.date > b.date ? -1 : 1));
+
   /* The newest term each subscription has billing rows for — its renewal part lives there — and that
      term's FIRST part (period_index restarts each term: 1 on today's rows, 0 on a few older ones). */
   const newestTerm = new Map<string, string>();
@@ -480,6 +516,8 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
       if (ids.length) d.renewalPartInvoiceIds = [...new Set(ids)].sort();
     }
     const ren = s.renewal_quote_id ? quoteById.get(s.renewal_quote_id) : undefined;
+    /* R-2854: the linked renewal quote is this renewal's quote whatever its state (draft, accepted, paid, cancelled) */
+    if (ren) d.renewalQuoteId = ren.id;
     if (ren && isOpenUnpaid(ren)) {
       d.sent = { quoteId: ren.id, kind: "renewal", expiresDate: ren.expires_date, status: ren.status };
       continue;
@@ -493,6 +531,10 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
       if (!b || b.subscription_id !== s.id || b.term_start !== term || (b.period_index ?? 0) !== firstIndex.get(s.id) || !isOpenUnpaid(q)) continue;
       if (!part || newer({ at: q.created_at, id: q.id }, { at: part.created_at, id: part.id })) { part = q; partBill = b; }
     }
+    /* R-2854: the renewal's OPEN part proforma is its quote too. A closed one (paid, cancelled) is not offered here — the
+       newest term with billing rows can be LAST year's, and "Paid 3 Nov 25" would read as this renewal being paid; a row
+       that is waiting on such a quote names it through its stage (row-quote.tsx). */
+    if (!d.renewalQuoteId && part) d.renewalQuoteId = part.id;
     if (part) {
       d.sent = {
         quoteId: part.id, kind: "part", expiresDate: part.expires_date, status: part.status,

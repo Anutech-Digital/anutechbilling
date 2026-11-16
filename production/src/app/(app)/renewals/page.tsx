@@ -73,11 +73,12 @@ import { NoRenewalDateCard } from "./no-date-card";
 import { chasedRenewal } from "./classify";
 import {
   QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, matchesElsewhere, LEGACY_BUCKETS, STAGE_FILTER_LABEL, STAGE_FILTER_ORDER, NO_FILTERS, TILE_TABS,
-  noRenewalDate, resolveBucket, renewalAmount, QUEUE_TABLE_MIN_VIEWPORT_PX,
+  noRenewalDate, resolveBucket, renewalAmount, QUEUE_TABLE_MIN_VIEWPORT_PX, queueColCss,
   sortQueue, filterQueue, filterOptions, bulkStageTargets, bulkQuoteConfirm,
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RenewalAmount,
 } from "./queue";
 import { buildQueueItems, firstRows, QUEUE_PAGE_ROWS, type QueueItem } from "./queue-items";
+import { planSeatsWords } from "./plan-seats";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
 import { monthOf, renewalTiles, tileMatches, renewedRowMatches, reconcileWindows, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
 import { RenewalReminderDialog, RenewalRemindButton, type ReminderDialogState } from "./reminder-dialog";
@@ -108,12 +109,14 @@ import {
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { type RenewalStage, type StageKey } from "@/lib/renewals/stage";
-import { StageFlagIcon } from "./stage-flag";
+import { StageFlagLine } from "./stage-flag";
+import { RenewalQuoteLine } from "./row-quote";
 import { dueCellFacts } from "./due-anchor";
-import { CustomerCell, ProductCell, DueCell, HistoryButton, LastInvoiceCell, LastPaidRowLine, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
+import { AmountTableCell, CustomerCell, ProductCell, DueCell, HistoryButton, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 import type { DrawerView } from "./drawer";
-import { BillTogetherGroups, togetherHint, useBillTogether } from "@/components/features/renewals/bill-together";
+import { BillTogetherGroups, togetherHint, togetherRowButton, useBillTogether } from "@/components/features/renewals/bill-together";
+import type { TogetherRowAction } from "@/components/features/renewals/stage-actions";
 import { BILL_TOGETHER, useBillTogetherProbe } from "@/components/features/renewals/bill-together-dialog";
 import { canOfferBillTogether } from "@/lib/renewals/bill-together";
 import { groupsShown, togetherIndex, togetherRowOf } from "./bill-together-rows";
@@ -160,9 +163,11 @@ function StageChip({ stage, size, compact = false, canQuotes = false }: { stage:
         {quoteHref
           ? <Link href={quoteHref as never} className="max-w-full rounded-full hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" aria-label={`${stage.label} — open ${stage.quoteId}`} data-testid="stage-chip-quote">{badge}</Link>
           : badge}
-        {stage.flags.map((f) => <StageFlagIcon key={f.key} flag={f} />)}
       </div>
-      {c.line2 && <p className="mt-1 break-words text-2xs text-ink-3 tabular-nums" data-testid="stage-line2">{c.line2}</p>}
+      {/* R-2854: ONE line under the chip — its flag in words (never an icon-only pill; "+N more" for the rest), else the
+          chip's note. In the table a flagged row's note stays in the tooltip (the Due column shows the same day count). */}
+      {stage.flags.length > 0 && <div className="mt-1"><StageFlagLine flags={stage.flags} all={!compact} /></div>}
+      {c.line2 && !(compact && stage.flags.length > 0) && <p className="mt-1 break-words text-2xs leading-4 text-ink-3 tabular-nums" data-testid="stage-line2">{c.line2}</p>}
     </div>
   );
 }
@@ -330,9 +335,11 @@ interface RenewalQueueProps {
   onOpen: (subId: string, view?: DrawerView) => void;
   /** R-2808: billed together last cycle → the row's "Bills with <other plan>" (opens Bill together); null = none. */
   togetherOf?: (subId: string) => { text: string; title?: string; onClick: () => void } | null;
+  /** R-2859: such a row (2+ of its group still ticked) → its ONE button is Bill together, not its own Bill next part; null = its own button. */
+  togetherButtonOf?: (subId: string) => TogetherRowAction | null;
 }
 
-function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen, togetherOf }: RenewalQueueProps) {
+function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen, togetherOf, togetherButtonOf }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -443,7 +450,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   <button type="button" onClick={() => onOpen(sub.id)} data-testid="renewal-open-drawer"
                     className="mt-0.5 block max-w-full truncate rounded-sm text-left text-2xs text-ink-3 underline-offset-2 hover:text-ink hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
                     aria-label={`Open details — ${sub.customer_name} · ${sub.plan}`}>
-                    {sub.plan} · {sub.seats} seats
+                    {planSeatsWords(sub.plan, sub.seats)}
                   </button>
                   {/* R-2755: the subscription's domain (nothing when it has none) */}
                   {subscriptionDomain(sub) && (
@@ -486,7 +493,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
               <HistoryButton onOpen={() => onOpen(sub.id, lastPaid.data?.get(sub.id) ? "payments" : "history")} name={`${sub.customer_name} · ${sub.plan}`} className="mb-2 block" />
 
               <div className="pt-2 border-t border-hairline/60">
-                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
+                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} together={togetherButtonOf?.(sub.id) ?? null} />
               </div>
             </li>
           );
@@ -495,13 +502,13 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
       )}
 
       {/* Desktop table — R-2759: from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX; a 1280 laptop's inner width
-          is 1264–1276), eight columns on the queue.ts budget, every cell at most two lines (row-cells.tsx). */}
+          is 1264–1276), eight columns on the queue.ts budget; R-2854: their widths grow with the window (queueColCss) and a cell is at most three short lines. */}
       {table && (
       <div data-testid="renewals-table">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             {QUEUE_TABLE_COLS.map((c) => (
-              <col key={c.key} style={c.width != null ? { width: c.width } : undefined} />
+              <col key={c.key} style={{ width: queueColCss(c) }} />
             ))}
           </colgroup>
           <thead>
@@ -537,25 +544,25 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                       onChange={(e) => onSelect([sub.id], e.target.checked)}
                     />
                   </td>
-                  <td className="min-w-0 px-1.5 py-1.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
-                  <td className="min-w-0 px-1.5 py-1.5">
-                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null} />
+                  <td className="min-w-0 px-1.5 py-1.5 leading-[1.125rem]"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
+                  <td className="min-w-0 px-1.5 py-1.5 leading-[1.125rem]">
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} period={item.period} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null}
+                      quoteLine={<RenewalQuoteLine docs={item.docs} stage={stage} loading={docsState.loading || (!stage && !docsState.failed)} failed={docsState.failed} canQuotes={canQuotes} todayIst={todayIst} />} />
                   </td>
                   <td className="px-1.5 py-1.5"><DueCell date={dueOf(item).date} days={dueOf(item).days} title={dueOf(item).title} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-1.5 py-1.5 text-right">
-                    <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
-                    <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteShort ? `${amount.gst} · ${amount.quoteShort}` : amount.gst}</p>
+                    <AmountTableCell text={amount.text} gst={amount.gst} title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : undefined} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
                   <td className="min-w-0 px-1.5 py-1.5">
-                    {/* R-2840: Last bill = invoice line(s) → the last payment (same Last paid read as the cards) → R-2841 quote note */}
-                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} stage={stage}
-                      paidLine={<LastPaidRowLine paid={paid} docs={item.docs} loading={lastPaid.loading || docsState.loading} failed={lastPaid.failed || (!paid && docsState.failed)} todayIst={todayIst} />} />
-                    {/* R-2839: History (replaced "+N earlier") — the row drawer on its History section */}
-                    <HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} />
+                    {/* R-2840 / R-2854: Last bill = the invoice → the last payment (same Last paid read as the cards); the quote is Product's quote line */}
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} todayIst={todayIst} prior={item.prior}
+                      paid={{ paid, loading: lastPaid.loading || docsState.loading, failed: lastPaid.failed || (!paid && docsState.failed) }}
+                      /* R-2839: History (replaced "+N earlier") — the row drawer on its History section */
+                      historyButton={<HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} />} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5">
-                    <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />
+                    <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} together={togetherButtonOf?.(sub.id) ?? null} />
                   </td>
                 </tr>
               );
@@ -573,7 +580,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
 
 /** R-239 / R-2403: a row as the queue filters / sort read it (queue.ts filterQueue, sortQueue). */
 const asQueueRow = (i: QueueItem) => ({
-  id: i.sub.id, daysUntil: i.daysUntil, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
+  id: i.sub.id, daysUntil: i.dueDays /* R-2858: the date sort = the Due column's order */, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
   statusKey: i.status.key, stageKey: i.stage?.key ?? null, atRisk: i.atRisk, customer: i.sub.customer_name, commitment: i.commitment, item: i,
 });
 
@@ -582,7 +589,7 @@ const SELECT_CLS = "bg-paper border border-hairline rounded-md text-xs px-2.5 py
 export default function RenewalsPage() {
   const { data: subs, isLoading, error, refetch } = useSubscriptions();
   /* R-453: an open renewal quote whose link-back is missing still shows "Open quote". */
-  const { data: openRenewals, isLoading: openRenewalsLoading } = useOpenRenewalQuotes();
+  const { data: openRenewals, isLoading: openRenewalsLoading, isError: openRenewalsError } = useOpenRenewalQuotes();
   const openRenewalMap = React.useMemo(() => openRenewalQuoteMap(openRenewals ?? []), [openRenewals]);
   const quoteStatusMap = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
   const { data: me } = useCurrentUser();
@@ -612,7 +619,7 @@ export default function RenewalsPage() {
   /* R-2405: the pressed tile (null = the tabs) and this IST month's paid renewals. */
   const [tile, setTile] = React.useState<TileKey | null>(null);
   const month = monthOf(istToday(today));
-  const { data: monthQuotes } = useRenewalPaymentsForMonth(month);
+  const { data: monthQuotes, isLoading: monthQuotesLoading, isError: monthQuotesError } = useRenewalPaymentsForMonth(month);
 
   /* Rows on the page: their contacts and renewal quotes (hooks run before any early return).
      R-2586: every dated row — the Later (91+ days) tab lists the annual book past 90 days. */
@@ -621,7 +628,7 @@ export default function RenewalsPage() {
     .map((s) => withRenewalQuote(s, openRenewalMap)), [subs, openRenewalMap]);
   /* R-2753: isLoading — the Remind button waits for the contacts, so a customer with no email is never counted in "Email N". */
   const { data: contacts, isLoading: contactsLoading } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
-  const { data: quoteInfo, isLoading: quoteInfoLoading } = useRenewalQuoteInfo(listed.flatMap((s) => [s.renewal_quote_id, s.quote_id]));   // R-2767: + the sale quote (its currency)
+  const { data: quoteInfo, isLoading: quoteInfoLoading, isError: quoteInfoError } = useRenewalQuoteInfo(listed.flatMap((s) => [s.renewal_quote_id, s.quote_id]));   // R-2767: + the sale quote (its currency)
   /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
   const { data: fuData } = useRenewalFollowups(listed.map((s) => s.id), listed.map((s) => s.customer_id ?? ""));
   const { data: names } = useUserNames();
@@ -803,6 +810,12 @@ export default function RenewalsPage() {
   const paidSubs = new Set(paidRenewalsInMonth(monthQuotes ?? [], month).map((q) => q.renewal_subscription_id ?? ""));
   /* R-2741: each tile's tab rows = tile rows + the closed rows it leaves out (tiles.ts reconcileWindows). */
   const windows = reconcileWindows([...tileRowOf.values()], month);
+  /* R-2855: a row's status (Renewed / quote sent) is final only once its documents, linked quotes and this
+     month's paid renewals are read — until then the tiles are placeholders (they showed ₹2.9L, then ₹5.4L).
+     A read that FAILED with nothing to show is never final either: the tiles say "Couldn't load" (a failed
+     background re-read keeps the last good rows, so the numbers stay). */
+  const tilesLoading = lastDocsQ.isLoading || quoteInfoLoading || openRenewalsLoading || monthQuotesLoading;
+  const tilesFailed = docsState.failed || (quoteInfoError && !quoteInfo) || (openRenewalsError && !openRenewals) || (monthQuotesError && !monthQuotes);
 
   const bucketTab = resolved.tab;
   const shown = narrowed.tabs;
@@ -911,6 +924,11 @@ export default function RenewalsPage() {
         /* R-2832 F5: under two still ticked the hint says "tick at least two" instead of opening the dialog */
         return h ? togetherHint(h, togetherOff, billTogether.open) : null;
       }
+    : undefined;
+  /* R-2859: the same group, as the row’s ONE button — never Bill next part beside a box that bills the pair */
+  /* from the first paint the box shows (check still out → shown, not pressable): the button never swaps under a click */
+  const togetherButtonOf = togetherVisible && togetherIdx
+    ? (id: string) => togetherRowButton(togetherIdx.hintOf.get(id), id, togetherOff, billTogether.open, !togetherOn)
     : undefined;
   /* only ticked rows still on screen (as the reminder) — a tick hidden by a search is never billed */
   const offerTicked = togetherOn && canOfferBillTogether(tickedShown.map(togetherRowOf));
@@ -1028,7 +1046,13 @@ export default function RenewalsPage() {
             {duesLine && (
               <>
                 {" · "}
-                <Link href={drillHref("customersUnpaid") as Route} className="text-rose hover:underline" data-testid="renewals-dues-line">
+                {/* R-2855: the hover says what this figure is — and that it is not the tiles' renewal value */}
+                <Link
+                  href={drillHref("customersUnpaid") as Route}
+                  className="text-rose hover:underline"
+                  data-testid="renewals-dues-line"
+                  title="Invoices already raised on these renewals that are not fully paid, plus an instalment that is due and not invoiced yet. The tiles below show renewal value (the next term's bill) — a different number."
+                >
                   {duesLine}
                 </Link>
                 {/* R-2562: the project read failed — the line says so; this retries just that read. */}
@@ -1067,7 +1091,8 @@ export default function RenewalsPage() {
       </div>
 
       {/* R-2405: the tiles — count + renewal ₹ in the table's own money; a press lists those rows. */}
-      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} windows={windows} narrowed={filtered || search.trim() !== ""} />
+      {/* R-2855: placeholders until the reads the tiles' numbers come from are in — a number never changes after it shows */}
+      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} windows={windows} narrowed={filtered || search.trim() !== ""} loading={tilesLoading} failed={tilesFailed} />
 
       {/* R-2266: ONE strip, closed by default (remembered per user). R-2405: the tiles above carry
           the money and counts (one fact, one place) — the strip keeps the forecast and the
@@ -1077,7 +1102,7 @@ export default function RenewalsPage() {
         userId={me?.userId}
         title="Forecast"
         className="mb-4"
-        summary={<StripFact label="Next 6 months" value={rupee(forecast.totalAmount, { compact: true })} />}
+        summary={<StripFact label="Next 6 months" value={tilesLoading ? "…" : rupee(forecast.totalAmount, { compact: true })} />}
         extras={topRisk ? (
           <StripLink
             tone="rose"
@@ -1093,6 +1118,7 @@ export default function RenewalsPage() {
       >
         <ForecastPanel
           forecast={forecast}
+          loading={tilesLoading}
           atRiskCount={highRiskSubs.length}
           atRiskArr={groups.atRiskArr}
           topName={topRisk ? topHighRisk : null}
@@ -1228,6 +1254,7 @@ export default function RenewalsPage() {
             docsState={docsState}
             onOpen={openDrawer}
             togetherOf={togetherOf}
+            togetherButtonOf={togetherButtonOf}
           />
         </div>
       </Card>
@@ -1246,6 +1273,7 @@ export default function RenewalsPage() {
             names={names}
             followupRows={fuData?.rows ?? []}
             onFollowup={drawerItem?.sub.customer_id ? () => setFollowupFor(drawerItem) : undefined}
+            together={drawerItem ? togetherButtonOf?.(drawerItem.sub.id) ?? null : null}
             strong={queueStrong}
           />
         );
@@ -1300,7 +1328,12 @@ export default function RenewalsPage() {
       </BulkActionBar>
 
       {/* The dialog's send = the existing send-now route per row (R-1642 reasons per failure). */}
-      <RenewalReminderDialog state={reminder} onClose={() => setReminder(null)} onSend={(rows) => sendAll(rows)} emailOf={emailOf} />
+      <RenewalReminderDialog state={reminder} onClose={() => setReminder(null)} onSend={(rows) => sendAll(rows)} emailOf={emailOf}
+        /* R-2856: a skipped row's next step — its drawer (Bill next part / Send renewal / Follow up), or the customer page for a contact */
+        /* the drawer opens a moment after the dialog has handed focus back to the Remind button (Radix, 0 ms timer) — Esc in the drawer then returns there, not to <body> */
+        onOpenRow={(row) => { setReminder(null); window.setTimeout(() => openDrawer(row.sub.id), 60); }}
+        customerHref={(row) => (row.sub.customer_id ? `/customers/${row.sub.customer_id}` : null)}
+      />
     </div>
   );
 }

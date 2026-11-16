@@ -17,8 +17,9 @@ describe("StageFlagIcon (R-2823)", () => {
     expect(screen.getByRole("img", { name: "Hold at Google — unpaid: Payment due — do not renew at the vendor yet" })).toBe(el);
   });
 
-  it("a flag without words stays an icon with its reason as the name", () => {
+  /* R-2854 (changed expectation — Chrome human test 16 Nov: "an icon-only warning pill … with no words"): every flag reads in words */
+  it("a flag without its own words reads its plain words too — never an icon-only pill", () => {
     render(<StageFlagIcon flag={{ key: "followUpDue", reason: "Follow-up due" }} />);
-    expect(screen.getByRole("img", { name: "Follow-up due" }).textContent).toBe("");
+    expect(screen.getByRole("img", { name: "Follow-up due" }).textContent).toBe("Follow-up due");
   });
 });
