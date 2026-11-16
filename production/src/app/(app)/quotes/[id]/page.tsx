@@ -146,10 +146,10 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
-import { quoteKindFor, quoteSubscriptionId, subscriptionForLine, type QuoteKindQuote } from "@/lib/quotes/quote-kind";
+import { quoteKindFor, quoteSubscriptionId, subscriptionForLine, togetherMembers, type QuoteKindQuote } from "@/lib/quotes/quote-kind";
 import { usePartFacts } from "@/lib/quotes/quote-kind-facts";
 import { withPartCosts } from "@/lib/quotes/part-cost";
-import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
+import { ForSubscriptionLine } from "@/components/features/quotes/for-subscription-line";
 import { QuoteKindStamp } from "@/components/features/quotes/quote-kind-stamp";
 
 // ============================================================
@@ -991,6 +991,7 @@ export default function QuoteDetailPage() {
   );
   const forSub = leadPart?.sub ?? (allSubs ?? []).find((s) => s.id === forSubId) ?? null;
   const forSubText = subscriptionForLine(forSub);
+  const togetherSubs = quote.is_renewal ? togetherMembers(items, allSubs) : [];
   /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
      "₹851/yr" as if it recurred yearly. No per-period suffix on those lines. */
@@ -1425,14 +1426,8 @@ export default function QuoteDetailPage() {
               )}
             </p>
             {/* R-2423 (2): which subscription this quote is for — opens it. */}
-            {forSub && forSubText && (
-              <p className="text-sm text-ink-3 mt-1" data-testid="quote-for-subscription">
-                For subscription:{" "}
-                <Link href={subscriptionOpenHref(forSub) as never} className="font-medium text-ink hover:text-amber-ink hover:underline">
-                  {forSubText}
-                </Link>
-              </p>
-            )}
+            {/* R-2871: a together renewal quote names every subscription it renews. */}
+            <ForSubscriptionLine single={forSub} singleText={forSubText} members={togetherSubs} />
           </div>
         </div>
 

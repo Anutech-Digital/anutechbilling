@@ -34,6 +34,7 @@ import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { togetherPlanNames } from "@/lib/quotes/quote-kind";
 import { isPartRequest, partAdvanceText, partLabelOf, partRequestPaymentToast, partRequestTdsCheck, type PartAdvance } from "@/lib/billing/part-requests";
 import { paymentToast, blankReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
@@ -1938,6 +1939,8 @@ export function RecordPaymentDialog({
                       .map((l) => l?.name ?? "")
                       .filter((n): n is string => typeof n === "string" && n.trim() !== ""),
                     renewsSubscription: isRenewal,
+                    /* R-2871: a together renewal quote names every subscription it renews. */
+                    renewsSubscriptions: isRenewal ? togetherPlanNames(lineItems) : undefined,
                     upgradesPlan: isUpgrade,
                     addsSeats: isAddSeatsQuote,
                   },
