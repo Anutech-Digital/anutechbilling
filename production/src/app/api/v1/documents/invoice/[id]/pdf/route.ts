@@ -17,7 +17,7 @@ import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
-import { loadRenewedSubscriptionDomain } from "@/lib/quotes/line-period-context";
+import { loadInvoicePeriodRuleFrom, loadRenewedSubscription } from "@/lib/quotes/line-period-context";
 import { tdsByPayment } from "@/lib/accounting/tds-receipt";
 import { liveKeyCheckoutRefusal } from "@/lib/checkout/live-guards";
 import { readLutArnFor } from "@/lib/gst/export-lut";
@@ -86,7 +86,9 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     logoDataUri: logo,
     razorpayConfigured,
     /* R-1764: a renewal quote's "Domain:" comes from the subscription it renews. */
-    subscriptionDomain: await loadRenewedSubscriptionDomain(admin, (quote as Quote) ?? null),
+    subscriptionDomain: await loadRenewedSubscription(admin, (quote as Quote) ?? null),
+    /* R-2727 review: the new period rule only for invoices created after it went live here. */
+    periodRuleFrom: await loadInvoicePeriodRuleFrom(admin),
     invoice:  inv,
     quote:    (quote as Quote) ?? null,
     customer: (customer as Customer) ?? null,

@@ -62,6 +62,20 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   const [csvName, setCsvName] = React.useState<string | null>(null);
   const [saved, setSaved] = React.useState<Array<{ domain: string; seats: number; on: boolean }>>([]);
   const fileRef = React.useRef<HTMLInputElement>(null);
+  /* R-2727 (Pratik): "+ Add domain" left the cursor on the button, so the next domain typed went
+     nowhere. The row it adds takes the focus once it is on screen. */
+  const domainInputs = React.useRef<Array<HTMLInputElement | null>>([]);
+  const focusRow = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    const i = focusRow.current;
+    if (i == null) return;
+    focusRow.current = null;
+    domainInputs.current[i]?.focus();
+  }, [manual]);
+  const addDomainRow = () => setManual((arr) => {
+    focusRow.current = arr.length;
+    return [...arr, { domain: "", seats: 1 }];
+  });
 
   React.useEffect(() => {
     if (!open) {
@@ -289,6 +303,7 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
                 {manual.map((row, idx) => (
                   <div key={idx} className="flex items-center gap-2 px-2 py-1.5">
                     <Input
+                      ref={(el) => { domainInputs.current[idx] = el; }}
                       className="flex-1 h-8 text-sm font-mono"
                       aria-label={`Domain ${idx + 1}`}
                       placeholder="e.g. domain.in"
@@ -314,7 +329,7 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
                 ))}
               </div>
               <Button type="button" size="sm" variant="default" icon="plus"
-                onClick={() => setManual((arr) => [...arr, { domain: "", seats: 1 }])}>
+                onClick={addDomainRow}>
                 Add domain
               </Button>
               <p className="text-2xs text-ink-3">

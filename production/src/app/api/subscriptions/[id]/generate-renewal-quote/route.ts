@@ -42,6 +42,7 @@ import { istToday } from "@/lib/dates/ist";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { parseBillNextBody } from "@/lib/billing/proforma";
+import { rollBilledElsewhere, renewsWhenPaidNote, type TermRoll } from "@/lib/renewals/pay-to-renew";
 import { billNextPreview, billThroughDay, firstUnbilledPeriod, type BillNextSub } from "@/lib/renewals/bill-next.server";
 
 export const dynamic = "force-dynamic";
@@ -137,25 +138,41 @@ export const POST = withRoute({
       freed = { periodStart: first.row.period_start, periodEnd: addDaysISO(first.row.period_end, -1),
         bill: { raised: tally.raised, requests: tally.requests, requestsOpen: tally.requestsOpen, skip: null } };
     }
+    let virtualRenewal: string | null = sub.renewal_date;
+    /* The renewal dates this run may find: the one read, and each term end this run marked or rolled —
+       a part raised already paid renews at once in the database (roll_paid_renewal_terms). */
+    const expectedDates = new Set<string | null>([sub.renewal_date]);
+    let termRoll: TermRoll | null = null;
+    let firstRoll: TermRoll | null = null;
     const runTermsRaw = await billDueTermsOldestFirst({
       sub: {
         billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date,
         renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id,
       },
       todayISO: today,
+      /* R-2735 (Pardeep, 13 Nov): "jab tak payment na aaye renew to karna hi nahi". The roll is VIRTUAL —
+         nothing is written to the subscription; the new term is billed as if renewed and its first part
+         carries the roll, which the database makes only when that part is PAID (roll_paid_renewal_terms). */
       roll: async (from, to) => {
-        const { data: moved, error: rollErr } = await supabase.from("subscriptions")
-          .update({ renewal_date: to, renewal_state: "renewed", reminder_count: 0, last_reminder_sent_at_v2: null })
-          .eq("id", sub.id).eq("status", "active").eq("renewal_date", from).is("renewal_quote_id", null)
-          .select("id");
-        if (rollErr) throw new Error(`Could not roll the term: ${rollErr.message}`);
-        if (!moved || moved.length === 0) throw new Error("The subscription changed while billing — reload and Generate again.");
+        virtualRenewal = to;
+        termRoll = to > from ? { from, to } : null;
       },
       billCurrentTerm: async () => {
         const { data: fresh, error: fErr } = await supabase.from("subscriptions").select(INSTALMENT_SUB_SELECT).eq("id", sub.id).single();
         if (fErr || !fresh) throw new Error(fErr?.message ?? "subscription not found");
+        if (!expectedDates.has(fresh.renewal_date)) throw new Error("The subscription changed while billing — reload and Generate again.");
         const facts = fresh.quote_id ? await readQuotePaymentFacts(supabase, fresh.quote_id) : undefined;
-        const r = await syncSubscriptionInstalments({ supabase, sub: fresh as InstalmentSub, quote: facts, todayISO: today, rebillCredited: true });
+        const roll = termRoll;
+        const r = await syncSubscriptionInstalments({
+          supabase, sub: { ...(fresh as InstalmentSub), renewal_date: virtualRenewal }, quote: facts, todayISO: today,
+          rebillCredited: true, ...(roll ? { termRoll: roll } : {}),
+        });
+        if (roll) expectedDates.add(roll.to);
+        if (roll && r.raised.length + r.requests.length + r.requestsOpen.length > 0) firstRoll ??= roll;
+        /* A term Zoho already billed (R-1763) is not collected here — it rolls as before (guarded). */
+        if (roll && r.skip?.code === "billed_elsewhere") {
+          await rollBilledElsewhere(supabase as unknown as SupabaseClient, sub.id, roll);
+        }
         /* R-2519c: a part the customer's money already covers waits for its date — say so. */
         const ahead = paidAheadReason(r.waiting, formatDate);
         return { raised: r.raised, requests: r.requests, requestsOpen: r.requestsOpen, skip: r.skip ?? (ahead ? { code: "paid_ahead", reason: ahead } : null) };
@@ -179,7 +196,9 @@ export const POST = withRoute({
         if (tErr) termsErrors.push(`${id}: ${tErr.message}`);
       }
     }
-    const msg = termsMessage(sub.customer_name, runTerms);
+    const termsMsg = termsMessage(sub.customer_name, runTerms);
+    /* R-2735: say that the renewal waits for the payment. */
+    const msg = termsMsg.ok ? { ...termsMsg, text: termsMsg.text + renewsWhenPaidNote(firstRoll) } : termsMsg;
     const { data: after } = await supabase.from("subscriptions").select("renewal_date").eq("id", sub.id).maybeSingle();
     const rolledTo = after?.renewal_date && after.renewal_date !== sub.renewal_date ? after.renewal_date : null;
     return NextResponse.json(
@@ -229,6 +248,7 @@ export const POST = withRoute({
         renewalDate:     sub.renewal_date,
         graceDays:       tenant.grace_period_days ?? 0,
         existingQuoteId: sub.renewal_quote_id,
+        itemId:          sub.item_id ?? null,   // R-2736: the line cost from its catalogue row
         status:          "draft",
       })
     : await createOrGetRenewalQuote({
@@ -239,6 +259,7 @@ export const POST = withRoute({
     customerName:    sub.customer_name,
     plan:            sub.plan,
     itemId:            sub.item_id ?? null,
+    vendor:          sub.vendor ?? null,   // R-2736: the catalogue cost match stays in this vendor
     seats:           sub.seats,
     mrr:             sub.mrr ?? 0,
     termMonths:      sub.term_months ?? null,

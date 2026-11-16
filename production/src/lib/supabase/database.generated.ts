@@ -931,6 +931,24 @@ export type Database = {
           },
         ]
       }
+      app_rule_dates: {
+        Row: {
+          from_at: string
+          key: string
+          note: string | null
+        }
+        Insert: {
+          from_at?: string
+          key: string
+          note?: string | null
+        }
+        Update: {
+          from_at?: string
+          key?: string
+          note?: string | null
+        }
+        Relationships: []
+      }
       ai_action_log: {
         Row: {
           action: string
@@ -11555,6 +11573,7 @@ export type Database = {
           employee_id: string
           esi: number
           esi_employer: number
+          esi_employer_expense_id: string | null
           expense_id: string | null
           gross: number
           id: string
@@ -11571,6 +11590,7 @@ export type Database = {
           period: string
           pf: number
           pf_employer: number
+          pf_employer_expense_id: string | null
           pf_wage: number | null
           reconciled_txn_id: string | null
           salary_in_force: number | null
@@ -11586,6 +11606,7 @@ export type Database = {
           employee_id: string
           esi?: number
           esi_employer?: number
+          esi_employer_expense_id?: string | null
           expense_id?: string | null
           gross: number
           id?: string
@@ -11602,6 +11623,7 @@ export type Database = {
           period: string
           pf?: number
           pf_employer?: number
+          pf_employer_expense_id?: string | null
           pf_wage?: number | null
           reconciled_txn_id?: string | null
           salary_in_force?: number | null
@@ -11617,6 +11639,7 @@ export type Database = {
           employee_id?: string
           esi?: number
           esi_employer?: number
+          esi_employer_expense_id?: string | null
           expense_id?: string | null
           gross?: number
           id?: string
@@ -11633,6 +11656,7 @@ export type Database = {
           period?: string
           pf?: number
           pf_employer?: number
+          pf_employer_expense_id?: string | null
           pf_wage?: number | null
           reconciled_txn_id?: string | null
           salary_in_force?: number | null
@@ -11662,8 +11686,22 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "salary_payments_esi_employer_expense_id_fkey"
+            columns: ["esi_employer_expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "salary_payments_expense_id_fkey"
             columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "salary_payments_pf_employer_expense_id_fkey"
+            columns: ["pf_employer_expense_id"]
             isOneToOne: false
             referencedRelation: "expenses"
             referencedColumns: ["id"]
@@ -12109,6 +12147,7 @@ export type Database = {
           customer_id: string | null
           customer_name: string
           domain: string | null
+          bill_group_id: string | null
           billed_externally_until: string | null
           external_ref: string | null
           external_ref_date: string | null
@@ -12162,6 +12201,7 @@ export type Database = {
           customer_id?: string | null
           customer_name: string
           domain?: string | null
+          bill_group_id?: string | null
           billed_externally_until?: string | null
           external_ref?: string | null
           external_ref_date?: string | null
@@ -12215,6 +12255,7 @@ export type Database = {
           customer_id?: string | null
           customer_name?: string
           domain?: string | null
+          bill_group_id?: string | null
           billed_externally_until?: string | null
           external_ref?: string | null
           external_ref_date?: string | null
@@ -15835,6 +15876,31 @@ export type Database = {
         }
         Returns: undefined
       }
+      edit_salary_payment: {
+        Args: {
+          p_advance_loan_id: string
+          p_advance_recovered: number
+          p_arrears?: number
+          p_bank_account_id: string
+          p_employee_id: string
+          p_esi: number
+          p_esi_employer?: number
+          p_gross: number
+          p_incentive?: number
+          p_lop_amount: number
+          p_lop_days: number
+          p_notes?: string
+          p_other: number
+          p_pay_date: string
+          p_period: string
+          p_pf: number
+          p_pf_employer?: number
+          p_pf_wage?: number
+          p_salary_id: string
+          p_tds: number
+        }
+        Returns: string
+      }
       employee_salary_arrears: {
         Args: { p_employee_id: string }
         Returns: {
@@ -16913,6 +16979,16 @@ export type Database = {
       salary_expense_date: {
         Args: { p_pay_date: string; p_period: string }
         Returns: string
+      }
+      salary_tds_lock: {
+        Args: { p_salary_id: string }
+        Returns: {
+          o_href: string
+          o_kind: string
+          o_month: string
+          o_name: string
+          o_what: string
+        }[]
       }
       _salary_in_force_gross: {
         Args: { p_employee_id: string; p_period: string }

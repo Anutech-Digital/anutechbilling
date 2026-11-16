@@ -59,6 +59,8 @@ import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { chasePartRequests, type PartRequestChaseResult } from "@/lib/billing/part-request-chase.server";
 import { billingCronDay } from "@/lib/billing/part-requests";
+import { termToBill, rollBilledElsewhere, type TermRoll } from "@/lib/renewals/pay-to-renew";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -67,7 +69,7 @@ export const runtime = "nodejs";
 function readActiveSubs(supabase: ReturnType<typeof createAdminClient>) {
   return fetchAllRows((from, to) => supabase
     .from("subscriptions")
-    .select(INSTALMENT_SUB_SELECT)
+    .select(`${INSTALMENT_SUB_SELECT}, auto_renew, renewal_quote_id`)
     .eq("status", "active")
     .order("id", { ascending: true })
     .range(from, to));
@@ -147,6 +149,12 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
   }
   result.total_active = subs.length;
 
+  /* R-2735 (Pardeep, 13 Nov — "jab tak payment na aaye renew to karna hi nahi"): a subscription billed in
+     parts whose new term has begun is NOT rolled (the renewals cron no longer does it). Its new term is
+     billed as if renewed (one term a run — the oldest unpaid one) and that term's first part carries the
+     roll; paying it renews, in the database (roll_paid_renewal_terms). */
+  subs = subs.map((s) => termToBill(s, today)?.billAs ?? s);
+
   /* Quote payment state, fetched separately rather than as an embedded join. This
      schema has two paths between quotes and subscriptions and PostgREST answers an
      ambiguous embed with PGRST201 — which surfaces as an empty page, not an error. */
@@ -213,7 +221,13 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
       const quote = sub.quote_id ? quoteById.get(sub.quote_id) : undefined;
       /* R-527: the per-subscription work lives in lib/billing/sync-instalments.server.ts so a
          recorded payment raises its instalment invoice at once, through this same code. */
+      /* R-2735: a renewal term (termToBill) carries its roll on sub.term_roll — sync marks its first part. */
       const r = await syncSubscriptionInstalments({ supabase, sub, quote, todayISO: today, dryRun });
+      /* A term Zoho already billed (R-1763) is not collected here — it rolls as before (guarded). */
+      const termRoll = (sub as { term_roll?: TermRoll }).term_roll;
+      if (termRoll && !dryRun && r.skip?.code === "billed_elsewhere") {
+        await rollBilledElsewhere(supabase as unknown as SupabaseClient, sub.id, termRoll);
+      }
       if (r.skip) {
         result.skipped.push({ subscription_id: sub.id, code: r.skip.code, reason: r.skip.reason });
         continue;

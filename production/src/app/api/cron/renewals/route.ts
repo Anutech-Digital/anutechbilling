@@ -67,6 +67,8 @@ import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import { releaseExpiredPlanChanges, dropReleasedLinks, tenantsWithLinkedQuote, type RpcClient } from "@/lib/renewals/release-expired-plan-change";
+import { togetherRole, togetherTemplateFields, pastGraceToday, TOGETHER_SKIP_RECIPIENT, type TogetherQuote } from "@/lib/renewals/together-reminder";
+import { readTogetherQuotes, type TogetherReadClient } from "@/lib/renewals/together-reminder.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -104,8 +106,9 @@ interface CronResult {
   grace_tasks?:     number;
   /** RN-24: subscriptions lapsed to 'expired' because they're not renewing and the term ended. */
   lapsed:           number;
-  /** R-808: split-billed subscriptions whose term rolled on this run (no renewal quote). */
-  split_rolled?:    number;
+  /** R-808 / R-2735: split-billed subscriptions whose new term has begun — NOT rolled here any more; the
+   *  billing cron bills the new term's first part and paying it renews (roll_paid_renewal_terms). */
+  split_awaiting_payment?: number;
   errors:           { subscription_id: string; message: string }[];
   details:          { subscription_id: string; customer: string; step: string; daysUntil: number; emailStatus?: string }[];
   /** S28 — WhatsApp copy of each reminder. `disabled` = switch OFF (the default). */
@@ -241,6 +244,18 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
     });
   }
 
+  /* R-2852: renewal quotes billed TOGETHER (R-2847) — every member links to the one quote, so it is
+     reminded about once per step from its lead member (earliest term, then lowest id, among the
+     subscriptions this run may remind about); the others skip with a logged reason. Read AFTER the
+     plan-change release above (it moves links). A failed read fails the run: guessing "single" would
+     email the whole quote once per member again. */
+  let togetherByQuote: Map<string, TogetherQuote>;
+  try {
+    togetherByQuote = await readTogetherQuotes(supabase as unknown as TogetherReadClient, allSubs.map((s) => s.renewal_quote_id));
+  } catch (e) {
+    return cronDbFailure("renewals", e, `together quotes read failed: ${errorMessage(e)}`);
+  }
+
   /* ── S22: look-ups fetched ONCE, not three round trips per subscription ──
      This loop used to read the tenant, the tenant's ingest mailboxes and the customer
      afresh for every subscription — three queries per row, for every active sub, on
@@ -296,6 +311,25 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
     return NextResponse.json({ error: `grace overrides read failed: ${errorMessage(e)}` }, { status: 500 });
   }
 
+  /* R-2852: who may LEAD a together quote's reminders this run — a renewable subscription whose grace
+     is not over (past grace it only raises the owner's Stop-service task and emails nothing, so the
+     next member leads; otherwise the later members' steps would be skipped with nobody sending). */
+  const remindable = new Set(allSubs.filter((s) => {
+    const t = tenantById.get(s.tenant_id);
+    if (!t || !s.renewal_date) return false;
+    return !pastGraceToday({
+      renewalDate:  s.renewal_date,
+      graceDays:    effectiveGraceDays({
+        tenantGraceDays:  t.grace_period_days,
+        trustedGraceDays: s.customer_id ? overrides.trustedByCustomer.get(s.customer_id) ?? null : null,
+        renewalDate:      s.renewal_date,
+        graceUntil:       overrides.bySubscription.get(s.id)?.graceUntil ?? null,
+      }),
+      renewalState: s.renewal_state,
+      termMonths:   s.term_months,
+    });
+  }).map((s) => s.id));
+
   /* The logo is the same image for every renewal PDF a tenant sends in a run. */
   const logoByTenant = new Map<string, ReturnType<typeof logoDataUri>>();
   const tenantLogo = (tenantId: string, url: string | null | undefined) => {
@@ -324,8 +358,8 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
          quote on top was proven (local DB) to bill the renewed year twice: once as the paid
          quote's whole-year invoice, again as four PENDING instalment invoices. So no quote,
          no reminder ladder and no grace suspension here (unpaid instalments are chased by
-         collections). On the new term's first day renewal_date moves one term on and the
-         billing cron invoices the new term's parts on their dates. lib/renewals/split-billed-renewal.ts */
+         collections). R-2735: renewal_date moves one term on only when the new term's first part is
+         PAID (lib/renewals/pay-to-renew.ts); the billing cron bills the new term's parts on their dates. */
       const split = splitBilledRenewalStep(
         { billing_cycle: sub.billing_cycle, term_months: sub.term_months, start_date: sub.start_date,
           renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id },
@@ -335,34 +369,19 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         if (split.kind === "held_open_quote") {
           result.errors.push({
             subscription_id: sub.id,
-            message: `Billed in parts, and renewal quote ${split.quoteId} is still open. Paying it would bill the new term twice, so the term was not rolled. Cancel or unlink that quote; the next run rolls the term.`,
+            message: `Billed in parts, and renewal quote ${split.quoteId} is still open. Paying it would bill the new term twice, so its new term is not billed. Cancel or unlink that quote; the billing job then bills the new term's first part, and paying it renews the subscription.`,
           });
         } else if (split.kind === "roll") {
-          /* Guarded on the date read: two overlapping runs roll once, not twice. */
-          const { data: rolled, error: rollErr } = await supabase
-            .from("subscriptions")
-            .update({
-              renewal_date:  split.newRenewalDate,
-              renewal_state: "renewed",
-              reminder_count: 0,
-              last_reminder_sent_at_v2: null,
-            })
-            .eq("id", sub.id)
-            .eq("status", "active")
-            .eq("renewal_date", sub.renewal_date!)
-            .is("renewal_quote_id", null)
-            .select("id");
-          if (rollErr) {
-            result.errors.push({ subscription_id: sub.id, message: `Could not roll the term: ${rollErr.message}` });
-          } else if ((rolled ?? []).length > 0) {
-            result.split_rolled = (result.split_rolled ?? 0) + 1;
-            result.details.push({
-              subscription_id: sub.id,
-              customer:        sub.customer_name,
-              step:            `renewed (billed in parts) → ${split.newRenewalDate}`,
-              daysUntil:       0,
-            });
-          }
+          /* R-2735 (Pardeep, 13 Nov — "jab tak payment na aaye renew to karna hi nahi"): the term is NOT
+             rolled here any more. The billing cron bills the new term's first part (termToBill) and the
+             database renews when that part is PAID (roll_paid_renewal_terms). */
+          result.split_awaiting_payment = (result.split_awaiting_payment ?? 0) + 1;
+          result.details.push({
+            subscription_id: sub.id,
+            customer:        sub.customer_name,
+            step:            `billed in parts — renews to ${split.newRenewalDate} when the new term's first part is paid`,
+            daysUntil:       0,
+          });
         }
         return;
       }
@@ -466,6 +485,45 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         }
       }
 
+      /* R-2852: another member of a together quote — its lead sends the quote's reminder (all plans,
+         the quote total). This step is logged as skipped (with the reason) and the state synced, so
+         the step is not tried again tomorrow and the Renewals row shows where it stands. */
+      const together = togetherRole(sub.id, sub.renewal_quote_id, togetherByQuote, (id) => remindable.has(id));
+      if (decision.shouldSendEmail && together.kind === "member") {
+        await supabase.from("renewal_email_log").insert({
+          tenant_id:       sub.tenant_id,
+          subscription_id: sub.id,
+          cadence_step:    decision.targetState,
+          recipient_email: TOGETHER_SKIP_RECIPIENT,
+          subject:         "(skipped — billed together)",
+          status:          "skipped",
+          error_message:   together.reason,
+        });
+        if (sub.renewal_state !== decision.targetState) {
+          await supabase.from("subscriptions").update({ renewal_state: decision.targetState }).eq("id", sub.id);
+        }
+        result.emails_skipped += 1;
+        detail.emailStatus = `(skipped: ${together.reason})`;
+        result.details.push(detail);
+        return;
+      }
+      /* R-2852: the lead — the quote's reminder already went today from ANY member at ANY step (Send now
+         on another row logs its own step on every member) → not again today. */
+      if (decision.shouldSendEmail && together.kind === "lead") {
+        const { count: quoteSentToday } = await supabase
+          .from("renewal_email_log")
+          .select("id", { count: "exact", head: true })
+          .in("subscription_id", together.quote.members.map((m) => m.subscriptionId))
+          .neq("status", "skipped")
+          .gte("sent_at", new Date(new Date().setHours(0, 0, 0, 0)).toISOString());
+        if ((quoteSentToday ?? 0) > 0) {
+          detail.emailStatus = `(already sent today for renewal quote ${together.quote.quoteId}, billed together)`;
+          result.emails_skipped += 1;
+          result.details.push(detail);
+          return;
+        }
+      }
+
       // ── Email path ───────────────────────────────────────────────
       if (decision.shouldSendEmail && decision.tone) {
         // 1. Ensure renewal quote exists (only matters at T-15 entry)
@@ -489,6 +547,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               renewalDate:     sub.renewal_date!,
               graceDays,
               existingQuoteId: sub.renewal_quote_id,
+              itemId:          sub.item_id ?? null,   // R-2736: the line cost from its catalogue row
             })
           : await createOrGetRenewalQuote({
           supabase,
@@ -498,6 +557,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           customerName:    sub.customer_name,
           plan:            sub.plan,
           itemId:            sub.item_id ?? null,
+          vendor:          sub.vendor ?? null,   // R-2736: the catalogue cost match stays in this vendor
           seats:           sub.seats,
           mrr:             sub.mrr ?? 0,
           termMonths:      sub.term_months ?? null,
@@ -536,6 +596,11 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         }
 
         const renewalQuoteId = quoteResult.quoteId;
+        /* R-2852: the lead of a together quote names every plan, the seats added up and the plan list —
+           only when the quote it got back IS that together quote (a link that could not be loaded falls
+           through to a new single quote, whose amount is this plan's alone). */
+        const togetherText = together.kind === "lead" && together.quote.quoteId === renewalQuoteId
+          ? togetherTemplateFields(together.quote) : null;
         /* R-2710: a draft from "Review renewal quote" goes out with this reminder (and is marked sent
            below) unless its discount / margin still waits for approval — then no email, retried. */
         const draftBlock = await draftRenewalQuoteBlock(supabase, sub.tenant_id, renewalQuoteId);
@@ -593,7 +658,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           values: {
             customer_name: resolvedContact.name || customer?.contact_name || customer?.name || sub.customer_name,
             seller_name:   tenant.name,
-            plan:          sub.plan,
+            plan:          togetherText?.planName ?? sub.plan,   // R-2852: every plan on a together quote
             amount:        rupee(renewalQuote.amount),
             due_date:      formatIstDate(sub.renewal_date!),
             days:          Math.abs(decision.daysUntilRenewal),
@@ -629,9 +694,10 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           tenantName:      tenant.name,
           tenantEmail:     tenant.email,
           tenantPhone:     tenant.phone,
-          planName:        sub.plan,
-          seats:           sub.seats,
+          planName:        togetherText?.planName ?? sub.plan,
+          seats:           togetherText?.seats ?? sub.seats,
           amount:          renewalQuote.amount,
+          planLines:       togetherText?.planLines,   // R-2852: plan · seats · period per member + the quote total
           renewalDate:     formatIstDate(sub.renewal_date!),
           daysUntil:       Math.abs(decision.daysUntilRenewal),
           graceDays,
@@ -870,6 +936,17 @@ async function planOnly(
 
   let splitRolls = 0;
   let splitHeld = 0;
+  /* R-2852: as the live pass — one reminder per together quote, from its lead. A failed read is a
+     note (the live pass would stop), never a bare 500 from the operator's rehearsal. */
+  let togetherByQuote = new Map<string, TogetherQuote>();
+  let togetherReadError: string | null = null;
+  try {
+    togetherByQuote = await readTogetherQuotes(supabase as unknown as TogetherReadClient, eligible.map((s) => s.renewal_quote_id));
+  } catch (e) {
+    togetherReadError = errorMessage(e);
+  }
+  const remindable = new Set(eligible.filter((s) => cronTenantAllowed(s.tenant_id)).map((s) => s.id));
+  let togetherSkipped = 0;
   for (const sub of eligible) {
     /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;
     /* R-808: billed in parts → no reminder, no quote; the term rolls on its first day. */
@@ -903,6 +980,11 @@ async function planOnly(
       continue;
     }
 
+    /* R-2852: a together quote's other members send nothing — its lead's reminder covers them. */
+    if (decision.shouldSendEmail && togetherRole(sub.id, sub.renewal_quote_id, togetherByQuote, (id) => remindable.has(id)).kind === "member") {
+      togetherSkipped += 1;
+      continue;
+    }
     const email   = sub.customer_id ? emailByCustomer.get(sub.customer_id) ?? null : null;
     const blocked = decision.shouldSendEmail && !email;
     if (blocked) blockedNoEmail += 1;
@@ -922,10 +1004,16 @@ async function planOnly(
 
   const notes: string[] = [];
   if (splitRolls > 0) {
-    notes.push(`${splitRolls} subscription(s) billed in parts would renew today: the term rolls on and the billing cron invoices the next parts. No renewal quote.`);
+    notes.push(`${splitRolls} subscription(s) billed in parts have reached their new term: the billing cron bills the new term's first part, and each renews only when that part is paid (R-2735). No renewal quote.`);
   }
   if (splitHeld > 0) {
     notes.push(`${splitHeld} subscription(s) billed in parts are due to renew but still have an open renewal quote. They would not roll until a person cancels or unlinks that quote.`);
+  }
+  if (togetherReadError) {
+    notes.push(`Renewal quotes billed together could not be read (${togetherReadError}) — a real run would stop before sending anything, so no quote is emailed once per subscription.`);
+  }
+  if (togetherSkipped > 0) {
+    notes.push(`${togetherSkipped} subscription(s) are billed together on one renewal quote with another subscription: that quote's reminder goes once, from its lead subscription, so they send nothing themselves (R-2852).`);
   }
   if (!isEmailConfigured()) {
     notes.push("Email is in STUB mode — a real run would log to renewal_email_log without delivering anything.");

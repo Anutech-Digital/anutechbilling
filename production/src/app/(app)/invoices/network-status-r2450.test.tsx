@@ -139,7 +139,7 @@ describe("invoices list chip (R-2450)", () => {
     const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
     expect(src).toContain("const networkChips = useNetworkChips(issuedIds);");
     expect(src).toContain("network={networkChips.get(inv.id)}");
-    expect(src).toContain("<MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} network={networkChips.get(inv.id)} />");
+    expect(src).toContain("<MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} network={networkChips.get(inv.id)} period={periodOf(inv)} />"); // R-2853 adds the period line
     expect(src.match(/<NetworkChip view=\{network\} \/>/g)?.length).toBe(2);
     // no new column: the table still has its seven columns (fits 1280 with Action visible)
     expect(src.match(/^\s*\{ id: "[a-z]+",\s+header:/gm)?.length).toBe(7);

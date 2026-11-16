@@ -89,7 +89,7 @@ export const PATCH = withRoute(
     const { data, error } = await db.from("tenants").update({ website_theme: theme }).eq("id", site as string).select("id");
     if (isWebsiteThemeColumnMissing(error)) {
       // Ours to fix (a deploy step), not the owner's — 503, and the message says what happens next.
-      console.warn("[website-theme] switch refused: migration 20261113102122 not applied on this database");
+      console.warn("[website-theme] switch refused: migration 20261116042955 not applied on this database");
       throw new RouteError(503, WEBSITE_THEME_NEEDS_DB);
     }
     dbFail(error, "The theme was not saved. Try again; if it repeats, report it.");

@@ -64,11 +64,13 @@ import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
+import { isHotFile, withoutHot, onlyHot, hotFileLine, withHotFiles, readHotHolds } from "./worker-lock-hot.mjs";
 import { LOCK_VERSION, hardPaths, softFolders, movesOf, claimHardPaths, claimFolders, parseMoveFlags, liveFilesReader, isFileLock } from "./worker-lock-files.mjs";
 import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue, turnGate, turnQueueLines, readTurnWaiters, joinTurnWait, leaveTurnWait, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 const readQueue = () => readQueueIn(LOCK_DIR);
 const leaveQueue = (c) => leaveQueueIn(LOCK_DIR, c);
 export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir, turnGate, turnQueueLines, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
+export { HOT_FILES, HOT_STALE_MS, isHotFile, withoutHot, onlyHot, hotBlockers, withHotFiles, globToRegExp } from "./worker-lock-hot.mjs";
 export { isDerived, withoutDerived, newestDeployDate, refreshDerived, rebaseResolvingDerived, MIGRATION_DERIVED } from "./worker-lock-derived.mjs";
 export { LOCK_VERSION, hardPaths, softFolders, claimHardPaths, claimFolders, parseMoveFlags, liveFilesReader, isFileArea, isFileLock, worktreeChangedFiles } from "./worker-lock-files.mjs";
 export { migrationDefines, relatedSqlTests, deployPeek, sqlTestSafe, relatedTestScript, runRelatedSql } from "./worker-lock-sql.mjs";
@@ -205,8 +207,9 @@ export function findConflicts(card, mine, locks, { live = () => [], moves = [], 
   const add = (c) => { const k = `${c.card}|${c.mine}|${c.theirs}`; if (!seen.has(k)) { seen.add(k); out.push(c); } };
   for (const l of locks) {
     if (l.card === card) continue;
-    const theirs = withoutDerived(hardPaths(l, live(l)));
-    for (const m of withoutDerived(mine)) for (const t of theirs) {
+    /* R-2826: hot files never clash at claim/check — also when an older lock recorded one (taken at push). */
+    const theirs = withoutHot(withoutDerived(hardPaths(l, live(l))));
+    for (const m of withoutHot(withoutDerived(mine))) for (const t of theirs) {
       if (pathsOverlap(m, t)) add({ card: l.card, mine: normPath(m), theirs: normPath(t) });
     }
     for (const m of moves) for (const t of softFolders(l)) {
@@ -520,7 +523,19 @@ export function lintRatchetVerdict({ code, text, ms }) {
   return { ok: false, message: `✗ lint ratchet (CI ka \`npm run lint:ratchet\`) LAAL — push NAHI hoga (${secs}):\n${tail}` };
 }
 
+/**
+ * R-2826: the hot files this push changes are taken here, in FIFO order (by the time `push` started), and
+ * freed when the push lands or fails (also on process.exit and a crash — see worker-lock-hot.mjs).
+ */
 async function pushWithTurn(card, ciFlags = {}) {
+  let hot = [];
+  try { hot = onlyHot(changedFiles()); } catch {}
+  if (!hot.length) return pushWithTurnInner(card, ciFlags);
+  try { return await withHotFiles(card, hot, () => pushWithTurnInner(card, ciFlags), { dir: LOCK_DIR, readyAt: Date.now(), log: (l) => console.log(l) }); }
+  catch (e) { if (e?.code === "HOT_TIMEOUT") { console.error(`✗ ${e.message}. Owner ko batao.`); process.exit(4); } throw e; }
+}
+
+async function pushWithTurnInner(card, ciFlags = {}) {
   /* R-1958: before the rebase (and again after it) — nothing of another card's may be undone. */
   const scope = (exit) => enforceScope(card, "commits", { lockDir: LOCK_DIR, allowOutside: ciFlags.allowOutside, cardPath: ciFlags.cardPath, exit });
   scope();
@@ -589,7 +604,7 @@ async function pushWithTurn(card, ciFlags = {}) {
        worktree — whose live diff counted until now — is cleaned up right after the push). Written BEFORE the
        push: the push moves anutech/manager-pardeep, after which the live diff is already empty. */
     try {
-      const pushedFiles = withoutDerived(changedFiles());
+      const pushedFiles = withoutHot(withoutDerived(changedFiles()));
       if (pushedFiles.length) updateLock(card, (l) => ({ ...l, files: [...new Set([...(l.files ?? []), ...pushedFiles])] }));
     } catch {}
     sh("git push -q anutech HEAD:manager-pardeep", pushEnv("push", card));
@@ -1340,6 +1355,7 @@ function main(argv) {
     for (const l of locks) console.log(`${l.card} (${normPriority(l.priority) ?? DEFAULT_PRIORITY})  ${l.state ?? LOCK_STATES.working}${countsTowardCap(l) ? "" : " (slot nahi ginta)"}  ${l.claimedAt}`);
     const slotLine = lineOf(readQueue().filter((e) => e.waitingFor !== "files"), Date.now());
     if (slotLine) console.log(`slot line: ${slotLine}`);
+    for (const h of readHotHolds(LOCK_DIR)) console.log(`hot file hold: ${h.card} — ${h.files.join(", ")} (push chal raha hai)`);
     for (const name of ["push", "heavy"]) {
       let turn = null;
       try { turn = JSON.parse(fs.readFileSync(path.join(LOCK_DIR, `_${name}-turn.json`), "utf8")); } catch {}
@@ -1383,7 +1399,11 @@ function main(argv) {
     /* R-2106: one form for every path (commas split, worktree prefix + production/ off) — printed when it changed anything. */
     const [worktree, ...rawPaths] = claimArgs;
     const moves = normaliseClaimAreas(rawMoves, worktree);
-    const areas = normaliseClaimAreas([...rawPaths, ...moves], worktree, (l) => console.log(l));
+    const askedAreas = normaliseClaimAreas([...rawPaths, ...moves], worktree, (l) => console.log(l));
+    /* R-2826: a hot file is never claimed or recorded — push takes it with a FIFO wait. */
+    const hotAsked = onlyHot(askedAreas);
+    for (const h of hotAsked) console.log(hotFileLine(h));
+    const areas = withoutHot(askedAreas);
     /* R-2718: only files + --move folders are held hard; other folders are scope only (soft). */
     const folders = claimFolders(areas, worktree);
     const hard = claimHardPaths(areas, moves, folders);
@@ -1392,7 +1412,7 @@ function main(argv) {
     const own0 = readLocks().find((l) => l.card === card) ?? null;
     /* R-1973: `claim <CARD> --fixes-red` (no paths) = take the slot back for a card in ci-wait / ci-red. */
     const reclaim = fixesRed && own0 && !countsTowardCap(own0) && !worktree;
-    if (!reclaim && (!worktree || !areas.length)) { console.error("claim <CARD> <worktree> <folder/file>... --card <card.json> [--wait] [--priority p0|p1|p2]   (CI laal ke baad: claim <CARD> --fixes-red --card <card.json>)"); process.exit(1); }
+    if (!reclaim && (!worktree || (!areas.length && !hotAsked.length))) { console.error("claim <CARD> <worktree> <folder/file>... --card <card.json> [--wait] [--priority p0|p1|p2]   (CI laal ke baad: claim <CARD> --fixes-red --card <card.json>)"); process.exit(1); }
     enforceCard(card, "claim", cardFlags);
     const derivedAsked = areas.filter(isDerived);
     if (derivedAsked.length) console.log(`(R-2105: ${derivedAsked.join(", ")} generated hain — claim ki zaroorat nahi, push inhe dobara banata hai)`);
@@ -1460,19 +1480,22 @@ function main(argv) {
     enforceStash(card, me); // R-2356: exit 10 on a stash made since claim
     /* R-2105: derived files (deploy-db-*.sh, peeks.generated.ts) stay out of the lock — push regenerates them. */
     const files = withoutDerived(changedFiles());
+    /* R-2826: hot files are taken at push (FIFO), never held here. */
+    const cold = withoutHot(files);
+    for (const h of onlyHot(files)) console.log(hotFileLine(h));
     /* R-2718: my changed files (+ my --move folders) against each other card's files — v2 locks by their
        claimed files, recorded files and their worktree's live changes; old locks by every path as before. */
     const fl = { live: liveFilesReader(), moves: isFileLock(me) ? movesOf(me) : [], soft: softFolders(me) };
-    const mineHard = [...files, ...fl.moves];
+    const mineHard = [...cold, ...fl.moves];
     const conflicts = findConflicts(card, mineHard, settleCiWaitLocks(card, mineHard, readLocks(), { ...realSettleDeps(), ...fl }), fl);
     if (conflicts.length) report(conflicts);
     const clash = checkMigrationClash(card, process.cwd(), readLocks()); // R-2614
     if (!clash.ok) { console.error(clash.message); process.exit(2); }
     enforceScope(card, "worktree", { lockDir: LOCK_DIR, allowOutside, cardPath: cardFlags.cardPath });
-    me.files = [...new Set([...(me.files ?? []), ...files])];
+    me.files = [...new Set([...(me.files ?? []), ...cold])];
     me.beatAt = new Date().toISOString();
     fs.writeFileSync(f, JSON.stringify(me, null, 2));
-    console.log(`✓ ${files.length} badli files — kisi aur worker se takraav nahi.`);
+    console.log(`✓ ${cold.length} badli files — kisi aur worker se takraav nahi.`);
     return;
   }
   if (cmd === "push") {

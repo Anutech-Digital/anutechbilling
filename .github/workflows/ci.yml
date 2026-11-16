@@ -54,7 +54,8 @@ jobs:
   # all blocking. `checks` below is a summary job that is red unless all of them are green — one
   # stable name for a required status. tests/ops/ci-workflow.test.ts pins all of this.
   static:
-    runs-on: ubuntu-latest
+    # R-2828: pinned — ubuntu-latest moved to 26.04 (14 Nov 2026), Playwright has no chromium build there; revisit when Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -107,7 +108,8 @@ jobs:
       - run: npm run lint:ratchet
 
   typecheck:
-    runs-on: ubuntu-latest
+    # R-2828: pinned — ubuntu-latest moved to 26.04 (14 Nov 2026), Playwright has no chromium build there; revisit when Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -124,7 +126,7 @@ jobs:
       # build hit on 28 Aug (exit 134, "Ineffective mark-compacts near heap limit") on three
       # runs in a row with no TypeScript change. Same fix as the build job below.
       # R-1802 (23 Oct 2026): 4096 is now too small too — runs for 72f27e0c, 2073625e and 1f02c2c6
-      # died the same way at ~4030 MB after ~8 min. ubuntu-latest has 16 GB and nothing else runs
+      # died the same way at ~4030 MB after ~8 min. ubuntu-24.04 has 16 GB and nothing else runs
       # in this job while tsc does, so 8192.
       - run: npm run typecheck
         env:
@@ -134,7 +136,8 @@ jobs:
   # run every file once (run 41333752288: 1926 files, 23353 tests). fail-fast off: a red shard
   # still lets the other finish, so the log names every failing test.
   test:
-    runs-on: ubuntu-latest
+    # R-2828: pinned — ubuntu-latest moved to 26.04 (14 Nov 2026), Playwright has no chromium build there; revisit when Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -160,7 +163,8 @@ jobs:
       - run: npm run test -- --shard=${{ matrix.shard }}/2
 
   build:
-    runs-on: ubuntu-latest
+    # R-2828: pinned — ubuntu-latest moved to 26.04 (14 Nov 2026), Playwright has no chromium build there; revisit when Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     # R-1991 raised the old whole-gate job to 45 min (Build alone 13 min in 40347350851). The
     # build now has its own job: 10.9-13 min (41333752288), so 30 still leaves room.
     timeout-minutes: 30
@@ -232,7 +236,7 @@ jobs:
           # R-1619 (19 Oct 2026): 4096 is now too small as well. From 514efbdb on, next build's
           # "Checking validity of types" died at ~4035 MB on every run, cache or no cache
           # (39192223157 was a full cold build); 8eba80ea, a cold build just before, passed.
-          # No single heavy import — the app's type graph grew past it. ubuntu-latest has
+          # No single heavy import — the app's type graph grew past it. ubuntu-24.04 has
           # 16 GB, so 6144 leaves ~10 GB for webpack's own workers. Build step only: the
           # typecheck step above (plain tsc) has its own cap (8192 since R-1802). Cloud Build's image build is
           # not affected: it skips this type check (SKIP_BUILD_TYPECHECK=1) and its builder
@@ -271,7 +275,8 @@ jobs:
   checks:
     needs: [static, typecheck, test, build]
     if: always()
-    runs-on: ubuntu-latest
+    # R-2828: pinned — ubuntu-latest moved to 26.04 (14 Nov 2026), Playwright has no chromium build there; revisit when Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: All gate jobs green
@@ -298,7 +303,8 @@ jobs:
   # Non-blocking for now (unlike the gate jobs) so a transient prod blip never blocks a
   # merge; flip to required once it has proven stable.
   e2e-smoke:
-    runs-on: ubuntu-latest
+    # R-2828: pinned — ubuntu-latest moved to 26.04 (14 Nov 2026), Playwright has no chromium build there; revisit when Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     continue-on-error: true
     # R-1593: install + chromium + three no-auth specs; a hung browser stops here.
     timeout-minutes: 15

@@ -354,6 +354,21 @@ export function ctcFromEmployee(
   return { ...r, basicAssumed };
 }
 
+/** R-2770: the two company payroll-policy switches the CTC follows (lib/payroll/policy.ts). */
+export interface CtcPolicy { gratuity: boolean; ctcIncludesEmployer: boolean }
+
+/** R-2770: ctcFromEmployee's options from the company payroll policy for the salary month
+ *  `asOf` (YYYY-MM). Missing policy = the defaults (gratuity on, CTC includes employer costs). */
+export function employeeCtcOptions(policy: CtcPolicy | null | undefined, asOf: string) {
+  return { asOf, includeGratuity: policy?.gratuity ?? true, ctcIncludesEmployer: policy?.ctcIncludesEmployer ?? true };
+}
+
+/** R-2770 (Hitesh): ONE monthly CTC per employee — the Employees table "CTC / month", the
+ *  employee drawer, the Salary Register CTC tab and Revise salary all read this. */
+export function employeeCtc(e: CtcEmployee, policy: CtcPolicy | null | undefined, asOf: string): EmployeeCtc {
+  return ctcFromEmployee(e, employeeCtcOptions(policy, asOf));
+}
+
 /** What the employee form's "CTC & Salary Breakdown" tab is showing. */
 export interface CtcTabInput {
   /** true once the user typed an Annual CTC in this dialog. */

@@ -5,7 +5,7 @@
  *   warm     "Warm & approachable": teal, marigold calls to action, Inter + Plus Jakarta Sans
  *            (docs/WEBSITE-THEME.md, site-warm.css)
  *
- * Stored on the website tenant's row (tenants.website_theme, migration 20261113102122) and
+ * Stored on the website tenant's row (tenants.website_theme, migration 20261116042955) and
  * switched by that workspace's OWNER in Settings → Branding (Pawan, 13 Nov 2026: "main admin
  * should be able to switch back and forth"). Theme only — no page text changes with it.
  *
@@ -47,7 +47,7 @@ export function isWebsiteThemeColumnMissing(err: { code?: string; message?: stri
 /** §24 copy for the not-yet-migrated database: what, why, what next. */
 export const WEBSITE_THEME_NEEDS_DB =
   "The website theme switch is not available on this server yet: its database update " +
-  "(migration 20261113102122_website_theme_switch) has not been applied. It goes out with the " +
+  "(migration 20261116042955_website_theme_switch) has not been applied. It goes out with the " +
   "next database deploy — until then the website stays on the Classic theme.";
 
 export type WebsiteThemeAccess =

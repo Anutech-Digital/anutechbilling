@@ -1,4 +1,4 @@
--- Website theme switch (13 Nov 2026). Migration: 20261113102122_website_theme_switch.
+-- Website theme switch (13 Nov 2026). Migration: 20261116042955_website_theme_switch.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 -- The fixture owns its data (AGENTS.md L11): its own tenant, never the live one.
 --

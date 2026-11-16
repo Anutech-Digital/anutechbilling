@@ -22,12 +22,12 @@ const RENEWALS_USER = { tenantGraceDays: 15, canEndSubscription: true, canReview
 const ROW = { followup: true, messaging: true };
 
 describe("R-2710 the row button opens the renewal quote first", () => {
-  it("Pratik's row (8–30 days, annual, no quote yet): Review renewal quote; ⋯ Send as is (no changes)", () => {
+  it("Pratik's row (8–30 days, annual, no quote yet): Send renewal; ⋯ Send as is (no changes)", () => {
     const set = renewalActionSet(sub(), null, { ...RENEWALS_USER, daysUntil: 18 });
     expect(set.primary).toEqual({ kind: "review", label: REVIEW_RENEWAL_QUOTE });
     expect(set.secondary).toEqual({ kind: "send-now", label: SEND_AS_IS });
     const step = renewalNextStep(set, ROW);
-    expect(step.button).toEqual({ kind: "review", label: "Review renewal quote" });
+    expect(step.button).toEqual({ kind: "review", label: "Send renewal" });
     expect(step.menu).toEqual(["secondary", "followup", "nudge", "voice", "not-renewing"]);
     expect(SEND_AS_IS).toBe("Send as is (no changes)");
   });
@@ -39,7 +39,7 @@ describe("R-2710 the row button opens the renewal quote first", () => {
     expect(set.row.text).toMatch(/Renewal quote Q-1 not sent yet/);
   });
 
-  it("sent / viewed and unpaid: Change renewal quote (Revise); ⋯ Resend renewal quote", () => {
+  it("sent / viewed and unpaid: Change renewal (Revise); ⋯ Resend renewal quote", () => {
     for (const status of ["sent", "viewed"]) {
       const set = renewalActionSet(sub({ renewal_quote_id: "Q-1" }), status, { ...RENEWALS_USER, daysUntil: 10 });
       expect(set.primary).toEqual({ kind: "change", label: CHANGE_RENEWAL_QUOTE });
@@ -81,7 +81,8 @@ describe("R-2710 wiring", () => {
   it("Review asks the generate route for a DRAFT and opens the editor; Change goes through the shared Revise", () => {
     const src = read("src/components/features/renewals/renewal-actions.tsx");
     expect(src).toMatch(/JSON\.stringify\(\{ review: true \}\)/);
-    expect(src).toMatch(/\/quotes\/\$\{encodeURIComponent\(json\.quoteId\)\}\/edit/);
+    /* R-2754: the editor link carries ?returnTo=<this Renewals tab> (lib/renewals/back-to-renewals.ts). */
+    expect(src).toMatch(/quoteEditHrefFromRenewals\(json\.quoteId, from\)/);
     expect(src).toMatch(/openRenewalRevision\(/);
     expect(src).toMatch(/canReview: canQuotes/);
   });

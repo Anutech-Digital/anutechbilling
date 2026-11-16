@@ -37,11 +37,15 @@ export const RESEND_RENEWAL_QUOTE = "Resend renewal quote";
 export const CREATE_QUOTE_NO_SEND = "Create quote (don't send)";
 export const BILL_NEXT_PART = "Bill next part";
 /** R-2548: the next part to bill is part 1 of the NEXT term — the renewal (a 12-month term / any other). */
-export const BILL_RENEWAL_YEAR = "Bill renewal · part 1 of next year";
-export const BILL_RENEWAL_TERM = "Bill renewal · part 1 of next term";
+/* R-2767 (R-2742, audit P4 — one verb per intention): getting the next term paid is ALWAYS "Send renewal"
+   (the Renewals stage model's word, lib/renewals/stage.ts SEND_RENEWAL); this file feeds Payment
+   Follow-up's renewal rows, which now say the same. Retired: the old Review / Change renewal quote and
+   Bill renewal part-1 row labels. */
+export const BILL_RENEWAL_YEAR = "Send renewal · part 1 of next year";
+export const BILL_RENEWAL_TERM = "Send renewal · part 1 of next term";
 /* R-2710 (Pratik, 12 Nov): the row's button opens the renewal quote in the editor first. */
-export const REVIEW_RENEWAL_QUOTE = "Review renewal quote";
-export const CHANGE_RENEWAL_QUOTE = "Change renewal quote";
+export const REVIEW_RENEWAL_QUOTE = "Send renewal";
+export const CHANGE_RENEWAL_QUOTE = "Change renewal";
 export const SEND_AS_IS = "Send as is (no changes)";
 export const CUSTOMER_NOT_RENEWING = "Customer not renewing";
 export const CANCEL_LABEL = "Cancel";
@@ -228,7 +232,10 @@ export const FOLLOW_UP = "Follow-up";
 /** What the ⋯ menu may hold, in the order it shows (the ending action last). */
 /* R-2519: "bill-ahead" — Bill next part (proforma preview) for a subscription billed in parts whose
    next part is not due yet, or whose cancelled proforma left a period to bill again. */
-export type RenewalMenuItem = "bill-ahead" | "secondary" | "followup" | "nudge" | "voice" | "not-renewing";
+/* R-2728: "record-payment" — a renewal quote / part bill with the customer: its quote's Record payment (?pay=1). */
+export type RenewalMenuItem = "bill-ahead" | "secondary" | "record-payment" | "followup" | "nudge" | "voice" | "not-renewing";
+
+export const RECORD_PAYMENT = "Record payment";
 
 export interface RenewalNextStep {
   /** The ONE visible button: the R-2401 rule's primary, else Follow-up; null = nothing to do here. */

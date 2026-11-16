@@ -34,7 +34,7 @@ function cycleWord(cycle: BillingCycle | null | undefined): string {
  */
 export function renewalQuoteBlockedReason(cycle: BillingCycle | null | undefined): string | null {
   if (!isSplitBilled(cycle)) return null;
-  return `This subscription is billed ${cycleWord(cycle)}, so each part gets its own invoice on its date. A renewal quote would bill the next term twice. It renews on its own: the term rolls on and the next parts are invoiced on their dates.`;
+  return `This subscription is billed ${cycleWord(cycle)}, so each part gets its own invoice on its date. A renewal quote would bill the next term twice. It renews on its own once the new term's first part is paid, and the next parts are invoiced on their dates.`;
 }
 
 export interface SplitRenewalFields {

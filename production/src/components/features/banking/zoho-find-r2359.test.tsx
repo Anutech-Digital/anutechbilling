@@ -2,7 +2,11 @@
 /* R-2359 — Reconcile → a money-in line → "Find in Zoho". Owner's example (FY 2026-27 audit): HDFC
    21 Jul 2026 ₹27,081 from SUPREME MEDIA, UTR IDFB6202M2890149 = Zoho payment ref → INV/26-27/0613,
    9 × Business Starter @ ₹2,550/yr, gptalents.in, 21 Jul 2026 – 20 Jul 2027. The press fills the
-   existing "A new sale" form; nothing is booked until Save. The server route is faked (no Zoho). */
+   existing "A new sale" form; nothing is booked until Save. The server route is faked (no Zoho).
+   R-2763: the Zoho line's period here starts 25 Jul (4 days after the bank line) so the dates the
+   form shows can only be Zoho's. With 21 Jul – 20 Jul the form's own default (start = bank day,
+   renewal a year on) looked the same, so the test could press Save before the Zoho-dates effect had
+   run, and CI under load sent subRenewal null (red at e8139eb0d, 14 Nov). */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -52,7 +56,7 @@ const MATCH = {
   customer: { zohoId: "c1", name: "SUPREME MEDIA & STUDIOS PRIVATE LIMITED", gstin: "07AAACS0000A1Z5" },
   invoices: [{
     zohoId: "i1", number: "INV/26-27/0613", date: "2026-07-21", amountApplied: 27081, total: 27081,
-    lines: [{ invoiceNumber: "INV/26-27/0613", name: "Google Workspace Business Starter", sku: "GWS-BS", qty: 9, rate: 2550, itemTotal: 22950, start: "2026-07-21", end: "2027-07-20", months: 12, domain: "gptalents.in" }],
+    lines: [{ invoiceNumber: "INV/26-27/0613", name: "Google Workspace Business Starter", sku: "GWS-BS", qty: 9, rate: 2550, itemTotal: 22950, start: "2026-07-25", end: "2027-07-24", months: 12, domain: "gptalents.in" }],
   }],
   moreInvoices: [],
 };
@@ -91,8 +95,9 @@ describe("R-2359 Find in Zoho → pre-filled new sale", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "A new sale (no quote yet)" }).getAttribute("aria-pressed")).toBe("true"));
     expect((screen.getByLabelText("Seats") as HTMLInputElement).value).toBe("9");
     expect((screen.getByLabelText("Unit price ₹/user/year") as HTMLInputElement).value).toBe("2550");
-    await waitFor(() => expect((screen.getByLabelText("Subscription start date") as HTMLInputElement).value).toBe("2026-07-21"));
-    expect((screen.getByLabelText("Subscription renewal date") as HTMLInputElement).value).toBe("2027-07-21");
+    /* R-2763: wait for Zoho's own dates (not the bank-day default) before anything is pressed. */
+    await waitFor(() => expect((screen.getByLabelText("Subscription start date") as HTMLInputElement).value).toBe("2026-07-25"));
+    await waitFor(() => expect((screen.getByLabelText("Subscription renewal date") as HTMLInputElement).value).toBe("2027-07-25"));
     expect(screen.getByText(/₹27,081 received = ₹27,081 due/)).toBeTruthy();
 
     /* No save without the owner's click. */
@@ -105,7 +110,7 @@ describe("R-2359 Find in Zoho → pre-filled new sale", () => {
     fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹27,081" }));
     await waitFor(() => expect(state.sale).toHaveBeenCalledTimes(1));
     const args = state.sale.mock.calls[0][0];
-    expect(args).toMatchObject({ customerId: "supreme", createSubscription: true, subStart: "2026-07-21", subRenewal: "2027-07-21" });
+    expect(args).toMatchObject({ customerId: "supreme", createSubscription: true, subStart: "2026-07-25", subRenewal: "2027-07-25" });
     expect(args.lines[0]).toMatchObject({ itemId: "GW-ST", qty: 9, rate: 2550, cycle: "annual_yearly", domain: "gptalents.in" });
   });
 

@@ -18,8 +18,10 @@
  */
 
 import { istToday } from "@/lib/dates/ist";
-import { shownQuoteStatus, expiredByDate } from "./quote-expiry";
+import { shownQuoteStatus, expiredByDate, validityEnded } from "./quote-expiry";
 import { paidToDateOf } from "./paid-to-date";
+import { isPartRequest } from "@/lib/billing/part-requests";
+import { proformaShownState, PAY_BY_PASSED_LABEL } from "@/lib/billing/proforma";
 
 export const QUOTE_LIST_TABS = [
   "draft", "sent", "viewed", "accepted", "awaiting", "invoiced", "rejected", "expired",
@@ -44,6 +46,8 @@ export interface ListTabQuote {
   billing_cycle?: string | null;
   line_items?: unknown;
   subscription_billing_id?: string | null;
+  cancelled_part_billing_id?: string | null;
+  cancelled_at?: string | null;
 }
 
 /**
@@ -61,11 +65,27 @@ function invoicedBalance(q: ListTabQuote): number {
   return quoteBalanceDue(q);
 }
 
+/**
+ * R-2851: the list's answer to what the quote page answers (R-2846) — an UNPAID payment request past
+ * its pay-by date is still payable, never "Expired". The list has no pay-by date per row, so it goes
+ * by the validity date (a request's validity = its pay-by date) through proformaShownState, the one
+ * rule. Display and tab only: no money rule.
+ */
+export function listPayByPassed(q: ListTabQuote, today: string = istToday()): boolean {
+  return proformaShownState({
+    isPartRequest: isPartRequest(q), status: q.status, cancelledAt: q.cancelled_at,
+    invoiceId: q.invoice_id, paymentStatus: q.payment_status, mailed: true,
+    dueOn: null, todayISO: today, validityEnded: validityEnded(q.expires_date, today),
+  })?.label === PAY_BY_PASSED_LABEL;
+}
+
 export function quoteListTab(q: ListTabQuote, today: string = istToday()): QuoteListTab {
   if (q.payment_status === "invoiced" || q.invoice_id) {
     return invoicedBalance(q) > 0 ? "awaiting" : "invoiced";
   }
   if (q.status === "rejected") return "rejected";
+  /* R-2851: a payment request past its pay-by date is still open — Awaiting payment, not Expired. */
+  if (listPayByPassed(q, today)) return "awaiting";
   /* R-1679: a sent / viewed quote whose validity ended is Expired, not Sent (quote-expiry.ts). */
   if (shownQuoteStatus(q, today) === "expired") return "expired";
   /* R-1713: 'awaiting' counts only once the customer ACCEPTED. Extension, add-seats and

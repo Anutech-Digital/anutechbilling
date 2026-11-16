@@ -33,6 +33,7 @@ import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-diviso
 import { quoteInstalmentPlan, firstLineCommitment } from "@/lib/billing/instalments";
 import { flexOneTimeFigures, lineChargedOnce, FLEX_FIRST_INVOICE, FLEX_THEN_MONTHLY, FLEX_ONCE } from "@/lib/quotes/per-period-figures";
 import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
+import { renewalPeriodLabel } from "@/lib/quotes/renewal-period-label";
 import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { UPI_SETTINGS_HREF } from "@/lib/pdf/quote-template";
@@ -231,6 +232,8 @@ export function QuotePreviewDialog({
   const instHeads    = firstInst ? splitIntraStateTax(firstInst.tax) : null;
   // R-367: the same "Support: Free — Included" line the PDF prints (one builder).
   const includedSupport = includedSupportLine(lineItems);
+  /* R-2746: which period a renewal / extension quote buys — the lines' own dates. */
+  const renewalLabel = renewalPeriodLabel(lineItems, periodContext);
 
   /* R-1694: the PDF's scan-to-pay QR. `upiVpa === undefined` means the caller did not wire it. */
   const qrWired      = upiVpa !== undefined;
@@ -391,6 +394,9 @@ export function QuotePreviewDialog({
             </div>
           </div>
 
+          {renewalLabel && (
+            <p className="text-xs text-ink-2 mb-1.5 tabular-nums" data-testid="renewal-period-label">{renewalLabel.text}</p>
+          )}
           {/* Line items */}
           <div className="mb-6 overflow-x-auto">
           <table className="w-full">

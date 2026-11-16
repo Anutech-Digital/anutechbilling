@@ -96,9 +96,9 @@ describe("R-830 Ask tab images", () => {
     expect(h.toastError).not.toHaveBeenCalled();
     /* The caught-error path only listens to sonner error toasts — none exists, so the trail stays clean. */
     expect(document.querySelector("[data-sonner-toast][data-type=error]")).toBeNull();
-    expect(screen.queryByText(/Error caught/)).toBeNull();
+    expect(screen.queryByText(/^Error on /)).toBeNull();
     const helpBtn = screen.getByRole("button", { name: /^Help —/ });
-    expect(helpBtn.getAttribute("title") ?? "").not.toMatch(/^Error caught/);
+    expect(helpBtn.getAttribute("title") ?? "").not.toMatch(/^Error on /);
     fireEvent.click(screen.getByRole("tab", { name: /Report/ }));
     expect(screen.queryByText(/goes with this report/)).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: /Ask/ })); // the tab choice outlives the test

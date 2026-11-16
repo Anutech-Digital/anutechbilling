@@ -8,12 +8,14 @@
  */
 "use client";
 
+import { useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
+import { salaryGuardNext, type SalaryTdsLock } from "@/lib/payroll/salary-edit";
 import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
@@ -558,6 +560,25 @@ export function useUnreconciledSalaries() {
   });
 }
 
+/** R-2733: every employee's payslips from `fromPeriod` (the FY's first month) — ONE paged read for
+ *  the Employees table's "In-hand / month" (TDS so far + ESI contribution period), never a query
+ *  per row. Only the fields lib/payroll/net-pay.ts reads. */
+export type PayslipFactsRow = Pick<SalaryPayment, "employee_id" | "period" | "gross" | "lop_amount" | "incentive" | "tds" | "esi">;
+export function usePayslipsSince(fromPeriod: string, enabled = true) {
+  return useQuery({
+    queryKey: ["salary-payments", "since", fromPeriod],
+    enabled,
+    queryFn: async (): Promise<PayslipFactsRow[]> => {
+      const supabase = createClient();
+      return fetchAllRows<PayslipFactsRow>((from, to) => supabase
+        .from("salary_payments").select("employee_id, period, gross, lop_amount, incentive, tds, esi")
+        .gte("period", fromPeriod)
+        .order("period", { ascending: true }).order("id", { ascending: true })
+        .range(from, to));
+    },
+  });
+}
+
 /** Every salary payment for ONE employee, oldest→newest. Feeds the per-employee
  *  full-year payroll calendar (click an employee's name on the payroll page). */
 export function useEmployeeSalaryHistory(employeeId: string | null) {
@@ -663,7 +684,8 @@ export function useUndoSalaryRevision() {
   });
 }
 
-export function usePaySalary() {
+/** `quiet`: the caller says what happened (R-2771 edit = "Salary for <month> changed"). */
+export function usePaySalary(opts: { quiet?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
@@ -713,7 +735,7 @@ export function usePaySalary() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["statutory-dues"] });
       /* R-1831: this books the salary — it reads Paid once its bank line is linked. */
-      toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
+      if (!opts.quiet) toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
     },
     onError: (err) => toastError(err),
   });
@@ -750,26 +772,63 @@ export function useAdjustSalaryLop() {
  *  reversal via the RPC: restores any advance recovery, deletes the booked
  *  Salaries expense, removes the salary_payment — so the row reverts to
  *  "Pay salary". (migration 0120) */
-export function useDeleteSalaryPayment() {
+/** Every list / report a booked or undone salary changes. */
+function refreshSalaryData(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["salary-payments"] });
+  qc.invalidateQueries({ queryKey: ["employee-loans"] });
+  qc.invalidateQueries({ queryKey: ["expenses"] });
+  qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+  qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+  qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+  qc.invalidateQueries({ queryKey: ["statutory-dues"] });
+}
+/** R-2771: the edit form calls this when it closes after its undo ran with `hold`. */
+export function useRefreshSalaryData() {
+  const qc = useQueryClient();
+  return useCallback(() => refreshSalaryData(qc), [qc]);
+}
+
+/** `quiet`: no toast (the caller says what happened). `hold` (R-2771 edit = undo + book again): the
+ *  salary lists are NOT re-read yet — the row and its open form stay until the new run is booked
+ *  (usePaySalary then re-reads everything) or the form closes (useRefreshSalaryData). Only what the
+ *  form's own limits read is refreshed: revision arrears and the advance loans. */
+export function useDeleteSalaryPayment(opts: { quiet?: boolean; hold?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (salaryId: string) => {
       const supabase = createClient();
       const { error } = await supabase.rpc("delete_salary_payment", { p_salary_id: salaryId });
-      if (error) throw new Error(error.message);
+      // R-2812: keep the refusal's HINT (the page that lifts it) for the toast button.
+      if (error) throw Object.assign(new Error(error.message), { hint: error.hint ?? null });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["salary-payments"] });
-      qc.invalidateQueries({ queryKey: ["employee-loans"] });
-      qc.invalidateQueries({ queryKey: ["expenses"] });
-      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
-      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["statutory-dues"] });
-      toast.success("Salary undone — you can pay it again");
+      if (opts.hold) {
+        qc.invalidateQueries({ queryKey: ["salary-payments", "arrears"] });
+        qc.invalidateQueries({ queryKey: ["employee-loans"] });
+      } else refreshSalaryData(qc);
+      if (!opts.quiet) toast.success("Salary undone — you can pay it again");
     },
-    // Blocked (bank-reconciled)? Point to Banking to un-reconcile first.
-    onError: (err) => guardErrorToast(err, { label: "Open Banking", href: "/accounting/banking" }),
+    // Blocked? Point to the page that lifts it (bank line / challan → Banking, filed return → Compliance).
+    onError: (err) => guardErrorToast(err, salaryGuardNext((err as { hint?: string | null } | null)?.hint)),
+  });
+}
+
+/** R-2812: is this salary's TDS already deposited (challan) or in a filed 24Q? Read when its row
+ *  menu opens — the same check delete_salary_payment / edit_salary_payment refuse with. */
+export function useSalaryTdsLock(salaryId: string | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["salary-payments", "tds-lock", salaryId],
+    enabled: enabled && Boolean(salaryId),
+    // Asked afresh on every open: a challan booked / return marked filed a minute ago must show.
+    staleTime: 0,
+    queryFn: async (): Promise<SalaryTdsLock | null> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("salary_tds_lock", { p_salary_id: salaryId! });
+      if (error) throw new Error(error.message);
+      const row = (Array.isArray(data) ? data[0] : data) as { o_kind: string | null; o_what: string | null; o_href: string | null } | null;
+      if (!row?.o_kind || (row.o_kind !== "deposited" && row.o_kind !== "filed")) return null;
+      return { kind: row.o_kind, what: row.o_what ?? "", href: row.o_href ?? "/accounting/banking" };
+    },
   });
 }
 

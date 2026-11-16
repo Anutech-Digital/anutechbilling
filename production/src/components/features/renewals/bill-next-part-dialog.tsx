@@ -7,8 +7,13 @@
  * seat with GST, may change the seats, the rate or how many periods, and then creates the
  * proforma(s). Nothing is emailed here — each proforma shows "Ready to send" until it goes out.
  * A seat change reaches the subscription only when the proforma is paid (or accepted).
+ *
+ * R-2757 (user audit 14 Nov, Greentin Check 2095): an EARLIER part still unpaid (its proforma with
+ * the customer, or its invoice) is named above the button with a link to record that payment; the
+ * button then reads "Bill Nov anyway" — billing ahead stays the owner's call. "Periods" → "Months to bill".
  */
 import * as React from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -17,9 +22,14 @@ import { FormField } from "@/components/ui/label";
 import { formatDate, rupee } from "@/lib/utils";
 import { readJsonSafe } from "@/app/(app)/renewals/reminders";
 import { LoadErrorInline } from "@/components/shared/load-error";
-import { MAX_BILL_PERIODS, partAmounts, periodText } from "@/lib/billing/proforma";
-import type { BillNextPreview } from "@/lib/billing/proforma";
+import { MAX_BILL_PERIODS, billAnywayLabel, partAmounts, periodText, periodsToBillLabel } from "@/lib/billing/proforma";
+import type { BillNextPreview, UnpaidEarlierPart } from "@/lib/billing/proforma";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { periodWords } from "@/app/(app)/renewals/last-docs";
+import { formatForeign, isForeignCurrency } from "@/lib/currency";
 import { istToday } from "@/lib/dates/ist";
+import { useBillTogetherProbe, useBillTogetherPreview } from "./bill-together-dialog";
+import type { TogetherBillRef } from "@/lib/renewals/bill-together";
 
 export interface BillNextChoice { periods: number; seats: number | null; seatRate: number | null }
 
@@ -66,6 +76,19 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
   const seatsNeedRate = !!preview && noRate && seats !== "" && seatsN !== preview.seats;
   const canCreate = !!preview && !seatsNeedRate && (valid || noRate);
 
+  /* R-2808: this part is already on a together proforma (Bill together) → say so and link it; no second bill. */
+  /* Create waits for that answer (no click before it is known); if the read fails the server still refuses a
+     second bill for a part on a live together proforma (R-2806 edge H — request_open with that proforma). */
+  const probe = useBillTogetherProbe(open);
+  const togetherQ = useBillTogetherPreview([sub.id], open && probe === "on");
+  const onTogether = togetherQ.data?.subs.find((s) => s.subscriptionId === sub.id)?.onTogetherBill ?? null;
+  const togetherChecking = probe === "pending" || (probe === "on" && togetherQ.isPending);
+
+  const unpaid = preview?.unpaidEarlier ?? [];
+  const createLabel = unpaid.length > 0 && preview
+    ? billAnywayLabel(preview.periods)
+    : periods > 1 ? `Create ${periods} proformas` : "Create proforma";
+
   const confirm = () => {
     if (!preview) return;
     onConfirm({ periods, seats: changed ? seatsN : null, seatRate: changed ? rateN : null });
@@ -85,6 +108,8 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
 
         {preview && (
           <div className="mt-4 space-y-3">
+            {onTogether && <OnTogetherNote bill={onTogether} />}
+            {unpaid.length > 0 && <UnpaidEarlierNote parts={unpaid} />}
             <div className="grid grid-cols-3 gap-3">
               <FormField label="Seats" htmlFor="bnp-seats" required>
                 <Input id="bnp-seats" name="seats" type="number" min={1} step={1} value={seats}
@@ -94,7 +119,7 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
                 <Input id="bnp-rate" name="seat_rate" type="number" min={0} step={1} value={rate}
                   onChange={(e) => setRate(e.target.value)} placeholder={noRate ? "As billed" : undefined} />
               </FormField>
-              <FormField label="Periods" htmlFor="bnp-periods" required>
+              <FormField label={periodsToBillLabel(preview.cycle)} htmlFor="bnp-periods" required>
                 <Input id="bnp-periods" name="periods" type="number" min={1} max={MAX_BILL_PERIODS} step={1} value={periods}
                   onChange={(e) => setPeriods(Math.min(MAX_BILL_PERIODS, Math.max(1, Math.round(Number(e.target.value) || 1))))} />
               </FormField>
@@ -130,11 +155,59 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
 
         <DialogFooter className="mt-4">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={confirm} disabled={!canCreate} loading={busy}>
-            {periods > 1 ? `Create ${periods} proformas` : "Create proforma"}
+          <Button variant="primary" onClick={confirm} disabled={!canCreate || !!onTogether || togetherChecking} loading={busy}>
+            {createLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function dueWords(p: UnpaidEarlierPart): string {
+  if (p.daysOverdue > 0) return `overdue ${p.daysOverdue} day${p.daysOverdue === 1 ? "" : "s"}${p.dueDate ? ` (due ${formatDate(p.dueDate)})` : ""}`;
+  return p.dueDate ? `due ${formatDate(p.dueDate)}` : "not yet due";
+}
+
+/** R-2808: the next part is already billed with other subscriptions on one proforma — open that one. */
+function OnTogetherNote({ bill }: { bill: TogetherBillRef }) {
+  return (
+    <div role="status" data-testid="bill-next-on-together" className="rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm">
+      <p className="font-medium text-ink">
+        Already billed together on {bill.quoteId}{bill.withPlans.length > 0 ? ` with ${bill.withPlans.join(" and ")}` : ""} ({bill.status})
+      </p>
+      <p className="mt-0.5 text-2xs text-ink-3">
+        This part is on that proforma — no second bill.{" "}
+        <Link className="font-medium text-ink underline underline-offset-2 hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+          href={`/quotes/${encodeURIComponent(bill.quoteId)}`}>Open it</Link>
+      </p>
+    </div>
+  );
+}
+
+/** R-2757: the earlier part(s) still unpaid — named, with the one next step (record its payment). */
+function UnpaidEarlierNote({ parts }: { parts: UnpaidEarlierPart[] }) {
+  return (
+    <div role="status" data-testid="bill-next-unpaid-earlier" className="rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm">
+      <p className="font-medium text-ink">
+        {parts.length === 1 ? "An earlier part is still unpaid" : `${parts.length} earlier parts are still unpaid`}
+      </p>
+      <ul className="mt-1 space-y-1">
+        {parts.map((p) => (
+          <li key={p.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-ink-2">
+            <span className="tabular-nums">
+              {periodWords(p.start, p.end)} · {p.kind === "invoice" ? "Invoice " : ""}{p.id} · {isForeignCurrency(p.currency) ? formatForeign(p.due, p.currency) : rupee(p.due)} unpaid · {dueWords(p)}
+            </span>
+            <Link
+              className="font-medium text-ink underline underline-offset-2 hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              href={p.kind === "invoice" ? invoiceHref(p.id) : `/quotes/${encodeURIComponent(p.id)}?pay=1`}
+            >
+              {p.kind === "invoice" ? "Open it" : "Record payment"}
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-2xs text-ink-3">You can still bill ahead — the customer then owes both.</p>
+    </div>
   );
 }

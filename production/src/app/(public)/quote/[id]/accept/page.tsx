@@ -24,6 +24,7 @@ import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
 import { extensionTitle, isOneTimeQuote, quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
+import { renewalPeriodLabel } from "@/lib/quotes/renewal-period-label";
 import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { QuoteReplaced, replacementHref } from "./replaced";
 import { shownQuoteStatus } from "@/lib/quotes/quote-expiry";
@@ -217,6 +218,8 @@ export default async function QuoteAcceptPage(props: Props) {
   /* R-1764: "Domain:" / "Subscription period:" under each subscription line — the same helper
      and inputs as the PDF and the tax invoice, so all three name the same dates. */
   const periodContext = await loadQuotePeriodContext(supabase, quote);
+  /* R-2746: "Renewal · <from> – <to>" above the lines — the same dates as each line's period. */
+  publicQuote.renewal_period_label = renewalPeriodLabel((quote.line_items ?? []) as QuoteLineItem[], periodContext)?.text ?? null;
   const lineItems: PublicLine[] = ((quote.line_items ?? []) as QuoteLineItem[]).map((l) => ({
     id: l.id, name: l.name, qty: l.qty, rate: l.rate, commitment: l.commitment,
     detail_notes: lineDetailNotes(l, periodContext),

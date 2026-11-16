@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenants' and column_name = 'website_theme')
 -- deploy-key: websitethemeswitch
--- 20261113102122_website_theme_switch.sql
+-- 20261116042955_website_theme_switch.sql
 --
 -- Website theme switch (Pawan, 13 Nov 2026): "main admin should be able to switch back and forth
 -- from the previous theme to this latest theme in settings".

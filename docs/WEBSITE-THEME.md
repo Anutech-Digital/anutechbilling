@@ -10,7 +10,7 @@ This link is the source of truth for the public website's look. It always shows 
 
 ## The switch: Classic ↔ Warm
 - **Settings → Branding → Website theme**, visible only to the **owner** of the workspace that owns the website (`BUY_PAGE_TENANT_ID`). Classic = the website as before (Anutech blue, Archivo); Warm = this design. Switch back and forth any time; the pages refresh at once.
-- Stored in `tenants.website_theme` (`classic` default | `warm`), migration `20261113102122_website_theme_switch`. Until that migration is on a database, the website stays Classic and the card says the update is pending.
+- Stored in `tenants.website_theme` (`classic` default | `warm`), migration `20261116042955_website_theme_switch`. Until that migration is on a database, the website stays Classic and the card says the update is pending.
 - Rules and reading: `production/src/lib/website-theme.ts`, `website-theme.server.ts` (cached read), `api/settings/website-theme` (owner-only switch).
 
 ## How Warm is built

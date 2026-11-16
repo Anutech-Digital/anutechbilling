@@ -30,7 +30,10 @@ import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
 import { grossAmount } from "@/lib/quotes/amounts";
 import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { renewalTerm } from "@/lib/renewals/renewal-term";
-import { renewalCost } from "@/lib/renewals/renewal-cost";
+import {
+  RENEWAL_CATALOG_COLUMNS, pickRenewalCatalogItem, renewalCatalogCost,
+  type RenewalCatalogPick, type RenewalCatalogRow,
+} from "@/lib/renewals/renewal-catalog-cost";
 import { istToday, toIstDate } from "@/lib/dates/ist";
 import { loadScheduledSeatCuts, renewalSeatCut } from "@/lib/renewals/scheduled-seat-cut";
 import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
@@ -67,6 +70,8 @@ export interface CreateRenewalQuoteInput {
    * Optional so no caller breaks; when absent the name lookup still runs.
    */
   itemId?:         string | null;
+  /** R-2736: `subscriptions.vendor` — a catalogue name match stays inside it. */
+  vendor?:         string | null;
   seats:           number;
   mrr:             number;          // monthly run rate (₹)
   /**
@@ -212,125 +217,9 @@ export async function createOrGetRenewalQuote(
     // If the linked quote was deleted somehow, fall through and create fresh
   }
 
-  // ── Path 2: price a new quote; create_renewal_quote numbers, stores and links it ──
-  // Export (international) customer → zero-rated under LUT: the renewal quote
-  // must NOT add GST (the old hardcoded 18% wrongly taxed foreign auto-renewals).
-  /* R-1532: a business that issues a Bill of Supply (not GST-registered / composition) renews
-     at 0% — R-1529's database refuses GST on its invoice. */
-  let renewalTaxRate = quoteStartTaxRate(await readTenantGstRegistration(supabase, input.tenantId));
-  if (input.customerId) {
-    const { data: cust } = await supabase
-      .from("customers").select("country, gst_treatment").eq("id", input.customerId).maybeSingle();
-    if (isZeroRatedSupply({ country: cust?.country, treatment: cust?.gst_treatment })) renewalTaxRate = 0;   // R-2515: export or SEZ without payment
-  }
-
-  /* ── Price the renewal for its OWN term ──────────────────────────────────
-     This was `Math.round(input.mrr * 12)` with `term_months` appearing nowhere in the
-     file, so a monthly subscription was quoted for a year. And on the row that renews
-     first (c398e832, 27 Aug, auto_renew on) `mrr` also held an ANNUAL figure —
-     ₹3,240/seat against a ₹270 catalogue price — so the two compounded to roughly 144x
-     the correct monthly charge. renewalTerm refuses that rather than dividing by 12 to
-     "repair" it: a plausible wrong price on a customer-facing quote is worse than a
-     stop. See lib/renewals/renewal-term.ts. */
-  /* By ID first — it survives a rename, the name does not. See CreateRenewalQuoteInput.itemId.
-     The name lookup is kept as the fallback for rows written before item_id existed. */
-  const catalogItem = await (async () => {
-    if (input.itemId) {
-      const { data } = await supabase
-        .from("items")
-        .select("msrp, wholesale")
-        .eq("tenant_id", input.tenantId)
-        .eq("id", input.itemId)
-        .maybeSingle();
-      if (data) return data;
-      /* Loud: an item_id that resolves to nothing means the catalogue row was deleted under a
-         live subscription, which is a bigger problem than this renewal. */
-      console.error(
-        `[renewals] subscription ${input.subscriptionId} points at item ${input.itemId}, ` +
-          "which no longer exists — falling back to matching on the plan NAME",
-      );
-    }
-    const { data } = await supabase
-      .from("items")
-      .select("msrp, wholesale")
-      .eq("tenant_id", input.tenantId)
-      .eq("name", catalogPlanName(input.plan))   // R-2095: an old "(N seats)" suffix
-      .maybeSingle();
-    return data;
-  })();
-
-  const term = renewalTerm({
-    mrr: input.mrr,
-    termMonths: input.termMonths ?? null,
-    termAmount: input.termAmount ?? null,
-    seats: input.seats,
-    catalogPerSeatMonth: (catalogItem as { msrp?: number | null } | null)?.msrp ?? null,
-  });
-
-  if (!term.ok) {
-    /* Loud, and it returns null — the same shape every other failure here uses, so the
-       cron logs it and moves on to the next subscription instead of dying. A renewal
-       nobody quoted is recoverable; a renewal quoted at 144x is not. */
-    console.error(`[renewals] subscription ${input.subscriptionId}: ${term.reason}`);
-    return null;
-  }
-
-  /* R-2583: a seat cut scheduled "At end of term" (R-2252) for THIS renewal date is billed here —
-     the quote is for the cut seats at the full subscription's per-seat rate (rate × qty = subtotal,
-     R-837). Paying it sets the subscription's seats and MRR (record_payment, rule N1). A failed
-     read makes no quote: one at the old seats would over-bill. See lib/renewals/scheduled-seat-cut.ts. */
-  const cutRows = await loadScheduledSeatCuts(supabase, input.tenantId, input.subscriptionId);
-  if (cutRows === null) return null;
-  const cut = renewalSeatCut(cutRows, { seats: input.seats, renewalDate: input.renewalDate });
-  const quoteSeats = cut.kind === "apply" ? cut.seats : input.seats;
-
-  const perSeatRate  = term.perSeatRate;
-  const annualAmount = perSeatRate * quoteSeats;                       // ex-GST subtotal for the term (= term.subtotal without a cut)
-  const grossAnnual  = grossAmount(annualAmount, renewalTaxRate);      // GST-inclusive payable (or ex-GST for export)
-
-  /* R-012 (Pawan, 26 Sep 2026). This was `annualAmount * 0.83` — a hardcoded 17% margin
-     standing in for the vendor's real price, so every renewal quote reported a 17%
-     margin because it was DEFINED to be 17%. On Business Starter the real wholesale is
-     ₹110/seat/month and the guess said about ₹224. Now it is read from the catalogue,
-     for the term the renewal actually covers, or admitted as unknown. */
-  const cost = renewalCost({
-    wholesalePerSeatMonth: (catalogItem as { wholesale?: number | null } | null)?.wholesale ?? null,
-    termMonths:            term.termMonths,
-    seats:                 quoteSeats,   // R-2583
-  });
-  if (!cost.known) {
-    /* Not fatal — a bespoke plan legitimately has no catalogue row, and the customer
-       still needs their renewal. It travels as 0, which `approval-economics` already
-       reads as `costUnknown` rather than as free, and it is said out loud here so the
-       cron log names the plan whose price is missing. */
-    console.warn(
-      `[renewals] subscription ${input.subscriptionId} (${input.plan}): cost not priced — ${cost.reason}. ` +
-        "The quote goes out with cost unknown; margin on it is not a number anybody should read.",
-    );
-  }
-  const perSeatCost = cost.perSeat;
-
-  const lineItems: QuoteLineItem[] = [{
-    id:         "renewal-1",
-    name:       catalogPlanName(input.plan),   // R-2095
-    /* R-2710: the subscription's catalogue item, so the editor knows the line (a Domain-vendor
-       item gets "Register for N years", R-1445). Not read by record_payment for a renewal. */
-    ...(input.itemId ? { item_id: input.itemId } : {}),
-    /* R-2710: a whole multi-year term (24 / 36 months) says its years, so the editor's picker shows
-       "2 yrs" (not 1) and a change scales from the right yearly price; the database keeps
-       extension_months = months / years × new years (quotes_r2710_renewal_term_follows_years). */
-    ...(term.termMonths > 12 && term.termMonths % 12 === 0 && term.termMonths <= 120 ? { years: term.termMonths / 12 } : {}),
-    qty:        quoteSeats,   // R-2583: the scheduled cut's seats
-    rate:       perSeatRate,
-    cost:       perSeatCost,
-    /* From the term, not hardcoded: record_payment reads this to decide what
-       subscription to build on the way back in, so calling a one-month renewal an
-       annual commitment produces the wrong one. */
-    commitment: term.commitment,
-  }];
-
-  const renewalAt   = new Date(input.renewalDate);
-  const validUntil  = new Date(renewalAt.getTime() + (input.graceDays ?? 0) * 86400000);
+  // ── Path 2: price a new quote (priceRenewalQuote); create_renewal_quote numbers, stores and links it ──
+  const priced = await priceRenewalQuote(input);
+  if (!priced.ok) return null;
 
   /* R-1574. This used to be three separate calls — next_document_number, insert the quote,
      then `subscriptions.update({ renewal_quote_id })` with no error check and no guard. Two
@@ -344,37 +233,7 @@ export async function createOrGetRenewalQuote(
   const { data: made, error: rpcErr } = await supabase.rpc("create_renewal_quote", {
     p_subscription_id: input.subscriptionId,
     p_tenant_id:       input.tenantId,
-    p_quote: {
-      customer_name:  input.customerName,
-      plan:           input.plan,
-      seats:          quoteSeats,   // R-2583
-      amount:         grossAnnual,
-      /* R-012, third item. These were `new Date().toISOString().slice(0, 10)`, which is
-         UTC — so between midnight and 05:30 IST every renewal quote was stamped with
-         YESTERDAY's date, and its validity window with it (AGENTS.md §6). The renewals
-         cron runs at 09:00 IST so it never saw this, but "Generate renewal quote" from
-         the subscription page is pressed by a person, and reps here work early. */
-      created_date:   istToday(),
-      expires_date:   toIstDate(validUntil),
-      line_items:     lineItems,
-      subtotal:       annualAmount,
-      total_cost:     cost.total,
-      tax_rate:       renewalTaxRate,   // 0 for an export (zero-rated) customer
-      /* R-012, and this is the one that took money. It was a hardcoded 12 while the price
-         and the commitment beside it already came from the subscription's own term — so a
-         MONTHLY renewal was priced for one month and then extended the subscription by a
-         YEAR, because `record_payment` reads this field to roll the dates forward.
-         Measured by Pawan on a ₹250/month hosting subscription: paid ₹295, renewal date
-         went to 25 Oct 2027 instead of 25 Nov 2026 and the MRR fell 250 → 21.
-         `createExtensionQuote` keeps its own 24/36 and is deliberately untouched. */
-      extension_months: term.termMonths,
-      /* R-2710: only a draft is ever asked for; the RPC stores anything else as 'sent'. */
-      ...(input.status === "draft" ? { status: "draft" } : {}),
-      /* R-2583: the cut note is for the owner — after the staff-only marker, never on the customer's PDF. */
-      notes: cut.kind === "none"
-        ? input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`
-        : composeQuoteNotes(input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`, cut.note),
-    } as unknown as Json,   // is_renewal / status / discount 0 are set by the RPC itself
+    p_quote:           priced.pQuote as unknown as Json,   // is_renewal / status / discount 0 are set by the RPC itself
   });
   if (rpcErr || !made) {
     /* Same shape as every other failure here: the cron logs it and moves on; nothing was
@@ -424,6 +283,214 @@ export async function createOrGetRenewalQuote(
     /* False when another run made (or linked) it first — its quote, not the one priced here. */
     created:     made.created,
     kind,
+  };
+}
+
+/**
+ * R-2849: the renewal quote's price for ONE subscription's next term — the p_quote create_renewal_quote stores — or why it
+ * cannot be priced. The ONE renewal pricing: createOrGetRenewalQuote (cron, Send now, Review / Generate) and Bill together
+ * for yearly subscriptions (create_renewal_quote_together takes one of these per subscription) both call it — never a
+ * second copy. Reads only (tenant GST registration, customer's country, catalogue, scheduled seat cuts); writes nothing.
+ */
+export type RenewalPriceInput = Omit<CreateRenewalQuoteInput, "existingQuoteId">;
+
+export interface PricedRenewal {
+  ok:          true;
+  /** create_renewal_quote's p_quote (and one part's `quote` for create_renewal_quote_together). */
+  pQuote:      Record<string, unknown>;
+  lineItems:   QuoteLineItem[];
+  /** Seats the renewal is for — a scheduled cut's (R-2583) or the subscription's. */
+  seats:       number;
+  /** ₹ a seat for the whole term (ex-GST). */
+  perSeatRate: number;
+  /** Ex-GST for the term = perSeatRate × seats. */
+  subtotal:    number;
+  /** GST-inclusive payable (ex-GST for a 0% export customer). */
+  amount:      number;
+  /** GST % (0 for an export / Bill of Supply business). */
+  taxRate:     number;
+  termMonths:  number;
+}
+
+export type RenewalPriceResult = PricedRenewal | { ok: false; reason: string };
+
+export async function priceRenewalQuote(input: RenewalPriceInput): Promise<RenewalPriceResult> {
+  const { supabase } = input;
+  // Export (international) customer → zero-rated under LUT: the renewal quote
+  // must NOT add GST (the old hardcoded 18% wrongly taxed foreign auto-renewals).
+  /* R-1532: a business that issues a Bill of Supply (not GST-registered / composition) renews
+     at 0% — R-1529's database refuses GST on its invoice. */
+  let renewalTaxRate = quoteStartTaxRate(await readTenantGstRegistration(supabase, input.tenantId));
+  if (input.customerId) {
+    const { data: cust } = await supabase
+      .from("customers").select("country, gst_treatment").eq("id", input.customerId).maybeSingle();
+    if (isZeroRatedSupply({ country: cust?.country, treatment: cust?.gst_treatment })) renewalTaxRate = 0;   // R-2515: export or SEZ without payment
+  }
+
+  /* ── Price the renewal for its OWN term ──────────────────────────────────
+     This was `Math.round(input.mrr * 12)` with `term_months` appearing nowhere in the
+     file, so a monthly subscription was quoted for a year. And on the row that renews
+     first (c398e832, 27 Aug, auto_renew on) `mrr` also held an ANNUAL figure —
+     ₹3,240/seat against a ₹270 catalogue price — so the two compounded to roughly 144x
+     the correct monthly charge. renewalTerm refuses that rather than dividing by 12 to
+     "repair" it: a plausible wrong price on a customer-facing quote is worse than a
+     stop. See lib/renewals/renewal-term.ts. */
+  /* By ID first — it survives a rename, the name does not. See CreateRenewalQuoteInput.itemId.
+     The name lookup is kept as the fallback for rows written before item_id existed. */
+  /* R-2736: by item_id, else the exact plan name, else the ONE confident catalogue match
+     (pickRenewalCatalogItem — the editor's "Use cost ₹X" pick). Q-F588-27-0156 had no item_id and its
+     row is "E2E Google Workspace Business Standard", so it went out at cost 0 and needed approval. */
+  const catalogPick = await (async (): Promise<RenewalCatalogPick<RenewalCatalogRow> | null> => {
+    if (input.itemId) {
+      const { data } = await supabase
+        .from("items")
+        .select(RENEWAL_CATALOG_COLUMNS)
+        .eq("tenant_id", input.tenantId)
+        .eq("id", input.itemId)
+        .maybeSingle();
+      if (data) return { row: data as RenewalCatalogRow, how: "item_id" };
+      /* Loud: an item_id that resolves to nothing means the catalogue row was deleted under a
+         live subscription, which is a bigger problem than this renewal. */
+      console.error(
+        `[renewals] subscription ${input.subscriptionId} points at item ${input.itemId}, ` +
+          "which no longer exists — falling back to matching on the plan NAME",
+      );
+    }
+    /* rev-r2736 F3: an ACTIVE row, of the subscription's vendor when it is known — an archived copy or
+       another vendor's row with the same name is not this licence's cost. */
+    const vendor = input.vendor && input.vendor !== "other" ? input.vendor : null;
+    let byName = supabase
+      .from("items")
+      .select(RENEWAL_CATALOG_COLUMNS)
+      .eq("tenant_id", input.tenantId)
+      .eq("name", catalogPlanName(input.plan))   // R-2095: an old "(N seats)" suffix
+      .eq("is_active", true);
+    if (vendor) byName = byName.eq("vendor", vendor as never);
+    const { data } = await byName.maybeSingle();
+    if (data) return { row: data as RenewalCatalogRow, how: "name" };
+    const { data: rows, error: rowsErr } = await supabase
+      .from("items")
+      .select(RENEWAL_CATALOG_COLUMNS)
+      .eq("tenant_id", input.tenantId);
+    if (rowsErr || !Array.isArray(rows)) return null;   // unread → cost unknown, the approval stays
+    const pick = pickRenewalCatalogItem(rows as RenewalCatalogRow[], { itemId: null, plan: input.plan, vendor: input.vendor ?? null });
+    /* Found only by a loose name read: trusted for the COST, never for the price sanity check below. */
+    return pick ? { row: pick.row, how: "match" } : null;
+  })();
+  const catalogItem = catalogPick?.row ?? null;
+
+  const term = renewalTerm({
+    mrr: input.mrr,
+    termMonths: input.termMonths ?? null,
+    termAmount: input.termAmount ?? null,
+    seats: input.seats,
+    /* R-2736: only a row found by id / exact name checks the PRICE — a name match is trusted for the
+       cost (a missing cost only keeps the approval), never to refuse a customer's renewal. */
+    catalogPerSeatMonth: catalogPick && catalogPick.how !== "match" ? catalogPick.row.msrp ?? null : null,
+  });
+
+  if (!term.ok) {
+    /* Loud, and it returns null — the same shape every other failure here uses, so the
+       cron logs it and moves on to the next subscription instead of dying. A renewal
+       nobody quoted is recoverable; a renewal quoted at 144x is not. */
+    console.error(`[renewals] subscription ${input.subscriptionId}: ${term.reason}`);
+    return { ok: false, reason: term.reason };
+  }
+
+  /* R-2583: a seat cut scheduled "At end of term" (R-2252) for THIS renewal date is billed here —
+     the quote is for the cut seats at the full subscription's per-seat rate (rate × qty = subtotal,
+     R-837). Paying it sets the subscription's seats and MRR (record_payment, rule N1). A failed
+     read makes no quote: one at the old seats would over-bill. See lib/renewals/scheduled-seat-cut.ts. */
+  const cutRows = await loadScheduledSeatCuts(supabase, input.tenantId, input.subscriptionId);
+  if (cutRows === null) return { ok: false, reason: "its scheduled seat cuts could not be read" };
+  const cut = renewalSeatCut(cutRows, { seats: input.seats, renewalDate: input.renewalDate });
+  const quoteSeats = cut.kind === "apply" ? cut.seats : input.seats;
+
+  const perSeatRate  = term.perSeatRate;
+  const annualAmount = perSeatRate * quoteSeats;                       // ex-GST subtotal for the term (= term.subtotal without a cut)
+  const grossAnnual  = grossAmount(annualAmount, renewalTaxRate);      // GST-inclusive payable (or ex-GST for export)
+
+  /* R-012 (Pawan, 26 Sep 2026). This was `annualAmount * 0.83` — a hardcoded 17% margin
+     standing in for the vendor's real price, so every renewal quote reported a 17%
+     margin because it was DEFINED to be 17%. On Business Starter the real wholesale is
+     ₹110/seat/month and the guess said about ₹224. Now it is read from the catalogue,
+     for the term the renewal actually covers, or admitted as unknown. */
+  /* R-2736: the row's tier for this term (annual / monthly), × years, × the quote's seats — the
+     arithmetic the quote builder stores (lib/renewals/renewal-catalog-cost.ts). */
+  const cost = renewalCatalogCost(catalogItem, {
+    termMonths: term.termMonths,
+    seats:      quoteSeats,   // R-2583
+  });
+  if (!cost.known) {
+    /* Not fatal — a bespoke plan legitimately has no catalogue row, and the customer
+       still needs their renewal. It travels as 0, which `approval-economics` already
+       reads as `costUnknown` rather than as free, and it is said out loud here so the
+       cron log names the plan whose price is missing. */
+    console.warn(
+      `[renewals] subscription ${input.subscriptionId} (${input.plan}): cost not priced — ${cost.reason}. ` +
+        "The quote goes out with cost unknown; margin on it is not a number anybody should read.",
+    );
+  }
+  const perSeatCost = cost.perSeat;
+
+  const lineItems: QuoteLineItem[] = [{
+    id:         "renewal-1",
+    name:       catalogPlanName(input.plan),   // R-2095
+    /* R-2710: the subscription's catalogue item, so the editor knows the line (a Domain-vendor
+       item gets "Register for N years", R-1445). Not read by record_payment for a renewal. */
+    /* R-2736: NOT the row a name match found — an item_id makes the editor re-price the line from the
+       catalogue on Duplicate / Revise, and the agreed price must stay. The cost is on the line already. */
+    ...(input.itemId ? { item_id: input.itemId } : {}),
+    /* R-2710: a whole multi-year term (24 / 36 months) says its years, so the editor's picker shows
+       "2 yrs" (not 1) and a change scales from the right yearly price; the database keeps
+       extension_months = months / years × new years (quotes_r2710_renewal_term_follows_years). */
+    ...(term.termMonths > 12 && term.termMonths % 12 === 0 && term.termMonths <= 120 ? { years: term.termMonths / 12 } : {}),
+    qty:        quoteSeats,   // R-2583: the scheduled cut's seats
+    rate:       perSeatRate,
+    cost:       perSeatCost,
+    /* From the term, not hardcoded: record_payment reads this to decide what
+       subscription to build on the way back in, so calling a one-month renewal an
+       annual commitment produces the wrong one. */
+    commitment: term.commitment,
+  }];
+
+  const renewalAt   = new Date(input.renewalDate);
+  const validUntil  = new Date(renewalAt.getTime() + (input.graceDays ?? 0) * 86400000);
+
+  const pQuote: Record<string, unknown> = {
+    customer_name:  input.customerName,
+    plan:           input.plan,
+    seats:          quoteSeats,   // R-2583
+    amount:         grossAnnual,
+    /* R-012, third item. These were `new Date().toISOString().slice(0, 10)`, which is
+       UTC — so between midnight and 05:30 IST every renewal quote was stamped with
+       YESTERDAY's date, and its validity window with it (AGENTS.md §6). The renewals
+       cron runs at 09:00 IST so it never saw this, but "Generate renewal quote" from
+       the subscription page is pressed by a person, and reps here work early. */
+    created_date:   istToday(),
+    expires_date:   toIstDate(validUntil),
+    line_items:     lineItems,
+    subtotal:       annualAmount,
+    total_cost:     cost.total,
+    tax_rate:       renewalTaxRate,   // 0 for an export (zero-rated) customer
+    /* R-012, and this is the one that took money. It was a hardcoded 12 while the price
+       and the commitment beside it already came from the subscription's own term — so a
+       MONTHLY renewal was priced for one month and then extended the subscription by a
+       YEAR, because `record_payment` reads this field to roll the dates forward.
+       Measured by Pawan on a ₹250/month hosting subscription: paid ₹295, renewal date
+       went to 25 Oct 2027 instead of 25 Nov 2026 and the MRR fell 250 → 21.
+       `createExtensionQuote` keeps its own 24/36 and is deliberately untouched. */
+    extension_months: term.termMonths,
+    /* R-2710: only a draft is ever asked for; the RPC stores anything else as 'sent'. */
+    ...(input.status === "draft" ? { status: "draft" } : {}),
+    /* R-2583: the cut note is for the owner — after the staff-only marker, never on the customer's PDF. */
+    notes: cut.kind === "none"
+      ? input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`
+      : composeQuoteNotes(input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`, cut.note),
+  };
+  return {
+    ok: true, pQuote, lineItems, seats: quoteSeats, perSeatRate, subtotal: annualAmount, amount: grossAnnual,
+    taxRate: renewalTaxRate, termMonths: term.termMonths,
   };
 }
 

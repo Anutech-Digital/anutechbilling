@@ -22,9 +22,12 @@ function latestRecordPaymentMigration(): { file: string; sql: string } {
   throw new Error("no migration defines record_payment");
 }
 
-/** The `if v_is_renewal_quote and v_is_fully_paid then … end if;` roll-forward block. */
+/** The `if v_is_renewal_quote and v_is_fully_paid then … end if;` roll-forward block — the ONE-subscription
+ *  path. R-2848 adds `and not v_r2848_together` to its condition (a renewal quote billed together renews each
+ *  subscription in r2848_roll_together instead); the block itself is the same single-subscription roll. */
 function renewalBranch(sql: string): string {
-  const start = sql.indexOf("if v_is_renewal_quote and v_is_fully_paid then");
+  const m = /if v_is_renewal_quote and v_is_fully_paid(?: and not v_r2848_together)? then/.exec(sql);
+  const start = m ? m.index : -1;
   expect(start, "renewal roll-forward branch not found").toBeGreaterThan(-1);
   const end = sql.indexOf("v_renewal_rolled_forward := true;", start);
   expect(end).toBeGreaterThan(start);
