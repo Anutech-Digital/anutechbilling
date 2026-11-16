@@ -24,7 +24,7 @@
 }
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]) {
   position: relative; isolation: isolate;
-  max-width: 1100px !important; padding: 0 clamp(16px, 4vw, 24px) !important;
+  max-width: var(--w-row) !important; padding: 0 var(--w-gutter) !important;
   display: grid; grid-template-columns: minmax(0, 240px) minmax(0, 760px); column-gap: 56px; row-gap: 0;
   justify-content: start;
 }
@@ -96,7 +96,7 @@
 /* /refund — the blocks as the design's cards: five product cards (three, then two), then
    "How to claim" on forest and "Timelines" on mint, side by side. */
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) {
-  grid-template-columns: repeat(6, minmax(0, 1fr)); column-gap: 16px; max-width: 1148px !important;
+  grid-template-columns: repeat(6, minmax(0, 1fr)); column-gap: 16px; max-width: var(--w-row) !important;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section > div:has(> nav[aria-label="Related documents"]):has(> #how-to-claim) > div[id] {
   grid-column: span 2; max-width: none; margin: 0 0 16px !important;
@@ -355,7 +355,7 @@
   background: var(--w-mint); right: -160px; top: -220px;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight) {
-  max-width: 1288px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: 35px 40px; align-items: center;
+  max-width: var(--w-row); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: 35px 40px; align-items: center;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight) > div:first-child {
   grid-column: 1; grid-row: 1; max-width: 680px !important; margin: 0 !important; display: flex; flex-direction: column; gap: 20px;
@@ -420,7 +420,7 @@
   background: var(--w-surface) !important; padding-block: clamp(27px, 3.52vw, 50px);
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) + section.section > .wrap {
-  max-width: 1288px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: stretch;
+  max-width: var(--w-row); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: stretch;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) + section.section > .wrap > div:first-child {
   grid-column: 1 / span 2; grid-row: 1; align-self: end; margin: 0 0 10px !important;

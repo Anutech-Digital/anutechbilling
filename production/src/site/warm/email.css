@@ -34,7 +34,7 @@
 /* ── Hero: dark forest band, photo slideshow under a tint, text on the left ───────────────── */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child {
   position: relative; isolation: isolate; text-align: left !important;
-  max-width: 1240px !important; padding-top: 48px !important; padding-bottom: 56px !important;
+  max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-top: 48px !important; padding-bottom: 56px !important;
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child::before {
   content: ""; position: absolute; z-index: -2; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw);
@@ -96,7 +96,7 @@
 }
 
 /* ── Products: dark users strip, then the edition cards on the ground ─────────────────────── */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#products { max-width: 1240px !important; padding-top: 48px !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#products { max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-top: 48px !important; }
 .anutech-site[data-site-theme="warm"] section#products > div:first-child {
   background: var(--w-forest) !important; border: 0 !important; border-radius: 20px !important; padding: 16px 24px !important;
   box-shadow: var(--w-shadow);
@@ -167,7 +167,7 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#features { background: transparent !important; border: 0 !important; }
 .anutech-site[data-site-theme="warm"] section#features > div,
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#compare {
-  max-width: 1144px !important; box-sizing: border-box; background: var(--w-surface); border: 1px solid var(--w-line);
+  max-width: var(--w-card) !important; box-sizing: border-box; background: var(--w-surface); border: 1px solid var(--w-line);
   border-radius: var(--w-radius-card); padding: 26px 24px !important; margin: 24px auto 0 !important;
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#compare { margin: 16px auto 0 !important; }
@@ -191,7 +191,7 @@
   background-image: linear-gradient(90deg, rgba(236,246,242,0.96) 0%, rgba(236,246,242,0.9) 45%, rgba(236,246,242,0.72) 100%), url(/site/warm/b57235dc64991b679efcfbac3de9d077.jpg) !important;
   background-size: cover !important; background-position: center, right center !important; background-repeat: no-repeat !important;
 }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) > div { max-width: 1240px !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) > div { max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) h2 { font-size: clamp(1.9rem, 3.4vw, 2.6rem) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) > div > div:first-child > div:last-child { gap: 14px; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) > div > div:first-child > div:last-child > div {
@@ -222,7 +222,7 @@
 /* ── Anutech Mail: a mint rounded panel on the ground, the price in a white card ─────────── */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#anutech-mail { background: transparent !important; border: 0 !important; padding: 56px 0 0; }
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div {
-  max-width: 1240px !important; box-sizing: border-box; background: var(--w-mint); border-radius: 28px; padding: 44px 44px !important;
+  max-width: var(--w-card) !important; box-sizing: border-box; background: var(--w-mint); border-radius: 28px; padding: 44px 44px !important;
 }
 .anutech-site[data-site-theme="warm"] section#anutech-mail h2 { font-size: clamp(1.7rem, 3vw, 2.25rem) !important; }
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:first-child > p { font-size: 17px !important; color: var(--w-ink-2) !important; }
@@ -242,7 +242,7 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has([data-grid-2up]):not(#catalogue) { background: transparent !important; border: 0 !important; padding: 40px 0 56px; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has([data-grid-2up]):not(#catalogue) > div {
   --hv-ink: #FFFFFF; --hv-blue: #FFFFFF; --hv-sec: #D5E3DD;
-  max-width: 1240px !important; box-sizing: border-box; background: var(--w-forest); border-radius: 24px; padding: 32px 36px !important;
+  max-width: var(--w-card) !important; box-sizing: border-box; background: var(--w-forest); border-radius: 24px; padding: 32px 36px !important;
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has([data-grid-2up]):not(#catalogue) [data-grid-2up] > div { text-align: left !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has([data-grid-2up]):not(#catalogue) [data-grid-2up] > div > div:first-child {

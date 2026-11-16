@@ -21,7 +21,7 @@
   background: var(--w-bg);
   line-height: 1.6;
 }
-.w-scope[data-site-theme="warm"] .gw .gw-wrap { width: min(1192px, calc(100% - 48px)); }
+.w-scope[data-site-theme="warm"] .gw .gw-wrap { width: var(--w-card); }
 .w-scope[data-site-theme="warm"] .gw :is(.gw-h1, .gw-h2, .gw-h3, .gw-steps b, .gw-why-card b, .gw-cb-title, .gw-promo-h, .gw-price, .gw-plan-name, .gw-plan-price, .gw-foot b, .gw-faq summary) {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
 }

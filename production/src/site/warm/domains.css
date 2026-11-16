@@ -107,8 +107,8 @@
   font-family: var(--font-site-body), "Inter", sans-serif !important; font-size: 14px !important;
   font-weight: 700 !important; letter-spacing: 0.08em !important; color: var(--w-teal) !important;
 }
-/* Section wrappers: the design's 1240px column and band rhythm. */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section { max-width: 1288px !important; padding-inline: clamp(16px, 4vw, 24px) !important; padding-block: clamp(27px, 3.52vw, 50px) !important; }
+/* Section wrappers: the navbar's content box (site-warm.css --w-row) and band rhythm. */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section { max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-block: clamp(27px, 3.52vw, 50px) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :is(h2) { font-size: clamp(2rem, 3.6vw, 2.44rem) !important; line-height: 1.12 !important; }
 
 /* ── 1 · Search: dark band, photo slideshow under a tint, the form as a white pill card ─── */

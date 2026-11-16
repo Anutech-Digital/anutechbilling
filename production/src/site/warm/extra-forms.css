@@ -226,7 +226,7 @@
   background: var(--w-surface); border-bottom-color: var(--w-line);
 }
 .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > header .max-w-5xl,
-.w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > footer .max-w-5xl { max-width: 1240px; }
+.w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > footer .max-w-5xl { max-width: var(--w-row); padding-left: var(--w-gutter); padding-right: var(--w-gutter); }
 .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > header .font-serif {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif; font-weight: 800; font-size: 20px; letter-spacing: -0.01em;
 }

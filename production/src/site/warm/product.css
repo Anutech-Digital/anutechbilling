@@ -22,6 +22,10 @@
   --w-marigold-soft: #FDF1D6; --w-marigold-ink: #7A4B00;
   --w-shadow: 0 24px 60px rgba(18, 49, 42, 0.12);
   --w-radius-card: 20px; --w-radius-btn: 14px;
+  /* The navbar's content box — same values as site-warm.css "Shared warm tokens" (--w-row …). */
+  --w-row: 1180px; --w-gutter: clamp(16px, 4vw, 24px);
+  --w-content: calc(var(--w-row) - 2 * var(--w-gutter));
+  --w-card: min(var(--w-content), calc(100% - 2 * var(--w-gutter)));
   /* The app's own tokens (HSL channels, as globals.css) re-pointed at the warm palette */
   --paper: 100 14% 96%;          /* #F5F7F4 */
   --paper-2: 0 0% 100%;          /* #FFFFFF */
@@ -39,6 +43,9 @@
   background: var(--w-bg);
   color: var(--w-ink);
 }
+@media (min-width: 980px) { .anutech-product[data-site-theme="warm"] { --w-gutter: 16px; } }
+@media (min-width: 1200px) { .anutech-product[data-site-theme="warm"] { --w-gutter: 24px; } }
+@media (min-width: 1340px) { .anutech-product[data-site-theme="warm"] { --w-row: 1320px; --w-gutter: 32px; } }
 .anutech-product[data-site-theme="warm"] main { overflow-x: clip; }
 .anutech-product[data-site-theme="warm"] .font-serif {
   font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
@@ -49,7 +56,7 @@
 /* ── Header / footer (ProductChrome.tsx) ── */
 .anutech-product[data-site-theme="warm"] > header { background: rgba(255, 255, 255, 0.96); border-color: var(--w-line); }
 .anutech-product[data-site-theme="warm"] > header > div,
-.anutech-product[data-site-theme="warm"] > footer > div { max-width: 1240px; }
+.anutech-product[data-site-theme="warm"] > footer > div { max-width: var(--w-row); padding-left: var(--w-gutter); padding-right: var(--w-gutter); }
 .anutech-product[data-site-theme="warm"] > header .font-serif { font-size: 20px; }
 .anutech-product[data-site-theme="warm"] > header nav a { font-weight: 600; color: var(--w-muted); }
 .anutech-product[data-site-theme="warm"] > header nav a:hover { color: var(--w-teal); }
@@ -65,8 +72,8 @@
 .anutech-product[data-site-theme="warm"] > footer a { color: var(--w-muted); min-height: 32px; display: inline-flex; align-items: center; }
 .anutech-product[data-site-theme="warm"] > footer a:hover { color: var(--w-teal); text-decoration: underline; }
 
-/* ── Shared section rhythm: the design's 1240px column and big 800-weight headings ── */
-.anutech-product[data-site-theme="warm"] main > section:not(:first-of-type) > div { max-width: 1240px; padding-left: clamp(16px, 4vw, 24px); padding-right: clamp(16px, 4vw, 24px); }
+/* ── Shared section rhythm: the navbar's content box (--w-row) and big 800-weight headings ── */
+.anutech-product[data-site-theme="warm"] main > section:not(:first-of-type) > div { max-width: var(--w-row); padding-left: var(--w-gutter); padding-right: var(--w-gutter); }
 .anutech-product[data-site-theme="warm"] main > section:not(:first-of-type) > div { padding-top: clamp(40px, 5vw, 72px); padding-bottom: clamp(40px, 5vw, 72px); }
 .anutech-product[data-site-theme="warm"] main > section h2 { font-size: clamp(2rem, 3.6vw, 2.44rem); line-height: 1.15; color: var(--w-ink); }
 .anutech-product[data-site-theme="warm"] main > section { border-top: 0; }
@@ -74,7 +81,7 @@
 /* ── Hero: forest band, photo on the right under a left-to-right shade ── */
 .anutech-product[data-site-theme="warm"] main > section:first-of-type {
   position: relative; isolation: isolate; max-width: none; margin: 0;
-  padding: clamp(56px, 6vw, 96px) max(clamp(16px, 4vw, 24px), calc((100% - 1192px) / 2));
+  padding: clamp(56px, 6vw, 96px) max(var(--w-gutter), calc((100% - var(--w-content)) / 2));
   min-height: min(640px, 80vh); box-sizing: border-box;
   display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
   background: var(--w-forest); color: #FFFFFF;
@@ -232,7 +239,7 @@
 .anutech-product[data-site-theme="warm"] #pricing { background: var(--w-bg); }
 .anutech-product[data-site-theme="warm"] #pricing > div {
   box-sizing: border-box; margin-top: clamp(32px, 4vw, 56px); margin-bottom: clamp(32px, 4vw, 56px);
-  width: calc(100% - 2 * clamp(16px, 4vw, 24px)); max-width: 1192px;
+  width: calc(100% - 2 * var(--w-gutter)); max-width: var(--w-content);
   padding: clamp(24px, 3vw, 44px) !important; border-radius: 28px; min-height: 380px;
   background: linear-gradient(90deg, rgba(232, 242, 252, 0.96) 0%, rgba(232, 242, 252, 0.9) 38%, rgba(232, 242, 252, 0.62) 60%, rgba(232, 242, 252, 0.55) 100%),
     url(/site/warm/eda12d2f6a4ca7f5b5423077c01332d7.jpg) right center / cover no-repeat #DCEEF9;

@@ -62,7 +62,7 @@
   background: var(--w-surface); border-bottom: 1px solid var(--w-line);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > header > div {
-  max-width: 1240px; padding-top: 6px; padding-bottom: 6px; padding-left: clamp(16px, 4vw, 24px); padding-right: clamp(16px, 4vw, 24px);
+  max-width: var(--w-row); padding-top: 6px; padding-bottom: 6px; padding-left: var(--w-gutter); padding-right: var(--w-gutter);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > header > div > a { min-height: 44px; color: var(--w-ink); }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > header > div > a .font-serif {
@@ -94,7 +94,7 @@
   position: relative; z-index: 1;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div {
-  max-width: 1240px; padding: clamp(24px, 3vw, 36px) clamp(16px, 4vw, 24px);
+  max-width: var(--w-row); padding: clamp(24px, 3vw, 36px) var(--w-gutter);
   flex-direction: column; align-items: center; justify-content: center; gap: 0; text-align: center;
   font-size: 14px; color: var(--w-muted);
 }
@@ -141,7 +141,7 @@
     url(/site/warm/435a469341d96c370a08ee8449e6766c.jpg) 70% center / cover no-repeat;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(1) > div:last-child {
-  max-width: 1240px; text-align: left; padding: clamp(48px, 6vw, 88px) clamp(16px, 4vw, 24px) clamp(120px, 11vw, 150px);
+  max-width: var(--w-row); text-align: left; padding: clamp(48px, 6vw, 88px) var(--w-gutter) clamp(120px, 11vw, 150px);
   display: flex; flex-direction: column; align-items: flex-start; gap: 20px;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(1) > div:last-child > span.rounded-full {
@@ -169,8 +169,8 @@
 
 /* Beta banner: marigold card overlapping the photo. */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(2) {
-  position: relative; z-index: 2; max-width: calc(1240px + 2 * clamp(16px, 4vw, 24px));
-  padding: 0 clamp(16px, 4vw, 24px); margin-top: clamp(-96px, -7vw, -72px);
+  position: relative; z-index: 2; max-width: var(--w-row);
+  padding: 0 var(--w-gutter); margin-top: clamp(-96px, -7vw, -72px);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(2) > div {
   background: var(--w-marigold-soft); border: 1px solid #F1DFB3; border-radius: 24px;
@@ -194,8 +194,8 @@
 
 /* Tier cards. */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(3) {
-  max-width: calc(1240px + 2 * clamp(16px, 4vw, 24px));
-  padding: clamp(36px, 4.4vw, 60px) clamp(16px, 4vw, 24px) clamp(30px, 3.84vw, 54px);
+  max-width: var(--w-row);
+  padding: clamp(36px, 4.4vw, 60px) var(--w-gutter) clamp(30px, 3.84vw, 54px);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(3) > .grid { gap: 20px; }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(3) > .grid > div {
@@ -242,7 +242,7 @@
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(4) > div:first-child { background: none; }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(4) > div:last-child {
-  max-width: calc(1240px + 2 * clamp(16px, 4vw, 24px)); padding: clamp(36px, 4.4vw, 64px) clamp(16px, 4vw, 24px);
+  max-width: var(--w-row); padding: clamp(36px, 4.4vw, 64px) var(--w-gutter);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(4) h2 { font-size: clamp(2rem, 3.6vw, 2.44rem); }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(4) .overflow-x-auto {
@@ -270,7 +270,7 @@
 
 /* FAQ: heading + photo card on the left, questions on the right. */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(5) {
-  max-width: calc(1240px + 2 * clamp(16px, 4vw, 24px)); padding: clamp(36px, 4.4vw, 64px) clamp(16px, 4vw, 24px);
+  max-width: var(--w-row); padding: clamp(36px, 4.4vw, 64px) var(--w-gutter);
   display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); grid-template-rows: auto 1fr; gap: 18px 40px; align-items: start;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(5) > div:first-child {
@@ -314,11 +314,11 @@
 
 /* Closing CTA: rounded forest photo band. */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(6) {
-  background: transparent; border: 0; padding: 0 clamp(16px, 4vw, 24px) clamp(30px, 3.84vw, 54px);
+  background: transparent; border: 0; padding: 0 var(--w-gutter) clamp(30px, 3.84vw, 54px);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(6) > div:first-child { background: none; }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(6) > div:last-child {
-  max-width: 1240px; text-align: left; border-radius: 32px; overflow: hidden;
+  max-width: var(--w-content); text-align: left; border-radius: 32px; overflow: hidden;
   padding: clamp(32px, 4.4vw, 60px) clamp(22px, 4vw, 56px);
   background: linear-gradient(100deg, rgba(18,49,42,0.94) 0%, rgba(18,49,42,0.82) 45%, rgba(18,49,42,0.45) 100%),
     url(/site/warm/1ecfdc38218b688cf12509eac50a21db.jpg) 70% center / cover no-repeat, #12312A;
@@ -364,7 +364,7 @@
 
 /* ── /about: forest photo hero, then the design's sections ───────────────────────────────── */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) {
-  max-width: calc(1240px + 2 * clamp(16px, 4vw, 24px)); padding-left: clamp(16px, 4vw, 24px); padding-right: clamp(16px, 4vw, 24px);
+  max-width: var(--w-row); padding-left: var(--w-gutter); padding-right: var(--w-gutter);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(dl) > h1 {
   padding-top: clamp(56px, 7vw, 104px); font-size: clamp(2.4rem, 5vw, 3.4rem); line-height: 1.1; letter-spacing: -0.03em;
@@ -539,7 +539,7 @@
 
 /* ── /privacy and /terms: white title band, sticky "On this page" left, sections right ──── */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(section[id]) {
-  max-width: calc(1100px + 2 * clamp(16px, 4vw, 24px)); padding-left: clamp(16px, 4vw, 24px); padding-right: clamp(16px, 4vw, 24px);
+  max-width: var(--w-row); padding-left: var(--w-gutter); padding-right: var(--w-gutter);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main.max-w-3xl:has(section[id]) > h1 + p {
   order: -1; position: relative; margin: 0; padding-top: clamp(20px, 2.56vw, 36px); padding-bottom: 14px;

@@ -125,7 +125,9 @@
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(n+3) {
   padding-top: clamp(40px, 4.4vw, 64px) !important; padding-bottom: clamp(40px, 4.4vw, 64px) !important;
 }
-.anutech-site[data-site-theme="warm"] .hlp > section > div { max-width: 1240px !important; }
+/* Sections: the navbar's gutter (their inline 20px), inner box = the navbar's content width. */
+.anutech-site[data-site-theme="warm"] .hlp > section { padding-left: var(--w-gutter) !important; padding-right: var(--w-gutter) !important; }
+.anutech-site[data-site-theme="warm"] .hlp > section > div { max-width: var(--w-content) !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section#faq > div { max-width: 860px !important; }
 
 /* Buttons: primary on a light ground = teal; the hero's and the top plan's = marigold. */
@@ -147,7 +149,7 @@
 /* ── 1 · Hero: dark forest band, photo slideshow under a forest tint ───────────────────────── */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) {
   position: relative; isolation: isolate; background: var(--w-forest);
-  padding: clamp(25px, 3.2vw, 45px) clamp(16px, 4vw, 24px) clamp(28px, 3vw, 40px) !important;
+  padding: clamp(25px, 3.2vw, 45px) var(--w-gutter) clamp(28px, 3vw, 40px) !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1)::before {
   content: ""; position: absolute; inset: 0; z-index: -2;
@@ -225,7 +227,7 @@
 
 /* ── 2 · Quick-jump: a white card inside the same forest band ──────────────────────────────── */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(2) {
-  background: var(--w-forest) !important; padding: 0 clamp(16px, 4vw, 24px) clamp(22px, 2.88vw, 40px) !important;
+  background: var(--w-forest) !important; padding: 0 var(--w-gutter) clamp(22px, 2.88vw, 40px) !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(2) > div {
   background: var(--w-surface); border: 1px solid var(--w-line); border-radius: var(--w-radius-card);

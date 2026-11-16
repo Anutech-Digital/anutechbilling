@@ -44,7 +44,7 @@
   background: url(/site/warm/bc78e63b8ff6d7367574cbee156c5dfe.jpg) center / cover no-repeat; box-shadow: 0 20px 50px rgba(18, 49, 42, 0.14);
 }
 .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap:has(> table.rates) {
-  max-width: 1100px; margin: 0 auto; background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 24px;
+  max-width: none; margin: 0 auto; background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 24px;
   box-shadow: 0 24px 60px rgba(18, 49, 42, 0.08);
 }
 .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates :is(th, td) {
@@ -746,13 +746,10 @@
    stays the page's own (inline), so "Down" still reads red and "Operational" green.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section:first-child { padding: clamp(22px, 2.88vw, 40px) 0 clamp(25px, 3.2vw, 45px); }
-/* Content box = the footer's (1240px, 24px sides), so the title, banner and service list line up
-   with the CTA band and footer below — it was a 948px column (owner, 16 Nov 2026: "too narrow"). */
+/* Content box = the navbar's (site-warm.css --w-row / --w-gutter), so the title, banner and service
+   list line up with the header, CTA band and footer — it was a 948px column (owner, 16 Nov 2026). */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap {
-  max-width: 1240px !important; display: flex; flex-direction: column;
-}
-@media (min-width: 980px) {
-  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap { padding-left: 24px; padding-right: 24px; }
+  max-width: var(--w-row) !important; padding-left: var(--w-gutter); padding-right: var(--w-gutter); display: flex; flex-direction: column;
 }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > h1 {
   order: 1; margin: 0 0 14px !important; font-size: clamp(2.4rem, 5vw, 3.06rem); line-height: 1.06; color: var(--w-ink);
