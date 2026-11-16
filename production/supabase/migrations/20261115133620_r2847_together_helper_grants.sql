@@ -1,4 +1,4 @@
--- deploy-peek: not has_function_privilege('anon', 'public.r2847_is_together_quote(text)', 'execute') and has_function_privilege('authenticated', 'public.r2847_is_together_quote(text)', 'execute')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.r2847_is_together_quote(text)') and not has_function_privilege('anon', oid, 'execute') and has_function_privilege('authenticated', oid, 'execute'))
 -- deploy-key: r2847togetherhelpergrants
 --
 -- R-2847 CI fix (15 Nov 2026, SQL tests red on b9eec44a7: anon_default_privileges FAIL 3 and r1560_definer_catalog_guard
