@@ -19,6 +19,7 @@ import { priorTermOwedOf, priorTermOwedText, subscriptionOwedOf } from "./prior-
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { withRenewalQuote } from "./open-renewal-quotes";
 import { classifyRenewals, type RenewalGroups } from "./classify";
+import { dueDaysOf, duePeriodFacts, type DuePeriod } from "./due-anchor";
 import {
   QUEUE_TABS, queueTabs, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
   type QueueTab, type RowStatus, type RenewalAmount, type RenewalQuoteInfo,
@@ -29,9 +30,28 @@ import { renewalFrequency, renewalCommitment, type Commitment } from "./frequenc
 import type { LastDocs } from "./last-docs";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
 
+/** A row before its item is built. R-2858: `dueDays` = the Due column's day count — the tab is picked by it. */
+export interface QueueRow {
+  sub: Subscription;
+  /** IST days to renewal_date (grace, Won't renew and the status words are judged on it). */
+  daysUntil: number;
+  dueDays: number;
+}
+
 export interface QueueItem {
   sub: Subscription;
   daysUntil: number;
+  /**
+   * R-2858: IST days to the date the Due column shows (due-anchor.ts) — the row's tab is windowTab(dueDays),
+   * so "Overdue 5d · part due 11 Nov" sits in Overdue even when the renewal date is today.
+   */
+  dueDays: number;
+  /**
+   * R-2858: the period the row is about — the unpaid part the Due date refers to (its own stored period), else
+   * the next term. The Product line shows `period.short` (tooltip `period.words`) and, when set,
+   * `period.running` ("Oct unpaid · Nov running"). null = no renewal date.
+   */
+  period: DuePeriod | null;
   status: RowStatus;
   amount: RenewalAmount;
   contact: RowContact | undefined;
@@ -74,28 +94,50 @@ export interface QueueBuildInput {
 }
 
 export interface QueueBuild {
-  enriched: { sub: Subscription; daysUntil: number }[];
-  groups: RenewalGroups<{ sub: Subscription; daysUntil: number }>;
-  tabs: Record<QueueTab, { sub: Subscription; daysUntil: number }[]>;
+  enriched: QueueRow[];
+  groups: RenewalGroups<QueueRow>;
+  tabs: Record<QueueTab, QueueRow[]>;
   items: Record<QueueTab, QueueItem[]>;
   allItems: QueueItem[];
 }
 
 export function buildQueueItems(f: QueueBuildInput): QueueBuild {
   const { today, todayIst } = f;
-  const enriched = f.subs
-    .filter(onRenewalsPage)
-    .map((s) => ({ sub: withRenewalQuote(s, f.openRenewalMap), daysUntil: daysUntilRenewal(s.renewal_date!, today) }));
   const quoteOf = (sub: Subscription) => f.quoteInfo?.get(sub.renewal_quote_id ?? "");
   const paid = (r: { sub: Subscription }) => isPaidRenewalQuote(r.sub, quoteOf(r.sub));
+  /* R-2758 (R-2738): the stage's facts — only once the documents are read (no flip after load), only this
+     renewal's quote / invoice (stage-input.ts). Read once per row; the flags are added in toItem. */
+  const stageFacts = new Map<string, ReturnType<typeof stageInputFor>>();
+  const stageFactsOf = (sub: Subscription) => {
+    if (!stageFacts.has(sub.id)) {
+      const linkedQuote = quoteOf(sub);
+      stageFacts.set(sub.id, stageInputFor({
+        sub, todayIst, docs: f.docs?.get(sub.id), docsLoading: f.docsLoading,
+        linkedStatus: sub.renewal_quote_id ? f.quoteStatusMap.get(sub.renewal_quote_id) ?? null : null,
+        linkedQuote: linkedQuote ?? null,
+        renewalPaid: paid({ sub }),
+      }));
+    }
+    return stageFacts.get(sub.id) ?? null;
+  };
+  /* R-2858: the Due column's day count BEFORE the rows are grouped — the stage's anchor (flags never move it),
+     so the tab and At risk are picked by the same date the row shows. Not read yet → the renewal date. */
+  const enriched: QueueRow[] = f.subs
+    .filter(onRenewalsPage)
+    .map((s) => {
+      const sub = withRenewalQuote(s, f.openRenewalMap);
+      const daysUntil = daysUntilRenewal(s.renewal_date!, today);
+      const facts = stageFactsOf(sub);
+      return { sub, daysUntil, dueDays: dueDaysOf(facts ? renewalStage(facts) : null, daysUntil) };
+    });
   /* R-2818 (review #2): the risk score's "Unpaid balance" reads the one owed rule; null while the documents load */
   const owedOf = (sub: Subscription) => subscriptionOwedOf(sub, f.docs?.get(sub.id))?.total ?? null;
   const groups = classifyRenewals(enriched, (r) => renewalRisk(r.sub, { owed: owedOf(r.sub) }).level === "high", today, paid);
-  const tabs     = queueTabs(groups);
+  const tabs     = queueTabs(groups);   // R-2858: by dueDays — the Due column's window
   const atRiskIds = new Set(groups.atRisk.map((r) => r.sub.id));
   const canQuotes = canOpenQuotes(f.role ?? undefined);
 
-  const toItem = (r: { sub: Subscription; daysUntil: number }): QueueItem => {
+  const toItem = (r: QueueRow): QueueItem => {
     const risk = renewalRisk(r.sub, { owed: owedOf(r.sub) });
     const docs = f.docs?.get(r.sub.id);
     /* R-2728: a renewal quote / part bill with the customer, unpaid → "Renewal quote sent" (stays listed). */
@@ -104,13 +146,10 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
     const customerOwnerId = r.sub.customer_id ? f.fuData?.ownerByCustomer.get(r.sub.customer_id) ?? null : null;
     const followup = renewalFollowup(r.sub.id, f.fuData?.rows ?? [], { customerOwnerId, today: todayIst, paid: status.key === "renewed" });
     const linkedQuote = quoteOf(r.sub);
-    /* R-2758 (R-2738): ONE stage per row — only once the documents are read (no flip after load),
-       only this renewal's quote / invoice (stage-input.ts). */
-    const input = stageInputFor({
-      sub: r.sub, todayIst, docs, docsLoading: f.docsLoading,
-      linkedStatus: r.sub.renewal_quote_id ? f.quoteStatusMap.get(r.sub.renewal_quote_id) ?? null : null,
-      linkedQuote: linkedQuote ?? null,
-      renewalPaid: paid(r),
+    /* R-2758 (R-2738): ONE stage per row — the facts read above (stageFactsOf) + this row's flags. */
+    const facts = stageFactsOf(r.sub);
+    const input = facts && {
+      ...facts,
       flags: {
         /* R-2756: a Won't renew / stopped row is not a renewal to chase — no at-risk flag on it. */
         atRisk: atRiskIds.has(r.sub.id) && riskChased(r.sub) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
@@ -121,10 +160,12 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
         followUpDue: followup.followUpDue ? { nextFollowUpOn: followup.nextFollowUpOn } : null,
         renewalHeld: f.holds?.get(r.sub.id) ?? null,
       },
-    });
+    };
     const stage = input ? renewalStage(input) : null;
     return {
       stage,
+      dueDays: r.dueDays,
+      period: duePeriodFacts(stage, docs, r.sub, todayIst),
       payHref: stage ? stagePayHref(stage, docs, canQuotes) : null,
       prior: priorTermOwedOf(r.sub, docs),
       owed: subscriptionOwedOf(r.sub, docs),

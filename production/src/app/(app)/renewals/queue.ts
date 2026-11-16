@@ -100,14 +100,17 @@ export function noRenewalDate<T extends { status: string; renewal_date: string |
  * one of them): Overdue = expired + service stopped; the windows = Next 7 days / upcoming /
  * future + the Won't-renew rows still running, split by date. R-2422: a flex (monthly-commitment)
  * subscription is a renewal like any other (R-2232's exclusion reversed by the owner, 3 Nov).
+ * R-2858: the window is the Due column's own day count (`dueDays` — a part due before the renewal date
+ * counts from ITS date; absent = the renewal date), so a Won't renew row with a late part is in Overdue.
  */
-export function queueTabs<T extends { daysUntil: number }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
+export function queueTabs<T extends { daysUntil: number; dueDays?: number | null }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
   const out: Record<QueueTab, T[]> = { overdue: [], due7: [], d30: [], d60: [], d90: [], later: [] };
   out.overdue.push(...g.expired, ...g.stopped);
   /* R-2586: g.later = chased renewals past 90 days (classify.ts); a far Won't renew row lands in later too. */
   for (const r of [...g.due7, ...g.upcoming, ...g.future, ...g.later, ...g.nonRenewing]) {
-    const t = windowTab(r.daysUntil);
-    if (t !== "overdue") out[t].push(r);
+    const t = windowTab(r.dueDays ?? r.daysUntil);
+    /* by the renewal date alone a row here is never overdue (classify.ts) — only a late part (dueDays) makes it so */
+    if (t !== "overdue" || r.dueDays != null) out[t].push(r);
   }
   return out;
 }

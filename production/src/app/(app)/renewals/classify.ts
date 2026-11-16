@@ -31,6 +31,13 @@
  * R-2431: the sidebar badge counts flex rows too (nav_badges SQL = buckets.ts inRenewalsBadge).
  * isFlexNextPart (lib/renewals/buckets.ts) — a part still ahead — is skipped by Bulk reminder (and
  * named in its confirm) and not chased on Payment Follow-up until its date has passed unbilled.
+ *
+ * R-2858 (Pardeep, 16 Nov 2026 — staging: "Overdue 5d · part due 11 Nov" listed under ≤7 days): a row
+ * may carry `dueDays` — the Due column's own day count (due-anchor.ts dueDaysOf: the earlier of an unpaid
+ * part's due date and the renewal date). The urgency group is picked by it, so the tab, the Due date and
+ * the chip count from ONE date: `expired` = money past its due date (the renewal date, or a part of it
+ * that fell due earlier). Won't renew ("still running?") and renewedPaid stay on the renewal date itself —
+ * they are about the term ending, not about a bill. No `dueDays` (documents not read) → the renewal date.
  */
 import { renewalBucket, isFlexNextPart } from "@/lib/renewals/buckets";
 import { effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
@@ -52,6 +59,8 @@ export interface ClassifySub {
 export interface ClassifyRow<S extends ClassifySub = ClassifySub> {
   sub: S;
   daysUntil: number;
+  /** R-2858: IST days to the date the Due column shows (an unpaid part due earlier, else the renewal date); absent = daysUntil. */
+  dueDays?: number | null;
 }
 
 export interface RenewalGroups<T> {
@@ -104,10 +113,12 @@ export function classifyRenewals<T extends ClassifyRow>(
       g.renewedPaid.push(r);
       continue;
     }
-    if (r.daysUntil < 0) {
+    /* R-2858: the group follows the Due column's date — a part due before the renewal date counts from ITS date */
+    const due = r.dueDays ?? r.daysUntil;
+    if (due < 0) {
       (isStopped(r.sub) ? g.stopped : g.expired).push(r);
     } else {
-      const b = renewalBucket(r.daysUntil);
+      const b = renewalBucket(due);
       if (b === "urgent") g.due7.push(r);
       else if (b === "upcoming") g.upcoming.push(r);
       else if (b === "future") g.future.push(r);
@@ -118,7 +129,9 @@ export function classifyRenewals<T extends ClassifyRow>(
   const paid = (r: T) => isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today);
   g.atRisk = [
     ...g.nonRenewing,
-    ...g.expired.filter((r) => !paid(r)),
+    /* R-2858: a row here only through a late part (renewal date not passed) owes that part — a 'renewed' state
+       from an earlier roll-forward does not make it paid */
+    ...g.expired.filter((r) => !paid(r) || (r.daysUntil >= 0 && r.dueDays != null && r.dueDays < 0)),
     ...[...g.due7, ...g.upcoming, ...g.future].filter((r) => !paid(r) && isHighRisk(r)),
   ];
   g.atRiskArr = g.atRisk.reduce((s, r) => s + r.sub.mrr * 12, 0);

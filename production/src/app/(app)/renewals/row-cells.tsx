@@ -165,7 +165,7 @@ export function AmountTableCell({ text, gst, title }: { text: string; gst: strin
   );
 }
 
-export function ProductCell({ plan, seats, vendor, term, termShort, frequency, domain = null, onOpen, together = null, quoteLine = null }: {
+export function ProductCell({ plan, seats, vendor, term, termShort, frequency, domain = null, onOpen, together = null, quoteLine = null, period = null }: {
   /** R-2854: this renewal's quote line (RenewalQuoteLine) — the cell's last line, on every row. */
   quoteLine?: ReactNode;
   plan: string | null; seats: number | null; vendor: string | null; term: string | null; termShort: string | null; frequency: string | null;
@@ -175,11 +175,17 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
   onOpen?: () => void;
   /** R-2808: billed together last cycle → line 2 reads "Bills with <other plan>" (a button that opens Bill together). */
   together?: { text: string; title?: string; onClick: () => void } | null;
+  /**
+   * R-2858: the period the row is ABOUT (due-anchor.ts duePeriodFacts) — the unpaid part the Due date refers to, else the
+   * next term. Given, it replaces `term` / `termShort`; its tooltip says "Oct unpaid · Nov running (billed part Oct 2026)".
+   */
+  period?: { short: string; title: string } | null;
 }) {
+  const shownShort = period?.short ?? termShort;
   const vendorWord = vendor ? vendor[0].toUpperCase() + vendor.slice(1) : null;
   const line1 = [plan, seatsWords(plan, seats), vendorWord].filter(Boolean).join(" · ");
   /* line 2 = the domain (R-2755) + the period (short); the full period + how it is paid are its tooltip */
-  const title2 = [term ? `Renews for ${term}` : null, frequency].filter(Boolean).join(" · ");
+  const title2 = [period?.title ?? (term ? `Renews for ${term}` : null), frequency].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0" data-cell="product">
       <p className="text-ink" title={line1}>
@@ -206,9 +212,9 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
            Due column shows the date it starts. */
         <p className="mt-0.5 flex max-h-[1lh] flex-wrap gap-x-1 overflow-hidden text-2xs leading-4" title={title2 || undefined}>
           <span className="min-w-0 max-w-full truncate text-ink-2" title={domain} data-testid="renewal-row-domain">{domain}</span>
-          {termShort && <span className="shrink-0 whitespace-nowrap text-ink-3 tabular-nums">· {termShort}</span>}
+          {shownShort && <span className="shrink-0 whitespace-nowrap text-ink-3 tabular-nums">· {shownShort}</span>}
         </p>
-      ) : termShort && <p className="mt-0.5 truncate text-2xs leading-4 text-ink-3 tabular-nums" title={title2}>{termShort}</p>}
+      ) : shownShort && <p className="mt-0.5 truncate text-2xs leading-4 text-ink-3 tabular-nums" title={title2}>{shownShort}</p>}
       {quoteLine}
     </div>
   );
