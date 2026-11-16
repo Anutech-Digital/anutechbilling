@@ -82,30 +82,60 @@ test.describe("R-2841 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: an accepted add-seats quote not invoiced shows under the Paid invoice (1280 table)", async ({ browser, baseURL }) => {
+  test("Step 1: the Paid invoice shows in the 1280 table's Last bill; the add-seats quote is not repeated there as a quote note", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1280, height: 900 });
     const r = await rowOf(page, "CT R2841 Seats Plan");
     const cell = await onlyOne(r.getByTestId("renewal-last-invoice-cell"), "last invoice cell");
-    await expect(cell.getByTestId("renewal-last-invoice-status")).toHaveText("Paid", { timeout: 60_000 });
-    const note = await onlyOne(cell.getByTestId("renewal-row-quote-note"), "quote note");
-    await expect(note).toHaveText("Quote Q-CT2841-SAccepted");
-    /* the state never cut: its words fit inside the cell (the number may truncate) */
-    const stateFits = await note.getByTestId("renewal-row-quote-note-state").evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
-    expect(stateFits).toBe(true);
-    await expect(note.getByRole("link", { name: "Q-CT2841-S" })).toHaveAttribute("href", "/quotes/Q-CT2841-S");
+    /* R-2854: Last bill = the invoice number + the payment line; "Paid" is said once (the payment line "Paid on invoice,
+       no receipt" / "Paid ₹… · date") — the separate status line is dropped when it would repeat it (lastBillLines) */
+    await expect(cell.getByTestId("renewal-last-invoice-no")).toHaveText("INV-CT2841-1", { timeout: 60_000 });
+    await expect(cell.getByTestId("renewal-row-last-paid")).toHaveText(/^Paid/, { timeout: 60_000 });
+    /* R-2854 (one fact once): the table's Last bill never names a quote, and the Product column's quote line is THIS
+       renewal's quote — this subscription has none ("No renewal quote yet"), so the add-seats quote is not on the row.
+       That is a change from R-2841's table promise: see the R-2841 regression step below (card R-2870's follow-up). */
+    await expect(cell.getByTestId("renewal-row-quote-note")).toHaveCount(0);
+    await expect(r.getByTestId("renewal-row-quote")).toHaveAttribute("data-quote", "none");
     /* fits 1280: the table needs no side scroll */
     const fits = await page.evaluate(() => { const t = document.querySelector("table"); const p = t?.parentElement; return !!p && p.scrollWidth <= p.clientWidth + 1; });
     expect(fits).toBe(true);
   });
 
-  test("Step 2: a 'Quote sent' row does not repeat the quote under its invoice", async ({ browser, baseURL }) => {
+  /* R-2841's table promise — an accepted add-seats quote not invoiced yet shows "Quote Q-… · Accepted" on the row — is
+     GONE from the table since R-2854 (the row shows only THIS renewal's quote). It still holds in the card layout below
+     the table's width (the next step). The table half is a REGRESSION against R-2841: it stays here, unchanged in
+     meaning, as test.fixme until the card filed for it (REGRESSION_CARD) puts a rule back or the owner drops it. */
+  test.fixme("Step 1b (REGRESSION vs R-2841, table): an accepted add-seats quote not invoiced shows 'Quote Q-CT2841-S · Accepted' on the 1280 table row", async ({ browser, baseURL }) => {
+    const page = await pageAs(browser, baseURL, "owner");
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const r = await rowOf(page, "CT R2841 Seats Plan");
+    await expect(r.getByText("Q-CT2841-S")).toHaveCount(1, { timeout: 60_000 });
+    await expect(r).toContainText("Accepted");
+  });
+
+  test("Step 1c: below the table width (cards) the accepted add-seats quote still shows 'Quote Q-CT2841-S · … · Accepted', linked, under the Paid invoice", async ({ browser, baseURL }) => {
+    const page = await pageAs(browser, baseURL, "owner");
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await openAppPage(page, "/renewals?bucket=overdue", /Renewals/);
+    const docs = page.getByTestId("renewal-last-docs").filter({ hasText: "Q-CT2841-S" }).filter({ visible: true });
+    await expect(docs).toHaveCount(1, { timeout: 60_000 });
+    const line = await onlyOne(docs.locator('[data-doc-line="quote"]'), "quote line");
+    await expect(line).toContainText("Accepted");
+    await expect(line.getByRole("link", { name: "Q-CT2841-S" })).toHaveAttribute("href", "/quotes/Q-CT2841-S");
+    await expect(docs.locator('[data-doc-line="invoice"]')).toContainText("INV-CT2841-1");
+  });
+
+  test("Step 2: a 'Quote sent' row names its quote ONCE (Product column's quote line), not again under its invoice", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1280, height: 900 });
     const r = await rowOf(page, "CT R2841 Sent Plan");
     await expect(r.getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
     const cell = await onlyOne(r.getByTestId("renewal-last-invoice-cell"), "last invoice cell");
-    await expect(cell.getByTestId("renewal-last-invoice-status")).toHaveText("Paid");
+    await expect(cell.getByTestId("renewal-row-last-paid")).toHaveText(/^Paid/);
     await expect(cell.getByTestId("renewal-row-quote-note")).toHaveCount(0);
+    await expect(cell.getByText("Q-CT2841-R")).toHaveCount(0);
+    /* the quote is named once on the row: the Product column's quote line (the chip's link is the same quote) */
+    await expect(r.getByTestId("renewal-row-quote")).toHaveAttribute("data-quote", "Q-CT2841-R");
+    await expect(r.getByTestId("renewal-row-quote-number")).toHaveAttribute("href", "/quotes/Q-CT2841-R");
   });
 });
