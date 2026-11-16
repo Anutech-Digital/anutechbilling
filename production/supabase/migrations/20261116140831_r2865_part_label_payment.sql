@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2865%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_parts_together(uuid[])') and prosrc like '%R-2865%')
 -- deploy-key: r2865partlabelpayment
--- 20261116112013_r2865_part_label_payment.sql
+-- 20261116140831_r2865_part_label_payment.sql
 --
 -- R-2865 (16 Nov 2026, Pardeep — staging Q-A378-27-0124, RENEWAL · PART 1 OF 1 · OCT 2026): the proforma said
 -- "Advance payment for month 1 · 1 Oct–31 Oct 2026". A renewal part is not an advance — an advance is money

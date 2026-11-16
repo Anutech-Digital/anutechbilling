@@ -1,7 +1,7 @@
 -- R-2865 (Pardeep, 16 Nov 2026 — staging Q-A378-27-0124): a renewal part proforma is a payment request for
 -- its service period, not an advance. New part proformas say "Payment for month 2 · 15 Oct–14 Nov 2026" where
 -- they said "Advance payment for month 2 · …" (line description, notes, the RPC's returned label).
--- Migration 20261116112013_r2865_part_label_payment — ONLY that text changes.
+-- Migration 20261116140831_r2865_part_label_payment — ONLY that text changes.
 -- Self-asserting, ONE transaction, rolled back. Run on a dev/test DB only.
 --
 --   A.  Bill next part, monthly, 49 seats × ₹450      → PI, ₹22,050 + 18% = ₹26,019; line 49 × 450, its period,

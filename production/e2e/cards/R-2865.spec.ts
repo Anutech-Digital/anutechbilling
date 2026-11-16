@@ -8,7 +8,7 @@
  *            "Amount due" under the usual title — never "advance". Closed without saving.
  * Run: `node scripts/ops/card-tests.mjs R-2865`.
  *
- * NEEDS THE DB FUNCTION of migration 20261116112013 (bill_subscription_instalment writes "Payment for …").
+ * NEEDS THE DB FUNCTION of migration 20261116140831 (bill_subscription_instalment writes "Payment for …").
  * Until `npm run localhost:update` has applied it on the local DB every step SKIPS itself.
  *
  * Data: the local scenario `bill-together-pair` (scripts/dev/scenario.mjs — local docker DB only), reloaded

@@ -9,7 +9,7 @@ import { readSource } from "@/lib/testing/source-cache"; // shared read cache fo
    amount, GST, period, link, lock or guard line changed, and no newer rule was dropped. */
 
 const MIG = path.resolve(__dirname, "..", "supabase", "migrations");
-const NEW = "20261116112013_r2865_part_label_payment.sql";
+const NEW = "20261116140831_r2865_part_label_payment.sql";
 
 function body(file: string, fn: string): string[] {
   const t = fs.readFileSync(path.join(MIG, file), "utf8").replace(/\r\n/g, "\n");
