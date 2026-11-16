@@ -19,6 +19,9 @@
  * R-2422: the row shows ONE next-step button (renewalNextStep: the rule's primary, else Follow-up)
  * and a ⋯ menu for the rest (Create quote (don't send), Follow-up, Nudge, Voice note, Customer not
  * renewing) — the pattern of Payment Follow-up's rows (collections/row-actions.tsx, R-2408).
+ * R-2856: the ⋯ items say the action (lib/renewals/stage.ts MENU_LABEL): "Follow up — log a call or
+ * promise" (the follow-up dialog), "Draft a WhatsApp message (AI)" (was Nudge — AI drafts, you edit
+ * and send), "Send a WhatsApp voice note" (was Voice note — a Hindi voice reminder, asks first).
  *
  * No new money call: the two routes and the two dialogs (and their RPCs) are the ones the
  * Renewals page and the subscription drawer already used.
@@ -47,7 +50,7 @@ import { useSetNonRenewing } from "@/components/features/subscriptions/use-non-r
 import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
-import { notRenewingDialog, type PrimaryContext, type PrimaryKind, type RenewalStage } from "@/lib/renewals/stage";
+import { notRenewingDialog, followUpMenuLabel, type PrimaryContext, type PrimaryKind, type RenewalStage } from "@/lib/renewals/stage";
 import { stageButtons, STAGE_MENU_LABEL, type StageMenuItem, type StageRunKind } from "./stage-actions";
 import { BillNextPartDialog, type BillNextChoice } from "./bill-next-part-dialog";
 import { isSplitBilled } from "@/lib/billing/instalments";
@@ -431,19 +434,19 @@ function RenewalActionsLive({ sub: raw, daysUntil, layout, strong = false, onFol
     followup: (
       <DropdownMenuItem key="followup" className={ITEM} onClick={() => onFollowup?.()}
         title="Log a call / promise / next date for this renewal">
-        <Icon name="phone" size={15} /> {FOLLOW_UP}
+        <Icon name="phone" size={15} /> {followUpMenuLabel(FOLLOW_UP)}
       </DropdownMenuItem>
     ),
     nudge: (
       <DropdownMenuItem key="nudge" className={ITEM} onClick={() => setDialog("nudge")}
         title="AI drafts a WhatsApp renewal message — you edit and send it yourself">
-        <Icon name="sparkles" size={15} /> Nudge
+        <Icon name="sparkles" size={15} /> {STAGE_MENU_LABEL.nudge}
       </DropdownMenuItem>
     ),
     voice: (
       <DropdownMenuItem key="voice" className={ITEM} disabled={voice.sending} onClick={() => void voice.send()}
         title="Send a Hindi voice-note renewal reminder on WhatsApp (asks first)">
-        <Icon name="whatsapp" size={15} /> Voice note
+        <Icon name="whatsapp" size={15} /> {STAGE_MENU_LABEL.voice}
       </DropdownMenuItem>
     ),
     "not-renewing": (
@@ -628,6 +631,7 @@ const MENU_TITLE: Partial<Record<StageMenuItem, string>> = {
   "bill-part": "Make the next period's proforma now — check seats, rate and how many periods first",
   "change-renewal": "The customer already has this quote — make a revision to edit and send; the old one stops accepting once it is sent",
   resend: "Email the renewal quote again (asks first)",
+  "follow-up": "Log a call / promise / next date for this renewal — nothing is sent to the customer",
   "resend-invoice": "Open the invoice to send it or its payment link again",
   nudge: "AI drafts a WhatsApp renewal message — you edit and send it yourself",
   voice: "Send a Hindi voice-note renewal reminder on WhatsApp (asks first)",

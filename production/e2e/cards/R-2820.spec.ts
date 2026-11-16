@@ -75,7 +75,7 @@ test.describe("R-2820 card test", () => {
     await openTab(page, "overdue", LATE);
     const btn = await onlyOne(page.getByTestId("renewals-remind"), "Remind button");
     /* the tab-level label: a count it can send "in Overdue", or greyed "Remind 0 · N …" */
-    await expect(btn).toHaveText(/^Remind (\d+ in Overdue|0 · \d+ .+)$/, { timeout: 60_000 });
+    await expect(btn).toHaveText(/^Remind (\d+ (of \d+ )?in Overdue|0 · \d+ .+)$/, { timeout: 60_000 });   // R-2856: "N of M" when rows are left out
     if (/^Remind 0/.test((await btn.textContent()) ?? "")) await expect(btn).toBeDisabled();
     await tick(page, LATE);
     await tick(page, SPLIT);
@@ -90,7 +90,7 @@ test.describe("R-2820 card test", () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await openTab(page, "d30", DUE);
     const btn = await onlyOne(page.getByTestId("renewals-remind"), "Remind button");
-    await expect(btn).toHaveText(/^Remind \d+ in 8–30$/, { timeout: 60_000 });
+    await expect(btn).toHaveText(/^Remind \d+ (of \d+ )?in 8–30$/, { timeout: 60_000 });
     const n = Number(/Remind (\d+)/.exec((await btn.textContent()) ?? "")?.[1]);
     await btn.click();
     const dlg = await onlyOne(page.getByTestId("renewal-reminder-dialog"), "reminder dialog");

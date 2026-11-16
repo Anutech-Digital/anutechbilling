@@ -80,13 +80,13 @@ test.describe("R-2753 card test", () => {
     /* R-2820: the button counts only rows it can send — on Overdue it names the tab, or is greyed
        ("Remind 0 · N …") when every overdue row needs a call or a part bill */
     const btn = await onlyOne(page.getByTestId("renewals-remind"), "Remind button");
-    await expect(btn).toHaveText(/^Remind (\d+ in Overdue|0 · \d+ .+)$/, { timeout: 60_000 });
+    await expect(btn).toHaveText(/^Remind (\d+ (of \d+ )?in Overdue|0 · \d+ .+)$/, { timeout: 60_000 });   // R-2856: "N of M" when rows are left out
     if (!/^Remind 0/.test((await btn.textContent()) ?? "")) {
-      const dlg = await openReminder(page, /^Remind \d+ in Overdue$/);
+      const dlg = await openReminder(page, /^Remind \d+ (of \d+ )?in Overdue$/);
       await expect(dlg.getByText(KOCHI)).toHaveCount(0);
       await expect(dlg.getByText(DELHI)).toHaveCount(0);
       const skipped = await onlyOne(dlg.getByRole("region", { name: "Skipped" }), "Skipped list");
-      const pastGrace = await onlyOne(skipped.locator("li", { hasText: "past the renewal date and the grace" }), "past-grace group");
+      const pastGrace = await onlyOne(skipped.getByTestId("reminder-skip-group").filter({ hasText: "past the renewal date and the grace" }), "past-grace group");
       await expect(pastGrace).toContainText(LATE);
       await expect(pastGrace).toContainText("Send renewal quote");
       /* never send — Close / Cancel */
@@ -104,11 +104,11 @@ test.describe("R-2753 card test", () => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1280, height: 900 });
     await openTab(page, "d30", KOCHI);
-    const dlg = await openReminder(page, /^Remind \d+ in 8–30$/);
+    const dlg = await openReminder(page, /^Remind \d+ (of \d+ )?in 8–30$/);
     const send = await onlyOne(dlg.getByRole("region", { name: "Will be emailed" }), "will-be-emailed list");
     await expect(send).toContainText(DELHI);
     await expect(send).not.toContainText(KOCHI);
-    const noEmail = await onlyOne(dlg.getByRole("region", { name: "Skipped" }).locator("li", { hasText: "no email on file" }), "no-email group");
+    const noEmail = await onlyOne(dlg.getByRole("region", { name: "Skipped" }).getByTestId("reminder-skip-group").filter({ hasText: "no email on file" }), "no-email group");
     await expect(noEmail).toContainText(KOCHI);
     /* the Email N count = the will-be-emailed list, Kochi not in it */
     const n = await send.locator("li").count();

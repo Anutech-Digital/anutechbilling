@@ -79,7 +79,8 @@ test.describe("R-2756 card test", () => {
     await expect(more).toBeVisible({ timeout: 60_000 });
     await more.click();
     await expect(page.getByRole("menuitem", { name: /Undo Won't renew/ })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole("menuitem", { name: /Nudge|Voice note|Follow up/ })).toHaveCount(0);
+    /* R-2856: the items now read "Draft a WhatsApp message (AI)" / "Send a WhatsApp voice note" / "Follow up — …" */
+    await expect(page.getByRole("menuitem", { name: /Nudge|WhatsApp|[Vv]oice note|Follow up/ })).toHaveCount(0);
   });
 
   test("Step 3: the customer page next best action says Won't renew · ends <date>", async ({ browser, baseURL }) => {

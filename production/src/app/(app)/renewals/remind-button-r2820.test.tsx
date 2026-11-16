@@ -8,7 +8,7 @@
  * rows told nothing apart).
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, cleanup, screen, fireEvent } from "@testing-library/react";
+import { render, cleanup, screen, fireEvent, within } from "@testing-library/react";
 import { RenewalRemindButton, RenewalReminderDialog } from "./reminder-dialog";
 import { reminderButton, reminderPlan, reminderScope, REMINDER_SKIP, type RenewalRowLike, type RenewalSubLike } from "./reminders";
 
@@ -42,7 +42,7 @@ describe("R-2820 reminderButton: counts only rows it can send, names the view, r
     const rows = [row("Due A", 3), row("Due B", 12), row("Late", -20)];
     const plan = reminderPlan(rows, { today: TODAY, tenantGraceDays: 0, emailOf });
     const b = reminderButton(reminderScope(0, "8–30", rows.length), plan);
-    expect(b.label).toBe("Remind 2 in 8–30");
+    expect(b.label).toBe("Remind 2 of 3 in 8–30");   // R-2856: N of M when a row is left out
     expect(b.disabled).toBe(false);
     expect(b.reason).toContain(`1 ${REMINDER_SKIP.pastGrace}`);
   });
@@ -50,7 +50,7 @@ describe("R-2820 reminderButton: counts only rows it can send, names the view, r
   it("a tab label reads 'in <tab>'; ticked rows read 'of N selected' when some can't go", () => {
     const rows = [row("Due A", 3), row("Wont", 5, { auto_renew: false })];
     const plan = reminderPlan(rows, { today: TODAY, emailOf });
-    expect(reminderButton(reminderScope(0, "≤7 days", 2), plan).label).toBe("Remind 1 in ≤7 days");
+    expect(reminderButton(reminderScope(0, "≤7 days", 2), plan).label).toBe("Remind 1 of 2 in ≤7 days");   // R-2856
     expect(reminderButton(reminderScope(2, "≤7 days", 2), plan).label).toBe("Remind 1 of 2 selected");
     const all = reminderPlan([row("Due A", 3)], { today: TODAY, emailOf });
     expect(reminderButton(reminderScope(1, "≤7 days", 2), all).label).toBe("Remind 1 selected");
@@ -126,6 +126,9 @@ describe("R-2820 dialog: the skipped list names the product next to the customer
     const plan = reminderPlan(rows, { today: TODAY, emailOf });
     render(<RenewalReminderDialog state={{ scope: reminderScope(0, "Overdue", 3), ...plan }} onClose={() => {}} onSend={async () => ({ sent: 0, stub: false, failed: [] })} />);
     const skipped = screen.getByRole("region", { name: "Skipped" });
-    expect(skipped.textContent).toContain("CT R2737 Renewals Pvt Ltd · Google Workspace, CT R2737 Renewals Pvt Ltd · Microsoft 365, Solo");
+    /* R-2856: one line per subscription (was one comma paragraph) */
+    expect(within(skipped).getAllByTestId("reminder-skip-row").map((li) => li.textContent)).toEqual([
+      "CT R2737 Renewals Pvt Ltd · Google WorkspaceOverdue 20d", "CT R2737 Renewals Pvt Ltd · Microsoft 365Overdue 20d", "SoloOverdue 20d",
+    ]);
   });
 });
