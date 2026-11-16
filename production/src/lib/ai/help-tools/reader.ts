@@ -48,6 +48,13 @@ export class HelpReadRefused extends Error {
   constructor(why: string) { super(`help reader refused: ${why}`); this.name = "HelpReadRefused"; }
 }
 
+/**
+ * A like / ilike pattern made by containsPattern() / startsWithPattern() from ONE literal word
+ * (R-2882, review of R-2879 note a). Opaque: the text lives in a private map, so a tool cannot
+ * hand the reader its own "%…" — and a % _ * or  typed by the person matches only itself.
+ */
+export interface HelpLikePattern { readonly __helpLikePattern: unique symbol }
+
 export interface HelpReadResult<Row> { data: Row[] | null; error: { message: string } | null; count: number | null }
 
 /** A read-only query: filters, order, paging, then await. Nothing else exists on it. */
@@ -60,7 +67,8 @@ export interface HelpQuery<Row> extends PromiseLike<HelpReadResult<Row>> {
   lte(column: string, value: unknown): HelpQuery<Row>;
   gt(column: string, value: unknown): HelpQuery<Row>;
   gte(column: string, value: unknown): HelpQuery<Row>;
-  ilike(column: string, pattern: string): HelpQuery<Row>;
+  /** `pattern` comes from containsPattern() / startsWithPattern() — a raw string is refused (R-2882). */
+  ilike(column: string, pattern: HelpLikePattern): HelpQuery<Row>;
   not(column: string, operator: string, value: unknown): HelpQuery<Row>;
   order(column: string, options?: { ascending?: boolean; nullsFirst?: boolean }): HelpQuery<Row>;
   range(from: number, to: number): HelpQuery<Row>;
@@ -94,6 +102,39 @@ export function assertReadableColumns(table: string, columns: unknown): string {
   if (!cols.length || cols.some((c) => !c)) throw new HelpReadRefused(`${table}: empty column in '${columns}'`);
   for (const c of cols) assertReadableColumn(table, c);
   return cols.join(",");
+}
+
+/** Longest literal search word for a pattern. */
+export const HELP_LIKE_WORD_MAX = 100;
+
+const PATTERN_TEXT = new WeakMap<object, string>();
+
+/**
+ * `word` as plain text inside a like / ilike pattern: \ % _ and * each get a backslash, so none is
+ * a wildcard (PostgREST also reads * as %). The backslash is escaped in the same pass, so an
+ * escape is never escaped again.
+ */
+export function likeLiteral(word: unknown): string {
+  if (typeof word !== "string" || !word.length || word.length > HELP_LIKE_WORD_MAX || hasControlChar(word)) {
+    throw new HelpReadRefused(`a search word must be 1-${HELP_LIKE_WORD_MAX} characters of plain text`);
+  }
+  return word.replace(/[\\%_*]/g, "\\$&");
+}
+
+function makePattern(text: string): HelpLikePattern {
+  const p = Object.freeze(Object.create(null)) as HelpLikePattern;
+  PATTERN_TEXT.set(p, text);
+  return p;
+}
+/** Matches rows whose column CONTAINS the word (case-insensitive with ilike). */
+export function containsPattern(word: unknown): HelpLikePattern { return makePattern(`%${likeLiteral(word)}%`); }
+/** Matches rows whose column STARTS WITH the word. */
+export function startsWithPattern(word: unknown): HelpLikePattern { return makePattern(`${likeLiteral(word)}%`); }
+
+function patternText(table: string, p: unknown): string {
+  const text = typeof p === "object" && p !== null ? PATTERN_TEXT.get(p) : undefined;
+  if (text === undefined) throw new HelpReadRefused(`${table}: a like / ilike pattern must be made with containsPattern() or startsWithPattern()`);
+  return text;
 }
 
 /** Operators not() may use — plain comparisons, no free-form filter text. */
@@ -220,8 +261,7 @@ function restrict<Row>(table: string, builder: Builder, nothing = false): HelpQu
   };
   q.ilike = (column: unknown, pattern: unknown) => {
     assertReadableColumn(table, column);
-    if (typeof pattern !== "string" || pattern.length > HELP_PATTERN_MAX || hasControlChar(pattern)) throw new HelpReadRefused(`${table}: ilike() pattern must be a string of at most ${HELP_PATTERN_MAX} characters`);
-    return next(builder.ilike(column, pattern));
+    return next(builder.ilike(column, patternText(table, pattern)));
   };
   q.not = (column: unknown, operator: unknown, value: unknown) => {
     assertReadableColumn(table, column);
@@ -229,6 +269,7 @@ function restrict<Row>(table: string, builder: Builder, nothing = false): HelpQu
     /* The reader writes the list itself — free text never becomes `not.in.(…)` (R-2879 finding 4). */
     const checked = operator === "in" ? notInList(table, value)
       : operator === "is" ? filterIs(table, value)
+      : operator === "like" || operator === "ilike" ? patternText(table, value)
       : filterScalar(table, `not ${operator}`, value);
     if (operator === "in" && checked === null) return next(builder);
     return next(builder.not(column, operator, checked));

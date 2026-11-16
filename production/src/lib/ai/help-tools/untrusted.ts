@@ -22,6 +22,8 @@
  * lines (tool name, link, "not allowed") outside them.
  */
 
+import { foldWithOwners } from "./fold";
+
 /** Longest single piece of row text (a name, a plan) placed inside a tool's sentence. */
 export const HELP_FREE_TEXT_MAX = 160;
 
@@ -54,11 +56,42 @@ function scrubLine(line: string): string {
     out += kind === "space" ? " " : ch;
     prev = c;
   }
-  out = out.replace(/<{2,}/g, "‹").replace(/>{2,}/g, "›");
-  /* Until none is left: removing one "untrusted data" can join the pieces of another. Each pass
-     makes the text shorter, so this ends. */
-  while (/untrusted[\s_-]*data/i.test(out)) out = out.replace(/untrusted[\s_-]*data/gi, "");
-  return out;
+  return neutraliseMarkers(out);
+}
+
+/**
+ * Cut every look-alike of one of our markers out of `text`, judged on the FOLDED form (R-2882,
+ * review of R-2879 finding 5): fullwidth / Unicode angle brackets, Cyrillic / Greek letters in
+ * "UNTRUSTED_DATA", and any short run of non-letters between the two words ("UNTRUSTED.DATA",
+ * "UNTRUSTED—DATA"). A run of two or more brackets becomes one ‹ or ›; the words are removed.
+ * Real text outside those spans — a Cyrillic name — stays as written. Removing one match can join
+ * the pieces of another, so it repeats; each pass makes the text shorter, and past MARKER_PASSES
+ * (only a deliberately nested attack gets there) the whole line is dropped.
+ */
+const MARKER_PASSES = 50;
+const MARKER_LIKE = /<{2,}|>{2,}|untrusted[^a-z]{0,6}data/g;
+function neutraliseMarkers(text: string): string {
+  let cur = text;
+  for (let pass = 0; pass < MARKER_PASSES; pass++) {
+    const { folded, owners, points } = foldWithOwners(cur);
+    const spans: { from: number; to: number; repl: string }[] = [];
+    for (const m of folded.matchAll(MARKER_LIKE)) {
+      const start = m.index ?? 0;
+      const from = owners[start];
+      const to = owners[start + m[0].length - 1] + 1;
+      if (spans.length && from < spans[spans.length - 1].to) continue;
+      spans.push({ from, to, repl: m[0][0] === "<" ? "‹" : m[0][0] === ">" ? "›" : "" });
+    }
+    if (!spans.length) return cur;
+    let next = "";
+    let at = 0;
+    for (const sp of spans) {
+      next += points.slice(at, sp.from).join("") + sp.repl;
+      at = sp.to;
+    }
+    cur = next + points.slice(at).join("");
+  }
+  return "";
 }
 
 /** Cut to `max` UTF-16 units without splitting a character; "…" marks the cut. */
