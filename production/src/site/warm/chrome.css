@@ -107,13 +107,22 @@
   background: var(--w-mint);
   color: var(--w-teal-dark) !important;
 }
-.anutech-site[data-site-theme="warm"] > header .nav-item > span[aria-hidden] {
-  display: inline-block;
-  color: currentColor !important;
-  opacity: .7;
-  transition: transform .25s cubic-bezier(.2, .8, .2, 1);
+/* The menus' caret: the design's 14px chevron (svg.nav-chev, w-only) in the item's own colour,
+   flipping when its menu opens — instead of Classic's 10px "▾" text glyph, which sat low, read
+   faint and changed shape with the font. The glyph is decoration (aria-hidden); allowed by name in
+   site-warm-scope.test.ts. */
+.anutech-site[data-site-theme="warm"] > header .nav-item > .nav-caret { display: none; }
+.anutech-site[data-site-theme="warm"] > header .nav-item > .nav-chev {
+  flex: none;
+  display: block;
+  margin-left: 1px;
+  color: currentColor;
+  transition: transform .15s ease;
 }
-.anutech-site[data-site-theme="warm"] > header .nav-item[aria-expanded="true"] > span[aria-hidden] { transform: rotate(180deg); }
+.anutech-site[data-site-theme="warm"] > header .nav-item[aria-expanded="true"] > .nav-chev { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] > header .nav-item > .nav-chev { transition: none; }
+}
 .anutech-site[data-site-theme="warm"] > header .nav-item:focus-visible { outline-offset: 0; }
 
 /* Cart: borderless 44px target with a cart glyph and a mint count pill (design). */

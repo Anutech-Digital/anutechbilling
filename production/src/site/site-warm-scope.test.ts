@@ -142,6 +142,9 @@ describe("site-warm.css never hides page content", () => {
      the text alternative): the grey placeholder bars and the pulsing dot, which the design does
      not draw. No words, no meaning. */
   const PEEK_DECOR = ['.anutech-site[data-site-theme="warm"] .hc .pk-skel', '.anutech-site[data-site-theme="warm"] .hc .pk-dot'];
+  /* The header menus' Classic "▾" glyph (aria-hidden decoration), replaced on Warm by the design's
+     chevron (svg.nav-chev, w-only) — the test below checks the replacement is there. */
+  const NAV_CARET = '.anutech-site[data-site-theme="warm"] > header .nav-item > .nav-caret';
 
   it("only ::before / ::after are ever hidden", () => {
     const offenders = rules
@@ -152,8 +155,15 @@ describe("site-warm.css never hides page content", () => {
       // are not page content; anything else hidden is.
       .filter((s) => !/\.w-[a-z0-9-]+(\[[^\]]*\])*\s*$/.test(s))
       .filter((s) => s !== HEADER_MENUS)
-      .filter((s) => !PEEK_DECOR.includes(s));
+      .filter((s) => !PEEK_DECOR.includes(s))
+      .filter((s) => s !== NAV_CARET);
     expect(offenders).toEqual([]);
+  });
+
+  it("the header's ▾ glyph it hides is decoration with the Warm chevron right beside it", () => {
+    const src = readFileSync(path.join(root, "src/site/components/chrome/Header.tsx"), "utf8");
+    expect(src).toMatch(/<span className="nav-caret" aria-hidden[^>]*>▾<\/span>/);
+    expect(src).toMatch(/<span className="nav-caret"[^\n]*\n[^\n]*\n\s*<svg className="w-only nav-chev" aria-hidden="true"/);
   });
 
   it("the ProductPeek decorations it hides are inside the aria-hidden drawing and carry no words", () => {

@@ -230,7 +230,9 @@ export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE }: {
                   boxShadow: isActive ? `inset 0 -2px 0 0 ${accent}` : "none",
                 }}
               >
-                {m.label} <span aria-hidden style={{ fontSize: 10, color: "var(--text-muted)" }}>▾</span>
+                {m.label} <span className="nav-caret" aria-hidden style={{ fontSize: 10, color: "var(--text-muted)" }}>▾</span>
+                {/* Warm theme only (w-only; hidden on Classic): the design's chevron, which replaces the ▾ there. */}
+                <svg className="w-only nav-chev" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
               </div>
             );
           })}
