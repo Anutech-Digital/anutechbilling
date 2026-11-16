@@ -10,15 +10,16 @@
  *     revised or released; a second renewal quote is still never offered (R-2232).
  */
 import {
-  renewalPrimary, MENU_LABEL, FOLLOW_UP,
+  renewalPrimary, MENU_LABEL, FOLLOW_UP, SEND_RENEWAL,
   type MenuItem, type PrimaryAction, type PrimaryContext, type PrimaryKind, type RenewalStage, type StageSub,
 } from "@/lib/renewals/stage";
 import { canRenewAnyway } from "@/lib/renewals/vendor-hold";
 
-export type StageMenuItem = MenuItem | "open-quote";
+/** "send-renewal" (R-2859): the row's own Send renewal, in ⋯ while the row's button is Bill together. */
+export type StageMenuItem = MenuItem | "open-quote" | "send-renewal";
 export type StageRunKind = PrimaryKind | StageMenuItem;
 
-export const STAGE_MENU_LABEL: Record<StageMenuItem, string> = { ...MENU_LABEL, "open-quote": "Open the closed quote" };
+export const STAGE_MENU_LABEL: Record<StageMenuItem, string> = { ...MENU_LABEL, "open-quote": "Open the closed quote", "send-renewal": SEND_RENEWAL };
 
 export interface StagePerms {
   canQuotes: boolean;
@@ -53,4 +54,34 @@ export function stageButtons(stage: RenewalStage, sub: StageSub, ctx: PrimaryCon
     menu.splice(at < 0 ? menu.length : at, 0, "renew-anyway");
   }
   return { primary, menu, graceOver: r.graceOver };
+}
+
+/**
+ * R-2859 — a row that Bill together suggests with others (the box above the queue, "Bills with …" on the row):
+ * its ONE button is "Bill together" — the same dialog the box opens — instead of its own Bill next part / Send
+ * renewal, which bills only that one subscription (staging 16 Nov: the box offered one bill for the pair while
+ * each row still offered its own Bill next part — two ways, and two proformas if both were pressed).
+ * Only the button that would bill THIS row alone is replaced: a parts group's Bill next part, a yearly group's Send
+ * renewal. Follow up / Record payment / Continue stay as they are. The row's own action moves to ⋯ (first) — Bill next
+ * part (ownerRule 3) / Send renewal — so one subscription can still be billed alone, with the same check-first path.
+ */
+export interface TogetherRowAction {
+  /** The suggested group's kind: "parts" = one proforma, "renewal" = one renewal quote (yearly). */
+  kind: "parts" | "renewal";
+  label: string;
+  title: string;
+  onClick: () => void;
+  /** The "is Bill together there?" check is still out: the button shows (no swap once it answers) but cannot be pressed. */
+  pending?: boolean;
+}
+
+const ALONE_KIND: Record<TogetherRowAction["kind"], PrimaryKind> = { parts: "bill-part", renewal: "send-renewal" };
+
+/** `together` in the result = the action the row's button runs (null = the row's own primary). */
+export function withTogether<T extends Pick<TogetherRowAction, "kind">>(b: StageButtons, together: T | null | undefined): StageButtons & { together: T | null } {
+  if (!together) return { ...b, together: null };
+  const alone = ALONE_KIND[together.kind];
+  if (b.primary?.kind !== alone) return { ...b, together: null };
+  const menu: StageMenuItem[] = b.menu.includes(alone as StageMenuItem) ? b.menu : [alone as StageMenuItem, ...b.menu];
+  return { ...b, menu, together };
 }

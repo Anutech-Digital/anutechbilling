@@ -51,7 +51,7 @@ import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { notRenewingDialog, followUpMenuLabel, type PrimaryContext, type PrimaryKind, type RenewalStage } from "@/lib/renewals/stage";
-import { stageButtons, STAGE_MENU_LABEL, type StageMenuItem, type StageRunKind } from "./stage-actions";
+import { stageButtons, withTogether, STAGE_MENU_LABEL, type StageMenuItem, type StageRunKind, type TogetherRowAction } from "./stage-actions";
 import { BillNextPartDialog, type BillNextChoice } from "./bill-next-part-dialog";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { createClient } from "@/lib/supabase/client";
@@ -126,6 +126,11 @@ export interface RenewalActionsProps {
    * reading the user: the buttons show disabled (R-2710: no click before the role is known).
    */
   viewer?: RenewalViewer | null;
+  /**
+   * R-2859: Bill together suggests this row with others of its customer (2+ still ticked in the box) → the row’s ONE
+   * button is "Bill together" (the box’s dialog) in place of its own Bill next part / Send renewal; null = its own button.
+   */
+  together?: TogetherRowAction | null;
 }
 
 /** R-2764: which control of the row was pressed — the row's button or an item of its ⋯. */
@@ -170,14 +175,14 @@ function LazyRenewalActions(props: RenewalActionsProps) {
     <StageActions
       stage={stage ?? null} name={sub.customer_name ?? "this customer"} layout={layout} strong={strong}
       busy={false} disabled={!viewer} pending={!viewer}
-      ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices}
+      ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices} together={props.together}
       /* follow-up needs nothing of the full component — no reason to mount it for that */
       onRun={(kind, from) => (kind === "follow-up" ? onFollowup?.() : setArmed({ kind, from }))}
     />
   );
 }
 
-function RenewalActionsLive({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId, stage, payHref, autoRun }: RenewalActionsLiveProps) {
+function RenewalActionsLive({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId, stage, payHref, autoRun, together }: RenewalActionsLiveProps) {
   const qc = useQueryClient();
   const router = useRouter();
   const confirm = useConfirm();
@@ -531,7 +536,7 @@ function RenewalActionsLive({ sub: raw, daysUntil, layout, strong = false, onFol
             stage={stage} name={name} layout={layout} strong={strong}
             busy={busy !== null || renewAnyway.busy || setNonRenewing.isPending}
             disabled={busy !== null || factsLoading} pending={factsLoading}
-            ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices}
+            ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices} together={together}
             onRun={onRun}
           />
         </div>
@@ -623,10 +628,11 @@ const PRIMARY_TITLE: Record<PrimaryKind, string> = {
 const MENU_ICON: Record<StageMenuItem, React.ComponentProps<typeof Icon>["name"]> = {
   "send-as-is": "mail", "bill-part": "plus", "record-payment": "rupee", "change-renewal": "edit", resend: "mail",
   "resend-invoice": "mail", "follow-up": "phone", nudge: "sparkles", voice: "whatsapp", "renew-anyway": "refresh",
-  "not-renewing": "x", "undo-wont-renew": "refresh", "view-subscription": "eye", "open-quote": "file",
+  "not-renewing": "x", "undo-wont-renew": "refresh", "view-subscription": "eye", "open-quote": "file", "send-renewal": "edit",
 };
 
 const MENU_TITLE: Partial<Record<StageMenuItem, string>> = {
+  "send-renewal": PRIMARY_TITLE["send-renewal"],
   "send-as-is": "Email the customer the renewal quote as it is, with its accept / pay link (asks first)",
   "bill-part": "Make the next period's proforma now — check seats, rate and how many periods first",
   "change-renewal": "The customer already has this quote — make a revision to edit and send; the old one stops accepting once it is sent",
@@ -641,7 +647,7 @@ const MENU_TITLE: Partial<Record<StageMenuItem, string>> = {
   "open-quote": "The renewal quote is closed — open it to revise it, or to release it before a new renewal",
 };
 
-function StageActions({ stage, sub, name, layout, strong, busy, disabled, pending = false, ctx, canQuotes, canPay, canInvoices, onRun }: {
+function StageActions({ stage, sub, name, layout, strong, busy, disabled, pending = false, ctx, canQuotes, canPay, canInvoices, onRun, together = null }: {
   stage: RenewalStage | null;
   sub: RenewalActionsSub;
   name: string;
@@ -656,6 +662,8 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, pendin
   canPay: boolean;
   canInvoices: boolean;
   onRun: (kind: StageRunKind, from: StageRunFrom) => void;
+  /** R-2859: the row is in a Bill together suggestion → that is its ONE button (withTogether decides). */
+  together?: TogetherRowAction | null;
 }) {
   /* Documents still loading: a placeholder — never a button that could act on a half-known row. */
   /* R-2825: a visibly disabled "Loading…" button (aria-busy + title) — not a grey block that looks like nothing and eats the click. */
@@ -667,7 +675,8 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, pendin
       </Button>
     );
   }
-  const { primary, menu } = stageButtons(stage, sub, ctx, { canQuotes, canPay, canInvoices });
+  /* R-2859: a row Bill together suggests with others bills them together — its own Bill next part moves to ⋯ */
+  const { primary, menu, together: tg } = withTogether(stageButtons(stage, sub, ctx, { canQuotes, canPay, canInvoices }), together);
   const grow = layout === "card" ? "flex-1" : undefined;
   /* R-2764 (R-2759 spec, 14 Nov): in the table the longest label ("Record payment") + ⋯ ran 4px past the
      184px Action column at 1280 — the table button is 12px narrower (padding + gaps), same words and icon. */
@@ -680,14 +689,15 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, pendin
           size="sm"
           className={cn("shrink-0", grow, tight && "gap-1.5 px-2")}
           loading={busy}
-          disabled={disabled}
-          aria-busy={pending || undefined}
-          onClick={() => onRun(primary.kind, "primary")}
-          title={pending ? "Loading… this button works in a moment" : PRIMARY_TITLE[primary.kind]}
+          disabled={disabled || !!tg?.pending}
+          aria-busy={pending || tg?.pending || undefined}
+          onClick={() => (tg ? tg.onClick() : onRun(primary.kind, "primary"))}
+          title={pending || tg?.pending ? "Loading… this button works in a moment" : tg ? tg.title : PRIMARY_TITLE[primary.kind]}
           data-testid="stage-primary"
+          data-together={tg ? true : undefined}
         >
-          <Icon name={PRIMARY_ICON[primary.kind]} size={12} />
-          {primary.label}
+          <Icon name={tg ? "plus" : PRIMARY_ICON[primary.kind]} size={12} />
+          {tg ? tg.label : primary.label}
         </Button>
       )}
       {menu.length > 0 && (

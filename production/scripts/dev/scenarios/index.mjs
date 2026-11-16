@@ -354,6 +354,16 @@ export const SCENARIOS = [
     ],
   },
   {
+    name: "bill-together-pair",
+    about: "R-2859: SCN Pair Works with two Google Workspace subscriptions on one domain, both billed monthly, annual term ended 5 days ago — SCN Pair Standard (3 seats) and SCN Pair Starter (7 seats). Renewals → Overdue: both rows are 'Part not billed' and Bill together suggests them (Same domain and period).",
+    cards: ["R-2859"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2859000-0000-4000-8000-000000000001"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1 },
+    pages: [
+      { path: "renewals", for: "R-2859 Overdue tab → SCN Pair Works: the Bill together box lists both; each row says 'Bills with …' and its ONE button is Bill together (Bill next part is in ⋯). Untick one in the box → both rows are back on Bill next part" },
+    ],
+  },
+  {
     name: "plan-change",
     about: "R-2227 card test's own customer SCN Plan Change Co: Google Workspace Business Starter (subscription 'SCN Plan Change Starter'), 10 seats × ₹3,240/yr paid yearly, annual term from the 1st two months ago, its invoice INV-SCN-PC-1 ₹38,232 paid in full. Change plan → E2E Google Workspace Business Standard credits the whole unused Starter value. A reload or --clear removes the customer, its subscription, quotes and invoices.",
     cards: ["R-2227"],
