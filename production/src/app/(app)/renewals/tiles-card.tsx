@@ -21,6 +21,12 @@ const TONE: Record<TileKey, string> = {
   renewedMonth: "text-emerald-ink",
 };
 
+/**
+ * R-2861: ONE row of six from a 1100px window up (was 1260 — a window or zoom level that reports 1100-1259 css px
+ * showed 3+3 and pushed the table ~75px down); 3+3 / 2+2+2 only below that. At the narrow end of the one-row
+ * range the label may be cut with "…" — the tile's tooltip carries the full label — the number and caption never are.
+ */
+export const TILE_GRID = "grid grid-cols-2 gap-2 md:grid-cols-3 min-[1100px]:grid-cols-6 min-[1100px]:gap-1.5 min-[1440px]:gap-2";
 const TILE_BOX = "min-w-0 rounded-lg border bg-paper px-2.5 py-2 text-left";
 const TILE_LABEL_CLS = "truncate text-3xs font-semibold uppercase tracking-wider text-ink-3";
 
@@ -56,7 +62,7 @@ export function RenewalTileRow({
   return (
     <div className="mb-3">
     <div
-      className="grid grid-cols-2 gap-2 md:grid-cols-3 min-[1260px]:grid-cols-6"
+      className={TILE_GRID}
       role="group"
       aria-label="Renewal totals — press one to list its renewals"
       aria-busy={loading && !failed ? true : undefined}
