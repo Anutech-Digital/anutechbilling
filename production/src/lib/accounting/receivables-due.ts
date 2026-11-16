@@ -171,7 +171,9 @@ export function subscriptionDuesLine(
   if (renewalDues <= 0 && (rowsOwed ?? 0) <= 0 && all.companiesTotal <= 0 && !projectsUnread) return null;
   const shown = rowsOwed ?? renewalDues;
   let line = rowsOwed != null
-    ? (shown > 0 ? `${rupee(shown)} still owed on these renewals` : "No renewal owed")
+    /* R-2855: names WHAT is owed — issued invoices still due + an instalment that is due and not invoiced yet (R-2818's
+       rule, lib/renewals/owed.ts) — so it is not read as the renewal value the tiles add up */
+    ? (shown > 0 ? `Bills and instalments due: ${rupee(shown)} unpaid on these renewals` : "No bill or instalment unpaid on these renewals")
     : (renewalDues > 0 ? `${rupee(renewalDues)} unpaid on these renewals` : "No renewal unpaid");
   if (projectsUnread) {
     // The subscription part was read fine — still name it; only the Companies total is left out.

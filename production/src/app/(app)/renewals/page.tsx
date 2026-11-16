@@ -589,7 +589,7 @@ const SELECT_CLS = "bg-paper border border-hairline rounded-md text-xs px-2.5 py
 export default function RenewalsPage() {
   const { data: subs, isLoading, error, refetch } = useSubscriptions();
   /* R-453: an open renewal quote whose link-back is missing still shows "Open quote". */
-  const { data: openRenewals, isLoading: openRenewalsLoading } = useOpenRenewalQuotes();
+  const { data: openRenewals, isLoading: openRenewalsLoading, isError: openRenewalsError } = useOpenRenewalQuotes();
   const openRenewalMap = React.useMemo(() => openRenewalQuoteMap(openRenewals ?? []), [openRenewals]);
   const quoteStatusMap = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
   const { data: me } = useCurrentUser();
@@ -619,7 +619,7 @@ export default function RenewalsPage() {
   /* R-2405: the pressed tile (null = the tabs) and this IST month's paid renewals. */
   const [tile, setTile] = React.useState<TileKey | null>(null);
   const month = monthOf(istToday(today));
-  const { data: monthQuotes } = useRenewalPaymentsForMonth(month);
+  const { data: monthQuotes, isLoading: monthQuotesLoading, isError: monthQuotesError } = useRenewalPaymentsForMonth(month);
 
   /* Rows on the page: their contacts and renewal quotes (hooks run before any early return).
      R-2586: every dated row — the Later (91+ days) tab lists the annual book past 90 days. */
@@ -628,7 +628,7 @@ export default function RenewalsPage() {
     .map((s) => withRenewalQuote(s, openRenewalMap)), [subs, openRenewalMap]);
   /* R-2753: isLoading — the Remind button waits for the contacts, so a customer with no email is never counted in "Email N". */
   const { data: contacts, isLoading: contactsLoading } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
-  const { data: quoteInfo, isLoading: quoteInfoLoading } = useRenewalQuoteInfo(listed.flatMap((s) => [s.renewal_quote_id, s.quote_id]));   // R-2767: + the sale quote (its currency)
+  const { data: quoteInfo, isLoading: quoteInfoLoading, isError: quoteInfoError } = useRenewalQuoteInfo(listed.flatMap((s) => [s.renewal_quote_id, s.quote_id]));   // R-2767: + the sale quote (its currency)
   /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
   const { data: fuData } = useRenewalFollowups(listed.map((s) => s.id), listed.map((s) => s.customer_id ?? ""));
   const { data: names } = useUserNames();
@@ -810,6 +810,12 @@ export default function RenewalsPage() {
   const paidSubs = new Set(paidRenewalsInMonth(monthQuotes ?? [], month).map((q) => q.renewal_subscription_id ?? ""));
   /* R-2741: each tile's tab rows = tile rows + the closed rows it leaves out (tiles.ts reconcileWindows). */
   const windows = reconcileWindows([...tileRowOf.values()], month);
+  /* R-2855: a row's status (Renewed / quote sent) is final only once its documents, linked quotes and this
+     month's paid renewals are read — until then the tiles are placeholders (they showed ₹2.9L, then ₹5.4L).
+     A read that FAILED with nothing to show is never final either: the tiles say "Couldn't load" (a failed
+     background re-read keeps the last good rows, so the numbers stay). */
+  const tilesLoading = lastDocsQ.isLoading || quoteInfoLoading || openRenewalsLoading || monthQuotesLoading;
+  const tilesFailed = docsState.failed || (quoteInfoError && !quoteInfo) || (openRenewalsError && !openRenewals) || (monthQuotesError && !monthQuotes);
 
   const bucketTab = resolved.tab;
   const shown = narrowed.tabs;
@@ -1040,7 +1046,13 @@ export default function RenewalsPage() {
             {duesLine && (
               <>
                 {" · "}
-                <Link href={drillHref("customersUnpaid") as Route} className="text-rose hover:underline" data-testid="renewals-dues-line">
+                {/* R-2855: the hover says what this figure is — and that it is not the tiles' renewal value */}
+                <Link
+                  href={drillHref("customersUnpaid") as Route}
+                  className="text-rose hover:underline"
+                  data-testid="renewals-dues-line"
+                  title="Invoices already raised on these renewals that are not fully paid, plus an instalment that is due and not invoiced yet. The tiles below show renewal value (the next term's bill) — a different number."
+                >
                   {duesLine}
                 </Link>
                 {/* R-2562: the project read failed — the line says so; this retries just that read. */}
@@ -1079,7 +1091,8 @@ export default function RenewalsPage() {
       </div>
 
       {/* R-2405: the tiles — count + renewal ₹ in the table's own money; a press lists those rows. */}
-      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} windows={windows} narrowed={filtered || search.trim() !== ""} />
+      {/* R-2855: placeholders until the reads the tiles' numbers come from are in — a number never changes after it shows */}
+      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} windows={windows} narrowed={filtered || search.trim() !== ""} loading={tilesLoading} failed={tilesFailed} />
 
       {/* R-2266: ONE strip, closed by default (remembered per user). R-2405: the tiles above carry
           the money and counts (one fact, one place) — the strip keeps the forecast and the
@@ -1089,7 +1102,7 @@ export default function RenewalsPage() {
         userId={me?.userId}
         title="Forecast"
         className="mb-4"
-        summary={<StripFact label="Next 6 months" value={rupee(forecast.totalAmount, { compact: true })} />}
+        summary={<StripFact label="Next 6 months" value={tilesLoading ? "…" : rupee(forecast.totalAmount, { compact: true })} />}
         extras={topRisk ? (
           <StripLink
             tone="rose"
@@ -1105,6 +1118,7 @@ export default function RenewalsPage() {
       >
         <ForecastPanel
           forecast={forecast}
+          loading={tilesLoading}
           atRiskCount={highRiskSubs.length}
           atRiskArr={groups.atRiskArr}
           topName={topRisk ? topHighRisk : null}
