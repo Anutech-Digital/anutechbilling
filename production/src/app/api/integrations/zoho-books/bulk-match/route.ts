@@ -19,7 +19,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { NOT_CONFIGURED_MESSAGE, SETTINGS_RETURN, ZOHO_FIND_ROLES, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
 import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
-import { getContact, ZohoApiError } from "@/lib/integrations/zoho-books/api";
+import { getContact, isZohoDayLimit, ZohoApiError, type ZohoDayLimitError } from "@/lib/integrations/zoho-books/api";
+import { releaseZohoReader, takeZohoReader, ZOHO_READER_HOLD_MS } from "@/lib/integrations/zoho-books/day-calls-store";
+import { ZOHO_RECONCILE_READER } from "@/lib/integrations/zoho-books/zoho-day-budget";
+import { zohoReaderBusyMessage } from "@/lib/integrations/zoho-books/zoho-limit";
 import {
   findZohoPayment, FX_DATE_WINDOW_DAYS, readZohoPaymentMatch, type RivalLine, type ZohoReadDeps,
 } from "@/lib/integrations/zoho-books/payment-match";
@@ -65,7 +68,7 @@ export async function POST(req: NextRequest) {
   const creds = zohoBooksCreds();
   if (!creds) return fail(503, "not_configured", NOT_CONFIGURED_MESSAGE, "This server has no Zoho Books app settings.", SETTINGS_NEXT);
 
-  const body = (await req.json().catch(() => ({}))) as { accountId?: unknown; txnIds?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { accountId?: unknown; txnIds?: unknown; last?: unknown };
   const accountId = typeof body.accountId === "string" ? body.accountId : "";
   if (!UUID_RE.test(accountId)) return fail(400, "bad_request", "No bank account was given.", "The page did not say which account to reconcile.", { label: "Reload the page" });
   const txnIds = Array.isArray(body.txnIds) ? body.txnIds.filter((x): x is string => typeof x === "string" && UUID_RE.test(x)) : null;
@@ -137,6 +140,15 @@ export async function POST(req: NextRequest) {
   const { data: custData } = await caller.admin.from("customers").select("id, name, gstin").eq("tenant_id", caller.tenantId);
   const appCustomers = (custData ?? []) as Array<{ id: string; name: string; gstin: string | null }>;
 
+  /* R-2661: one Zoho reader at a time per company — refused with the running read's name before any
+     Zoho call. The lease stays while the sheet goes on (every page renews it; a closed sheet's runs out
+     in a few minutes); a stop by the day budget or a failure lets it go at once. */
+  const readerHolder = await takeZohoReader(caller.admin, caller.tenantId, ZOHO_RECONCILE_READER, Date.now() + ZOHO_READER_HOLD_MS);
+  if (readerHolder) {
+    return fail(409, "reader_busy", zohoReaderBusyMessage(readerHolder), "Two Zoho reads at once use up Zoho's daily limit twice as fast.", { label: "Press Continue when that read is done" });
+  }
+  const letGo = async <R>(res: R): Promise<R> => { await releaseZohoReader(caller.admin, caller.tenantId, ZOHO_RECONCILE_READER); return res; };
+
   let zohoCalls = 0;
   const counted: typeof fetch = (input, init) => { zohoCalls += 1; return fetch(input, init); };
   let token = await zohoAccessToken(caller, conn.refreshToken, creds);
@@ -184,10 +196,13 @@ export async function POST(req: NextRequest) {
 
   /* R-2419: each row carries what the app already has for its customer (open quotes, opening
      invoices, recent receipts, billed periods) — the plan's double-booking checks need it. */
-  const answer = async (stopped: boolean) => {
+  const answer = async (stopped: boolean, dayLimit?: ZohoDayLimitError) => {
     try {
       const rows = await attachCustomerFacts(out, caller, createClient() as unknown as Parameters<typeof attachCustomerFacts>[2], appCustomers);
-      return NextResponse.json({ ok: true, rows, skipped, zohoCalls, ...(stopped ? { stopped: { code: "busy", message: "Zoho is busy — waiting a minute, then it carries on." } } : {}) });
+      /* R-2661: dayLimit = the app's own day budget is used (no call was made) — the sheet stops at once. */
+      const day = dayLimit ? { dayLimit: { calls: dayLimit.day.calls, budget: dayLimit.day.budget, retryAt: dayLimit.day.retryAt, day: dayLimit.day.day } } : {};
+      const stop = dayLimit ? { stopped: { code: "day_limit", message: dayLimit.message } } : stopped ? { stopped: { code: "busy", message: "Zoho is busy — waiting a minute, then it carries on." } } : {};
+      return NextResponse.json({ ok: true, rows, skipped, zohoCalls, ...stop, ...day });
     } catch (e) {
       const what = e instanceof FactsReadError ? e.message : "the app's records";
       return fail(500, "read_failed", `Could not read ${what} for these customers.`,
@@ -201,19 +216,23 @@ export async function POST(req: NextRequest) {
       try {
         out.push(await withRetry(() => planOne(line, payments)));
       } catch (e) {
+        if (isZohoDayLimit(e)) return letGo(await answer(true, e));
         if (e instanceof ZohoApiError && (e.code === "busy" || e.status === 429)) return answer(true);
         throw e;
       }
     }
-    return answer(false);
+    /* The sheet's last page read to the end: the reader lease is let go (else it stays for the next page). */
+    return body.last === true ? letGo(await answer(false)) : answer(false);
   } catch (e) {
+    if (isZohoDayLimit(e)) return letGo(await answer(true, e));
+    if (e instanceof ZohoApiError && (e.code === "busy" || e.status === 429)) return answer(true);
+    await releaseZohoReader(caller.admin, caller.tenantId, ZOHO_RECONCILE_READER);
     if (e instanceof ZohoApiError) {
       if (e.status === 401 || e.code === "reconnect") {
         return fail(502, "reconnect", "Zoho Books did not let ResellerOS read payments.",
           "The Zoho connection has ended, or it was made before payment reading was added (2 Nov 2026).",
           { label: "Disconnect and connect Zoho Books again", href: SETTINGS_RETURN });
       }
-      if (e.code === "busy" || e.status === 429) return answer(true);
       return fail(502, "zoho_error", e.message, "Zoho Books answered with an error.", { label: "Press Continue to try again" });
     }
     return fail(502, "zoho_error", "Could not read from Zoho Books.", "The lookup stopped part way.", { label: "Press Continue to try again" });

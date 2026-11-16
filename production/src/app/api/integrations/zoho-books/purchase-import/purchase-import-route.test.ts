@@ -23,6 +23,16 @@ const st = vi.hoisted(() => ({
   saved: {} as Record<string, string>,
   savedUse: [] as string[],
   mapsSeen: [] as Array<Record<string, string>>,
+  /* R-2661: the one-reader lease calls, who holds it (null = free), and what one read step answers. */
+  readerRpcs: [] as Array<[string, Record<string, unknown>]>,
+  readerHolder: null as string | null,
+  scanSteps: 0,
+  scanResult: { listed: 3, detailed: 3, listDone: true, complete: true, busy: false, calls: 2 } as Record<string, unknown>,
+}));
+
+vi.mock("@/lib/integrations/zoho-books/fy-import/scan", async (orig) => ({
+  ...(await orig<typeof import("@/lib/integrations/zoho-books/fy-import/scan")>()),
+  scanStep: async () => { st.scanSteps += 1; return st.scanResult; },
 }));
 
 vi.mock("@/lib/integrations/zoho-books/fy-import/account-choices", async (orig) => ({
@@ -31,7 +41,9 @@ vi.mock("@/lib/integrations/zoho-books/fy-import/account-choices", async (orig) 
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
-  resolveZohoCaller: async () => (st.role === null ? null : { userId: "u1", tenantId: "t1", role: st.role, canManage: true, admin: {} }),
+  resolveZohoCaller: async () => (st.role === null ? null : { userId: "u1", tenantId: "t1", role: st.role, canManage: true, admin: {
+    rpc: async (fn: string, args: Record<string, unknown>) => { st.readerRpcs.push([fn, args]); return { data: fn === "zoho_reader_take" ? st.readerHolder : true, error: null }; },
+  } }),
   readConnection: async () => ({ refreshToken: "rt", orgId: "600", orgName: "Org", connectedAt: null }),
   zohoAccessToken: async () => "access",
   dropZohoAccessToken: async () => {},
@@ -98,6 +110,8 @@ beforeEach(() => {
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
   st.targets = new Map();
   st.saved = {}; st.savedUse = []; st.mapsSeen = [];
+  st.readerRpcs = []; st.readerHolder = null; st.scanSteps = 0;
+  st.scanResult = { listed: 3, detailed: 3, listDone: true, complete: true, busy: false, calls: 2 };
 });
 
 describe("R-2502 purchase-import route", () => {
@@ -216,5 +230,45 @@ describe("R-2704 purchase-import route — the paid-from choice is remembered pe
     const res = await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "x", choice: "none" }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/open accounts/);
+  });
+});
+
+describe("R-2661 purchase-import route — one Zoho reader at a time", () => {
+  const readerCalls = () => st.readerRpcs.map(([fn]) => fn);
+  const env = () => { vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "id"); vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "secret"); };
+
+  it("read while another read holds the company's lease: refused 409 with its name; no read step runs", async () => {
+    env();
+    st.readerHolder = "FY 2025-26 receipts from Zoho";
+    try {
+      const res = await POST(req({ action: "read", fy: "2025-26", kind: "bills" }));
+      const body = await res.json();
+      expect(res.status).toBe(409);
+      expect(body.error).toContain("Another Zoho read is running for this company: FY 2025-26 receipts from Zoho.");
+      expect(st.scanSteps).toBe(0);
+      expect(readerCalls()).toEqual(["zoho_reader_take"]);
+      expect(st.readerRpcs[0][1]).toMatchObject({ p_tenant: "t1", p_name: "FY 2025-26 purchases from Zoho" });
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("bills / expenses / vendor payments are ONE read: the lease stays when bills or expenses are complete and is let go when vendor payments (the last) are; a part-read kind keeps it", async () => {
+    env();
+    try {
+      for (const kind of ["bills", "expenses"]) {
+        st.readerRpcs = [];
+        const res = await POST(req({ action: "read", fy: "2025-26", kind }));
+        expect((await res.json())).toMatchObject({ ok: true, kind, complete: true });
+        expect(readerCalls()).toEqual(["zoho_reader_take"]);
+      }
+      st.readerRpcs = [];
+      st.scanResult = { listed: 9, detailed: 4, listDone: true, complete: false, busy: false, calls: 5 };
+      await POST(req({ action: "read", fy: "2025-26", kind: "vendorpayments" }));
+      expect(readerCalls()).toEqual(["zoho_reader_take"]);
+      st.readerRpcs = [];
+      st.scanResult = { listed: 9, detailed: 9, listDone: true, complete: true, busy: false, calls: 5 };
+      await POST(req({ action: "read", fy: "2025-26", kind: "vendorpayments" }));
+      expect(readerCalls()).toEqual(["zoho_reader_take", "zoho_reader_release"]);
+      expect(st.readerRpcs[1][1]).toEqual({ p_tenant: "t1", p_name: "FY 2025-26 purchases from Zoho" });
+    } finally { vi.unstubAllEnvs(); }
   });
 });

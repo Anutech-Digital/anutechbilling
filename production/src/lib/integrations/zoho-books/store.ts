@@ -14,6 +14,8 @@ import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { decryptTenantSecrets, sealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { canManageZohoBooks, type ZohoCreds } from "./config";
 import { forgetAccessToken, getAccessToken, invalidateAccessToken, type TokenStore } from "./token-cache";
+import { registerDayMeter } from "./zoho-day-budget";
+import { tenantDayMeter } from "./day-calls-store";
 
 type Db = ReturnType<typeof createAdminClientFor>;
 
@@ -147,9 +149,12 @@ export function tenantTokenStore(admin: Db, tenantId: string): TokenStore {
   };
 }
 
-/** The access token for this caller's connection — cached, minted at most once at a time. */
-export function zohoAccessToken(caller: Pick<ZohoCaller, "admin" | "tenantId">, refreshToken: string, creds: ZohoCreds): Promise<string> {
-  return getAccessToken(caller.tenantId, refreshToken, creds, tenantTokenStore(caller.admin, caller.tenantId));
+/** The access token for this caller's connection — cached, minted at most once at a time.
+ *  R-2661: the token is registered to this tenant's day meter, so api.ts counts (and stops) every call made with it. */
+export async function zohoAccessToken(caller: Pick<ZohoCaller, "admin" | "tenantId">, refreshToken: string, creds: ZohoCreds): Promise<string> {
+  const token = await getAccessToken(caller.tenantId, refreshToken, creds, tenantTokenStore(caller.admin, caller.tenantId));
+  registerDayMeter(token, tenantDayMeter(caller.admin, caller.tenantId));
+  return token;
 }
 
 /** Zoho said 401 to a cached token: forget it so the next call mints a fresh one. */
