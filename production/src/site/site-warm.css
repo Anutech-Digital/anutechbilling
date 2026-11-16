@@ -457,8 +457,47 @@
   .anutech-site[data-site-theme="warm"] .hc .hc-card:hover, .anutech-site[data-site-theme="warm"] .hc .hc-card:hover .hc-card-img img,
   .anutech-site[data-site-theme="warm"] .hc .hc-card:hover .hc-card-cta > span { transform: none; }
 }
-/* "Resell licences yourself?" — a quiet line under the cards with the two links as text buttons. */
-.anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller { margin: 24px 0 0; font-size: 15px; color: var(--w-muted); }
+/* Bento (owner, 16 Nov 2026: "improve it further"), from 1100px: Business email — the lead product —
+   is the tall featured card (two rows, the photo takes the extra height); Domains and Web hosting sit
+   beside it; SSL & security runs wide under them, photo on the left and its text on the right. The
+   heading and its intro split into two columns. Same cards, same order (Tab order unchanged). */
+@media (min-width: 1100px) {
+  .anutech-site[data-site-theme="warm"] .hc .hc-it {
+    display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); column-gap: 48px; align-items: end;
+  }
+  .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-eyebrow { grid-column: 1; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-h2 { grid-column: 1; margin-bottom: 0; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-sub { grid-column: 2; grid-row: 2; margin: 0; justify-self: end; max-width: 520px; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-it > :is(.hc-grid4, .hc-reseller) { grid-column: 1 / -1; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-grid4 {
+    margin-top: clamp(28px, 3vw, 40px);
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr); grid-auto-rows: auto;
+  }
+  /* Featured: Business email */
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) { grid-row: 1 / span 2; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-img { flex: 1 1 auto; height: auto; min-height: 300px; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-img img { object-position: left top; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-name { font-size: 26px; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-price span { font-size: 40px; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-body { flex: 0 0 auto; font-size: 15.5px; max-width: 420px; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-w-card-ico { width: 60px; height: 60px; margin-top: -30px; }
+  /* Wide: SSL & security — photo left, text right */
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) {
+    grid-column: 2 / span 2; display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
+    column-gap: 28px; padding: 24px 24px 20px 0; align-content: start;
+  }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > * { grid-column: 2; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > .hc-card-img {
+    grid-column: 1; grid-row: 1 / span 7; height: auto; min-height: 220px; margin: -24px 0 -20px; border-bottom: 0; border-right: 1px solid var(--w-line);
+  }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > .hc-w-card-ico { margin: 0 0 12px; border: 0; width: 48px; height: 48px; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > .hc-card-cta { align-self: end; }
+}
+/* "Resell licences yourself?" — a soft bar under the cards, the two links as teal text buttons. */
+.anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller {
+  margin: 20px 0 0; padding: 14px 20px; border-radius: 16px; background: var(--w-mint-soft); border: 1px solid #D6EAE2;
+  font-size: 15px; color: var(--w-ink-2);
+}
 .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller a { color: var(--w-teal); font-weight: 700; text-underline-offset: 3px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller a:hover { color: var(--w-teal-dark); text-decoration: underline; }
 
