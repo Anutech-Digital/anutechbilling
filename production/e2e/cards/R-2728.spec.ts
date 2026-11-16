@@ -92,8 +92,15 @@ test.describe("R-2728 card test", () => {
     const chip = r.getByTestId("stage-chip");
     await expect(chip).toContainText("Quote sent", { timeout: 60_000 });
     await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });   // the role is read (the chip link depends on it)
-    await expect(r.getByTestId("stage-line2")).toContainText("Overdue 5d");
+    /* R-2854 / R-2857: the day count is no longer a line under the chip (a flag such as "Hold at Google — unpaid"
+       takes that place): it is the chip's tooltip and the Due column's "5d ago" */
+    await expect(chip).toHaveAttribute("title", /Overdue 5d/);
+    await expect(r.locator('[data-cell="due"]')).toContainText("5d ago");
     await expect(r.getByTestId("stage-chip-quote")).toHaveAttribute("href", "/quotes/Q-CT2728-REN");
+    /* R-2854: the renewal quote is also the Product column's quote line — number (opens the quote) + state + date */
+    await expect(r.getByTestId("renewal-row-quote")).toHaveAttribute("data-quote", "Q-CT2728-REN");
+    await expect(r.getByTestId("renewal-row-quote-number")).toHaveAttribute("href", "/quotes/Q-CT2728-REN");
+    await expect(r.getByTestId("renewal-row-quote-state")).toContainText("Sent");
     /* R-2767 (changed expectation): 10 days of validity left is not row news — the Due cell shows it only at
        3 days or less / expired; the drawer says it while the quote is with the customer */
     await expect(r.getByTestId("due-quote-expiry")).toHaveCount(0);
@@ -107,15 +114,20 @@ test.describe("R-2728 card test", () => {
 
   test("Step 2: the 'Bill next part' row shows its part proforma clickable and stays as 'Renewal quote sent' (not 'Renewed'), 'No expiry set'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
-    const r = await rowOf(page, "later", "CT R2728 Parts Plan");
+    /* R-2858 / R-2862: a part-billed row sits on the tab of the part's OWN due date (5 days ago = Overdue), not the
+       renewal date a year out ("Later") — Due date, period and tab agree */
+    const r = await rowOf(page, "overdue", "CT R2728 Parts Plan");
     await expect(r.getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
     await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
     await expect(r.getByText("Renewed", { exact: true })).toHaveCount(0);
     /* R-2760: a part proforma has no validity — the Due column keeps its own day words (no expiry line) */
     await expect(r.getByTestId("due-quote-expiry")).toHaveCount(0);
     /* due on the part's own date (5 days ago), not the renewal date a year out */
-    await expect(r.getByTestId("stage-line2")).toContainText("Overdue 5d");
+    await expect(r.getByTestId("stage-chip")).toHaveAttribute("title", /Overdue 5d/);
+    await expect(r.locator('[data-cell="due"]')).toContainText("5d ago");
     await expect(r.getByTestId("stage-chip-quote")).toHaveAttribute("href", "/quotes/PI-CT2728-1");
+    /* R-2854: the Product column's quote line names the same part proforma */
+    await expect(r.getByTestId("renewal-row-quote")).toHaveAttribute("data-quote", "PI-CT2728-1");
   });
 
   test("Step 3: status filter 'Quote sent (N)' (R-2760: the stage) lists exactly those rows; the unsent overdue row is not in it", async ({ browser, baseURL }) => {
