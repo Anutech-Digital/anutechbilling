@@ -5,8 +5,7 @@
  *
  * Renders one wrapper with `display: contents`, so it never creates a box: on Classic the page lays
  * out exactly as before. It carries `data-site-theme` (what the warm stylesheets and the w-only gate
- * key on) and the Warm fonts' CSS variables, and on Warm it applies a saved light/dark choice before
- * paint, like the website's own layout.
+ * key on) and the Warm fonts' CSS variables.
  *
  * Pages shared by every reseller (quote accept/view, enquiry, project quote) are deliberately NOT
  * wrapped: they show other resellers' customers, and the Warm design is Anutech's own.
@@ -14,7 +13,6 @@
 import { siteWarmBody, siteWarmHeading } from "@/lib/fonts";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { getWebsiteTheme } from "@/lib/website-theme.server";
-import { THEME_BOOT_SCRIPT } from "@/site/components/chrome/ThemeSwitch";
 import { WarmSiteChrome } from "@/site/components/chrome/WarmSiteChrome";
 import "@/site/warm-only.css";
 import "@/site/site-warm.css";
@@ -41,7 +39,6 @@ export async function WarmScope({ children, kind, siteChrome = false }: WarmScop
       data-site-theme={theme}
       style={{ display: "contents" }}
     >
-      {theme === "warm" && <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />}
       {theme === "warm" && siteChrome ? <WarmSiteChrome>{children}</WarmSiteChrome> : children}
     </div>
   );

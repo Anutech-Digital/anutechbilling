@@ -18,15 +18,11 @@ const warmFiles = ["src/site/site-warm.css", ...readdirSync(warmDir).filter((f) 
 const css = warmFiles.map((f) => readFileSync(path.join(root, f), "utf8")).join("\n");
 const layout = readFileSync(path.join(root, "src/app/(marketing)/layout.tsx"), "utf8");
 
-/** The company site's wrapper, or the ResellerOS product site's ((product)/layout.tsx); a dark
- *  variant may put the root's data-theme in front. Nothing else can match a warm rule. */
+/** The company site's wrapper, or the ResellerOS product site's ((product)/layout.tsx). Nothing
+ *  else can match a warm rule — and no root prefix: Warm is light only (owner, 16 Nov 2026: the
+ *  light/dark switch and the dark variant were removed), so a ":root[data-theme=…]" rule fails here. */
 const SCOPES = ['.anutech-site[data-site-theme="warm"]', '.anutech-product[data-site-theme="warm"]', '.w-scope[data-site-theme="warm"]'];
-const inScope = (sel: string) =>
-  SCOPES.some((sc) =>
-    sel.startsWith(sc) ||
-    sel.startsWith(`:root[data-theme="dark"] ${sc}`) ||
-    // device-dark default: only when the visitor has not picked light (inside a prefers-color-scheme block)
-    sel.startsWith(`:root:not([data-theme="light"]) ${sc}`));
+const inScope = (sel: string) => SCOPES.some((sc) => sel.startsWith(sc));
 
 /** Split a selector list on top-level commas only — a comma inside :is()/:has()/:not(), however
  *  deeply nested, belongs to that selector (a one-level regex split cut ":has(a:nth-child(3), b)"). */
@@ -70,6 +66,14 @@ describe("site-warm.css is opt-in only", () => {
   it("every selector starts with the warm scope", () => {
     const unscoped = list.filter((s) => !inScope(s));
     expect(unscoped).toEqual([]);
+  });
+
+  /* Warm is light only (owner, 16 Nov 2026: remove the light/dark switch and its functionality).
+     A dark rule would show only on dark-mode devices — with no switch to get back to light. */
+  it("has no dark mode: no prefers-color-scheme block and no data-theme selector", () => {
+    const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code).not.toMatch(/prefers-color-scheme/);
+    expect(code).not.toMatch(/\[data-theme=/);
   });
 });
 

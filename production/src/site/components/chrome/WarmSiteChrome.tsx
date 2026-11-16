@@ -24,7 +24,6 @@ import { domainRenewals } from "@/site/lib/renewal-line";
 import "@/site/site.css";
 import "@/site/site-warm.css";
 import "@/site/warm/chrome.css";
-import "@/site/warm/switch.css";
 import "@/site/warm/whatsapp.css";
 
 export async function WarmSiteChrome({ children }: { children: React.ReactNode }) {
@@ -37,7 +36,7 @@ export async function WarmSiteChrome({ children }: { children: React.ReactNode }
       <div className={site} data-site-theme="warm" style={{ display: "contents" }}>
         <CartProvider domainRenewals={domainRenewals(tlds)}>
           <UtilityBar />
-          <Header emailFrom={emailFrom} domainTeaser={domainTeaser(tlds)} warm />
+          <Header emailFrom={emailFrom} domainTeaser={domainTeaser(tlds)} />
           <CartDrawer />
         </CartProvider>
       </div>

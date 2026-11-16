@@ -61,7 +61,7 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style^="color: rgb(124, 45, 18)"]),
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="; color: rgb(124, 45, 18)"]) { color: var(--w-teal-dark) !important; }
 
-/* The component's white (C.card "#fff") is the warm card colour — same in light, the dark card in dark. */
+/* The component's white (C.card "#fff") is the warm card colour. */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#fff"]),
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background: rgb(255, 255, 255)"]) { background: var(--w-surface) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#FDFBF8"]),
@@ -508,42 +508,3 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#included > div:last-child > div > .dm-tile { margin-bottom: 12px; background: var(--w-marigold-soft); color: var(--w-marigold-ink); }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#included > div:last-child > div:nth-child(even) > .dm-tile { background: var(--w-mint); color: var(--w-teal); }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#included > div:last-child > div:last-child > .dm-tile { background: var(--w-marigold); color: var(--w-on-marigold); }
-
-/* ════════════════════════════════════════════════════════════════════════════════════════════
-   DARK — /domains (search, result, rate card, cards)
-   The same rules twice: once for a visitor who chose dark (data-theme="dark"), once for a
-   device in dark mode when the visitor has not chosen light. Light is untouched.
-   ════════════════════════════════════════════════════════════════════════════════════════════ */
-/* The selected search tab is the card colour; its forest text would vanish on the dark card. */
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search [role="tab"][aria-selected="true"] { color: var(--w-teal) !important; }
-/* The light hairlines and tints this file paints (#EEF2EE, #B9DCCF, the marigold card's cream). */
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#F3ECE5"], [style*="background: rgb(243, 236, 229)"]) { background: var(--w-surface-2) !important; }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #FBD3B8"], [style*="dashed #FBD3B8"], [style*="solid rgb(251, 211, 184)"], [style*="dashed rgb(251, 211, 184)"], [style*="solid #BBF7D0"], [style*="dashed #BBF7D0"], [style*="solid rgb(187, 247, 208)"], [style*="dashed rgb(187, 247, 208)"]) { border-color: var(--w-mint) !important; }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form ~ div[style*="overflow"] > div:first-child { border-bottom-color: var(--w-line) !important; }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(2) > div:last-child > div:nth-child(2) > div { border-bottom-color: var(--w-line) !important; }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates tbody tr { border-bottom-color: var(--w-line) !important; }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates tbody tr:hover { background: rgba(94, 208, 179, 0.06); }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div::before { border-color: rgba(244, 183, 64, 0.14); }
-/* Extras: the "not sure" rule on the dark marigold card. */
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure { border-top-color: rgba(244, 183, 64, 0.22); }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child > div { border-color: rgba(244, 183, 64, 0.22) !important; box-shadow: none; }
-/* Teal fills (the classic dark/orange buttons and badges) carry the dark text that reads on the light teal. */
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :is([style*="background:#C2410C"], [style*="background: rgb(194, 65, 12)"], [style*="background:#17120F"], [style*="background: rgb(23, 18, 15)"]) { color: var(--w-on-teal) !important; }
-@media (prefers-color-scheme: dark) {
-  /* The selected search tab is the card colour; its forest text would vanish on the dark card. */
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search [role="tab"][aria-selected="true"] { color: var(--w-teal) !important; }
-  /* The light hairlines and tints this file paints (#EEF2EE, #B9DCCF, the marigold card's cream). */
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="background:#F3ECE5"], [style*="background: rgb(243, 236, 229)"]) { background: var(--w-surface-2) !important; }
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :where([style*="solid #FBD3B8"], [style*="dashed #FBD3B8"], [style*="solid rgb(251, 211, 184)"], [style*="dashed rgb(251, 211, 184)"], [style*="solid #BBF7D0"], [style*="dashed #BBF7D0"], [style*="solid rgb(187, 247, 208)"], [style*="dashed rgb(187, 247, 208)"]) { border-color: var(--w-mint) !important; }
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) #search form ~ div[style*="overflow"] > div:first-child { border-bottom-color: var(--w-line) !important; }
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(2) > div:last-child > div:nth-child(2) > div { border-bottom-color: var(--w-line) !important; }
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates tbody tr { border-bottom-color: var(--w-line) !important; }
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#rates tbody tr:hover { background: rgba(94, 208, 179, 0.06); }
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div::before { border-color: rgba(244, 183, 64, 0.14); }
-  /* Extras: the "not sure" rule on the dark marigold card. */
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) .dm-unsure { border-top-color: rgba(244, 183, 64, 0.22); }
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child > div { border-color: rgba(244, 183, 64, 0.22) !important; box-shadow: none; }
-  /* Teal fills (the classic dark/orange buttons and badges) carry the dark text that reads on the light teal. */
-  :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :is([style*="background:#C2410C"], [style*="background: rgb(194, 65, 12)"], [style*="background:#17120F"], [style*="background: rgb(23, 18, 15)"]) { color: var(--w-on-teal) !important; }
-}
-

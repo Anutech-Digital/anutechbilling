@@ -496,55 +496,9 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════════════════════════════
-   DARK — only what the tokens above cannot carry (a light photo band, borders and text that
-   are literal light-mode colours, logos with dark lettering). Written once per prefix: the
-   header switch (data-theme="dark") and the device setting (prefers-color-scheme) when the
-   visitor has not chosen light.
-   ════════════════════════════════════════════════════════════════════════════════════════════ */
-
-/* /email — migration band: the photo under a dark ground tint instead of the light one. */
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) {
-  background-color: var(--w-bg) !important;
-  background-image: linear-gradient(90deg, rgba(30,38,35,0.96) 0%, rgba(30,38,35,0.9) 45%, rgba(30,38,35,0.74) 100%), url(/site/warm/b57235dc64991b679efcfbac3de9d077.jpg) !important;
-}
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) > div > div:first-child > div:last-child > div { box-shadow: 0 18px 44px rgba(0,0,0,0.35); }
-/* /email — suite logos carry dark lettering: a small light chip behind them. */
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) > img {
-  box-sizing: content-box; background: #FFFFFF; padding: 4px 8px; border-radius: 8px;
-}
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:has(input) { box-shadow: inset 0 0 0 1px var(--w-line-strong); }
-/* /google-workspace/pricing — hairlines, the 30+ offer note. */
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-top { box-shadow: 0 10px 14px -14px rgba(0,0,0,0.6); }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-table td, :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-table tbody tr:not(.wp-group) th { border-top-color: var(--w-line); }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-no { color: var(--w-muted-2); }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer { border-color: var(--w-line-strong); color: var(--w-marigold-ink); }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer.on { border-color: var(--w-line-strong); }
-:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq details[open] { box-shadow: 0 10px 24px rgba(0,0,0,0.3); }
-@media (prefers-color-scheme: dark) {
-/* /email — migration band: the photo under a dark ground tint instead of the light one. */
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) {
-  background-color: var(--w-bg) !important;
-  background-image: linear-gradient(90deg, rgba(30,38,35,0.96) 0%, rgba(30,38,35,0.9) 45%, rgba(30,38,35,0.74) 100%), url(/site/warm/b57235dc64991b679efcfbac3de9d077.jpg) !important;
-}
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) > div > div:first-child > div:last-child > div { box-shadow: 0 18px 44px rgba(0,0,0,0.35); }
-/* /email — suite logos carry dark lettering: a small light chip behind them. */
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) > img {
-  box-sizing: content-box; background: #FFFFFF; padding: 4px 8px; border-radius: 8px;
-}
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:first-child > span:has(input) { box-shadow: inset 0 0 0 1px var(--w-line-strong); }
-/* /google-workspace/pricing — hairlines, the 30+ offer note. */
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-top { box-shadow: 0 10px 14px -14px rgba(0,0,0,0.6); }
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-table td, :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-table tbody tr:not(.wp-group) th { border-top-color: var(--w-line); }
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-no { color: var(--w-muted-2); }
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer { border-color: var(--w-line-strong); color: var(--w-marigold-ink); }
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-offer.on { border-color: var(--w-line-strong); }
-:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq details[open] { box-shadow: 0 10px 24px rgba(0,0,0,0.3); }
-}
-
-/* ════════════════════════════════════════════════════════════════════════════════════════════
    Warm-only extras (artboards Email, Compare): elements the components add with class `w-only`
    (hidden on Classic by src/site/warm-only.css). All decorative (aria-hidden), no words; colours
-   through var(--w-…) so the dark variant follows without extra rules.
+   through var(--w-…).
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 /* /email hero — slideshow progress dots: one bar per photo, filled in marigold while it shows.
    Same 21s cycle as em-warm-slides above (3 photos, 7s each, starting at 0s). */
