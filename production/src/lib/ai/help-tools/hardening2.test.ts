@@ -10,7 +10,7 @@
  * The guard rules (items 1 and 2) are self-tested in src/lib/security/help-tools-guard.test.ts.
  * No AI is called anywhere here.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { PostgrestClient } from "@supabase/postgrest-js";
 import { scopedReader, HelpReadRefused, likeLiteral, containsPattern, startsWithPattern } from "./reader";
@@ -151,6 +151,8 @@ describe("items 3 + 4: input strictness at every depth, and a schema that cannot
     expect(() => def(z.object({ f: z.object({}).catchall(z.string()) }).strict())).toThrow(/strict/);
     expect(() => def(z.object({ f: z.object({ a: z.string() }) }).strict())).toThrow(/strict/);
     expect(() => def(z.object({ f: z.array(z.object({ a: z.string() }).passthrough()) }).strict())).toThrow(/strict/);
+    expect(() => def(z.object({ a: z.string() }).strict().catchall(z.string()))).toThrow(/strict/); // strict + a catchall still takes unknown keys
+    expect(() => def(z.object({ f: z.object({ a: z.string() }).strict().catchall(z.string()) }).strict())).toThrow(/strict/);
     expect(() => def(z.object({ f: z.object({ g: z.object({ a: z.string() }).strip() }).strict() }).strict())).toThrow(/strict/);
     expect(() => def(z.object({ f: z.union([z.string(), z.object({ a: z.string() }).passthrough()]) }).strict())).toThrow(/strict/);
     // the same shapes, strict at every level, are fine
@@ -212,6 +214,16 @@ describe("items 3 + 4: input strictness at every depth, and a schema that cannot
     const t4 = def(s4, "probe_tool_four");
     (inner._def as { unknownKeys: string }).unknownKeys = "passthrough"; // a NESTED object swapped
     expect(t4.input.safeParse({ f: { a: "1", tenant_id: "B" } }).success).toBe(false);
+  });
+
+  it("a second lock: a parse that returns a tenant / user / role key anywhere in its value is refused", () => {
+    const schema = z.object({ q: z.string().optional() }).strict();
+    const t = def(schema, "probe_tool_out");
+    const spy = vi.spyOn(schema, "safeParse").mockReturnValue({ success: true, data: { q: "x", nested: [{ ["tenаnt_id"]: "B" }] } } as never);
+    expect(t.input.safeParse({ q: "x" }).success).toBe(false);
+    spy.mockReturnValue({ success: true, data: { q: "x" } } as never);
+    expect(t.input.safeParse({ q: "x" }).success).toBe(true);
+    spy.mockRestore();
   });
 
   it("an untouched tool parses as before", () => {

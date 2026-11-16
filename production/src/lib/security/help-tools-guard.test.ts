@@ -852,6 +852,7 @@ describe("R-2882 guard: computed reads by declaration, followed files, zod inter
       ["index of a map on a parameter", PLANTED, "export const f = (c: any, xs: { map: any }) => xs.map((_r: unknown, i: any) => c[i]);"],
       ["second read after a data map", PLANTED, "const o: any = {}; export const f = (m: string, n: string) => o[m][n];"],
       ["data map held in a let", PLANTED, "let o: any = {}; export const f = (m: string) => o[m];"],
+      ["data map made with a prototype that is not null", PLANTED, "const o: any = Object.create(() => 0); export const f = (m: string) => o[m];"],
       ["data map is a parameter", PLANTED, "export const f = (o: Record<string, unknown>, m: string) => o[m];"],
     ];
     for (const [name, file, src] of plants) expect(scanFile(file, src).problems, name).not.toEqual([]);
