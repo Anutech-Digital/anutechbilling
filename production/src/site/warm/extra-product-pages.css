@@ -82,36 +82,48 @@
   .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > header nav a { padding: 0 9px; font-size: 14px; }
 }
 
-/* ── PublicFooter: white footer with a quiet link row ─────────────────────────────────────── */
+/* ── PublicFooter: the main site footer's look, sized for seven links ────────────────────────
+   Owner, 16 Nov 2026: one thin row (logo + copyright far left, a long line of links far right, a gap
+   in the middle) "looks weird". Now a brand block on the left (logo over the copyright) and the links
+   in three short columns on the right — ResellerOS's documents, Anutech Digital's, then About and
+   Contact — as the site footer's link columns. Same links in the same order (the columns follow the
+   page order, so Tab still moves down each column, then on to the next). */
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer {
   background: var(--w-surface); border-top: 1px solid var(--w-line); margin-top: 0; color: var(--w-muted);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div {
-  max-width: 1240px; padding: clamp(20px, 2.6vw, 36px) clamp(16px, 4vw, 24px); font-size: 13px; color: var(--w-muted);
+  max-width: 1240px; padding: clamp(28px, 3.2vw, 44px) clamp(16px, 4vw, 24px);
+  font-size: 14px; color: var(--w-muted); gap: 24px;
 }
-.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav { gap: 4px 16px; }
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div > div:first-child { flex-direction: column; align-items: flex-start; gap: 12px; }
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div > div:first-child > img { width: 36px; height: 36px; }
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div > div:first-child > span { font-size: 13px; line-height: 1.55; color: var(--w-muted-2); }
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a {
-  color: var(--w-muted); text-decoration: none; display: inline-flex; align-items: center; min-height: 32px;
+  color: var(--w-muted); text-decoration: none; display: inline-flex; align-items: center; min-height: 44px;
+  line-height: 1.45; text-underline-offset: 3px; transition: color .15s ease;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:hover { color: var(--w-teal); text-decoration: underline; }
-@media (max-width: 767px) {
-  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a { min-height: 44px; }
-}
-/* Side by side both halves used to shrink together, so the copyright broke onto two lines and the
-   seven links onto two rows ("Contact" alone below) with room to spare. The copyright keeps its one
-   line and the links take the rest, on the right — from 1200px, where one row of links fits; below
-   that the links go under the copyright, left-aligned, instead of wrapping beside it. */
-@media (min-width: 768px) and (max-width: 1199px) {
-  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div {
-    flex-direction: column; align-items: flex-start;
-  }
-}
-@media (min-width: 1200px) {
+@media (min-width: 768px) {
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div { align-items: flex-start; gap: 32px; }
+  /* one line under the logo — a narrow box broke it before "· Rohini, Delhi" */
   .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div > div:first-child { flex: none; }
   .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div > div:first-child > span { white-space: nowrap; }
-  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav {
-    flex: 1 1 0; min-width: 0; justify-content: flex-end;
-  }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav { grid-template-columns: repeat(3, auto); column-gap: clamp(28px, 4vw, 64px); }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a { min-height: 32px; padding: 2px 0; }
+  /* columns of 2 · 3 · 2 in page order */
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:nth-child(1) { grid-area: 1 / 1; }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:nth-child(2) { grid-area: 2 / 1; }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:nth-child(3) { grid-area: 1 / 2; }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:nth-child(4) { grid-area: 2 / 2; }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:nth-child(5) { grid-area: 3 / 2; }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:nth-child(6) { grid-area: 1 / 3; }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:nth-child(7) { grid-area: 2 / 3; }
+}
+/* Tablet: the three columns beside the brand block squeezed "Anutech Digital privacy" onto two lines —
+   they go under it instead. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div { flex-direction: column; gap: 20px; }
 }
 
 /* Kicker labels (the app Badge used as an eyebrow) — the design's teal uppercase label. */
