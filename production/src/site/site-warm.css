@@ -457,6 +457,10 @@
   .anutech-site[data-site-theme="warm"] .hc .hc-card:hover, .anutech-site[data-site-theme="warm"] .hc .hc-card:hover .hc-card-img img,
   .anutech-site[data-site-theme="warm"] .hc .hc-card:hover .hc-card-cta > span { transform: none; }
 }
+/* SSL & security photo (public/ssl-card.webp) is a tall portrait: every frame crops it top and
+   bottom, so keep the laptop, the padlock shield and the icons around them in view — they sit a
+   little below the middle (the top third is sky). */
+.anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) .hc-card-img img { object-position: center 62%; }
 /* Bento (owner, 16 Nov 2026: "improve it further"), from 1100px: Business email — the lead product —
    is the tall featured card (two rows, the photo takes the extra height); Domains and Web hosting sit
    beside it; SSL & security runs wide under them, photo on the left and its text on the right. The
@@ -491,12 +495,7 @@
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > * { grid-column: 2; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > .hc-card-img {
     grid-column: 1; grid-row: 1 / span 7; height: auto; min-height: 220px; margin: -24px 0 -20px; border-bottom: 0; border-right: 1px solid var(--w-line);
-    /* The SSL picture is a small landscape (350×275) in a near-square frame: cropping it ("cover")
-       cut the check marks off and blew it up. The whole picture shows, centred, on a soft gradient
-       sampled from its own edges so it blends into the frame (owner, 16 Nov 2026). */
-    background: linear-gradient(180deg, #E8EBF5 0%, #E1E6F2 50%, #D5DBEB 100%);
   }
-  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > .hc-card-img img { object-fit: contain; object-position: center; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > .hc-w-card-ico { margin: 0 0 12px; border: 0; width: 48px; height: 48px; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) > .hc-card-cta { align-self: end; }
 }
