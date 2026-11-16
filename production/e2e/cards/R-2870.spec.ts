@@ -11,6 +11,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, E2E_TENANT_SQL, localDb, onlyInCardTests, onlyOne, openAppPage, pageAs } from "./card-steps";
 
 const SUB_A = "c2850000-0000-4000-8000-000000000021";
+const CUST = "c2850000-0000-4000-8000-000000000001";
 const NAME = "SCN Yearly Pair Pvt Ltd";
 const PLAN_A = "SCN Yearly Standard";
 const PLAN_B = "SCN Yearly Starter";
@@ -62,8 +63,10 @@ test.describe("R-2870 card test", () => {
       await expect(sheet.locator("#amount")).toHaveValue(String(TOTAL), { timeout: 90_000 });
       await sheet.getByRole("button", { name: "Confirm payment" }).click();
       await expect(sheet).toBeHidden({ timeout: 120_000 });
-      const invoice = db().one(`select i.id from public.invoices i where i.quote_id = '${quoteId}' and i.tenant_id = ${T}`);
-      expect(invoice).toBeTruthy();
+      /* the one invoice of this customer (as R-2850 reads it) — it may land a moment after the sheet closes */
+      const readInvoice = () => db().one(`select coalesce(string_agg(i.id, ','), '') from public.invoices i where i.customer_id = '${CUST}' and i.tenant_id = ${T}`);
+      await expect.poll(readInvoice, { timeout: 60_000 }).toMatch(/^[^,]+$/);
+      const invoice = readInvoice();
 
       /* Renewals "Later" (they are renewed, dated a year on): Last bill = the together invoice, paid, with its payment */
       await openAppPage(page, "/renewals?bucket=later", /Renewals/);
@@ -80,7 +83,12 @@ test.describe("R-2870 card test", () => {
 
       /* the tile counts both members (each its own share) */
       await openAppPage(page, "/renewals?bucket=d30", /Renewals/);
-      expect(await renewedCount(page), "Renewed this month: +2 (one per renewed subscription)").toBe(before + 2);
+      /* members renew 10 and 20 days from today — only those whose term date falls in THIS IST month count now (late in a month, maybe one or none) */
+      const inMonth = Number(db().one(`select count(*) from public.renewal_quote_subscriptions l
+         where l.quote_id = '${quoteId}' and l.renewed_at is not null
+           and l.renewal_term_date >= date_trunc('month', public.ist_today())::date
+           and l.renewal_term_date < (date_trunc('month', public.ist_today()) + interval '1 month')::date`));
+      expect(await renewedCount(page), `Renewed this month: +${inMonth} (one per renewed member whose term is in this month)`).toBe(before + inMonth);
     } finally {
       await page.context().close();
     }
