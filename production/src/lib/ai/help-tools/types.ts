@@ -18,6 +18,7 @@
 import { z } from "zod";
 import { USER_ROLES, type UserRole } from "@/lib/auth/roles";
 import type { HelpDb } from "./reader";
+import { foldKey } from "./fold";
 
 export const HELP_TOOL_TIERS = ["read", "safe", "confirm", "never"] as const;
 export type HelpToolTier = (typeof HELP_TOOL_TIERS)[number];
@@ -87,42 +88,84 @@ export interface HelpToolDef<I extends z.ZodTypeAny = z.ZodTypeAny> {
   run: (input: z.infer<I>, ctx: HelpToolCtx) => Promise<HelpToolOutput>;
 }
 
-/** zod's strict object: unknown keys are refused. */
+/** zod's strict object: unknown keys refused, and no catchall that would take them instead (R-2882). */
 export function isStrictObject(s: z.ZodTypeAny): boolean {
-  return s instanceof z.ZodObject && (s._def as { unknownKeys?: string }).unknownKeys === "strict";
+  if (!(s instanceof z.ZodObject)) return false;
+  const def = s._def as { unknownKeys?: string; catchall?: unknown };
+  return def.unknownKeys === "strict" && def.catchall instanceof z.ZodNever;
 }
 
 /**
  * Input keys that would let the model say WHO it is acting for (R-2879). Tenant, user and role
  * come from the session only — a tool that needs "which salesperson" names the key for what it
- * is (owner_id of a lead, assigned_to), never one of these. Compared without case and "_": any key
- * with "tenant" or "role" in it, user / uid / actor (also as_user, for_user_id …), company_id /
- * org_id / workspace_id, impersonate…, on_behalf…. A wide net on purpose — a key it catches by
- * mistake is renamed, a key it misses lets the model pick whose data it reads.
+ * is (owner_id of a lead, assigned_to), never one of these. Compared in FOLDED form (R-2882:
+ * NFKC, look-alike Cyrillic / Greek letters, case, every separator and invisible character gone —
+ * "Tеnant-ID" with a Cyrillic е is "tenantid"): any key with "tenant" or "role" in it, user / uid /
+ * actor (also as_user, for_user_id …), company_id / org_id / workspace_id, impersonate…,
+ * on_behalf…. A wide net on purpose — a key it catches by mistake is renamed, a key it misses lets
+ * the model pick whose data it reads.
  */
 function isSessionOnlyKey(key: string): boolean {
-  const k = key.replace(/[_\-\s]/g, "").toLowerCase();
+  const k = foldKey(key);
   return k.includes("tenant") || k.includes("role") || k.includes("impersonat") || k.includes("onbehalf")
     || /^(for|as|by|auth|session|current|acting|login|my)?(user|users|userid|uid|actor|actorid)$/.test(k)
     || /^(company|org|organisation|organization|workspace)id$/.test(k);
 }
 
+/**
+ * Does a parsed value hold a tenant / user / role key at ANY depth? A second lock at run time: an
+ * input that came out of the schema with such a key (an output a schema built, a swapped schema)
+ * never reaches the tool. Too deep or too wide to check counts as yes.
+ */
+export function hasSessionOnlyKey(value: unknown, depth = 0, seen: { n: number } = { n: 0 }): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  seen.n += 1;
+  if (depth > 12 || seen.n > 2000) return true;
+  if (Array.isArray(value)) return value.some((v) => hasSessionOnlyKey(v, depth + 1, seen));
+  for (const [k, v] of Object.entries(value)) {
+    if (isSessionOnlyKey(k) || hasSessionOnlyKey(v, depth + 1, seen)) return true;
+  }
+  return false;
+}
+
 /** Plain values an input may hold. */
 const INPUT_LEAVES = [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodEnum, z.ZodLiteral, z.ZodDate, z.ZodNull] as const;
+/** Plain ASCII key names only: a look-alike letter or an invisible character cannot be a key. */
+const INPUT_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** Every key of an input schema, at any depth; throws for a shape whose keys cannot be listed. */
-function inputKeys(s: z.ZodTypeAny, depth = 0): string[] {
+/**
+ * Walk an input schema at EVERY depth. Returns a signature of everything that decides what it
+ * accepts (every object's key list and strictness, wrappers, string / number checks, enum values)
+ * and pushes each key name onto `keys`. Throws for anything that breaks the contract: an object
+ * that is not strict (passthrough, strip, a catchall) at any level, a key that is not plain ASCII,
+ * a transform / preprocess (an output that can grow keys), or a type whose keys this walk cannot
+ * list. defineHelpTool runs it once at registration and the private parser runs it again before
+ * every parse and compares the signature — a schema changed after registration stops the tool.
+ */
+function describeInput(s: z.ZodTypeAny, keys: string[], depth = 0): string {
   if (depth > 10) throw new Error("input schema is nested too deep to check");
   if (s instanceof z.ZodObject) {
+    if (!isStrictObject(s)) throw new Error("every object in input must be strict, at any depth — no passthrough, strip or catchall (z.object({...}).strict())");
     const shape = s.shape as Record<string, z.ZodTypeAny>;
-    return Object.entries(shape).flatMap(([k, v]) => [k, ...inputKeys(v, depth + 1)]);
+    const parts = Object.entries(shape).map(([k, v]) => {
+      if (!INPUT_KEY.test(k)) throw new Error(`input key '${k}' must be plain ASCII letters, digits and _`);
+      keys.push(k);
+      return `${k}:${describeInput(v, keys, depth + 1)}`;
+    });
+    return `{${parts.join(",")}}`;
   }
-  if (s instanceof z.ZodOptional || s instanceof z.ZodNullable) return inputKeys(s.unwrap() as z.ZodTypeAny, depth + 1);
-  if (s instanceof z.ZodDefault) return inputKeys(s.removeDefault() as z.ZodTypeAny, depth + 1);
-  if (s instanceof z.ZodArray) return inputKeys(s.element as z.ZodTypeAny, depth + 1);
-  if (s instanceof z.ZodEffects) return inputKeys(s.innerType() as z.ZodTypeAny, depth + 1);
-  if (s instanceof z.ZodUnion) return (s.options as z.ZodTypeAny[]).flatMap((o) => inputKeys(o, depth + 1));
-  if (INPUT_LEAVES.some((leaf) => s instanceof leaf)) return [];
+  if (s instanceof z.ZodOptional || s instanceof z.ZodNullable) return `${s instanceof z.ZodOptional ? "opt" : "null"}(${describeInput(s.unwrap() as z.ZodTypeAny, keys, depth + 1)})`;
+  if (s instanceof z.ZodDefault) return `default(${describeInput(s.removeDefault() as z.ZodTypeAny, keys, depth + 1)})`;
+  if (s instanceof z.ZodArray) return `array(${describeInput(s.element as z.ZodTypeAny, keys, depth + 1)})`;
+  if (s instanceof z.ZodEffects) {
+    if ((s._def as { effect?: { type?: string } }).effect?.type !== "refinement") throw new Error("input may not use transform / preprocess (an effect that can change the keys) — only refine");
+    return `refine(${describeInput(s.innerType() as z.ZodTypeAny, keys, depth + 1)})`;
+  }
+  if (s instanceof z.ZodUnion) return `union(${(s.options as z.ZodTypeAny[]).map((o) => describeInput(o, keys, depth + 1)).join("|")})`;
+  if (INPUT_LEAVES.some((leaf) => s instanceof leaf)) {
+    const d = s._def as { typeName?: string; checks?: unknown; values?: unknown; value?: unknown };
+    return `${String(d.typeName)}${JSON.stringify([d.checks ?? null, d.values ?? null, d.value ?? null])}`;
+  }
   /* Fail closed: a type whose keys this walk cannot list (record, map, any, unknown, intersection,
      discriminated union, lazy, tuple, pipeline …) may not be a tool input until it is added here. */
   throw new Error("input may use only objects, arrays, unions, optional / nullable / default and plain values (string, number, boolean, enum, literal, date)");
@@ -135,19 +178,49 @@ export function isHelpToolDef(t: unknown): t is HelpToolDef {
 }
 
 /**
+ * The parser a registered tool exposes as `input` (R-2882, review of R-2879 finding 4). The zod
+ * schema lives only in this closure — `tool.input` has no `_def` to mutate. The schema object the
+ * tool's author wrote can still be reached through the author's own variable, so before EVERY
+ * parse the walk runs again and its signature must equal the one taken at registration; the parsed
+ * value is then checked for a tenant / user / role key at any depth. Anything else is a refused
+ * parse (success: false), so the runner answers bad_input and the tool does not run.
+ */
+function privateParser(schema: z.ZodTypeAny, signature: string): { safeParse: (v: unknown) => z.SafeParseReturnType<unknown, unknown>; parse: (v: unknown) => unknown } {
+  const refused = (why: string): z.SafeParseError<unknown> => ({ success: false, error: new z.ZodError([{ code: "custom", path: [], message: why }]) });
+  const safeParse = (v: unknown): z.SafeParseReturnType<unknown, unknown> => {
+    try {
+      if (describeInput(schema, []) !== signature) return refused("input schema changed after registration");
+    } catch {
+      return refused("input schema no longer meets the contract");
+    }
+    const r = schema.safeParse(v);
+    if (r.success && hasSessionOnlyKey(r.data)) return refused("input holds a tenant / user / role key");
+    return r;
+  };
+  const parse = (v: unknown): unknown => {
+    const r = safeParse(v);
+    if (!r.success) throw r.error;
+    return r.data;
+  };
+  return Object.freeze({ safeParse, parse });
+}
+
+/**
  * Register a tool. Throws (at import time, so the app does not start with a bad tool) when the
- * contract is broken: tier `never`, a loose input schema, an input key for tenant / user / role,
- * no roles / an unknown role, a page that is not an app path, a bad name, or a row cap above
- * HELP_ROWS_MAX.
+ * contract is broken: tier `never`, a loose input schema (at any depth), an input key for tenant /
+ * user / role (look-alikes included), no roles / an unknown role, a page that is not an app path,
+ * a bad name, or a row cap above HELP_ROWS_MAX. The returned tool is frozen and its `input` is a
+ * private parser (privateParser), not the schema.
  */
 export function defineHelpTool<I extends z.ZodTypeAny>(def: HelpToolDef<I> | (Omit<HelpToolDef<I>, "tier"> & { tier: HelpToolTier })): HelpToolDef<I> {
   const bad = (why: string) => new Error(`help tool ${def.name}: ${why}`);
   if (!/^[a-z][a-z0-9_]{2,47}$/.test(def.name)) throw bad("name must be snake_case, 3-48 chars");
   if (def.tier === "never" || !(HELP_TOOL_TIERS as readonly string[]).includes(def.tier)) throw bad(`tier '${def.tier}' cannot be registered`);
-  if (!isStrictObject(def.input)) throw bad("input must be a strict zod object (z.object({...}).strict())");
-  let keys: string[];
+  if (!(def.input instanceof z.ZodObject)) throw bad("input must be a strict zod object (z.object({...}).strict())");
+  const keys: string[] = [];
+  let signature: string;
   try {
-    keys = inputKeys(def.input);
+    signature = describeInput(def.input, keys);
   } catch (err) {
     throw bad((err as Error).message);
   }
@@ -157,7 +230,8 @@ export function defineHelpTool<I extends z.ZodTypeAny>(def: HelpToolDef<I> | (Om
   if (!def.roles.length || def.roles.some((r) => !(USER_ROLES as readonly string[]).includes(r))) throw bad("roles must be known roles, at least one");
   if (!/^\/[a-z0-9/_-]*(\?[^#\s]*)?$/i.test(def.page) || !isAppPath(def.page)) throw bad("page must be an app path");
   if (def.maxRows != null && (!Number.isInteger(def.maxRows) || def.maxRows < 1 || def.maxRows > HELP_ROWS_MAX)) throw bad(`maxRows must be 1-${HELP_ROWS_MAX}`);
-  const tool = Object.freeze({ ...def, roles: Object.freeze([...def.roles]) }) as HelpToolDef<I>;
+  const input = privateParser(def.input, signature) as unknown as I;
+  const tool = Object.freeze({ ...def, input, roles: Object.freeze([...def.roles]) }) as HelpToolDef<I>;
   DEFINED.add(tool);
   return tool;
 }
