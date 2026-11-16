@@ -18,13 +18,15 @@
 --     of the gross (attendance_settings.payroll_basic_pct; no row / out of range = 50), round, never above
 --     gross − DA, never below 0 — the SAME rule as lib/payroll/salary-revision.ts basicAtPct and the
 --     R-2815 repair (r2815_policy_basic).
---     On an UPDATE only when a salary column really changed, or the employee has no salary revision:
---     a revised employee's Basic is set by Revise salary (R-2699 guard trg_employee_salary_via_revision
---     runs first — this trigger's name sorts after it), so an Edit that changes nothing never rewrites it.
+--     On an UPDATE only when the gross or DA really changed (value differs from the old row) or a Basic was
+--     cleared (set -> empty) in the statement. An unchanged save of an OLD empty-Basic employee (the Edit form
+--     sends every column) leaves it empty - no silent data repair (money-rules Y4; R-2815 is the repair).
+--     R-2699 guard trg_employee_salary_via_revision runs first (this trigger's name sorts after it).
 --     Skipped while app.r2815_undo = 'on' (the logged undo of the R-2815 repair puts the empty Basic back).
 --   employee_salary_revisions, BEFORE INSERT: a revision saved with no Basic gets the same policy Basic
 --     (revise_employee_salary inserts the revision row first, then the employee row — both end equal).
 --   prev_* history and salary_payments are never touched.
+-- employee_salary_revisions INSERT: a new revision is a new salary, so an empty Basic there is filled (kept).
 -- Existing empty Basics are filled by the R-2815 repair (owner runs scripts/ops/r2773b-fill-basic.sql).
 -- A CHECK (basic_monthly is not null or monthly_gross <= 0) can be VALIDATEd once live is repaired —
 -- follow-up, not here (a NOT VALID check would refuse a name edit on an unrepaired employee).
@@ -46,12 +48,15 @@ begin
   -- R-2816: an empty Basic never means the whole gross — fill it with the company policy Basic %.
   if new.basic_monthly is not null or v_gross <= 0 then return new; end if;
   if coalesce(current_setting('app.r2815_undo', true), '') = 'on' then return new; end if;
+  -- On an UPDATE fill only when the salary REALLY changed (gross or DA differs from the old row) or a Basic
+  -- was cleared in this statement (old set -> new empty). Postgres fires UPDATE OF for every column in the
+  -- SET list even when the value is unchanged, and the Edit form always sends basic_monthly - so an unchanged
+  -- save of an OLD empty-Basic employee must stay empty (money-rules Y4: the repair is R-2815, the owner's call).
   if tg_op = 'UPDATE'
      and new.monthly_gross is not distinct from old.monthly_gross
-     and new.basic_monthly is not distinct from old.basic_monthly
      and new.da_monthly is not distinct from old.da_monthly
-     and exists (select 1 from public.employee_salary_revisions r where r.employee_id = new.id) then
-    return new;   -- nothing salary-wise changed on a revised employee: Revise salary owns it
+     and old.basic_monthly is null then
+    return new;
   end if;
   select s.payroll_basic_pct into v_pct from public.attendance_settings s where s.tenant_id = new.tenant_id;
   if v_pct is null or v_pct not between 10 and 100 then v_pct := 50; end if;

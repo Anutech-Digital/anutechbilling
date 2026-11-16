@@ -4,8 +4,9 @@
 --
 --   A  insert with a gross and no Basic → policy % (40% company: 12,000; no-settings company: 50%;
 --      33,333 → 16,667; DA cap 30k/DA 20k → 10,000). A typed Basic is kept (even 0). Gross 0 → empty.
---   B  Edit (no revisions): gross changed on an empty-Basic row → filled; Basic cleared → filled again;
---      a name-only edit of an old empty-Basic row is NOT refused (left for the R-2815 repair).
+--   B  Edit (no revisions): gross changed on an empty-Basic row -> filled; Basic cleared (set -> empty) -> filled again;
+--      an UNCHANGED full-row Edit (the app shape: every column in SET) or a name/phone/email-only edit of an old
+--      empty-Basic row stays EMPTY (no silent repair, R-2815 owns it); gross really changed on it -> filled.
 --   C  Revise salary with no Basic (R-2699 revise_employee_salary, owner login) → the revision row AND
 --      the employee row get the same policy Basic; prev_* history keeps the old value.
 --   D  revised employee: the R-2699 guard still refuses a direct Basic change; an Edit that changes no
@@ -77,11 +78,25 @@ begin
   if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000e3') is distinct from 12000 then
     raise exception 'FAIL B3: Basic cleared, not refilled with the policy';
   end if;
-  -- an Edit form that sends every column unchanged on the old empty-Basic row (no revisions) → filled
-  update public.employees set monthly_gross = monthly_gross, basic_monthly = null, da_monthly = da_monthly
+  -- B4: the app's Edit shape — every column in the SET list, values unchanged — on an OLD empty-Basic row
+  -- (no revisions) leaves it EMPTY: no silent data repair (money-rules Y4; the repair is R-2815).
+  update public.employees set name = name, phone = phone, email = email, designation = designation,
+         monthly_gross = monthly_gross, basic_monthly = null, da_monthly = da_monthly
    where id = 'c2816000-0000-4000-8000-0000000000e7';
-  if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000e7') is distinct from 16667 then
-    raise exception 'FAIL B4: full-row Edit of an empty-Basic employee (no revisions) not filled';
+  if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000e7') is not null then
+    raise exception 'FAIL B4: an unchanged full-row Edit filled an old empty Basic (silent data repair)';
+  end if;
+  -- B5: only phone / email / designation changed (the Edit form shape) -> untouched, not refused
+  update public.employees set phone = '9999900000', email = 'r2816-gita@example.test', designation = 'Clerk',
+         monthly_gross = monthly_gross, basic_monthly = null, da_monthly = da_monthly
+   where id = 'c2816000-0000-4000-8000-0000000000e7';
+  if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000e7') is not null then
+    raise exception 'FAIL B5: a phone/email edit filled an old empty Basic';
+  end if;
+  -- B6: the gross really changed on that old empty-Basic row -> filled (no policy row: 50%% of 40,000)
+  update public.employees set monthly_gross = 40000, basic_monthly = null where id = 'c2816000-0000-4000-8000-0000000000e7';
+  if (select basic_monthly from public.employees where id = 'c2816000-0000-4000-8000-0000000000e7') is distinct from 20000 then
+    raise exception 'FAIL B6: gross changed on an old empty-Basic row, Basic not filled';
   end if;
   raise notice 'PASS B edit';
 end $$;
