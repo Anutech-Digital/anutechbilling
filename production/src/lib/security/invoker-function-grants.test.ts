@@ -44,6 +44,16 @@ const SERVICE_ROLE_ONLY: Record<string, string> = {
     "R-1004: one-time data backfill of customers.account_manager_id, run by the migration " +
     "owner; only service_role may re-run it. authenticated is revoked on purpose " +
     "(r1004_account_manager_backfill.test.sql case 4).",
+  zoho_day_calls_add:
+    "R-2661: adds to the per-company Zoho day counter; called only by the server through the admin " +
+    "client (service_role) from the one Books API call path. authenticated is revoked on purpose " +
+    "(r2661_zoho_day_calls.test.sql).",
+  zoho_reader_take:
+    "R-2661: takes / renews the one-reader lease; called only by the server through the admin " +
+    "client (service_role). authenticated is revoked on purpose (r2661_zoho_day_calls.test.sql).",
+  zoho_reader_release:
+    "R-2661: releases the one-reader lease; called only by the server through the admin client " +
+    "(service_role). authenticated is revoked on purpose (r2661_zoho_day_calls.test.sql).",
   subscription_dues_drift:
     "R-2154: read-only all-company dues-drift report (R-1823 §7 / r1708-dues-drift-report.sql), " +
     "run by the manager as the migration login; never called by the app. authenticated is " +
