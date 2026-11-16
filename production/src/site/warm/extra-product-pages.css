@@ -87,15 +87,31 @@
   background: var(--w-surface); border-top: 1px solid var(--w-line); margin-top: 0; color: var(--w-muted);
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div {
-  max-width: 1240px; padding: clamp(20px, 2.6vw, 36px) clamp(16px, 4vw, 24px); font-size: 14px; color: var(--w-muted);
+  max-width: 1240px; padding: clamp(20px, 2.6vw, 36px) clamp(16px, 4vw, 24px); font-size: 13px; color: var(--w-muted);
 }
-.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav { gap: 4px 18px; }
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav { gap: 4px 16px; }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a {
   color: var(--w-muted); text-decoration: none; display: inline-flex; align-items: center; min-height: 32px;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a:hover { color: var(--w-teal); text-decoration: underline; }
 @media (max-width: 767px) {
   .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav a { min-height: 44px; }
+}
+/* Side by side both halves used to shrink together, so the copyright broke onto two lines and the
+   seven links onto two rows ("Contact" alone below) with room to spare. The copyright keeps its one
+   line and the links take the rest, on the right — from 1200px, where one row of links fits; below
+   that the links go under the copyright, left-aligned, instead of wrapping beside it. */
+@media (min-width: 768px) and (max-width: 1199px) {
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div {
+    flex-direction: column; align-items: flex-start;
+  }
+}
+@media (min-width: 1200px) {
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div > div:first-child { flex: none; }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer > div > div:first-child > span { white-space: nowrap; }
+  .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > footer nav {
+    flex: 1 1 0; min-width: 0; justify-content: flex-end;
+  }
 }
 
 /* Kicker labels (the app Badge used as an eyebrow) — the design's teal uppercase label. */
