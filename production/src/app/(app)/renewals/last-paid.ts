@@ -42,6 +42,8 @@ export interface LastPaidInput {
   }>;
   billings: ReadonlyArray<{ id?: string; subscription_id: string; invoice_id: string | null }>;
   invoices: ReadonlyArray<{ id: string; quote_id: string | null }>;
+  /** R-2870: together-quote link rows (renewal_quote_subscriptions) — the quote belongs to each member. */
+  links?: ReadonlyArray<{ quote_id: string; subscription_id: string; released_at?: string | null }>;
   payments: ReadonlyArray<{
     id: string; amount: number; method: string; status: string; received_at: string;
     refunded_at: string | null; quote_id: string | null; invoice_id: string | null;
@@ -82,7 +84,7 @@ function addTo<K, V>(m: Map<K, Set<V>>, k: K, v: V) {
 }
 
 /** Every quote and invoice id a set of subscriptions reaches — what last-paid-data reads payments for. */
-export function linkedDocs(input: Pick<LastPaidInput, "subs" | "linkedQuotes" | "billings" | "invoices" | "quoteSiblings">) {
+export function linkedDocs(input: Pick<LastPaidInput, "subs" | "linkedQuotes" | "billings" | "invoices" | "quoteSiblings" | "links">) {
   const quoteSubs = new Map<string, Set<string>>();
   const invoiceSubs = new Map<string, Set<string>>();
   for (const s of input.quoteSiblings ?? []) if (s.quote_id) addTo(quoteSubs, s.quote_id, s.id);
@@ -90,6 +92,7 @@ export function linkedDocs(input: Pick<LastPaidInput, "subs" | "linkedQuotes" | 
     if (s.quote_id) addTo(quoteSubs, s.quote_id, s.id);
     if (s.renewal_quote_id) addTo(quoteSubs, s.renewal_quote_id, s.id);
   }
+  for (const l of input.links ?? []) if (!l.released_at) addTo(quoteSubs, l.quote_id, l.subscription_id);   // R-2870
   const billingSub = new Map(input.billings.filter((b) => b.id).map((b) => [b.id as string, b.subscription_id]));
   for (const q of input.linkedQuotes) {
     if (q.renewal_subscription_id) addTo(quoteSubs, q.id, q.renewal_subscription_id);

@@ -27,7 +27,8 @@ import { noteTotalsByInvoice, type NoteAmountRow } from "@/lib/invoices/note-tot
 import {
   attachDocDetails, attachSendTimes, detailQuoteIds, lastDocsBySubscription, sendLogQuoteIds, shownInvoiceIds,
   type SendLogRow,
-  type DocBilling, type DocInvoice, type DocQuote, type DocQuoteDetail, type LastDocs, type LastDocsInput,
+  liveTogetherLinks,
+  type DocBilling, type DocInvoice, type DocQuote, type DocQuoteDetail, type LastDocs, type LastDocsInput, type TogetherLink,
 } from "./last-docs";
 
 type SubRef = LastDocsInput["subs"][number];
@@ -36,6 +37,9 @@ const QUOTE_COLS = "id, status, payment_status, created_at, created_date, expire
 /** R-2830: the part proformas also carry their lines — a together proforma names every member's part there (same query, no read per row). */
 const PART_COLS = `${QUOTE_COLS}, line_items`;
 const INVOICE_COLS = "id, quote_id, invoice_date, status, amount, paid_amount, currency, created_at, due_date, net_payable, adjusted_advances, written_off_at, fx_rate";
+/** R-2870: renewal_quote_subscriptions (R-2847) — which subscriptions a together renewal quote renews. */
+export const TOGETHER_LINK_COLS = "quote_id, subscription_id, renewal_term_date, subtotal, renewed_at, released_at";
+
 const DETAIL_COLS = "id, line_items, is_renewal, is_extension, is_add_seats, is_one_off, extension_months, renewal_term_date, created_date";
 
 /** The read's own copy of each subscription (deduped, sorted — a stable query key). */
@@ -96,6 +100,8 @@ export interface RenewalDocRows {
   /** round 1, drawer only: the revisions of those quotes (opts.moreQuotes) */
   more: DocQuote[];
   billings: DocBilling[];
+  /** R-2870: the together-quote links of the listed subscriptions (released ones left out); their quotes are in `viaSub`. */
+  links: TogetherLink[];
   /** the billed parts' proformas (quotes.subscription_billing_id) */
   parts: DocQuote[];
   /** invoices raised from the round-1 quotes (every status) */
@@ -156,7 +162,23 @@ export async function readRenewalDocRows(
       .order("id", { ascending: true })
       .range(from, to), c),
   ]);
-  const viaSub = [...new Map([...viaRenewal, ...viaSeats].map((q) => [q.id, q])).values()]
+  /* R-2870: a quote billed together names its members in renewal_quote_subscriptions (the quote's own renewal_subscription_id
+     is empty, and paying clears the subscription's renewal_quote_id) — one more batched read, then the quotes not read yet. A failed
+     link read leaves the rows as they were (the table is older than this read on a server without R-2847). */
+  const links = liveTogetherLinks(await fetchAllRowsIn<TogetherLink, string>(subIds, (run, from, to) => loose
+    .from("renewal_quote_subscriptions")
+    .select(TOGETHER_LINK_COLS)
+    .in("subscription_id", run)
+    .order("id", { ascending: true })
+    .range(from, to), c).catch((e: unknown) => { console.warn("R-2870: together links not read", e); return [] as TogetherLink[]; }));
+  const known = new Set([...viaRenewal, ...viaSeats, ...own].map((q) => q.id));
+  const linkQuotes = await fetchAllRowsIn<DocQuote, string>([...new Set(links.map((l) => l.quote_id))].filter((id) => !known.has(id)), (run, from, to) => loose
+    .from("quotes")
+    .select(QUOTE_COLS)
+    .in("id", run)
+    .order("id", { ascending: true })
+    .range(from, to), c);
+  const viaSub = [...new Map([...viaRenewal, ...viaSeats, ...linkQuotes].map((q) => [q.id, q])).values()]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   /* R-2740 drawer: the other revisions of these quotes (drawer-data.ts readRevisions) join round 1. */
   const more = opts.moreQuotes ? await opts.moreQuotes([...viaSub, ...own], QUOTE_COLS) : [];
@@ -187,7 +209,7 @@ export async function readRenewalDocRows(
       .order("id", { ascending: true })
       .range(from, to), c),
   ]);
-  return { viaSub, own, more, billings, parts, byQuote, byId };
+  return { viaSub, own, more, billings, links, parts, byQuote, byId };
 }
 
 /** R-2765: the rows' documents from rounds 1–2, then round 3 (only for what the rows show). */
@@ -200,9 +222,9 @@ export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, o
      hundred KB, and half the requests). The drawer's one-subscription read passes none — one chunk, as before. */
   const c = { concurrency: opts.concurrency };
   const loose = supabase as unknown as SupabaseClient;
-  const { viaSub, own, more, billings, parts, byQuote, byId } = r;
+  const { viaSub, own, more, billings, links, parts, byQuote, byId } = r;
   const quotes = [...new Map([...viaSub, ...own, ...more, ...parts].map((q) => [q.id, q])).values()];
-  const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId] }, { all: opts.all });
+  const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId], links }, { all: opts.all });
 
   const shownInvoices = shownInvoiceIds(docs);
   let read: [DocQuoteDetail[], NoteAmountRow[], NoteAmountRow[]];
