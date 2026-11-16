@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { SettlementLookup } from "@/lib/razorpay/settlement-match";
+import type { MonthBatchLookup, MonthBatch, BatchRow } from "@/lib/razorpay/settlement-batch";
 
 export type { SettlementLookup };
 
@@ -72,5 +73,70 @@ export function useReconcileRazorpaySettlement() {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       invalidateReceivables(qc);
     },
+  });
+}
+
+/* ── R-2654: a whole month at once ─────────────────────────────────────────────────────────── */
+
+export type { MonthBatchLookup, MonthBatch, BatchRow };
+
+export interface MonthRunResult {
+  runId: string | null;
+  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number }>;
+  refused: Array<{ txnId: string; message: string }>;
+}
+export interface MonthUndoResult {
+  undone: number;
+  left: Array<{ txn_id: string; txn_date: string; credit: number; reason: string }>;
+}
+
+const MONTH_URL = "/api/banking/razorpay-settlement/month";
+
+/** The ready / blocked table — one Razorpay read for the month; nothing saved. */
+export function useRazorpayMonthBatch(accountId: string, month: string | null) {
+  return useQuery({
+    queryKey: ["razorpay_settlement", "month", accountId, month],
+    enabled: Boolean(month),
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      const qs = new URLSearchParams({ accountId, month: month as string });
+      return (await call<{ result: MonthBatchLookup }>(`${MONTH_URL}?${qs.toString()}`)).result;
+    },
+  });
+}
+
+/** After a run / undo: the bank lines, the month table, expenses and what customers owe. */
+export function invalidateBank(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+  qc.invalidateQueries({ queryKey: ["razorpay_settlement"] });
+  qc.invalidateQueries({ queryKey: ["expenses"] });
+  invalidateReceivables(qc);
+}
+
+/** One chunk of "Reconcile all ready" — the server plans again and books under one run id. The sheet
+ *  sends the chunks one after another and refreshes the bank page once at the end (invalidateBank). */
+export function useRunRazorpayMonth() {
+  return useMutation({
+    mutationFn: async (input: { accountId: string; month: string; txnIds: string[]; runId?: string | null }) =>
+      (await call<{ run: MonthRunResult }>(MONTH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run", accountId: input.accountId, month: input.month, txnIds: input.txnIds, ...(input.runId ? { runId: input.runId } : {}) }),
+      })).run,
+  });
+}
+
+/** "Undo this run". */
+export function useUndoRazorpayMonth() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (runId: string) =>
+      (await call<{ undo: MonthUndoResult }>(MONTH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "undo", runId }),
+      })).undo,
+    onSuccess: () => invalidateBank(qc),
   });
 }

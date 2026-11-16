@@ -21,6 +21,7 @@
  * interest debit notes, and what is already on a debit note is subtracted from "so far".
  */
 import { addDaysISO, daysBetweenISO } from "@/lib/dates/ist";
+import { lineRateSet, rateLabel, type RateSourceLine } from "@/lib/gst/line-rates";
 
 export const LATE_INTEREST_RATE_PCT = 18;
 /** Every interest debit note's `notes` starts with this — how earlier charges are found. */
@@ -125,6 +126,20 @@ export function interestToAdd(interestSoFar: number, charged: { taxable: number 
 export function interestDebitNoteGross(interest: number, taxRate: number | null | undefined): number {
   const rate = taxRate ?? 18;
   return interest + Math.round((interest * rate) / 100);
+}
+
+/**
+ * R-2717: late interest is not added on an invoice whose lines carry different GST rates.
+ * The debit note is "interest + GST at the invoice's rate", and such an invoice has no single
+ * rate: issue_debit_note would split the note like the invoice (part of the interest untaxed),
+ * so the note's taxable would no longer be the interest and "already added" would read wrong.
+ * Null = one rate, interest can be added as before. The sentence is what the user sees.
+ */
+export function lateInterestRefusal(invoice: { line_items?: unknown }): string | null {
+  const rates = lineRateSet(Array.isArray(invoice.line_items) ? (invoice.line_items as RateSourceLine[]) : null);
+  if (!rates || rates.length <= 1) return null;
+  return `This invoice has lines at different GST rates (${rateLabel(rates)}), so late interest cannot be added as one debit note yet. `
+    + "Ask your accountant which GST rate the interest carries.";
 }
 
 export function interestDebitNoteNote(input: { dueDate: string; asOf: string; interest: number }): string {

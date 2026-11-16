@@ -58,8 +58,16 @@ describe("R-2519 — what the proforma shows", () => {
   it("mailed and not yet due → null (the normal Sent badge stands)", () => {
     expect(proformaShownState({ ...base, mailed: true })).toBeNull();
   });
-  it("past its pay-by date and unpaid → 'Expired' (still payable; reminders go on)", () => {
-    expect(proformaShownState({ ...base, mailed: true, todayISO: "2026-11-07" })).toEqual({ label: "Expired", kind: "danger" });
+  it("past its pay-by date and unpaid → 'Pay-by date passed — still payable' (R-2846; 'Expired' beside 'Awaiting payment' read as dead)", () => {
+    expect(proformaShownState({ ...base, mailed: true, todayISO: "2026-11-07" })).toEqual({ label: "Pay-by date passed — still payable", kind: "warning" });
+  });
+  it("R-2846: a request is never 'Expired' — stored expired, or validity ended with no pay-by date known", () => {
+    const passed = { label: "Pay-by date passed — still payable", kind: "warning" };
+    expect(proformaShownState({ ...base, status: "expired" })).toEqual(passed);
+    expect(proformaShownState({ ...base, mailed: true, dueOn: null, validityEnded: true })).toEqual(passed);
+    expect(proformaShownState({ ...base, mailed: true, dueOn: null, validityEnded: false })).toBeNull();
+    expect(proformaShownState({ ...base, isPartRequest: false, status: "expired" })).toBeNull();
+    expect(proformaShownState({ ...base, status: "expired", paymentStatus: "partial" })).toBeNull();
   });
   it("cancelled → 'Cancelled', for any quote", () => {
     expect(proformaShownState({ ...base, isPartRequest: false, status: "rejected", cancelledAt: "2026-11-06T06:00:00Z" }))

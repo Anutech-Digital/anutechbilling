@@ -340,7 +340,7 @@ export const SCENARIOS = [
     expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 3 },
     pages: [
       { path: "customers", for: "R-2548 the three SCN Part Bill customers — Subscriptions → Add Subscription → Existing Customer picks them" },
-      { path: "renewals", for: "R-2548 after adding SCN Part Bill Studio's Annual · Half-yearly subscription: 'Bill renewal · part 1 of next year'" },
+      { path: "renewals", for: "R-2548 after adding SCN Part Bill Studio's Annual · Half-yearly subscription: 'Send renewal · part 1 of next year'" },
     ],
   },
   {
@@ -351,6 +351,16 @@ export const SCENARIOS = [
     expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1 },
     pages: [
       { path: "subscriptions", for: "R-2226 SCN Seat Parts Monthly → Manage seats → effective date = 1st of this month → 'Part rate ₹270/seat (1 month of ₹3,240/yr)', ₹270 per seat; SCN Seat Parts Yearly → Pro-rata factor as before" },
+    ],
+  },
+  {
+    name: "bill-together-pair",
+    about: "R-2859: SCN Pair Works with two Google Workspace subscriptions on one domain, both billed monthly, annual term ended 5 days ago — SCN Pair Standard (3 seats) and SCN Pair Starter (7 seats). Renewals → Overdue: both rows are 'Part not billed' and Bill together suggests them (Same domain and period).",
+    cards: ["R-2859"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2859000-0000-4000-8000-000000000001"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1 },
+    pages: [
+      { path: "renewals", for: "R-2859 Overdue tab → SCN Pair Works: the Bill together box lists both; each row says 'Bills with …' and its ONE button is Bill together (Bill next part is in ⋯). Untick one in the box → both rows are back on Bill next part" },
     ],
   },
   {

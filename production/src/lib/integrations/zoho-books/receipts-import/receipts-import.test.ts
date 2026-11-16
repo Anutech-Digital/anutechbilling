@@ -211,6 +211,7 @@ describe("R-2501 scan — customer payments through the FY import framework (REA
       drop: async (_fy: string, id: string) => { rows.delete(id); },
       counts: async () => ({ listed: rows.size, detailed: [...rows.values()].filter(Boolean).length }),
       reset: async () => {},
+      refresh: async () => {}, requeueUnlisted: async () => 0, /* R-2653 */
     };
     const urls: URL[] = [];
     const j = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });

@@ -29,7 +29,9 @@ export interface OutputRow {
   amount:       number;        // GST-inclusive
   taxableValue: number;        // persisted (migration 0116), else reverse-derived
   gst:          number;        // total GST (persisted, else reverse-derived)
-  taxRate:      number;        // GST rate %
+  taxRate:      number;        // GST rate % (R-2717: the highest, when `rates` lists several)
+  /** R-2717: the document's lines carry different GST rates — every rate, lowest first. Absent = one rate. */
+  rates?:       number[];
   /** R-1131: no stored rate and no tax figure to derive one from — filed at 0%, shown as "rate missing". */
   rateMissing?: boolean;
   interState:   boolean;       // true → IGST; false → CGST + SGST
@@ -37,7 +39,7 @@ export interface OutputRow {
   /** R-335: a credit note issued after its invoice's GST s.34 limit (30 Nov after that FY). Warning only. */
   lateCreditNote?: boolean;
   /** Per-line HSN/SAC share of the taxable value (catalogue item's `hsn`). See lib/gst/gstr1.ts. */
-  lines?:       { hsn: string; description?: string; taxable: number }[];
+  lines?:       { hsn: string; description?: string; taxable: number; rate?: number | null }[];
   /** R-1742: invoices.gst_treatment frozen at issue (a note takes its invoice's); null = before R-1736. */
   gstTreatment?: string | null;
 }

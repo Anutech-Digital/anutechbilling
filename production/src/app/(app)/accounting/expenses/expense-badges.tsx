@@ -6,6 +6,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { expensePayStatus, type Expense } from "@/lib/queries/expenses";
 import { isPartlyPaidExpense } from "@/lib/accounting/vendor-account";
+import { isZohoImportedExpense } from "./expense-form";
 
 /** Reconcile tag shown next to a Salaries expense's category. Salary expenses
  *  reflect their salary's paid-status (which supports PARTIAL payments); every
@@ -92,10 +93,12 @@ export function BillChip({ tone, label, title }: { tone: "rose" | "amber"; label
  *  by the Payroll module — they carry no bill or line items, so they get no
  *  items editor and clicking one jumps to Payroll (their real home) instead of
  *  the bill-style detail. */
-export function isPayrollExpense(e: { category?: string | null; payment_method?: string | null }): boolean {
+export function isPayrollExpense(e: { category?: string | null; payment_method?: string | null; zoho_doc_id?: string | null }): boolean {
   const cat = e.category ?? "";
   return (
-    cat === "Salaries" ||
+    /* R-2683: a Zoho-imported bill on Salaries (salary paid outside Payroll) is still a bill —
+       it opens here, shows To pay / Paid and can be marked paid like any other expense. */
+    (cat === "Salaries" && !isZohoImportedExpense(e)) ||
     e.payment_method === "statutory" ||
     /\b(ESI|EPF|PF|Provident|Gratuity|Bonus|TDS)\b/i.test(cat)
   );

@@ -9,6 +9,9 @@
  *
  * Body: { fileBase64: string (raw base64, no data: prefix), mimeType: string,
  *         pages?: { from, to, total } }   ← R-1690: read only these pages of a PDF
+ * R-2662: mimeType "text/plain" = the TEXT of a password-protected PDF, unlocked in the browser
+ * (lib/banking/pdf-unlock.ts), "=== Page N ===" lines marking its pages. The password never
+ * reaches this route — the body has no field for it.
  * Returns: { rows: [{txn_date, description, debit, credit, balance_after}], mode, chunk?,
  *            rowCount (the model's own count of lines on those pages, or null), rowsReturned }
  *          or { error, kind } with 504 (timeout), 503 (busy) or 502 (anything else).
@@ -78,6 +81,14 @@ const PROMPT =
   "description = the narration/particulars text (UPI/NEFT/cheque details). " +
   "SKIP non-transaction lines: opening balance, closing balance, sub-totals, carried-forward, page headers/footers. " +
   "Keep chronological order as printed. If you cannot read it, return { \"rows\": [] }.";
+
+/* R-2662: an unlocked PDF arrives as its text (lib/banking/pdf-unlock.ts). */
+const TEXT_NOTE =
+  "\n\nThe statement is given as TEXT taken from the PDF, not as the PDF itself. Each page starts with a line \"=== Page N ===\" " +
+  "(N = that page's number in the PDF). Each text keeps the printed layout: a value starts at the same character position as the column " +
+  "it was printed in, so an amount standing under the Withdrawal/Debit heading is a debit and one under the Deposit/Credit heading is a credit " +
+  "(an empty column is just spaces). Check the direction against the running balance too. The text may also hold the page just before and " +
+  "just after the pages you are asked to read — use them only to complete a row that crosses a page break and to see the previous balance.";
 
 type AiRow = { date?: string; description?: string; debit?: number; credit?: number; balance?: number | null };
 
@@ -229,7 +240,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  if (!/^(image\/(png|jpe?g|webp|heic|heif)|application\/pdf)$/i.test(parsed.mimeType)) {
+  if (!/^(image\/(png|jpe?g|webp|heic|heif)|application\/pdf|text\/plain)$/i.test(parsed.mimeType)) {
     return NextResponse.json({ error: "Upload a PDF or photo of the statement." }, { status: 400 });
   }
 
@@ -244,9 +255,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  /* Pages only mean something for a PDF; a photo is always read whole. */
-  const pages = /pdf/i.test(parsed.mimeType) ? parsed.pages : undefined;
-  const prompt = pages ? PROMPT + pagesPrompt(pages) : PROMPT;
+  /* Pages only mean something for a PDF (or its unlocked text); a photo is always read whole. */
+  const isText = /^text\/plain$/i.test(parsed.mimeType);
+  const pages = /pdf/i.test(parsed.mimeType) || isText ? parsed.pages : undefined;
+  const prompt = (isText ? PROMPT + TEXT_NOTE : PROMPT) + (pages ? pagesPrompt(pages) : "");
 
   const { answer, reason } = await extractWithFallback(gemini.apiKey, gemini.model, gemini.tenantId, parsed.mimeType, parsed.fileBase64, prompt);
   if (!answer) {

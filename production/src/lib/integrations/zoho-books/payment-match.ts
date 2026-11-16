@@ -25,13 +25,18 @@ import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { normalizeCountry } from "@/lib/gst/countries";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import type { CustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
-import { parseInwardRemittance, type InwardRemittance } from "@/lib/banking/inward-remittance";
+import { parseInwardRemittance, remittanceFitsCredit, type InwardRemittance } from "@/lib/banking/inward-remittance";
 import { bankRefKey, bankRefNorm } from "@/lib/banking/narration-ref";
 
 /** ₹ either side of the bank amount the fallback accepts (bank charges / round-off). */
 export const AMOUNT_TOLERANCE = 2;
 /** Days either side of the bank date the fallback searches. */
 export const DATE_WINDOW_DAYS = 3;
+/** R-2658: units of the FOREIGN currency either side of an inward remittance's amount ("USD1024.0@93.6"). */
+export const FX_AMOUNT_TOLERANCE = 1;
+/** R-2658: days either side of the bank date an inward remittance's Zoho payment is searched (Zoho's
+ *  payment is dated when the customer sent the money; the bank credits it up to a week later). */
+export const FX_DATE_WINDOW_DAYS = 10;
 /** Invoices read for one payment (a payment applied to more is rare; the rest are listed by number). */
 export const MAX_INVOICES = 5;
 
@@ -144,8 +149,18 @@ export function zohoCustomerPlace(
   return { country: "India", gstTreatment: mapGstTreatment(code), state: stateCode ? GST_STATE_BY_CODE[stateCode] ?? null : null };
 }
 
+/** How a bank line was paired with its Zoho payment. R-2658 "fx_amount": an inward remittance and the
+ *  ONE Zoho payment of its foreign amount (pickByAmount) — the only pairing besides the UTR that
+ *  "Book all clean" trusts, and only to pay an open invoice in that currency (isCleanPair). */
+export type MatchBy = "utr" | "amount_date" | "fx_amount";
+
 export interface ZohoPaymentMatch {
-  by: "utr" | "amount_date" | "picked";
+  by: MatchBy | "picked";
+  /** R-2658: why a pair by "fx_amount" is NOT sure (a rival bank line, an incomplete Zoho read) —
+   *  such a pair is shown and can be ticked by a person, never booked by "Book all clean". */
+  notSure?: string | null;
+  /** R-2658: when the pairing was made (ISO) — an only-candidate pair goes stale (isSureFxPay). */
+  matchedAt?: string | null;
   payment: ZohoPaymentRow;
   customer: ZohoMatchCustomer;
   invoices: ZohoMatchInvoice[];
@@ -155,7 +170,7 @@ export interface ZohoPaymentMatch {
 
 export type FindZohoResult =
   | { kind: "match"; match: ZohoPaymentMatch }
-  | { kind: "several"; by: "utr" | "amount_date"; candidates: ZohoPaymentRow[] }
+  | { kind: "several"; by: MatchBy; candidates: ZohoPaymentRow[] }
   | { kind: "none"; utrs: string[]; from: string; to: string };
 
 type Fetch = typeof fetch;
@@ -250,6 +265,77 @@ export function isLineMoney(
   return inr || (!!rem && amountClose(p.amount, rem.amount));
 }
 
+/** R-2658: the line's inward remittance when the narration really describes THIS credit (foreign
+ *  amount × the bank's rate = the credit, ±₹1); null for a ₹ line or a narration that does not fit. */
+export function lineRemittance(line: Pick<BankCreditLine, "credit" | "description">): InwardRemittance | null {
+  const r = parseInwardRemittance(line.description);
+  return r && remittanceFitsCredit(r, line.credit) ? r : null;
+}
+
+/** R-2658: is this Zoho payment the remittance's own money — the same foreign currency (Zoho must
+ *  say it), the amount within FX_AMOUNT_TOLERANCE units? */
+export function isFxMoney(p: Pick<ZohoPaymentRow, "amount" | "currency">, rem: InwardRemittance | null): boolean {
+  return !!rem && !!p.currency && p.currency !== "INR" && p.currency === rem.currency
+    && Math.abs(p.amount - rem.amount) <= FX_AMOUNT_TOLERANCE + 1e-9;
+}
+
+/** A line as the window needs it: its date, and (when known) what says it is a remittance. */
+export type WindowLine = Pick<BankCreditLine, "txnDate"> & Partial<Pick<BankCreditLine, "credit" | "description">>;
+
+/** Days either side of the bank date a line's Zoho payment is looked for. */
+export function lineWindowDays(line: WindowLine): number {
+  const rem = line.credit === undefined ? null : lineRemittance({ credit: line.credit, description: line.description ?? null });
+  return rem ? FX_DATE_WINDOW_DAYS : DATE_WINDOW_DAYS;
+}
+
+export type AmountPick =
+  | { kind: "one"; by: "amount_date" | "fx_amount"; payment: ZohoPaymentRow; notSure?: string }
+  | { kind: "several"; by: "amount_date" | "fx_amount"; candidates: ZohoPaymentRow[] }
+  | { kind: "none" };
+
+/** A bank line that could claim the same Zoho payment: any money-in line of the company with a
+ *  remittance narration — reconciled or not, any account (its id tells it from the line itself). */
+export type RivalLine = BankCreditLine & { id?: string };
+
+/** Why a found pair is not sure when Zoho's list was cut short. */
+export const NOT_SURE_INCOMPLETE = "Zoho has more payments in this period than were read — another payment of the same amount may be among them.";
+
+/**
+ * R-2658 — WHICH Zoho payment a line is when no UTR pairs them, from a list of payments. Pure.
+ *   · the ₹ rule as before (R-2359 / R-2425): isLineMoney, dated within DATE_WINDOW_DAYS;
+ *   · an inward remittance (lineRemittance) also takes a Zoho payment in its currency of its foreign
+ *     amount (isFxMoney) dated within FX_DATE_WINDOW_DAYS — by "fx_amount".
+ * One candidate → "one"; more → "several" (the person picks — nothing is guessed). A pair by
+ * "fx_amount" is SURE only when nothing says otherwise; `notSure` carries the reason:
+ *   · another bank line (`rivals`: reconciled or not — a reconciled one may already have used this
+ *     payment) carries the same foreign amount within the window of that payment;
+ *   · the payment list was cut short (`complete` false).
+ */
+export function pickByAmount(line: RivalLine, payments: readonly ZohoPaymentRow[], rivals: readonly RivalLine[] = [], complete = true): AmountPick {
+  const parsed = parseInwardRemittance(line.description);
+  const rem = parsed && remittanceFitsCredit(parsed, line.credit) ? parsed : null;
+  const gap = (p: ZohoPaymentRow, date: string) => dayGap(p.date, date);
+  const fx = (p: ZohoPaymentRow) => isFxMoney(p, rem) && gap(p, line.txnDate) <= FX_DATE_WINDOW_DAYS;
+  const near = payments
+    .filter((p) => fx(p) || (isLineMoney(p, line, parsed) && gap(p, line.txnDate) <= DATE_WINDOW_DAYS))
+    .sort((a, b) => gap(a, line.txnDate) - gap(b, line.txnDate));
+  if (near.length === 0) return { kind: "none" };
+  const byFx = near.some(fx);
+  if (near.length > 1) return { kind: "several", by: byFx ? "fx_amount" : "amount_date", candidates: near.slice(0, 10) };
+  const payment = near[0];
+  if (!byFx) return { kind: "one", by: "amount_date", payment };
+  /* A rival is judged by its narration alone (even one that does not fit its credit) — when in doubt, not sure. */
+  const rival = rivals.find((o) => o !== line && !(o.id && o.id === line.id)
+    && isFxMoney(payment, parseInwardRemittance(o.description)) && gap(payment, o.txnDate) <= FX_DATE_WINDOW_DAYS);
+  const notSure = rival
+    ? `Another bank line (${rival.txnDate.slice(0, 10)}, the same ${payment.currency} amount) could be this Zoho payment — check which line it belongs to.`
+    : complete ? undefined : NOT_SURE_INCOMPLETE;
+  return { kind: "one", by: "fx_amount", payment, ...(notSure ? { notSure } : {}) };
+}
+
+/** R-2658: pages of 200 the live lookup reads for an inward remittance's ±10-day window. */
+export const FX_LIVE_PAGES = 5;
+
 function addDays(iso: string, days: number): string {
   const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -262,10 +348,11 @@ export const amountClose = (a: number, b: number) => Math.abs(a - b) <= AMOUNT_T
 
 export interface ZohoReadDeps { orgId: string; token: string; fetch?: Fetch }
 
-/** Step 1 + 2: which Zoho payment is this bank line? */
-export async function findZohoPayment(line: BankCreditLine, deps: ZohoReadDeps): Promise<
-  { kind: "one"; by: "utr" | "amount_date"; payment: ZohoPaymentRow }
-  | { kind: "several"; by: "utr" | "amount_date"; candidates: ZohoPaymentRow[] }
+/** Step 1 + 2: which Zoho payment is this bank line? `rivals` (R-2658) = the company's other
+ *  remittance lines, when the caller has them — see pickByAmount. */
+export async function findZohoPayment(line: RivalLine, deps: ZohoReadDeps, rivals: readonly RivalLine[] = []): Promise<
+  { kind: "one"; by: MatchBy; payment: ZohoPaymentRow; notSure?: string }
+  | { kind: "several"; by: MatchBy; candidates: ZohoPaymentRow[] }
   | { kind: "none"; utrs: string[]; from: string; to: string }
 > {
   const f = deps.fetch ?? fetch;
@@ -280,15 +367,23 @@ export async function findZohoPayment(line: BankCreditLine, deps: ZohoReadDeps):
     if (sameAmount.length === 1) return { kind: "one", by: "utr", payment: sameAmount[0] };
     return { kind: "several", by: "utr", candidates: (sameAmount.length ? sameAmount : hits).slice(0, 10) };
   }
-  const from = addDays(line.txnDate, -DATE_WINDOW_DAYS);
-  const to = addDays(line.txnDate, DATE_WINDOW_DAYS);
-  const page = await listCustomerPaymentsPage(deps.orgId, deps.token, { dateStart: from, dateEnd: to }, f);
-  const near = page.rows.map(paymentFromZoho)
-    .filter((p): p is ZohoPaymentRow => !!p && isLineMoney(p, line, rem))
-    .sort((a, b) => dayGap(a.date, line.txnDate) - dayGap(b.date, line.txnDate));
-  if (near.length === 1) return { kind: "one", by: "amount_date", payment: near[0] };
-  if (near.length > 1) return { kind: "several", by: "amount_date", candidates: near.slice(0, 10) };
-  return { kind: "none", utrs, from, to };
+  /* R-2658: an inward remittance is searched ±10 days and paired by its foreign amount (pickByAmount). */
+  const days = lineWindowDays(line);
+  const from = addDays(line.txnDate, -days);
+  const to = addDays(line.txnDate, days);
+  /* A ₹ line reads one page as before; a remittance's wider window is read up to FX_LIVE_PAGES pages
+     (its payment is usually dated BEFORE the bank date — the far end of a newest-first list). Still
+     more after that → whatever is found is not sure. */
+  const pages = days === FX_DATE_WINDOW_DAYS ? FX_LIVE_PAGES : 1;
+  const payments: ZohoPaymentRow[] = [];
+  let more = true;
+  for (let n = 1; n <= pages && more; n++) {
+    const page = await listCustomerPaymentsPage(deps.orgId, deps.token, { dateStart: from, dateEnd: to, ...(n > 1 ? { page: n } : {}) }, f);
+    payments.push(...page.rows.map(paymentFromZoho).filter((p): p is ZohoPaymentRow => !!p));
+    more = page.more;
+  }
+  const picked = pickByAmount(line, payments, rivals, !more);
+  return picked.kind === "none" ? { kind: "none", utrs, from, to } : picked;
 }
 
 /** R-2474: a Zoho invoice detail → its money history (payments, credits, write-off, balance). No

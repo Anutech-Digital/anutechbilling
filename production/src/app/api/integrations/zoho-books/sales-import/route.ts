@@ -7,7 +7,9 @@
  *   read     → reads the next piece of the FY from Zoho into the server's scan (list, then each
  *              invoice's detail; READ only; at most FY_CALLS_PER_REQUEST Zoho calls a request —
  *              call again after `waitMs` until `complete`). Counts come from the stored rows.
- *   restart  → forgets the scan (read again from the start).
+ *   restart  → R-2653: Read again — lists the FY again and reads the detail only of invoices new or
+ *              changed in Zoho (status / last_modified_time); one gone from Zoho is dropped. { fresh: true }
+ *              forgets the scan instead (read every detail again).
  *   preview  → the plan from the COMPLETE scan: counts, skip reasons, Zoho vs to-import totals per
  *              month, what is already in the app per month, past batches. Nothing written.
  *              R-2530: also `gstinChoices` — Zoho customers whose name matches one app customer with
@@ -73,7 +75,10 @@ export async function POST(req: NextRequest) {
   const store = supabaseScanStore<ZohoSaleFacts>(db, caller.tenantId, KIND);
 
   if (action === "restart") {
-    try { await store.reset(fy); } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
+    try {
+      if (body.fresh === true) await store.reset(fy);
+      else await store.refresh(fy, { onlyAccount: null, nowIso: new Date().toISOString() });
+    } catch { return fail(500, "Could not start the Zoho read again. Try again."); }
     return NextResponse.json({ ok: true, fy, listed: 0, detailed: 0, complete: false });
   }
 

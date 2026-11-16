@@ -22,11 +22,6 @@ type Loose = {
   from: (t: string) => {
     select: (cols: string) => {
       order: (c: string, o?: { ascending?: boolean }) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-      eq: (c: string, v: string) => {
-        not: (c: string, op: string, v: null) => {
-          order: (c: string, o?: { ascending?: boolean }) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-        };
-      };
     };
   };
 };
@@ -131,20 +126,18 @@ export function useDeleteCustomerPayer() {
 /** A bank line this customer's payers paid on (the answer stored on the line). */
 export interface PayerLine { id: string; bank_account_id: string; txn_date: string; credit: number; payer_key: string | null }
 
-/** "Seen on which lines": the reconciled money-in lines answered for this customer. */
+/** "Seen on which lines": the reconciled money-in lines answered for this customer.
+ *  R-2711: read through customer_payer_lines (SECURITY INVOKER — the caller's RLS applies). The data
+ *  gateway refuses a JSON-path filter key such as `payer->>customer_id` (400 on every customer page). */
 export function useCustomerPayerLines(customerId: string | null) {
   return useQuery({
     queryKey: ["customer_payer_lines", customerId],
     enabled: Boolean(customerId),
     queryFn: async (): Promise<PayerLine[]> => {
-      const { data, error } = await db().from("bank_transactions")
-        .select("id, bank_account_id, txn_date, credit, payer")
-        .eq("payer->>customer_id", customerId as string)
-        .not("matched_to_type", "is", null)
-        .order("txn_date", { ascending: false });
+      const { data, error } = await db().rpc("customer_payer_lines", { p_customer_id: customerId });
       if (error) throw error;
-      return ((data ?? []) as Array<{ id: string; bank_account_id: string; txn_date: string; credit: number; payer: { key?: string } | null }>)
-        .map((r) => ({ id: r.id, bank_account_id: r.bank_account_id, txn_date: r.txn_date, credit: Number(r.credit) || 0, payer_key: r.payer?.key ?? null }));
+      return ((data ?? []) as Array<{ id: string; bank_account_id: string; txn_date: string; credit: number; payer_key: string | null }>)
+        .map((r) => ({ id: r.id, bank_account_id: r.bank_account_id, txn_date: r.txn_date, credit: Number(r.credit) || 0, payer_key: r.payer_key ?? null }));
     },
     staleTime: 30_000,
   });

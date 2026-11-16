@@ -3,7 +3,7 @@
  * connected Meta Ads login manages (a brand's lead ads often run on a Page other than the one used
  * for posting). No Page token is stored: at list / pull time the Meta Ads login's token
  * (ad_accounts.access_token, sealed) is opened server-side and asked for its Pages' tokens.
- * Chosen forms live in meta_lead_forms (migration 20261110120000).
+ * Chosen forms live in meta_lead_forms (migration 20261112051529).
  */
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";

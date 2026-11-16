@@ -18,6 +18,8 @@ vi.mock("@/lib/queries/customers", () => ({
     isPending: false,
     mutateAsync: async (a: { id: string; patch: Record<string, unknown> }) => { updates.push(a); return {}; },
   }),
+  /* R-2715: the duplicate-customer hint's list (create mode only). */
+  useCustomers: () => ({ data: [] }),
 }));
 vi.mock("./group-form-dialog", () => ({ GroupFormDialog: () => null }));
 vi.mock("@/lib/queries/customer-groups", () => ({ useCustomerGroups: () => ({ data: [] }) }));

@@ -4,8 +4,8 @@
  * Audit (Anutech-HQ/drafts/RENEWALS-AUDIT/page-audit.md): the old Insights line read
  * "Urgent MRR ₹5.8L · Upcoming 30d MRR ₹7.0K · At risk ARR ₹69.2L" — monthly and yearly money
  * mixed, and none of it led to a list. Now six tiles, all in the SAME money the table shows (the
- * row's renewal amount: the open renewal quote's total, else the term amount — queue.ts
- * renewalAmount), and a click shows exactly the rows a tile adds up:
+ * row's renewal amount: R-2751 the term amount BEFORE GST, whether or not a renewal quote exists —
+ * queue.ts renewalAmount), and a click shows exactly the rows a tile adds up:
  *
  *   Overdue            the Overdue tab's rows
  *   Due in 30 days     due today .. +30 days (the ≤7 days + 8–30 tabs)
@@ -22,6 +22,10 @@
  * from the renewal quotes themselves (quotes.is_renewal, renewal_term_date = the renewal date it
  * renewed — R-1574) that are fully paid. Pure — tested in tiles-r2405.test.ts.
  */
+import { taxableAfterDiscount } from "@/lib/quotes/amounts";
+import { SAAS_GST_RATE } from "@/lib/gst/hsn";
+import type { RenewalForecast } from "@/lib/renewals/forecast";
+import { rupee } from "@/lib/utils";
 import type { QueueTab, RowStatusKey } from "./queue";
 
 export const TILE_KEYS = ["overdue", "due30", "due60", "due90", "wontRenew", "renewedMonth"] as const;
@@ -36,11 +40,22 @@ export const TILE_LABEL: Record<TileKey, string> = {
   renewedMonth: "Renewed this month",
 };
 
-/** What the table shows when a tile is pressed (the Renewed tile shows the work still left). */
-export const TILE_VIEW_LABEL: Record<TileKey, string> = {
-  ...TILE_LABEL,
-  renewedMonth: "Still due this month",
+/**
+ * R-2855: what each tile's ₹ IS, in plain words, printed under the number (it was only in the tooltip).
+ * The work tiles add up renewal VALUE (the next term's bill, before GST) — not unpaid bills; the header
+ * line carries those ("Bills and instalments due: ₹X unpaid on these renewals"). The Renewed tile's
+ * caption is worked out (tileText): the % and the month's ₹ it divides by.
+ */
+export const TILE_CAPTION: Record<Exclude<TileKey, "renewedMonth">, string> = {
+  overdue: "Renewal value overdue",
+  due30: "Renewal value due",
+  due60: "Renewal value due",
+  due90: "Renewal value due",
+  wontRenew: "Renewal value leaving",
 };
+
+/** What the table shows when a tile is pressed. R-2741: the Renewed tile lists the renewals it counts. */
+export const TILE_VIEW_LABEL: Record<TileKey, string> = { ...TILE_LABEL };
 
 /** One queue row, as the tiles need it. */
 export interface TileRow {
@@ -61,6 +76,25 @@ export interface RenewalQuotePayment {
   status?: string | null;
   renewal_subscription_id: string | null;
   renewal_term_date: string | null;
+  /** R-2751: for the amount before GST = subtotal less discount (quotes.subtotal / discount_pct / tax_rate). */
+  subtotal?: number | null;
+  discount_pct?: number | null;
+  tax_rate?: number | null;
+}
+
+
+
+/**
+ * R-2751: a paid renewal quote counts in "Renewed this month" at its amount BEFORE GST — the same
+ * basis as every row and tile (queue.ts renewalAmount: term amount + GST). It used the total incl.
+ * GST, so "of ₹1.0L due in Nov" mixed incl. GST (paid) with before GST (still due).
+ * Subtotal less discount; a quote with no subtotal → total ÷ (1 + its GST rate).
+ */
+export function quoteAmountBeforeGst(q: Pick<RenewalQuotePayment, "amount" | "subtotal" | "discount_pct" | "tax_rate">): number {
+  const sub = Math.round(q.subtotal ?? 0);
+  if (sub > 0) return taxableAfterDiscount(sub, q.discount_pct ?? 0);
+  const rate = Math.max(0, q.tax_rate ?? SAAS_GST_RATE);
+  return Math.round(((q.amount ?? 0) * 100) / (100 + rate));
 }
 
 export interface MonthRange {
@@ -104,7 +138,8 @@ const NOT_DUE: ReadonlySet<RowStatusKey> = new Set(["renewed", "non-renewing"]);
  */
 export function tileMatches(key: TileKey, r: TileRow, month: MonthRange, paidSubs: ReadonlySet<string> = new Set()): boolean {
   switch (key) {
-    case "overdue":   return r.tab === "overdue";
+    /* R-2741: Overdue leaves out a Won't renew / renewed row too — it is counted in its own tile, once. */
+    case "overdue":   return r.tab === "overdue" && !NOT_DUE.has(r.statusKey);
     case "due30":     return (r.tab === "due7" || r.tab === "d30") && !NOT_DUE.has(r.statusKey);
     case "due60":     return r.tab === "d60" && !NOT_DUE.has(r.statusKey);
     case "due90":     return r.tab === "d90" && !NOT_DUE.has(r.statusKey);
@@ -112,6 +147,53 @@ export function tileMatches(key: TileKey, r: TileRow, month: MonthRange, paidSub
     case "renewedMonth":
       return inMonth(r.renewalDate, month) && !NOT_DUE.has(r.statusKey) && !paidSubs.has(r.id);
   }
+}
+
+/** R-2741: the rows the Renewed tile's press lists — the renewals it adds up (a paid quote, or a Renewed row not moved on yet). */
+export function renewedRowMatches(r: TileRow, month: MonthRange, paidSubs: ReadonlySet<string>): boolean {
+  return paidSubs.has(r.id) || (r.statusKey === "renewed" && inMonth(r.renewalDate, month));
+}
+
+/** The queue tabs each Overdue / Due tile is made of. */
+export const TILE_WINDOW_TABS = {
+  overdue: ["overdue"], due30: ["due7", "d30"], due60: ["d60"], due90: ["d90"],
+} as const satisfies Record<string, readonly QueueTab[]>;
+export type WindowKey = keyof typeof TILE_WINDOW_TABS;
+
+export interface WindowReconcile {
+  /** Rows the tabs of this window hold (the tab counts added up). */
+  tabRows: number;
+  /** Rows the tile counts. */
+  tileRows: number;
+  /** Closed rows the tabs still list but the tile leaves out (own tile / already renewed). */
+  wontRenew: number;
+  renewed: number;
+}
+
+/**
+ * R-2741 — ONE function for "tile = tab count = sum of rows": for each window, the tab rows split
+ * into what the tile counts + the closed rows it leaves out, so tabRows === tileRows + wontRenew + renewed
+ * always, and the tile can say "(+1 won't renew)" instead of looking 1 short of its tab.
+ */
+export function reconcileWindows(rows: readonly TileRow[], month: MonthRange): Record<WindowKey, WindowReconcile> {
+  const out = {} as Record<WindowKey, WindowReconcile>;
+  for (const key of Object.keys(TILE_WINDOW_TABS) as WindowKey[]) {
+    const tabs: readonly QueueTab[] = TILE_WINDOW_TABS[key];
+    const inTabs = rows.filter((r) => tabs.includes(r.tab));
+    out[key] = {
+      tabRows: inTabs.length,
+      tileRows: inTabs.filter((r) => tileMatches(key, r, month)).length,
+      wontRenew: inTabs.filter((r) => r.statusKey === "non-renewing").length,
+      renewed: inTabs.filter((r) => r.statusKey === "renewed").length,
+    };
+  }
+  return out;
+}
+
+/** "(+1 won't renew)" / "(+2 renewed)" — what a tab holds beyond its tile; "" when they agree. */
+export function windowExtraNote(w: WindowReconcile): string {
+  const parts = [w.wontRenew > 0 ? `${w.wontRenew} won't renew` : "", w.renewed > 0 ? `${w.renewed} renewed` : ""].filter(Boolean);
+  return parts.length ? `(+${parts.join(", +")})` : "";
 }
 
 export interface TileFigure {
@@ -127,6 +209,10 @@ export interface RenewedFigure extends TileFigure {
   pct: number | null;
   /** What the tile's click shows: renewals of this month not paid yet. */
   stillDue: TileFigure;
+  /** R-2855: `stillDue` split by where those rows sit — past their date (in the Overdue tile) … */
+  stillDueOverdue: TileFigure;
+  /** … and not due yet (in the Due in 30 days tile). stillDueOverdue + stillDueLater = stillDue, always. */
+  stillDueLater: TileFigure;
 }
 
 export type RenewalTiles = Record<Exclude<TileKey, "renewedMonth">, TileFigure> & { renewedMonth: RenewedFigure };
@@ -152,9 +238,16 @@ export function renewalTiles(rows: readonly TileRow[], quotes: readonly RenewalQ
   /* a row already Renewed (paid, its date not moved yet) with no paid quote loaded counts as renewed too */
   const renewedRows = rows.filter((r) => r.statusKey === "renewed" && inMonth(r.renewalDate, month) && !paidSubs.has(r.id));
   const renewedCount = paid.length + renewedRows.length;
-  const renewedAmount = paid.reduce((s, q) => s + Math.round(q.amount ?? 0), 0)
+  /* R-2751: before GST, like the rows (it was the quote total incl. GST). */
+  const renewedAmount = paid.reduce((s, q) => s + quoteAmountBeforeGst(q), 0)
     + renewedRows.reduce((s, r) => s + Math.round(r.amount), 0);
   const stillDue = sum("renewedMonth");
+  /* R-2855: the month's unpaid renewals, split by tab — the same rows, so the two parts add up to stillDue */
+  const stillDueOverdue: TileFigure = { count: 0, amount: 0 };
+  for (const r of rows) {
+    if (r.tab === "overdue" && tileMatches("renewedMonth", r, month, paidSubs)) { stillDueOverdue.count += 1; stillDueOverdue.amount += Math.round(r.amount); }
+  }
+  const stillDueLater: TileFigure = { count: stillDue.count - stillDueOverdue.count, amount: stillDue.amount - stillDueOverdue.amount };
   const dueAmount = renewedAmount + stillDue.amount;
   return {
     overdue: sum("overdue"),
@@ -168,6 +261,87 @@ export function renewalTiles(rows: readonly TileRow[], quotes: readonly RenewalQ
       dueAmount,
       pct: dueAmount > 0 ? Math.round((renewedAmount / dueAmount) * 100) : null,
       stillDue,
+      stillDueOverdue,
+      stillDueLater,
     },
+  };
+}
+
+export interface TileText {
+  /** The big number, compact ("₹4.5L"). */
+  value: string;
+  /** Beside it: how many renewals. */
+  sub: string;
+  /** R-2855: under it, what the number is — always on screen. */
+  caption: string;
+  /** The tooltip: full rupees and how the number is made. */
+  title: string;
+}
+
+/** "1 renewal" / "3 renewals" — one wording for the tiles and the tile-view bar. */
+export const plural = (n: number) => `${n} renewal${n === 1 ? "" : "s"}`;
+
+/**
+ * R-2855 — every word a tile shows, in one pure place (tiles-card.tsx only draws it).
+ *
+ * Renewed this month: "₹P · N renewals" and under it "N% of <month>'s ₹X", where ₹X = that month's
+ * renewals, paid + not paid (before GST) — the base of the % is on the tile itself. The old helper said
+ * "₹3.4L still due (Overdue + Due tiles)", read as "= those tiles added up" (4.5L + 5.4L): those tiles
+ * also hold other months' renewals. The tooltip says how ₹X is made and which part of the unpaid rest
+ * sits in Overdue and which in Due in 30 days (the two parts add up — renewalTiles).
+ * Every branch reads the AMOUNTS (pct / stillDue.amount), so a ₹0 renewal never gives "₹0 of it not paid".
+ */
+export function tileText(key: TileKey, t: RenewalTiles, month: MonthRange, windows: Partial<Record<WindowKey, WindowReconcile>>): TileText {
+  if (key === "renewedMonth") {
+    const f = t.renewedMonth;
+    const due = rupee(f.dueAmount, { compact: true });
+    /* on the tile: short enough for one line of a 160px tile (1280 screen); the tooltip keeps "N% of ₹X due in <month>" */
+    const caption = f.pct == null ? `Nothing due in ${month.label}` : `${f.pct}% of ${month.label}'s ${due}`;
+    const long = f.pct == null ? caption : `${f.pct}% of ${due} due in ${month.label}`;
+    const base = `"Due in ${month.label}" = renewals dated in ${month.label}, paid + not paid, before GST (${rupee(f.dueAmount)})`;
+    const parts = [
+      f.stillDueOverdue.amount > 0 ? `${rupee(f.stillDueOverdue.amount)} of it is in Overdue` : "",
+      f.stillDueLater.amount > 0 ? `${rupee(f.stillDueLater.amount)} is not due yet (in ${TILE_LABEL.due30})` : "",
+    ].filter(Boolean);
+    const unpaid = f.stillDue.amount > 0
+      ? `Not paid yet: ${rupee(f.stillDue.amount)} (${plural(f.stillDue.count)}) — ${parts.join(", ")}`
+      : f.pct == null ? `No renewal value dated in ${month.label}` : `All of ${month.label}'s renewals are paid`;
+    return {
+      value: rupee(f.amount, { compact: true }),
+      sub: plural(f.count),
+      caption,
+      title: `${TILE_LABEL[key]}: ${rupee(f.amount)} paid (${plural(f.count)}) — ${long}. ${base}. ${unpaid}. Press to list the renewed ones.`,
+    };
+  }
+  const f = t[key];
+  const w = key in windows ? windows[key as WindowKey] : undefined;
+  const extra = w ? windowExtraNote(w) : "";   // R-2741: "(+1 won't renew)" — the tab lists it, the tile does not
+  const sub = extra ? `${plural(f.count)} ${extra}` : plural(f.count);
+  const caption = TILE_CAPTION[key];
+  return {
+    value: rupee(f.amount, { compact: true }),
+    sub,
+    caption,
+    title: `${TILE_LABEL[key]}: ${rupee(f.amount)} — ${sub}. ${caption}, before GST (each renewal's next-term bill; not unpaid bills). Press to list them.`,
+  };
+}
+
+/**
+ * R-2751: the Forecast's bar for THIS month = the Renewed tile's "of ₹X due in <month>" (paid +
+ * still due, before GST). The audit saw "91% of ₹1.0L due in Nov" next to a Forecast Nov of
+ * ₹12.6K: the forecast counted only subscriptions still dated in November, but a paid renewal has
+ * already moved its date to next year. Later months stay the forecast's own (term amounts of the
+ * renewals dated then); the totals are summed again so the strip's line adds up.
+ */
+export function forecastWithThisMonth(f: RenewalForecast, renewed: RenewedFigure, month: MonthRange): RenewalForecast {
+  const key = month.start.slice(0, 7);
+  const months = f.months.map((m) => (m.key === key
+    ? { ...m, amount: renewed.dueAmount, count: renewed.count + renewed.stillDue.count }
+    : m));
+  return {
+    ...f,
+    months,
+    totalAmount: months.reduce((s, m) => s + m.amount, 0),
+    totalCount: months.reduce((s, m) => s + m.count, 0),
   };
 }

@@ -24,6 +24,9 @@ export interface InwardRemittance {
 /** Codes a remittance narration is read for (the billing currencies + a few common ones).
  *  R-2440: reconcile_bank_credit_new_sale_fx (migration 20261103163318) holds the same list twice — change all three together. */
 const CODES = ["USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD", "CHF", "JPY", "NZD", "HKD", "SAR"];
+/** R-2658: the same codes for a database pre-filter (a narration with "<CODE>…@" — a superset of what
+ *  parseInwardRemittance accepts; the caller still parses each row). */
+export const REMITTANCE_CODES: readonly string[] = CODES;
 const RE = new RegExp(`(?:^|[^A-Z])(${CODES.join("|")})\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*@\\s*([0-9]+(?:\\.[0-9]+)?)`, "i");
 
 /** "INW … USD1024.0@93.6" → {USD, 1024, 93.6}; null when the narration carries no foreign amount + rate. */

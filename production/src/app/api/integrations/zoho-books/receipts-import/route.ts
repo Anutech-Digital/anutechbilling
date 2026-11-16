@@ -11,7 +11,11 @@
  *              browser closed; progress is saved after every Zoho call, so it resumes.
  *   step     → R-2607: the open dialog runs one server pass too (same lease — never two at once).
  *   status   → R-2607: progress { listed, detailed, complete, running, error } — no Zoho call.
- *   restart  → forgets the scan (refused while a server pass runs).
+ *   restart  → R-2653: Read again (refused while a server pass runs) — lists the FY again and reads the
+ *              detail only of payments new or changed in Zoho (status / last_modified_time); one gone from
+ *              Zoho is dropped. { onlyAccount: <Zoho account id> } limits it to payments deposited to that
+ *              account (Razorpay Clearing: ~13 list + its changed payments, not 2,576). { fresh: true }
+ *              forgets the scan instead (every detail again).
  *   preview  → the plan from the COMPLETE scan: counts, totals, Zoho deposit accounts with the app
  *              account each goes to (owner's choice, else a suggestion; "none" = Leave these out → its
  *              payments are skipped "Left out by owner."), skip reasons, past batches.
@@ -21,6 +25,9 @@
  *              comes from the scan in the database. NO suggestion here (R-2501 fix): only the accounts the
  *              dialog sent (what it showed) are used — a Zoho account it did not send is skipped.
  *              Already-booked payments with no bank line yet are sent again: the SQL matches their bank line if it has come in since.
+ *   saveAccount → R-2704: { zohoKey: <Zoho deposit account id>, choice: <app account id> | "none" | "" } —
+ *              save_zoho_account_bank_choice remembers it for this company ("" forgets); the next
+ *              preview starts from the saved choices (what the dialog sends still wins).
  *   undo     → { batchId, reason } — remove_zoho_fy_receipts_import (OWNER only, while nothing in the
  *              batch was touched since; R-2501 follow-up).
  * Zoho is never written to.
@@ -30,9 +37,12 @@ import { resolveZohoCaller } from "@/lib/integrations/zoho-books/store";
 import { fyDateRange } from "@/lib/integrations/zoho-books/fy-fetch";
 import { supabaseBgStore } from "@/lib/integrations/zoho-books/fy-import/bg-store";
 import { companyReadPass } from "@/lib/integrations/zoho-books/fy-import/read-job.server";
+import { parseOnlyAccount } from "@/lib/integrations/zoho-books/fy-import/scan";
+import { parseSaveChoice, readAccountChoices, withSavedChoices } from "@/lib/integrations/zoho-books/fy-import/account-choices";
+import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { RECEIPTS_IMPORT_PART, partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
-import type { ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
+import { foreignOf, inrAmountOf, type ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
 import { RECEIPTS_IMPORT_ROLES, buildReceiptsPlan, toReceiptPick } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import { parseAccountMap, readReceiptsContext } from "@/lib/integrations/zoho-books/receipts-import/store";
 import { depositAccountLabel, depositAccounts } from "@/lib/payments/deposit-accounts";
@@ -47,6 +57,8 @@ const KIND = "customerpayments" as const;
 const ROLE_MSG = "Only the owner or an accountant can import FY receipts from Zoho.";
 /** R-2607: the dialog's own server pass — under maxDuration (60 s) with room for the counts. */
 const STEP_BUDGET_MS = 40_000;
+/** R-2693: left-out payments listed in one preview (a year has ~2,600 payments; the counts always cover all). */
+const SKIPPED_LIST_MAX = 5_000;
 const READING_MSG = "The server is reading Zoho right now — wait until it says it has read all payments, then read again.";
 
 function fail(status: number, error: string) {
@@ -70,13 +82,26 @@ export async function POST(req: NextRequest) {
 
   if (action === "restart") {
     /* R-2607: never under a running pass — it would save its old page over the fresh start. The
-       restart TAKES the lease itself first (no pass can start in between), then forgets the run. */
+       restart TAKES the lease itself first (no pass can start in between), then starts the read again. */
+    const only = parseOnlyAccount(body.onlyAccount);
+    if (only === undefined) return fail(400, "Choose a Zoho account to read, or All accounts.");
+    const until = Date.now() + 60_000;
+    let held: PaceEntry[] | null = null;
     try {
       const s = await bg.readBg(fy);
-      if (s && !(await bg.takeLease(fy, Date.now() + 60_000, Date.now()))) return fail(409, READING_MSG);
-      await store.reset(fy);
-    } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
-    return NextResponse.json({ ok: true, fy, listed: 0, detailed: 0, complete: false, running: false, error: null });
+      if (s && !(await bg.takeLease(fy, until, Date.now()))) return fail(409, READING_MSG);
+      if (s) held = s.pace ?? [];
+      /* R-2653: Read again keeps what is read — lists again, reads only new / changed payments (of
+         `only`'s account, when chosen). { fresh: true } forgets the scan (every detail again). */
+      if (body.fresh === true) await store.reset(fy);
+      else await store.refresh(fy, { onlyAccount: only, nowIso: new Date().toISOString() });
+    } catch {
+      return fail(500, "Could not start the Zoho read again. Try again.");
+    } finally {
+      /* R-2653: let go of the restart's own lease at once (also after an error), so the next pass need not wait it out. */
+      if (held) await bg.release(fy, { finished: false, error: null, nowMs: Date.now(), leaseUntilMs: until, pace: held }).catch(() => {});
+    }
+    return NextResponse.json({ ok: true, fy, listed: 0, detailed: 0, complete: false, running: false, error: null, onlyAccount: only });
   }
 
   /* R-2607: the read runs on the SERVER. start = ask for it (keeps what is read — resumes);
@@ -91,16 +116,35 @@ export async function POST(req: NextRequest) {
         ok: true, fy, ...c,
         complete: !!run?.listDone && c.detailed >= c.listed && !s?.requestedAt,
         running: !!s?.requestedAt, error: s?.error ?? null, finishedAt: s?.finishedAt ?? null, lastStepAt: s?.lastStepAt ?? null,
+        /* R-2653: the last Read again was limited to this Zoho deposit account (null = all). */
+        onlyAccount: run?.onlyAccount ?? null,
       });
     } catch {
       return fail(500, "Could not reach the Zoho read. Try again.");
     }
   }
 
+  if (action === "saveAccount") {
+    const c = parseSaveChoice(body, "receipts");
+    if (!c) return fail(400, "Choose an app account for this Zoho account, or Leave these out.");
+    const supabase = createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any).rpc("save_zoho_account_bank_choice", { p_use: c.use, p_key: c.key, p_choice: c.choice });
+    if (error) return fail(400, (error as { message?: string }).message ?? "The choice was not saved.");
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === "preview" || action === "import") {
-    const accountMap = parseAccountMap(body.accounts);
-    let plan, counts, run, ctx;
+    const sent = parseAccountMap(body.accounts);
+    let plan, counts, run, ctx, accountMap = sent;
     try {
+      /* R-2704: the preview starts from this company's saved choices (reopen keeps them); the dialog's
+         own map wins. The import still maps ONLY what the dialog sent (it showed the saved ones first). */
+      /* A failed read of the saved choices only loses the defaults — the preview still works (suggestions). */
+      if (action === "preview") {
+        const saved = await readAccountChoices(db, caller.tenantId, "receipts").catch(() => ({}));
+        accountMap = withSavedChoices(parseAccountMap(saved), sent);
+      }
       [counts, run] = await Promise.all([store.counts(fy), store.readRun(fy)]);
       if (!run?.listDone || counts.detailed < counts.listed || counts.listed === 0) {
         return fail(409, "Read the year from Zoho first (Read from Zoho) — it is not complete yet.");
@@ -124,11 +168,18 @@ export async function POST(req: NextRequest) {
       let batches;
       try { batches = await readImportBatches(db, caller.tenantId, KIND, fy); }
       catch { return fail(500, "Could not read what is already imported. Refresh and try again."); }
-      const skipped = plan.rows.filter((r) => r.verdict === "skip").slice(0, 500)
-        .map((r) => ({ number: r.facts.number, date: r.facts.date, customer: r.facts.customerName, amount: r.facts.amount, reason: r.reason }));
+      /* R-2693: every left-out payment is listed (was cut at 500 without a word); a foreign-currency one
+         with its currency + own amount, and the ₹ at Zoho's rate only when known (null — never its
+         dollars as rupees). Above SKIPPED_LIST_MAX the screen says how many more are not listed. */
+      const left = plan.rows.filter((r) => r.verdict === "skip");
+      const skipped = left.slice(0, SKIPPED_LIST_MAX).map((r) => {
+        const fx = foreignOf(r.facts);
+        return { number: r.facts.number, date: r.facts.date, customer: r.facts.customerName,
+          amount: inrAmountOf(r.facts), currency: fx?.currency ?? null, foreignAmount: fx?.amount ?? null, reason: r.reason };
+      });
       return NextResponse.json({
         ok: true, fy, scanned: counts.listed, counts: plan.counts, totals: plan.totals, parts,
-        deposits: plan.deposits, skipReasons: plan.skipReasons, skipped, batches,
+        deposits: plan.deposits, skipReasons: plan.skipReasons, skipped, skippedMore: left.length - skipped.length, batches,
         /* Remove import is the OWNER's (remove_zoho_fy_receipts_import checks the same) — the screen
            offers it only to the owner (button = action). */
         canRemove: caller.role === "owner",
@@ -148,7 +199,9 @@ export async function POST(req: NextRequest) {
       p_fy: fy, p_picks: slice, p_dry_run: dryRun,
     });
     if (error) return fail(400, (error as { message?: string }).message ?? "The import was refused.");
-    return NextResponse.json({ ok: true, fy, part, parts, result: data });
+    /* R-2693: the plan this part was cut from — the check's sum line ("all N accounted for") uses the SAME
+       scanned / left-out counts as the picks it checked, not an older preview's. */
+    return NextResponse.json({ ok: true, fy, part, parts, result: data, scanned: plan.counts.scanned, leftOut: plan.counts.skip });
   }
 
   if (action === "undo") {

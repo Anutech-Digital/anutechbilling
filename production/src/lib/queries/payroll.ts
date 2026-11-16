@@ -8,24 +8,30 @@
  */
 "use client";
 
+import { useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
+import { salaryGuardNext, type SalaryTdsLock } from "@/lib/payroll/salary-edit";
 import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
 import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
 import { resolveSalaryBankLines, salariesNeedingBankLine, type BankLineFacts, type BankLineRef } from "@/lib/payroll/salary-bank-link";
+import { bookedSalaryMonths, deleteBlockMessage, hasDeleteBlockers, type DeleteBlockers } from "@/lib/payroll/statutory";
+import { arrearsSummary, type ArrearsSummary, type SalaryRevision } from "@/lib/payroll/salary-revision";
+
+export type { SalaryRevision } from "@/lib/payroll/salary-revision";
 
 /** R-607: no pin_hash — members cannot read it (20261010010000). Use `pin_set`. */
 export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "pin_hash">;
 
 /** Every employees column a member may read: all but pin_hash. Kept explicit because
  *  `select("*")` now fails with "permission denied" (column grants). */
-const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere, exit_date, exit_reason, resignation_date, exit_note, exit_started_at";
+const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, pf_full_wage, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere, exit_date, exit_reason, resignation_date, exit_note, exit_started_at";
 export type LeaveEntry = Database["public"]["Tables"]["leave_entries"]["Row"];
 export type SalaryPayment = Database["public"]["Tables"]["salary_payments"]["Row"];
 export type Attendance = Database["public"]["Tables"]["attendance"]["Row"];
@@ -68,7 +74,7 @@ export function useUpsertEmployee() {
     mutationFn: async (input: {
       id?: string; name: string; monthly_gross: number; joining_date?: string | null;
       leave_allowance?: number; pan?: string | null; pf_no?: string | null; esi_no?: string | null;
-      esi_applicable?: boolean; pf_applicable?: boolean; is_active?: boolean; notes?: string | null;
+      esi_applicable?: boolean; pf_applicable?: boolean; pf_full_wage?: boolean; is_active?: boolean; notes?: string | null;
       basic_monthly?: number | null; da_monthly?: number;
       email?: string | null; phone?: string | null; designation?: string | null;
       date_of_birth?: string | null; address?: string | null;
@@ -188,21 +194,47 @@ export function useCancelEmployeeExit() {
   });
 }
 
-/** Delete an employee. Blocked if they have salary history (deactivate instead
- *  so payroll records stay intact). Fresh employees delete cleanly (their
- *  attendance/leave cascade away). */
+/** R-2698: what ties an employee to the books — booked salary months (oldest first), project
+ *  labour and expense claims, the same three things tg_employee_delete_guard refuses on — so
+ *  the delete screen names them instead of failing with a red error after the click. */
+export async function fetchEmployeeDeleteBlockers(employeeId: string): Promise<DeleteBlockers> {
+  const supabase = createClient();
+  const [sal, lab, claims] = await Promise.all([
+    supabase.from("salary_payments").select("period").eq("employee_id", employeeId).order("period", { ascending: true }),
+    supabase.from("project_labour").select("id", { count: "exact", head: true }).eq("employee_id", employeeId),
+    supabase.from("expense_claims").select("id", { count: "exact", head: true }).eq("employee_id", employeeId),
+  ]);
+  for (const r of [sal, lab, claims]) if (r.error) throw r.error;
+  return {
+    salaryMonths: bookedSalaryMonths((sal.data ?? []) as { period: string }[]),
+    projectLabour: lab.count ?? 0,
+    expenseClaims: claims.count ?? 0,
+  };
+}
+
+/** R-2701: the delete dialog's check (fetchEmployeeDeleteBlockers), read fresh each time it opens. */
+export function useEmployeeDeleteBlockers(employeeId: string | null) {
+  return useQuery({
+    queryKey: ["employee-delete-blockers", employeeId ?? "none"],
+    enabled: Boolean(employeeId),
+    queryFn: () => fetchEmployeeDeleteBlockers(employeeId!),
+    staleTime: 0,
+  });
+}
+
+/** Delete an employee. Blocked if they have salary / project labour / expense claims (Start exit
+ *  instead, so payroll records stay intact). Fresh employees delete cleanly
+ *  (their attendance/leave cascade away). */
 export function useDeleteEmployee() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async (e: { id: string; name: string; canExit?: boolean }) => {
       const supabase = createClient();
-      const { count, error: cErr } = await supabase
-        .from("salary_payments").select("id", { count: "exact", head: true }).eq("employee_id", id);
-      if (cErr) throw cErr;
-      if ((count ?? 0) > 0) {
-        throw new Error("This employee has salary payments on record. Set them Inactive (Edit) instead of deleting, so your payroll history stays intact.");
-      }
-      const { error } = await supabase.from("employees").delete().eq("id", id);
+      /* Back-stop (the delete dialog checks first): never reach the DB guard's raw message. R-2701:
+         the way on is the viewer's own (Start exit for the owner, Edit for anyone else), as in the dialog. */
+      const blockers = await fetchEmployeeDeleteBlockers(e.id);
+      if (hasDeleteBlockers(blockers)) throw new Error(deleteBlockMessage(e.name, blockers, e.canExit ?? false));
+      const { error } = await supabase.from("employees").delete().eq("id", e.id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -528,6 +560,25 @@ export function useUnreconciledSalaries() {
   });
 }
 
+/** R-2733: every employee's payslips from `fromPeriod` (the FY's first month) — ONE paged read for
+ *  the Employees table's "In-hand / month" (TDS so far + ESI contribution period), never a query
+ *  per row. Only the fields lib/payroll/net-pay.ts reads. */
+export type PayslipFactsRow = Pick<SalaryPayment, "employee_id" | "period" | "gross" | "lop_amount" | "incentive" | "tds" | "esi">;
+export function usePayslipsSince(fromPeriod: string, enabled = true) {
+  return useQuery({
+    queryKey: ["salary-payments", "since", fromPeriod],
+    enabled,
+    queryFn: async (): Promise<PayslipFactsRow[]> => {
+      const supabase = createClient();
+      return fetchAllRows<PayslipFactsRow>((from, to) => supabase
+        .from("salary_payments").select("employee_id, period, gross, lop_amount, incentive, tds, esi")
+        .gte("period", fromPeriod)
+        .order("period", { ascending: true }).order("id", { ascending: true })
+        .range(from, to));
+    },
+  });
+}
+
 /** Every salary payment for ONE employee, oldest→newest. Feeds the per-employee
  *  full-year payroll calendar (click an employee's name on the payroll page). */
 export function useEmployeeSalaryHistory(employeeId: string | null) {
@@ -546,7 +597,95 @@ export function useEmployeeSalaryHistory(employeeId: string | null) {
   });
 }
 
-export function usePaySalary() {
+// ── R-2699: salary revisions (increment with an effective-from month) ───────────────
+/** Every salary revision of the company (payroll roles only — RLS). Small: a few per employee. */
+export function useSalaryRevisions(enabled = true) {
+  return useQuery({
+    queryKey: ["salary-revisions"],
+    enabled,
+    queryFn: async (): Promise<SalaryRevision[]> => {
+      const supabase = createClient();
+      const rows = await fetchAllRows((from, to) => supabase
+        .from("employee_salary_revisions")
+        .select("id, employee_id, effective_from, monthly_gross, basic_monthly, da_monthly, prev_monthly_gross, prev_basic_monthly, prev_da_monthly, annual_ctc, note, created_by, created_at")
+        .order("effective_from", { ascending: true }).order("id", { ascending: true })
+        .range(from, to));
+      return rows as SalaryRevision[];
+    },
+  });
+}
+
+/** Arrears per booked month (employee_salary_arrears) less what was already paid. */
+export function useSalaryArrears(employeeId: string | null) {
+  return useQuery({
+    queryKey: ["salary-payments", "arrears", employeeId ?? "none"],
+    enabled: Boolean(employeeId),
+    queryFn: async (): Promise<ArrearsSummary> => {
+      const supabase = createClient();
+      const [{ data: months, error }, paidRows] = await Promise.all([
+        supabase.rpc("employee_salary_arrears", { p_employee_id: employeeId! }),
+        fetchAllRows((from, to) => supabase.from("salary_payments").select("id, arrears")
+          .eq("employee_id", employeeId!).gt("arrears", 0).order("id", { ascending: true }).range(from, to)),
+      ]);
+      if (error) throw error;
+      const paid = paidRows.reduce((s, r) => s + (r.arrears ?? 0), 0);
+      return arrearsSummary((months ?? []).map((m) => ({ period: m.period, arrears: m.arrears })), paid);
+    },
+  });
+}
+
+function invalidateRevisions(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["salary-revisions"] });
+  qc.invalidateQueries({ queryKey: ["salary-payments", "arrears"] });
+  qc.invalidateQueries({ queryKey: ["employees"] });
+}
+
+export function useReviseSalary() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      employeeId: string; effectiveMonth: string; monthlyGross: number;
+      basicMonthly: number | null; daMonthly: number; annualCtc: number | null; note: string | null;
+    }) => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("revise_employee_salary", {
+        p_employee_id: input.employeeId,
+        p_effective_from: `${input.effectiveMonth}-01`,
+        p_monthly_gross: input.monthlyGross,
+        p_basic_monthly: input.basicMonthly ?? undefined,
+        p_da_monthly: input.daMonthly,
+        p_annual_ctc: input.annualCtc ?? undefined,
+        p_note: input.note ?? undefined,
+      });
+      if (error) throw error;
+      return data as string;
+    },
+    onSuccess: () => {
+      invalidateRevisions(qc);
+      toast.success("Salary revised");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not revise the salary." }),
+  });
+}
+
+export function useUndoSalaryRevision() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (revisionId: string) => {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("undo_salary_revision", { p_revision_id: revisionId });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      invalidateRevisions(qc);
+      toast.success("Salary revision undone");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not undo the salary revision." }),
+  });
+}
+
+/** `quiet`: the caller says what happened (R-2771 edit = "Salary for <month> changed"). */
+export function usePaySalary(opts: { quiet?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
@@ -555,9 +694,11 @@ export function usePaySalary() {
       tds: number; pf: number; esi: number; esiEmployer?: number; pfEmployer?: number; other: number; bankAccountId: string; notes?: string | null;
       /** The PF wage the form computed (Basic + DA prorated) — kept on the payslip for the ECR. */
       pfWage?: number | null;
+      /** R-2699: salary-revision arrears paid with this salary (pay_salary_with_arrears). */
+      arrears?: number;
     }) => {
       const supabase = createClient();
-      const { error } = await supabase.rpc("pay_salary", {
+      const args = {
         p_employee_id:       input.employeeId,
         p_period:            input.period,
         p_pay_date:          input.payDate,
@@ -576,7 +717,13 @@ export function usePaySalary() {
         p_other:             input.other,
         p_bank_account_id:   input.bankAccountId,
         p_notes:             input.notes ?? null,
-      });
+      };
+      const arrears = Math.max(0, Math.round(input.arrears ?? 0));
+      /* R-2699: arrears go through the wrapper (one transaction, outstanding re-checked); without
+         arrears the old pay_salary path is unchanged. */
+      const { error } = arrears > 0
+        ? await supabase.rpc("pay_salary_with_arrears", { ...args, p_arrears: arrears })
+        : await supabase.rpc("pay_salary", args);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -588,7 +735,7 @@ export function usePaySalary() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["statutory-dues"] });
       /* R-1831: this books the salary — it reads Paid once its bank line is linked. */
-      toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
+      if (!opts.quiet) toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
     },
     onError: (err) => toastError(err),
   });
@@ -625,26 +772,63 @@ export function useAdjustSalaryLop() {
  *  reversal via the RPC: restores any advance recovery, deletes the booked
  *  Salaries expense, removes the salary_payment — so the row reverts to
  *  "Pay salary". (migration 0120) */
-export function useDeleteSalaryPayment() {
+/** Every list / report a booked or undone salary changes. */
+function refreshSalaryData(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["salary-payments"] });
+  qc.invalidateQueries({ queryKey: ["employee-loans"] });
+  qc.invalidateQueries({ queryKey: ["expenses"] });
+  qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+  qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+  qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+  qc.invalidateQueries({ queryKey: ["statutory-dues"] });
+}
+/** R-2771: the edit form calls this when it closes after its undo ran with `hold`. */
+export function useRefreshSalaryData() {
+  const qc = useQueryClient();
+  return useCallback(() => refreshSalaryData(qc), [qc]);
+}
+
+/** `quiet`: no toast (the caller says what happened). `hold` (R-2771 edit = undo + book again): the
+ *  salary lists are NOT re-read yet — the row and its open form stay until the new run is booked
+ *  (usePaySalary then re-reads everything) or the form closes (useRefreshSalaryData). Only what the
+ *  form's own limits read is refreshed: revision arrears and the advance loans. */
+export function useDeleteSalaryPayment(opts: { quiet?: boolean; hold?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (salaryId: string) => {
       const supabase = createClient();
       const { error } = await supabase.rpc("delete_salary_payment", { p_salary_id: salaryId });
-      if (error) throw new Error(error.message);
+      // R-2812: keep the refusal's HINT (the page that lifts it) for the toast button.
+      if (error) throw Object.assign(new Error(error.message), { hint: error.hint ?? null });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["salary-payments"] });
-      qc.invalidateQueries({ queryKey: ["employee-loans"] });
-      qc.invalidateQueries({ queryKey: ["expenses"] });
-      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
-      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["statutory-dues"] });
-      toast.success("Salary undone — you can pay it again");
+      if (opts.hold) {
+        qc.invalidateQueries({ queryKey: ["salary-payments", "arrears"] });
+        qc.invalidateQueries({ queryKey: ["employee-loans"] });
+      } else refreshSalaryData(qc);
+      if (!opts.quiet) toast.success("Salary undone — you can pay it again");
     },
-    // Blocked (bank-reconciled)? Point to Banking to un-reconcile first.
-    onError: (err) => guardErrorToast(err, { label: "Open Banking", href: "/accounting/banking" }),
+    // Blocked? Point to the page that lifts it (bank line / challan → Banking, filed return → Compliance).
+    onError: (err) => guardErrorToast(err, salaryGuardNext((err as { hint?: string | null } | null)?.hint)),
+  });
+}
+
+/** R-2812: is this salary's TDS already deposited (challan) or in a filed 24Q? Read when its row
+ *  menu opens — the same check delete_salary_payment / edit_salary_payment refuse with. */
+export function useSalaryTdsLock(salaryId: string | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["salary-payments", "tds-lock", salaryId],
+    enabled: enabled && Boolean(salaryId),
+    // Asked afresh on every open: a challan booked / return marked filed a minute ago must show.
+    staleTime: 0,
+    queryFn: async (): Promise<SalaryTdsLock | null> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("salary_tds_lock", { p_salary_id: salaryId! });
+      if (error) throw new Error(error.message);
+      const row = (Array.isArray(data) ? data[0] : data) as { o_kind: string | null; o_what: string | null; o_href: string | null } | null;
+      if (!row?.o_kind || (row.o_kind !== "deposited" && row.o_kind !== "filed")) return null;
+      return { kind: row.o_kind, what: row.o_what ?? "", href: row.o_href ?? "/accounting/banking" };
+    },
   });
 }
 

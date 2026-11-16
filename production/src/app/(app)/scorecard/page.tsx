@@ -9,7 +9,10 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -18,16 +21,21 @@ import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { rupee, cn } from "@/lib/utils";
 import { usePerformance, roleFocus, type PerfRow } from "@/lib/queries/performance";
-
-function thisMonth(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
+import { scorePeriodNow } from "@/lib/performance/employee-score";
 
 export default function ScorecardPage() {
-  const [period, setPeriod] = React.useState(thisMonth());
+  /* useSearchParams needs a boundary (R-2725: ?user=<login> opens one person's scorecard). */
+  return <React.Suspense fallback={null}><Scorecards /></React.Suspense>;
+}
+
+function Scorecards() {
+  /* R-2725: the IST month — the same one the Employees table's Score column reads. */
+  const [period, setPeriod] = React.useState(scorePeriodNow());
   const perf = usePerformance(period);
-  const { data: rows, isLoading } = perf;
+  const { data: all, isLoading } = perf;
+  /* R-2725: opened from an employee (Score column / profile button) → that person only. */
+  const onlyUser = useSearchParams().get("user");
+  const rows = onlyUser ? (all ?? []).filter((r) => r.userId === onlyUser) : all;
 
   return (
     <div className="mx-auto max-w-[1000px] p-4 md:p-6 lg:p-8 space-y-5">
@@ -39,9 +47,12 @@ export default function ScorecardPage() {
             Every employee — <b>results first</b> (based on their role), then reliability, then activity. Activity is only a signal, not part of the score.
           </p>
         </div>
-        <div>
-          <label htmlFor="scorecard-month" className="block text-2xs text-ink-3 mb-1">Month</label>
-          <Input id="scorecard-month" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-44" />
+        <div className="flex items-end gap-2">
+          {onlyUser && <Button asChild variant="outline"><Link href="/scorecard">All scorecards</Link></Button>}
+          <div>
+            <label htmlFor="scorecard-month" className="block text-2xs text-ink-3 mb-1">Month</label>
+            <Input id="scorecard-month" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-44" />
+          </div>
         </div>
       </header>
 
@@ -51,6 +62,8 @@ export default function ScorecardPage() {
         /* R-1807: a failed read is an error + Try again — not "No team members yet", and
            never a Revenue of ₹0 for everyone. */
         <LoadError what="Scorecards" error={perf.error} onRetry={perf.refetch} />
+      ) : onlyUser && (rows?.length ?? 0) === 0 ? (
+        <Card className="py-2"><EmptyState icon="users" title="No scorecard for this person" body="They have no active login on your team. Open All scorecards to see everyone." /></Card>
       ) : (rows?.length ?? 0) === 0 ? (
         <Card className="py-2"><EmptyState icon="users" title="No team members yet" body="Invite teammates at /team — their scorecards will show here." /></Card>
       ) : (
@@ -88,7 +101,7 @@ function Scorecard({ row }: { row: PerfRow }) {
           <div className="text-[12px] text-ink-3">{row.role} · focus: <b className="text-ink-2">{focus.label}</b> <span className="text-ink-3">({focus.hint})</span></div>
         </div>
         <div className="text-right shrink-0">
-          <div className="font-serif text-3xl text-ink tabular-nums leading-none">{row.score}</div>
+          <div data-testid={`scorecard-score-${row.userId}`} className="font-serif text-3xl text-ink tabular-nums leading-none">{row.score}</div>
           <div className="text-3xs uppercase tracking-wider text-ink-3 mt-1">score</div>
         </div>
       </div>

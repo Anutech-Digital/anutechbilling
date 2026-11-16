@@ -20,7 +20,8 @@ const R310_FILES = [
   "src/components/features/subscriptions/import-subscriptions-dialog.tsx",
   "src/lib/queries/customer-groups.ts",
   "src/app/(app)/accounting/advances/page.tsx",
-  "src/app/(app)/admin/feedback/page.tsx",
+  // R-2726: the report buttons (and their error toasts) moved from page.tsx into the row component.
+  "src/app/(app)/admin/feedback/feedback-row.tsx",
   "src/app/(app)/coupons/page.tsx",
 ] as const;
 

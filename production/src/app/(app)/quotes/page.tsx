@@ -66,6 +66,7 @@ import { unifiedStatus, cashNote } from "@/lib/quotes/status-badge";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { awaitsMyApproval } from "@/lib/quotes/awaiting-approval";
 import { ApprovalsStrip } from "@/components/features/quotes/approvals-strip";
+import { QuoteValidityCell } from "@/components/features/quotes/quote-validity-cell";
 import { QUOTES_TABLE_COLS } from "@/components/features/quotes/quotes-table-cols";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
@@ -997,8 +998,6 @@ export default function QuotesPage() {
                 {paged.shown.map((q, rowIndex) => {
                   const margin = estimateMarginForQuote(q, costedLinesOf(q));
                   const uStatus = unifiedStatus(q);
-                  const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
-                  const expiringSoon = dl !== null && dl >= 0 && dl <= 7;
                   const kbSelected = rowIndex === keys.index;
                   /* R-2459: approval / no place of supply locks the WhatsApp follow-up like every customer copy. */
                   const copyBlock = copyBlocks.get(q.id) ?? null;
@@ -1132,17 +1131,8 @@ export default function QuotesPage() {
                         })()}
                       </td>
                       <td className="px-3 py-2.5 text-sm align-top">
-                        {q.status === "accepted" || q.status === "rejected" ? (
-                          <span className="text-ink-3">—</span>
-                        ) : dl === null ? (
-                          <span className="text-ink-3">—</span>
-                        ) : dl < 0 ? (
-                          <Badge kind="danger" dot>Expired {Math.abs(dl)}d</Badge>
-                        ) : expiringSoon ? (
-                          <Badge kind="warning" dot>{dl}d left</Badge>
-                        ) : (
-                          <span className="text-xs text-ink-3 tabular-nums">{dl}d left</span>
-                        )}
+                        {/* R-2851: a payment request past pay-by reads amber "still payable", not "Expired Nd". */}
+                        <QuoteValidityCell q={q} />
                       </td>
                       {/* R-2264: at most ONE action button per row (never primary — the
                           page's one primary is "New quote") + the ⋯ menu with every

@@ -73,21 +73,5 @@ export function duplicateSubscriptionText(dup: ExistingSub, want: { plan: string
   return `This customer already has ${dup.plan ?? want.plan} on ${domain}${facts ? ` (${facts})` : ""} — use Manage seats or Correct details instead.`;
 }
 
-export interface CustomerOption { id: string; name: string; domain?: string | null }
-
-/**
- * Existing customers matching what is typed in Company Name: every typed word in the name, or
- * the text inside the domain. 2+ letters; an exact name first; capped (a picker, not a report).
- */
-export function matchCustomers<T extends CustomerOption>(list: readonly T[], typed: string, limit = 5): T[] {
-  const q = norm(typed);
-  if (q.length < 2) return [];
-  const words = q.split(" ");
-  const hits = list.filter((c) => {
-    const name = norm(c.name);
-    return words.every((w) => name.includes(w)) || (!!c.domain && norm(c.domain).includes(q));
-  });
-  const exact = hits.filter((c) => norm(c.name) === q);
-  const rest = hits.filter((c) => norm(c.name) !== q);
-  return [...exact, ...rest].slice(0, limit);
-}
+/* R-2715: the "already a customer?" typeahead (R-1443's matchCustomers) moved to
+   lib/customers/duplicate-match.ts — one rule for the Onboard dialog and /customers/new. */

@@ -5,6 +5,7 @@ import { getTenantSession } from "@/server/auth/session";
 import { withTenant } from "@/server/db";
 import { canReviewSocial, canWriteSocial, claimApproved, completePublish, publishSocial, socialRole, updateSocial, validMediaUrl } from "@/lib/marketing/social-content";
 import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule";
+import { ensureSocialJobOn } from "@/lib/automation/social-jobs.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -72,6 +73,13 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     if (!item) return NextResponse.json({ error: "Draft changed. Refresh the page." }, { status: 409 });
     const verb: Record<string, string> = { save: "Edited a post", submit: "Scheduled a post", approve: "Approved a post", return: "Sent a post back", stop: "Stopped a scheduled post" };
     await logPersonActivity(session, { platform: current.platform, action: verb[input.action] ?? input.action, detail: (caption ?? "").slice(0, 120), contentId: id });
+    /* R-2692: approving a post WITH a post time asks for it to go out on its own — the OWNER's approval turns the
+       social-publish job on (not over an owner's own OFF on /automation). R-2709 merge (16 Nov 2026): a
+       reviewer's "Schedule post" is approved straight away, so it asks the same. */
+    if ((input.action === "approve" || input.action === "submit") && item.status === "approved" && item.scheduled_at) {
+      const autoPostOn = await ensureSocialJobOn("social-publish");
+      return NextResponse.json({ item, autoPostOn });
+    }
     return NextResponse.json({ item });
   } catch (error) {
     console.error("[social-content] action failed", error instanceof Error ? error.message : "unknown");

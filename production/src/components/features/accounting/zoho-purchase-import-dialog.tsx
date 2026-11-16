@@ -64,6 +64,8 @@ interface Preview {
     toReconcile: PaymentToReconcile[];
   };
   categories: string[];
+  /** R-2704: the paid-from map the server used (saved choices + the dialog's); absent from an older server. */
+  accountChoices?: Record<string, string>;
   bankAccounts: { id: string; name: string; last4: string | null; type: string | null }[];
   batches: (ImportBatch & { kind: Kind })[];
 }
@@ -103,9 +105,22 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
 
   const loadPreview = React.useCallback(async () => {
     setBusy("preview"); setError(null);
-    try { setPreview(await call<Preview>({ action: "preview", accounts: accountsRef.current })); }
+    try {
+      const p = await call<Preview>({ action: "preview", accounts: accountsRef.current });
+      /* R-2704: the map the server used (this company's saved choices + ours) is what the screen shows and the import sends. */
+      if (p.accountChoices) { accountsRef.current = p.accountChoices; setAccounts(p.accountChoices); }
+      setPreview(p);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(null); }
+  }, []);
+
+  /* R-2704: one save at a time, in the order chosen — two quick changes never land out of order. */
+  const saveChain = React.useRef<Promise<void>>(Promise.resolve());
+  const saveAccountChoice = React.useCallback((zohoKey: string, choice: string) => {
+    saveChain.current = saveChain.current.then(() => call({ action: "saveAccount", zohoKey, choice }).then(() => {},
+      (e) => setError(`Your choice is used now but was not saved for next time: ${(e as Error).message}`)));
+    return saveChain.current;
   }, []);
 
   /* R-2652: Try again after Zoho's limit carries on from where the read stopped (never a restart that wipes the scan). */
@@ -242,6 +257,8 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
                   const next = { ...accountsRef.current, [k]: v };
                   accountsRef.current = next;
                   setAccounts(next); setCheck({});
+                  /* R-2704: remembered for this company — reopening starts from it. A failed save is said after the preview. */
+                  void saveAccountChoice(k, v);
                   void loadPreview();
                 }} />
               <MonthTable p={p} />
@@ -438,7 +455,8 @@ function AccountMap({ list, bankAccounts, chosen, busy, onChange }: {
     merged.set(a.zohoName, t ? { ...t, count: t.count + a.count, amount: t.amount + a.amount } : a);
   }
   if (!merged.size) return null;
-  const missing = [...merged.values()].filter((a) => !a.appAccountId).length;
+  /* R-2704: "Leave these out" (saved or chosen now) is a choice, not "not chosen". */
+  const missing = [...merged.values()].filter((a) => !a.appAccountId && chosen[a.zohoName] !== "none").length;
   return (
     <div className="rounded-md border border-hairline px-3 py-2">
       <p className="text-xs font-semibold text-ink mb-1">

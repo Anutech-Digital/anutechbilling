@@ -60,10 +60,14 @@ export function pfEpsCap(periodOrDate?: string | null): number {
  * get a different PF than last month.
  */
 export interface PfWage { base: number; assumed: boolean; note: string }
-export function pfWage(i: { gross: number; lopAmount?: number | null; basic?: number | null; da?: number | null }): PfWage {
+export function pfWage(i: { gross: number; lopAmount?: number | null; basic?: number | null; da?: number | null; monthlyGross?: number | null }): PfWage {
   const gross = Math.max(0, Math.round(i.gross || 0));
   const lop = Math.min(gross, Math.max(0, Math.round(i.lopAmount ?? 0)));
-  const earnedRatio = gross > 0 ? (gross - lop) / gross : 0;
+  /* R-2698: a part-month salary ("Salary to pay" prorated below the employee's monthly gross)
+     prorates Basic + DA too — never the whole month's Basic on a few days' pay. A payment above
+     the monthly gross keeps the full Basic + DA (ratio capped at 1). */
+  const fullMonth = Math.max(gross, Math.round(i.monthlyGross ?? 0));
+  const earnedRatio = fullMonth > 0 ? (gross - lop) / fullMonth : 0;
   if (i.basic === null || i.basic === undefined) {
     return { base: gross - lop, assumed: true, note: "Basic not set — PF is being calculated on full gross. Enter Basic in Employee → Statutory." };
   }
@@ -94,12 +98,15 @@ const ZERO = (base: number, ceiling: number): PfContribution => ({
  * @param covered     pass false to exclude an employee with no EPFO account.
  * @param period      the salary month (YYYY-MM) — decides which ceiling applies.
  *                    Omit only for an illustration as of today.
+ * @param opts.capped R-2698: false = PF on the FULL Basic + DA (the employee's PF basis is
+ *                    "full wage", employees.pf_full_wage). Default true = capped at the month's
+ *                    statutory ceiling. EPS is always on the capped wage (pfEpsCap / ecr.ts).
  */
-export function computePf(monthlyWage: number, covered = true, period?: string | null): PfContribution {
+export function computePf(monthlyWage: number, covered = true, period?: string | null, opts?: { capped?: boolean }): PfContribution {
   const ceiling = pfWageCeiling(period);
   const wage = Math.max(0, Math.round(monthlyWage || 0));
   if (!covered || wage <= 0) return ZERO(wage, ceiling);
-  const base = Math.min(wage, ceiling);
+  const base = (opts?.capped ?? true) ? Math.min(wage, ceiling) : wage;
   const employee = Math.round(base * PF_EMPLOYEE_RATE);
   const employer = Math.round(base * PF_EMPLOYER_RATE);
   return { applicable: true, ceiling, base, employee, employer, total: employee + employer };

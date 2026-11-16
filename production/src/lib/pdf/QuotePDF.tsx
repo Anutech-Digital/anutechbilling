@@ -32,6 +32,7 @@ import { pdfRupee, pdfSafeMoney } from "./pdf-money";
 import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
 import { lineDetailNotes } from "./invoice-display";
+import { renewalPeriodLabel } from "@/lib/quotes/renewal-period-label";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
 import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
@@ -334,6 +335,8 @@ const s = StyleSheet.create({
 
   // Line items table
   table: { marginBottom: 14 },
+  /* R-2746: "Renewal · <from> – <to>" just above the lines. */
+  renewalPeriod: { fontSize: 9, color: COLORS.ink2, marginBottom: 4 },
   trHeader: {
     flexDirection:    "row",
     borderTopWidth:   2,
@@ -478,6 +481,8 @@ export function QuotePDF(props: QuotePDFProps) {
   const docLabel = proforma ? PROFORMA_TITLE : quoteDocumentLabel({ paid: isPaid, isRenewal, isUpgrade });
   /* R-813: a customer document — never the staff-only audit part of the notes. */
   const notes = customerQuoteNotes(props.notes, lineItems);
+  /* R-2746: which period a renewal / extension quote buys — the lines' own dates. */
+  const renewalLabel = renewalPeriodLabel(lineItems, periodContext);
   const includedSupport = props.includedSupport !== undefined
     ? props.includedSupport
     : includedSupportLine(lineItems);
@@ -685,6 +690,7 @@ export function QuotePDF(props: QuotePDFProps) {
           </View>
         </View>
 
+        {renewalLabel ? <Text style={s.renewalPeriod}>{renewalLabel.text}</Text> : null}
         {/* ── Line items ──────────────────────────────────────────── */}
         <View style={s.table}>
           <View style={s.trHeader}>

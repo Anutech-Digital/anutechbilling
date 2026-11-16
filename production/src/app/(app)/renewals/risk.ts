@@ -13,7 +13,9 @@
  * marked HIGH RISK on a number nobody measured (Abhishek, Scenario 9, Gupta Infotech).
  * Unchecked usage now adds no score and says "Seat usage not checked".
  */
-import { rupee } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
+import { addDaysISO } from "@/lib/dates/ist";
+import { chasedRenewal } from "./classify";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { subscriptionDue } from "@/lib/accounting/receivables-due";
 
@@ -29,7 +31,13 @@ export interface RiskResult {
 type RiskFields = Pick<Subscription, "used" | "seats" | "outstanding_amount" | "plan" | "used_synced_at">
   & Partial<Pick<Subscription, "written_off_at">>;
 
-export function renewalRisk(sub: RiskFields): RiskResult {
+/**
+ * R-2818 (review rev-r2818 #2): `owed` = what the subscription's documents still owe by the ONE owed
+ * rule (lib/renewals/owed.ts — the customer page's), so the "Unpaid balance" reason never says SCN
+ * Kochi owes ₹25.5K while its customer page says All clear. null = documents not read yet → no
+ * unpaid signal (never a guess). Left out (undefined) → the stored balance, as before.
+ */
+export function renewalRisk(sub: RiskFields, opts: { owed?: number | null } = {}): RiskResult {
   let score = 0;
   const reasons: string[] = [];
 
@@ -51,7 +59,7 @@ export function renewalRisk(sub: RiskFields): RiskResult {
   // payment is far more likely to lapse at renewal.
   /* R-1473: the same due the dashboard Collections card and Companies add up — a
      written-off balance is no longer "unpaid" here either (lib/accounting/receivables-due). */
-  const due = subscriptionDue({
+  const due = opts.owed !== undefined ? Math.max(0, opts.owed ?? 0) : subscriptionDue({
     customer_id: null, outstanding_amount: sub.outstanding_amount, written_off_at: sub.written_off_at,
   });
   if (due > 0) {
@@ -79,4 +87,91 @@ export function renewalRisk(sub: RiskFields): RiskResult {
      so the first reason shown on the row is a real one when there is one. */
   reasons.sort((a, b) => Number(a === "Seat usage not checked") - Number(b === "Seat usage not checked"));
   return { score, level, badgeKind, label, reasons };
+}
+
+/* ─── R-2756 (user audit 14 Nov, job 5/9): ONE day count + who can be "Top risk" ─────────────────
+ * Greentin Check 2095: the row said "Part bill overdue 44d", the Renewal AI box "renewal 14d
+ * overdue", and the date read 31 Oct (14 days ago) — the AI box counted from renewal_date, the row
+ * from the part's due date. And a customer marked Won't renew became the header's "Top risk".
+ * Now the AI box / Top risk read the row's OWN stage (lib/renewals/stage.ts, R-2738): its `days`
+ * is the day count the chip shows, and the words name the date it counts from. A row the stage
+ * calls ending (Won't renew / Ended), stopped (Service stopped / Cancelled / Paused / Expired) or
+ * renewed is not a renewal to chase — never Top risk, no at-risk flag on its row (its ⋯ already
+ * has no Nudge / Voice note: renewalPrimary). */
+
+/** Stage keys that are not a renewal to chase (stage.ts renewalPrimary gives them no chase step). */
+const NOT_CHASED_STAGES: ReadonlySet<string> = new Set(["ending", "stopped", "renewed"]);
+const STOPPED_STATUS: ReadonlySet<string> = new Set(["cancelled", "paused", "expired", "suspended"]);
+
+/** A renewal somebody should chase: not Won't renew, not stopped / cancelled / paused / expired. */
+export function riskChased(sub: { auto_renew?: boolean | null; status?: string | null; renewal_state?: string | null }): boolean {
+  if (!chasedRenewal(sub)) return false;   // R-2225 Won't renew (classify.ts — one rule)
+  if (STOPPED_STATUS.has(sub.status ?? "")) return false;
+  return sub.renewal_state !== "suspended";
+}
+
+/** The stage facts the day words read (a RenewalStage fits). */
+export interface StageDays {
+  key: string; days: number | null; renewalDays: number | null;
+  /** R-2817: what `days` counts from (stage.ts rowAnchor) and that date; absent = judged by renewalDays !== days (older callers). */
+  anchorKind?: "part" | "renewal";
+  anchorDate?: string | null;
+  /** R-2817: the part's own due date when it is not the anchor's date's twin (stage.ts partDueDate). */
+  partDueDate?: string | null;
+}
+
+/**
+ * The overdue words for a row, from its stage's own day count (the number on the chip), naming
+ * what it counts from (the stage counts from a part's own due date when it differs, else from
+ * renewal_date — stage.ts docWhen / invoiced):
+ *   invoiced, part date  "Part bill overdue 44d (due 1 Oct 2026)"
+ *   invoiced             "Invoice overdue 14d (due 31 Oct 2026)"
+ *   other, part date     "Part due 44d ago (1 Oct 2026)"   (sent / draft part quote — no bill raised yet)
+ *   other                "Renewal date passed 14d ago (31 Oct 2026)"
+ * null = not overdue, no stage yet (documents still loading — never a guessed number), or a row
+ * that is not chased.
+ */
+export function stageOverdueWords(stage: StageDays | null | undefined, todayIst: string): string | null {
+  if (!stage || stage.days == null || stage.days >= 0 || NOT_CHASED_STAGES.has(stage.key)) return null;
+  const late = -stage.days;
+  /* R-2817: the date is the stage's own anchor (the Due column's date), never re-derived */
+  const from = formatDate(stage.anchorDate ?? addDaysISO(todayIst, stage.days));
+  const partDate = stage.anchorKind ? stage.anchorKind === "part" : stage.renewalDays !== stage.days;
+  /* an invoice whose part bill is due LATER than the passed renewal date is not "overdue" itself (R-2817) */
+  if (stage.key === "invoiced" && !partDate && stage.partDueDate) return `Renewal date passed ${late}d ago (${from})`;
+  if (stage.key === "invoiced") return partDate ? `Part bill overdue ${late}d (due ${from})` : `Invoice overdue ${late}d (due ${from})`;
+  return partDate ? `Part due ${late}d ago (${from})` : `Renewal date passed ${late}d ago (${from})`;
+}
+
+export interface TopRiskRow {
+  sub: { auto_renew?: boolean | null; status?: string | null; renewal_state?: string | null };
+  stage: StageDays | null;
+  daysUntil: number;
+  atRisk: boolean;
+}
+
+/** May this row carry the at-risk flag / be the AI box's pick? At risk, chased, and its stage is not ending / stopped / renewed. */
+export function riskCandidate(r: TopRiskRow): boolean {
+  return r.atRisk && riskChased(r.sub) && !(r.stage && NOT_CHASED_STAGES.has(r.stage.key));
+}
+
+/** The header's "Top risk" and the Renewal AI pick: the most overdue chased at-risk row (by the chip's day count). */
+export function topRiskPick<T extends TopRiskRow>(rows: readonly T[]): T | null {
+  const days = (r: T) => r.stage?.days ?? r.daysUntil;
+  let best: T | null = null;
+  for (const r of rows) {
+    if (!riskCandidate(r)) continue;
+    if (!best || days(r) < days(best)) best = r;
+  }
+  return best;
+}
+
+/** The AI box's reasons for its pick: the row's own overdue words, then the real risk signals. */
+export function topRiskReasons(row: TopRiskRow & { sub: RiskFields; owed?: { total: number } | null }, todayIst: string): string[] {
+  const when = stageOverdueWords(row.stage, todayIst);
+  return [
+    ...(when ? [when] : []),
+    /* R-2818: the row's own owed figure (QueueItem.owed), never the stored balance */
+    ...renewalRisk(row.sub, { owed: row.owed?.total ?? null }).reasons.filter((x) => x !== "Seat usage not checked"),
+  ];
 }

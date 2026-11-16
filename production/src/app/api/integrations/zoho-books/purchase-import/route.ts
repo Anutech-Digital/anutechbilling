@@ -8,7 +8,8 @@
  *   read     { kind } → reads the next piece of one Zoho list (bills / expenses / vendorpayments) into
  *              the server's scan; READ only; at most FY_CALLS_PER_REQUEST Zoho calls a request — call
  *              again until `complete`. Counts come from the stored rows.
- *   restart  { kind } → forgets that list's scan.
+ *   restart  { kind } → R-2653: Read again — lists it again, reads only new / changed documents
+ *              (status / last_modified_time); one gone from Zoho is dropped. { fresh: true } forgets the scan.
  *   accounts { "<Zoho paid-through account>": "<app account id>" } may go with preview / import (R-2502c):
  *              the owner's map of where Zoho's expenses and payments were paid from (else suggested).
  *   preview  → from the COMPLETE bills + expenses scans: counts, skip reasons, Zoho vs to-import vs
@@ -16,6 +17,10 @@
  *              the category choices, bank accounts; and (when that scan is complete) the vendor
  *              payments plan. Nothing written.
  *   saveMap  { rows: [{ zohoAccountId, zohoAccountName, category }] } → save_zoho_account_categories.
+ *   saveAccount { zohoKey: <Zoho paid-through name>, choice: <app account id> | "none" | "" } → R-2704:
+ *              save_zoho_account_bank_choice remembers the paid-from choice for this company ("" forgets);
+ *              preview starts from the saved choices (what the dialog sends still wins) and returns the map
+ *              as accountChoices; the import maps only what the dialog sent.
  *   import   { kind, part, dryRun } → one part through import_zoho_fy_purchases (bills /
  *              expenses) or import_zoho_fy_vendor_payments; dryRun true (default) writes nothing.
  *              Picks name only Zoho ids + the matched vendor — every amount comes from the scan.
@@ -40,6 +45,7 @@ import {
 import {
   parseAccountMap, readAppPurchasesByMonth, readBankAccounts, readOtherPurchasesByMonth, readPaymentContext, readPurchaseContext,
 } from "@/lib/integrations/zoho-books/purchase-import/store";
+import { parseSaveChoice, readAccountChoices, withSavedChoices } from "@/lib/integrations/zoho-books/fy-import/account-choices";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +81,11 @@ export async function POST(req: NextRequest) {
 
   if (action === "restart") {
     if (!isKind(body.kind)) return fail(400, "Choose bills, expenses or vendor payments.");
-    try { await storeOf(body.kind).reset(fy); } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
+    try {
+      const st = storeOf(body.kind);
+      if (body.fresh === true) await st.reset(fy);
+      else await st.refresh(fy, { onlyAccount: null, nowIso: new Date().toISOString() });
+    } catch { return fail(500, "Could not start the Zoho read again. Try again."); }
     return NextResponse.json({ ok: true, fy, kind: body.kind, listed: 0, detailed: 0, complete: false });
   }
 
@@ -133,7 +143,21 @@ export async function POST(req: NextRequest) {
     return { done: Boolean(run?.listDone) && c.detailed >= c.listed, listed: c.listed };
   };
 
-  const accountMap = parseAccountMap(body.accounts);
+  if (action === "saveAccount") {
+    const c = parseSaveChoice(body, "purchases");
+    if (!c) return fail(400, "Choose an app account for this Zoho account, or Leave these out.");
+    const { error } = await rpc("save_zoho_account_bank_choice", { p_use: c.use, p_key: c.key, p_choice: c.choice });
+    if (error) return fail(400, error.message ?? "The choice was not saved.");
+    return NextResponse.json({ ok: true });
+  }
+
+  /* R-2704: the PREVIEW starts from this company's saved paid-from choices, the dialog's own map on top
+     (the screen wins), and returns that map as `accountChoices` — the dialog shows it and sends it with
+     the import. The import maps only what the dialog sent (no saved map behind the screen, as R-2501).
+     A failed read of the saved choices only loses the defaults. */
+  const accountMap = action === "preview"
+    ? withSavedChoices(parseAccountMap(await readAccountChoices(db, caller.tenantId, "purchases").catch(() => ({}))), parseAccountMap(body.accounts))
+    : parseAccountMap(body.accounts);
   const purchasePlan = async () => {
     const [b, e] = await Promise.all([complete("bills"), complete("expenses")]);
     if (!b.done || !e.done || b.listed + e.listed === 0) return null;
@@ -182,6 +206,8 @@ export async function POST(req: NextRequest) {
         accounts: pays.accounts, skipReasons: pays.skipReasons, toReconcile: pays.toReconcile.slice(0, 1000),
       },
       categories: CATEGORY_CHOICES, batches,
+      /* R-2704: the paid-from map this preview used (saved choices + the dialog's) — the dialog's state from now on. */
+      accountChoices: accountMap,
       bankAccounts: banks
         .filter((a) => a.is_active !== false).map((a) => ({ id: a.id, name: a.name, last4: a.account_number_last4 ?? null, type: a.account_type ?? null })),
     });

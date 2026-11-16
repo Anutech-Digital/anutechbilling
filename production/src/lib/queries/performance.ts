@@ -49,6 +49,9 @@ export const PERF_WEIGHTS = {
 export interface PerfBreakdown { label: string; detail: string; points: number }
 export interface PerfRow {
   userId: string;
+  /** R-2725: the employee this login is linked to (users.employee_id), null when none — the
+   *  Employees table shows this row's score against that employee. */
+  employeeId?: string | null;
   name: string;
   role: string;
   dealsWon: number;
@@ -171,14 +174,17 @@ export async function fetchPerformanceInputs(supabase: SupabaseClient<Database>,
  *
  * @param period 'YYYY-MM' — used when scope is 'month'.
  * @param scope  'month' (default, unchanged behaviour) or 'week' (this week).
+ * @param opts   `enabled: false` reads nothing (R-2725: the Employees table asks only for
+ *               owner / manager — the roles that may open Scorecards).
  */
-export function usePerformance(period: string, scope: PerfScope = "month") {
+export function usePerformance(period: string, scope: PerfScope = "month", opts: { enabled?: boolean } = {}) {
+  const enabled = opts.enabled !== false;
   const membersQ = useTeamMembers();
   const members = membersQ.data ?? [];
 
   const q = useQuery({
     queryKey: ["performance", period, scope, members.map((m) => m.id).join(",")],
-    enabled: members.length > 0,
+    enabled: enabled && members.length > 0,
     queryFn: async (): Promise<PerfRow[]> => {
       const supabase = createClient();
       const { start, end } = scope === "week" ? weekWindow() : monthWindow(period);
@@ -248,7 +254,7 @@ export function usePerformance(period: string, scope: PerfScope = "month") {
         const activityCount = activityByUser.get(mem.id) ?? 0;
 
         return {
-          userId: mem.id, name: memberLabel(mem), role: mem.role,
+          userId: mem.id, employeeId: empId ?? null, name: memberLabel(mem), role: mem.role,
           dealsWon, revenue, quotesSent, paymentsCount, tasksOnTime, tasksLate,
           presentDays, activityCount, score, breakdown,
           kudosReceived: myKudos.received,
@@ -274,8 +280,8 @@ export function usePerformance(period: string, scope: PerfScope = "month") {
      members yet". Both states are carried here; Try again re-reads whichever failed. */
   return {
     data: q.data,
-    isLoading: membersQ.isLoading || q.isLoading,
-    isError: membersQ.isError || q.isError,
+    isLoading: enabled && (membersQ.isLoading || q.isLoading),
+    isError: enabled && (membersQ.isError || q.isError),
     error: membersQ.isError ? membersQ.error : q.error,
     refetch: () => {
       if (membersQ.isError) void membersQ.refetch();

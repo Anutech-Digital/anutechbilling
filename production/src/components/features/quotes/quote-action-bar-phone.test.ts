@@ -64,8 +64,11 @@ describe("one Send button (R-1726)", () => {
   const send = body.slice(body.indexOf("data-send-menu") - 200);
 
   it("the quote bar has exactly one primary button, and it opens the Send menu", () => {
+    /* R-2710: editing a renewal quote, the one primary button is "Save & send to customer" and the
+       Send menu becomes a plain ▾ (other ways) — still ONE primary at a time. */
     expect(body.match(/variant="primary"/g)?.length).toBe(1);
-    expect(send).toMatch(/<DropdownMenuTrigger asChild>\s*<Button\s+variant="primary"\s+icon="send"/);
+    expect(body).toMatch(/\{renewalEdit && \(\s*<Button\s+variant="primary"/);
+    expect(send).toMatch(/<DropdownMenuTrigger asChild>\s*<Button\s+variant=\{renewalEdit \? "default" : "primary"\}\s+icon=\{renewalEdit \? undefined : "send"\}/);
     expect(body).not.toMatch(/>\s*Send via email\s*<\/Button>/);
     expect(body).not.toMatch(/>\s*Send via WhatsApp\s*<\/Button>/);
   });

@@ -48,7 +48,19 @@ describe("R-1445 isTermLine: who gets the 'Register for' picker", () => {
   it("a Workspace line is not", () => {
     expect(isTermLine({ ...base, item_id: "gw", name: "Google Workspace Starter", domain: "acme.in" }, domainIds)).toBe(false);
   });
-  it("a bulk line is not", () => {
-    expect(isTermLine({ ...base, bulk: true }, domainIds)).toBe(false);
+  it("a bulk Workspace line is not (R-2712: a bulk DOMAIN line is — domain-term-r2712.test.ts)", () => {
+    expect(isTermLine({ ...base, item_id: "gw", name: "Google Workspace Starter", bulk: true }, domainIds)).toBe(false);
+  });
+});
+
+describe("R-2710: a domain renewal line's text follows its years", () => {
+  const renewal = { id: "renewal-1", name: "Domain acme.in", description: "Renewal, 1 year", qty: 1, rate: 1200, cost: 0, commitment: "annual_yearly" } as QuoteLineItem;
+  it("1 → 3 years: 'Renewal, 3 years' and 3x the rate; back to 1: 'Renewal, 1 year'", () => {
+    const three = lineForYears(renewal, 3);
+    expect(three).toMatchObject({ description: "Renewal, 3 years", rate: 3600, years: 3 });
+    expect(lineForYears(three, 1)).toMatchObject({ description: "Renewal, 1 year", rate: 1200 });
+  });
+  it("an operator's own text is never rewritten", () => {
+    expect(lineForYears({ ...renewal, description: "Includes privacy" }, 2).description).toBe("Includes privacy");
   });
 });

@@ -10,10 +10,17 @@
  * wrote one for the user). Lines are read first so a challan / loan / salary line, a money-in or
  * an already-reconciled line is refused before any write; repeated ids are booked once.
  * GST is booked as 0 — a line with a GST bill is booked from its own Reconcile sheet.
+ *
+ * R-2657 (Pardeep's D1, 10 Nov): a line that a Zoho-imported expense / COGS bill already covers
+ * (lib/banking/zoho-covered.ts — same amount within ₹1, date window) is refused: it is matched to
+ * that document on the bank page (R-2655), never booked as a second expense. The imported documents
+ * are read before any write; if they cannot be read, nothing is booked. GST stays ₹0 on every row,
+ * so the tool never claims input GST (a GST-filed month never changes).
  */
 import { z } from "zod";
 import { withRoute, dbFail } from "@/lib/api/with-route";
 import { BULK_MAX, refuseBulkRow } from "@/lib/banking/bulk-expense";
+import { COVERED_MESSAGE, coveredLines, loadImportedDocs, type DocsDb, type ImportedDoc } from "@/lib/banking/zoho-covered";
 import { Sentry } from "@/lib/sentry";
 
 export const runtime = "nodejs";
@@ -47,7 +54,7 @@ type Db = {
   rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
 };
 
-interface LineRow { id: string; description: string | null; debit: number | string | null; matched_to_type: string | null }
+interface LineRow { id: string; description: string | null; debit: number | string | null; matched_to_type: string | null; txn_date: string }
 
 export const POST = withRoute(
   { route: "api/banking/bulk-expense", roles: ROLES, roleHint: ROLE_HINT, input: postSchema },
@@ -57,10 +64,24 @@ export const POST = withRoute(
     const rows = input.rows.filter((r) => !seen.has(r.txnId) && !!seen.add(r.txnId));
 
     const { data, error } = await db.from("bank_transactions")
-      .select("id, description, debit, matched_to_type")
+      .select("id, description, debit, matched_to_type, txn_date")
       .in("id", rows.map((r) => r.txnId));
     dbFail(error, "Could not read the bank lines — nothing was booked. Try again.");
-    const byId = new Map(((data ?? []) as LineRow[]).map((l) => [l.id, l]));
+    const lines = (data ?? []) as LineRow[];
+    const byId = new Map(lines.map((l) => [l.id, l]));
+
+    /* D1: the Zoho-imported purchases that could cover these lines — read before any write. */
+    const dates = lines.map((l) => String(l.txn_date ?? "").slice(0, 10)).filter(Boolean).sort();
+    let docs: ImportedDoc[] = [];
+    if (dates.length > 0) {
+      try {
+        docs = await loadImportedDocs(supabase as unknown as DocsDb, dates[0], dates[dates.length - 1]);
+      } catch (e) {
+        dbFail({ message: e instanceof Error ? e.message : String(e) }, "Could not check the Zoho-imported purchases — nothing was booked. Try again.");
+      }
+    }
+    /* Each imported document covers at most one line (the nearest in date) — same rule as the sheet. */
+    const covered = coveredLines(lines.map((l) => ({ id: l.id, debit: Number(l.debit ?? 0), txn_date: String(l.txn_date ?? "") })), docs);
 
     const bookOne = async (r: (typeof rows)[number]): Promise<BulkExpenseResult> => {
       const line = byId.get(r.txnId);
@@ -68,6 +89,9 @@ export const POST = withRoute(
       if (line.matched_to_type !== null) return { txnId: r.txnId, ok: false, error: "This line is already reconciled." };
       const refused = refuseBulkRow({ description: line.description, debit: Number(line.debit ?? 0) }, r.category);
       if (refused) return { txnId: r.txnId, ok: false, error: refused };
+      if (covered.has(line.id)) {
+        return { txnId: r.txnId, ok: false, error: COVERED_MESSAGE };
+      }
       const res = await db.rpc("book_bank_txn_as_expense", {
         p_txn_id: r.txnId, p_category: r.category, p_vendor: r.payee || null, p_gst: 0, p_notes: line.description,
       });

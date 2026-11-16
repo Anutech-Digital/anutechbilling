@@ -1,6 +1,7 @@
 /** Exchange LinkedIn Ads consent, discover ad accounts, then run the first metrics sync. */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { mayDo } from "@/lib/auth/action-roles";
 import { originFromRequest } from "@/lib/google/oauth";
 import { exchangeLinkedInCode } from "@/lib/integrations/linkedin/api";
 import { linkedInAdsRedirectUri, linkedInCreds } from "@/lib/integrations/linkedin/config";
@@ -22,7 +23,9 @@ export async function GET(request: NextRequest) {
   if (!code || request.cookies.get("linkedin_ads_oauth_state")?.value !== url.searchParams.get("state")) return done("badstate");
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) return NextResponse.redirect(`${origin}/login`);
-  const { data: me } = await createClient().from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await createClient().from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  /* R-2684 review: same gate as connect — the state cookie alone does not prove the caller may connect company accounts. */
+  if (!mayDo(me?.role, "integration.company")) return done("role");
   if (!me?.tenant_id) return done("error");
   const creds = await readLinkedInAdsCredentials(createAdminClient(), me.tenant_id) ?? linkedInCreds();
   if (!creds || refuseConnectWithoutVault("linkedin-ads/callback")) return done("notconfigured");

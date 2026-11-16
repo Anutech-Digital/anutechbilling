@@ -4,6 +4,10 @@
  * R-2401 — the renewal buttons, ONE component for the Renewals cards/table and the Payment
  * Follow-up renewal rows (rules + labels: ./renewal-actions-rules.ts).
  *
+ *   Review renewal quote       → R-2710: generate-renewal-quote {review:true} makes / reuses it as a
+ *                                DRAFT and opens /quotes/<id>/edit (Save & send to customer there).
+ *   Change renewal quote       → R-2710: the sent quote is revised (R-448 / R-2368) and the new draft
+ *                                opens in the editor. Send as is / Resend stay in the ⋯ menu.
  *   Send renewal quote         → /api/renewals/send-now (creates the quote if missing, emails it
  *                                with the accept / pay link) — after the same confirm as before.
  *   Create quote (don't send)  → /api/subscriptions/[id]/generate-renewal-quote (opens the quote
@@ -15,6 +19,9 @@
  * R-2422: the row shows ONE next-step button (renewalNextStep: the rule's primary, else Follow-up)
  * and a ⋯ menu for the rest (Create quote (don't send), Follow-up, Nudge, Voice note, Customer not
  * renewing) — the pattern of Payment Follow-up's rows (collections/row-actions.tsx, R-2408).
+ * R-2856: the ⋯ items say the action (lib/renewals/stage.ts MENU_LABEL): "Follow up — log a call or
+ * promise" (the follow-up dialog), "Draft a WhatsApp message (AI)" (was Nudge — AI drafts, you edit
+ * and send), "Send a WhatsApp voice note" (was Voice note — a Hindi voice reminder, asks first).
  *
  * No new money call: the two routes and the two dialogs (and their RPCs) are the ones the
  * Renewals page and the subscription drawer already used.
@@ -29,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
+import { MONEY_RECORD_ROLES, canRecordMoney, type UserRole } from "@/lib/auth/roles";
 import { toastError } from "@/lib/errors/toast-error";
 import { useOpenRenewalQuotes } from "@/lib/queries/subscriptions";
 import { queryKeys } from "@/lib/queries/keys";
@@ -37,9 +45,17 @@ import { readJsonSafe, sendNowConfirm, sendNowStep, sentToastText } from "@/app/
 import { openRenewalQuoteMap, openRenewalQuoteStatus } from "@/app/(app)/renewals/open-renewal-quotes";
 import { NonRenewingDialog } from "@/components/features/subscriptions/non-renewing-dialog";
 import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
-import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
+import { VendorHoldBadge, useRenewAnyway } from "@/components/features/subscriptions/vendor-hold-badge";
+import { useSetNonRenewing } from "@/components/features/subscriptions/use-non-renewing";
+import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
+import { canOpenInvoices } from "@/lib/invoices/access";
+import { vendorHoldState } from "@/lib/renewals/vendor-hold";
+import { notRenewingDialog, followUpMenuLabel, type PrimaryContext, type PrimaryKind, type RenewalStage } from "@/lib/renewals/stage";
+import { stageButtons, withTogether, STAGE_MENU_LABEL, type StageMenuItem, type StageRunKind, type TogetherRowAction } from "./stage-actions";
 import { BillNextPartDialog, type BillNextChoice } from "./bill-next-part-dialog";
 import { isSplitBilled } from "@/lib/billing/instalments";
+import { createClient } from "@/lib/supabase/client";
+import { openRenewalRevision } from "@/lib/quotes/start-revision";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -47,9 +63,15 @@ import {
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { useVoiceNoteSend } from "@/components/shared/voice-note-button";
 import {
-  renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART,
+  renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART, RECORD_PAYMENT,
   type RenewalActionSub, type RenewalButtonKind, type RenewalMenuItem,
 } from "./renewal-actions-rules";
+import { quoteEditHrefFromRenewals } from "@/lib/renewals/back-to-renewals";
+
+/** R-2754: the Renewals URL this button was clicked on (keeps the tab) — the editor links back to it. */
+function hereUrl(): string | null {
+  return typeof window === "undefined" ? null : `${window.location.pathname}${window.location.search}`;
+}
 
 const NOT_RENEWING_TITLE = {
   "non-renewing": "Mark Won't renew: it runs till the renewal date, then ends — no renewal quote or reminder",
@@ -69,7 +91,13 @@ export interface RenewalActionsSub extends RenewalActionSub {
   customer_id?: string | null;
 }
 
-export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false }: {
+/** R-2764: who is looking — the Renewals queue reads it once and hands it to every row. */
+export interface RenewalViewer {
+  role: string | null | undefined;
+  tenantGracePeriodDays: number;
+}
+
+export interface RenewalActionsProps {
   sub: RenewalActionsSub;
   /** IST days to the renewal date; negative = past it. */
   daysUntil: number;
@@ -81,7 +109,80 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   onFollowup?: () => void;
   /** R-2422: offer Nudge (AI draft) and Voice note in the ⋯ menu (Renewals). */
   messaging?: boolean;
-}) {
+  /** R-2728: the renewal quote / part proforma with the customer, unpaid → ⋯ "Record payment" (/quotes/<id>?pay=1). */
+  recordPaymentQuoteId?: string;
+  /**
+   * R-2758 (R-2738 model): the row's ONE stage — the button and ⋯ come from renewalPrimary(stage).
+   * undefined = the older rules (Payment Follow-up rows); null = the row's documents are still
+   * loading → a placeholder, never a button that could act on a half-known row.
+   */
+  stage?: RenewalStage | null;
+  /** R-2758: where Record payment goes (stage-input.ts payHref); null = nothing to pay. */
+  payHref?: string | null;
+  /**
+   * R-2764 (14 Nov freeze): given (with a stage), the row first shows only its button + ⋯, with no hooks
+   * of its own; the full component — router, confirm, the user / open-quote reads, Renew anyway, Won't
+   * renew, Voice note — mounts on the first click and runs that click. null = the screen is still
+   * reading the user: the buttons show disabled (R-2710: no click before the role is known).
+   */
+  viewer?: RenewalViewer | null;
+  /**
+   * R-2859: Bill together suggests this row with others of its customer (2+ still ticked in the box) → the row’s ONE
+   * button is "Bill together" (the box’s dialog) in place of its own Bill next part / Send renewal; null = its own button.
+   */
+  together?: TogetherRowAction | null;
+}
+
+/** R-2764: which control of the row was pressed — the row's button or an item of its ⋯. */
+type StageRunFrom = "primary" | "menu";
+
+/** R-2764: the click that mounted the full component, and where it came from (focus goes back there). */
+interface AutoRun { kind: StageRunKind; from: StageRunFrom }
+
+interface RenewalActionsLiveProps extends RenewalActionsProps {
+  autoRun?: AutoRun;
+}
+
+export function RenewalActions(props: RenewalActionsProps) {
+  if (props.stage !== undefined && props.viewer !== undefined) return <LazyRenewalActions {...props} />;
+  return <RenewalActionsLive {...props} />;
+}
+
+/** R-2764: ONE place for what the stage row's button + ⋯ may offer — the lazy and the full row use it,
+    so the menu never changes between the first and the second click. */
+function stageRowFacts(sub: RenewalActionsSub, role: string | null | undefined, graceDays: number,
+  { payHref, onFollowup, messaging }: { payHref?: string | null; onFollowup?: () => void; messaging?: boolean }) {
+  const r = (role ?? undefined) as Parameters<typeof canOpenQuotes>[0];
+  const canQuotes = canOpenQuotes(r);
+  return {
+    ctx: {
+      role: r, canEndSubscription: mayMarkNonRenewing(r), tenantGraceDays: graceDays,
+      offers: { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id }, vendorHold: vendorHoldState(sub),
+    } as PrimaryContext,
+    canQuotes,
+    canPay: !!payHref && canRecordMoney(r) && (payHref.startsWith("/quotes/") ? canQuotes : canOpenInvoices(r)),
+    canInvoices: canOpenInvoices(r),
+  };
+}
+
+/** R-2764: the row's button + ⋯ from its stage, with no per-row hooks until one is pressed. */
+function LazyRenewalActions(props: RenewalActionsProps) {
+  const [armed, setArmed] = React.useState<AutoRun | null>(null);
+  if (armed) return <RenewalActionsLive {...props} autoRun={armed} />;
+  const { sub, stage, layout, strong = false, onFollowup, viewer } = props;
+  const facts = stageRowFacts(sub, viewer?.role, viewer?.tenantGracePeriodDays ?? 0, props);
+  return (
+    <StageActions
+      stage={stage ?? null} name={sub.customer_name ?? "this customer"} layout={layout} strong={strong}
+      busy={false} disabled={!viewer} pending={!viewer}
+      ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices} together={props.together}
+      /* follow-up needs nothing of the full component — no reason to mount it for that */
+      onRun={(kind, from) => (kind === "follow-up" ? onFollowup?.() : setArmed({ kind, from }))}
+    />
+  );
+}
+
+function RenewalActionsLive({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId, stage, payHref, autoRun, together }: RenewalActionsLiveProps) {
   const qc = useQueryClient();
   const router = useRouter();
   const confirm = useConfirm();
@@ -89,7 +190,11 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   const canQuotes = canOpenQuotes(me?.role);
   const graceDays = me?.tenantGracePeriodDays ?? 0;
   /* R-453 / R-2232: an open renewal quote whose link-back is missing still counts; draft vs sent. */
-  const { data: openRenewals } = useOpenRenewalQuotes();
+  const { data: openRenewals, isLoading: openRenewalsLoading } = useOpenRenewalQuotes();
+  /* R-2710: until the user and the open renewal quotes are read, the row cannot know whether its
+     button is Review, Change or (for a role without the editor) Send — no click that could email
+     the customer before it is known. */
+  const factsLoading = !me || !!openRenewalsLoading;
   const sub = React.useMemo(() => {
     if (raw.renewal_quote_id) return raw;
     const q = openRenewalQuoteMap(openRenewals ?? []).get(raw.id.toLowerCase());
@@ -101,14 +206,42 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   );
   const set = renewalActionSet(sub, quoteStatus, {
     daysUntil, tenantGraceDays: graceDays, canEndSubscription: mayMarkNonRenewing(me?.role),
+    /* R-2710: the editor (canOpenQuotes) AND the generate route (MONEY_RECORD_ROLES) — else the old buttons. */
+    canReview: canQuotes && !!me?.role && MONEY_RECORD_ROLES.includes(me.role as UserRole),
   });
   const name = sub.customer_name ?? "this customer";
 
-  const [busy, setBusy] = React.useState<"send-now" | "generate" | null>(null);
+  const [busy, setBusy] = React.useState<RenewalButtonKind | null>(null);
   const [dialog, setDialog] = React.useState<"non-renewing" | "cancel" | "nudge" | "bill-next" | null>(null);
   /* R-2519: billed in parts → "Bill next part" opens the proforma preview first (seats, rate, periods). */
   const splitBilled = isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null);
   const voice = useVoiceNoteSend({ customerId: sub.customer_id ?? "", purpose: "renewal", customerName: name });
+  /* R-2758: grace over → Renew anyway is a ⋯ item (same prompt + RPC as the badge); Undo Won't renew. */
+  const renewAnyway = useRenewAnyway({ ...sub, customer_name: name, plan: sub.plan });
+  const setNonRenewing = useSetNonRenewing();
+  /* R-2764: the click that mounted this component (LazyRenewalActions) runs once, after the first render. */
+  const runRef = React.useRef<((kind: StageRunKind) => void) | null>(null);
+  const wrapRef = React.useRef<HTMLDivElement | null>(null);
+  const autoRan = React.useRef(false);
+  React.useEffect(() => {
+    /* R-2710: never before the user and the open renewal quotes are read (Review vs Send depends on them). */
+    if (!autoRun || autoRan.current || !runRef.current || factsLoading) return;
+    autoRan.current = true;
+    /* the pressed button / ⋯ was replaced by this component's own — keyboard focus goes back to it, so a
+       dialog it opens returns focus there on close */
+    const lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+    if (lost) wrapRef.current?.querySelector<HTMLElement>(autoRun.from === "primary" ? '[data-testid="stage-primary"]' : '[data-testid="stage-more"]')?.focus();
+    runRef.current(autoRun.kind);
+  }, [autoRun, factsLoading]);
+
+  async function onUndoWontRenew() {
+    const ok = await confirm({
+      title: `Undo Won't renew for ${name}?`,
+      body: "It comes back to Renewals as a normal renewal — the renewal quote and reminders go out as usual.",
+      confirmLabel: "Undo Won't renew", icon: "refresh",
+    });
+    if (ok) setNonRenewing.mutate({ id: sub.id, on: false });
+  }
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["subscriptions"] });
@@ -157,6 +290,63 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
     }
   }
 
+  /* R-2710 (Pratik, 12 Nov): "Review renewal quote" — make (or reuse) the renewal quote as a DRAFT
+     and open it in the editor: check seats, rate and term, then "Save & send to customer" there.
+     Nothing is emailed here. A linked quote that was already sent goes through Change (Revise). */
+  async function onReview() {
+    const from = hereUrl();   // R-2754: the tab clicked on, before the await (the owner may switch tabs meanwhile)
+    setBusy("review");
+    try {
+      const res = await fetch(`/api/subscriptions/${sub.id}/generate-renewal-quote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ review: true }),
+      });
+      const json = (await readJsonSafe(res)) as { error?: string; quoteId?: string; quoteStatus?: string | null };
+      if (!res.ok || !json.quoteId) {
+        toastError(new Error(json.error ?? "Could not open the renewal quote"), {
+          action: { label: "Retry", onClick: () => void onReview() },
+        });
+        return;
+      }
+      refresh();
+      /* Not a draft (or its status unread) → Change: it opens a draft itself, revises a sent one, or says why not. */
+      if (json.quoteStatus !== "draft") {
+        await onChange(json.quoteId, from);
+        return;
+      }
+      router.push(quoteEditHrefFromRenewals(json.quoteId, from) as never);
+    } catch (err) {
+      toastError(err, { fallback: "Could not open the renewal quote", action: { label: "Retry", onClick: () => void onReview() } });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /* R-2710: "Change renewal quote" — the customer already has it: Revise it (R-448; the
+     subscription link moves to the revision when it is sent, R-2368) and open that draft. A second
+     click re-opens the same unsent revision. */
+  async function onChange(quoteId = sub.renewal_quote_id, from: string | null = hereUrl()) {
+    if (!quoteId) return;
+    setBusy("change");
+    try {
+      const r = await openRenewalRevision(createClient(), quoteId);
+      if (!r.ok) {
+        toastError(new Error(r.reason), {
+          action: { label: "Open quote", onClick: () => router.push(`/quotes/${encodeURIComponent(quoteId)}` as never) },
+        });
+        return;
+      }
+      refresh();
+      if (r.created) toast.success(`Revision ${r.quoteId} created as a draft`, { description: "The customer's old quote is replaced when you send this one." });
+      router.push(quoteEditHrefFromRenewals(r.quoteId, from) as never);
+    } catch (err) {
+      toastError(err, { fallback: "Couldn't start the revision." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   /* R-239: an email to a customer is never one stray click — say who and which email. */
   async function onSendNow() {
     const s = { ...sub, customer_name: name };
@@ -190,15 +380,22 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
     }
   }
 
-  const run = (kind: "send-now" | "generate") => (kind === "send-now" ? onSendNow() : onGenerate());
+  const run = (kind: RenewalButtonKind) => (
+    kind === "send-now" ? onSendNow() : kind === "review" ? onReview() : kind === "change" ? onChange() : onGenerate()
+  );
   const grow = layout === "card" ? "flex-1" : undefined;
   /* R-2422: ONE next-step button + ⋯ (Payment Follow-up's R-2408 pattern) instead of six stacked buttons. */
   const step = renewalNextStep(set, { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id });
   const button = step.button;
   /* R-2519: billed in parts and Bill next part is not the row's button → it is in the ⋯ menu
      (bill a period ahead, or re-bill one whose proforma was cancelled). */
-  const menuKeys: RenewalMenuItem[] = splitBilled && sub.status === "active" && button?.kind !== "generate"
+  const baseMenu: RenewalMenuItem[] = splitBilled && sub.status === "active" && button?.kind !== "generate"
     ? ["bill-ahead", ...step.menu] : step.menu;
+  /* R-2728: the quote's own Record payment dialog (R-243 ?pay=1) — only for roles that can open it and record money. */
+  const payQuote = recordPaymentQuoteId && canQuotes && canRecordMoney(me?.role) ? recordPaymentQuoteId : null;
+  const menuKeys: RenewalMenuItem[] = payQuote
+    ? [...baseMenu.filter((k) => k === "bill-ahead" || k === "secondary"), "record-payment", ...baseMenu.filter((k) => k !== "bill-ahead" && k !== "secondary")]
+    : baseMenu;
 
   const notRenewingButton = set.notRenewing && (
     <Button
@@ -223,28 +420,38 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         <Icon name="plus" size={15} /> Bill next part…
       </DropdownMenuItem>
     ),
-    "create-quote": (
-      <DropdownMenuItem key="create-quote" className={ITEM} disabled={busy !== null} onClick={() => void onGenerate()}
-        title="Create the renewal quote and open it — nothing is emailed until you send it">
-        <Icon name="plus" size={15} /> {set.secondary?.label}
+    secondary: (
+      <DropdownMenuItem key="secondary" className={ITEM} disabled={busy !== null}
+        onClick={() => void run(set.secondary?.kind ?? "generate")}
+        title={set.secondary?.kind === "send-now"
+          ? "Email the customer the renewal quote as it is, with its accept / pay link (asks first)"
+          : "Create the renewal quote and open it — nothing is emailed until you send it"}>
+        <Icon name={set.secondary?.kind === "send-now" ? "mail" : "plus"} size={15} /> {set.secondary?.label}
+      </DropdownMenuItem>
+    ),
+    "record-payment": (
+      <DropdownMenuItem key="record-payment" className={ITEM}
+        onClick={() => payQuote && router.push(`/quotes/${encodeURIComponent(payQuote)}?pay=1` as never)}
+        title={`Record the customer's payment against ${payQuote ?? "the quote"} — its own Record payment dialog opens`}>
+        <Icon name="rupee" size={15} /> {RECORD_PAYMENT}
       </DropdownMenuItem>
     ),
     followup: (
       <DropdownMenuItem key="followup" className={ITEM} onClick={() => onFollowup?.()}
         title="Log a call / promise / next date for this renewal">
-        <Icon name="phone" size={15} /> {FOLLOW_UP}
+        <Icon name="phone" size={15} /> {followUpMenuLabel(FOLLOW_UP)}
       </DropdownMenuItem>
     ),
     nudge: (
       <DropdownMenuItem key="nudge" className={ITEM} onClick={() => setDialog("nudge")}
         title="AI drafts a WhatsApp renewal message — you edit and send it yourself">
-        <Icon name="sparkles" size={15} /> Nudge
+        <Icon name="sparkles" size={15} /> {STAGE_MENU_LABEL.nudge}
       </DropdownMenuItem>
     ),
     voice: (
       <DropdownMenuItem key="voice" className={ITEM} disabled={voice.sending} onClick={() => void voice.send()}
         title="Send a Hindi voice-note renewal reminder on WhatsApp (asks first)">
-        <Icon name="whatsapp" size={15} /> Voice note
+        <Icon name="whatsapp" size={15} /> {STAGE_MENU_LABEL.voice}
       </DropdownMenuItem>
     ),
     "not-renewing": (
@@ -255,63 +462,8 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
     ),
   };
 
-  return (
+  const dialogs = (
     <>
-      <div className={cn("flex flex-wrap items-center gap-1.5", layout === "card" && "w-full")}>
-        {set.graceOver && (
-          /* Grace over — owner decides: Renew anyway and Cancel side by side (R-2401). */
-          <span className="inline-flex flex-wrap items-center gap-1.5" data-testid="grace-over-choice">
-            <VendorHoldBadge sub={{ ...sub, customer_name: name, plan: sub.plan }} />
-            {notRenewingButton}
-          </span>
-        )}
-        {button && button.kind === "followup" && (
-          <Button variant="default" size="sm" icon="phone" className={grow}
-            aria-label={`Log a follow-up for ${name}`} onClick={() => onFollowup?.()}>
-            {button.label}
-          </Button>
-        )}
-        {button && button.kind !== "followup" && (
-          <Button
-            variant={strong ? "primary" : "default"}
-            size="sm"
-            className={grow}
-            loading={busy === button.kind}
-            disabled={busy !== null}
-            onClick={() => void run(button.kind as RenewalButtonKind)}
-            title={button.kind === "send-now"
-              ? "Email the customer the renewal quote with its accept / pay link (creates it first if needed)"
-              : set.renewal
-                ? "Bill part 1 of the next term — the renewal, at today's seats × rate (you check them first; proforma, then the tax invoice when paid)"
-                : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
-          >
-            <Icon name={button.kind === "send-now" ? "mail" : "plus"} size={12} />
-            {button.label}
-          </Button>
-        )}
-        {button && button.kind === "generate" && set.renewal && set.note && (
-          /* R-2548: what the renewal click bills — the next term's dates and today's seats × rate. */
-          <p className="basis-full text-2xs text-ink-3 tabular-nums" data-testid="renewal-part-note">{set.note}</p>
-        )}
-        {menuKeys.length > 0 && (
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label={menuLabel}
-                title="More actions"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
-              >
-                <Icon name="more_h" size={16} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[13rem]">
-              {menuKeys.map((k) => menuItem[k])}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
-
       {dialog === "bill-next" && (
         <BillNextPartDialog
           sub={{ id: sub.id, customer_name: name, plan: sub.plan }}
@@ -347,5 +499,231 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         />
       )}
     </>
+  );
+
+  /* R-2758 (R-2738): the row's ONE button + ⋯ from its stage (renewalPrimary). */
+  if (stage !== undefined) {
+    const onRun = (kind: StageRunKind) => {
+      if (!stage) return;
+      switch (kind) {
+        /* R-2710: the editor needs canOpenQuotes AND the generate route's money roles (set.canReview's rule). */
+        case "send-renewal": return void (canQuotes && !!me?.role && MONEY_RECORD_ROLES.includes(me.role as UserRole) ? onReview() : onSendNow());
+        case "send-as-is": return void onSendNow();
+        /* code-review: send-now refuses split-billed subs — a part proforma is resent from its own page. */
+        case "resend": return stage.split && stage.quoteId ? router.push(`/quotes/${encodeURIComponent(stage.quoteId)}` as never) : void onSendNow();
+        case "bill-part": return setDialog("bill-next");
+        case "continue": return stage.quoteId ? router.push(quoteEditHrefFromRenewals(stage.quoteId, hereUrl()) as never) : undefined;   // R-2754: back to this tab
+        case "follow-up": return onFollowup?.();
+        case "record-payment": return payHref ? router.push(payHref as never) : undefined;
+        case "change-renewal": return void onChange(stage.quoteId ?? undefined);
+        case "resend-invoice": return stage.invoiceId ? router.push(`/invoices/${encodeURIComponent(stage.invoiceId)}` as never) : undefined;
+        case "open-quote": return stage.quoteId ? router.push(`/quotes/${encodeURIComponent(stage.quoteId)}` as never) : undefined;
+        case "nudge": return setDialog("nudge");
+        case "voice": return void voice.send();
+        case "renew-anyway": return void renewAnyway.run();
+        case "not-renewing": return setDialog(notRenewingDialog(stage));
+        case "undo-wont-renew": return void onUndoWontRenew();
+        case "view-subscription": return router.push(subscriptionOpenHref({ id: sub.id, customer_name: sub.customer_name }) as never);
+      }
+    };
+    runRef.current = onRun;
+    const facts = stageRowFacts(sub, me?.role, graceDays, { payHref, onFollowup, messaging });
+    return (
+      <>
+        {/* R-2764: `contents` — no box of its own; only lets the auto-run find the button to focus */}
+        <div ref={wrapRef} className="contents">
+          <StageActions
+            stage={stage} name={name} layout={layout} strong={strong}
+            busy={busy !== null || renewAnyway.busy || setNonRenewing.isPending}
+            disabled={busy !== null || factsLoading} pending={factsLoading}
+            ctx={facts.ctx} sub={sub} canQuotes={facts.canQuotes} canPay={facts.canPay} canInvoices={facts.canInvoices} together={together}
+            onRun={onRun}
+          />
+        </div>
+        {dialogs}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className={cn("flex flex-wrap items-center gap-1.5", layout === "card" && "w-full")}>
+        {set.graceOver && (
+          /* Grace over — owner decides: Renew anyway and Cancel side by side (R-2401). */
+          <span className="inline-flex flex-wrap items-center gap-1.5" data-testid="grace-over-choice">
+            <VendorHoldBadge sub={{ ...sub, customer_name: name, plan: sub.plan }} />
+            {notRenewingButton}
+          </span>
+        )}
+        {button && button.kind === "followup" && (
+          <Button variant="default" size="sm" icon="phone" className={grow}
+            aria-label={`Log a follow-up for ${name}`} onClick={() => onFollowup?.()}>
+            {button.label}
+          </Button>
+        )}
+        {button && button.kind !== "followup" && (
+          <Button
+            variant={strong ? "primary" : "default"}
+            size="sm"
+            className={grow}
+            loading={busy === button.kind}
+            disabled={busy !== null || factsLoading}
+            onClick={() => void run(button.kind as RenewalButtonKind)}
+            title={button.kind === "review"
+              ? "Open the renewal quote to check seats, rate and term, then send it from there (nothing is emailed yet)"
+              : button.kind === "change"
+              ? "The customer already has this quote — make a revision to edit and send; the old one stops accepting once it is sent"
+              : button.kind === "send-now"
+              ? "Email the customer the renewal quote with its accept / pay link (creates it first if needed)"
+              : set.renewal
+                ? "Bill part 1 of the next term — the renewal, at today's seats × rate (you check them first; proforma, then the tax invoice when paid)"
+                : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
+          >
+            <Icon name={button.kind === "send-now" ? "mail" : button.kind === "review" || button.kind === "change" ? "edit" : "plus"} size={12} />
+            {button.label}
+          </Button>
+        )}
+        {button && button.kind === "generate" && set.renewal && set.note && (
+          /* R-2548: what the renewal click bills — the next term's dates and today's seats × rate. */
+          <p className="basis-full text-2xs text-ink-3 tabular-nums" data-testid="renewal-part-note">{set.note}</p>
+        )}
+        {menuKeys.length > 0 && (
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={menuLabel}
+                title="More actions"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              >
+                <Icon name="more_h" size={16} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[13rem]">
+              {menuKeys.map((k) => menuItem[k])}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+
+      {dialogs}
+    </>
+  );
+}
+
+// ─── R-2758: the stage row's ONE button + ⋯ ──────────────────────────────────
+
+const PRIMARY_ICON: Record<PrimaryKind, React.ComponentProps<typeof Icon>["name"]> = {
+  "send-renewal": "edit", "bill-part": "plus", continue: "edit", "follow-up": "phone", "record-payment": "rupee",
+};
+
+const PRIMARY_TITLE: Record<PrimaryKind, string> = {
+  "send-renewal": "Open the renewal quote to check seats, rate and term, then send it from there (nothing is emailed yet)",
+  "bill-part": "Bill the next part — check seats, rate and periods first (proforma, then the tax invoice when paid)",
+  continue: "Open the part quote you started — nothing has gone to the customer yet",
+  "follow-up": "Log a call / promise / next date for this renewal",
+  "record-payment": "Record the customer's payment for this renewal",
+};
+
+const MENU_ICON: Record<StageMenuItem, React.ComponentProps<typeof Icon>["name"]> = {
+  "send-as-is": "mail", "bill-part": "plus", "record-payment": "rupee", "change-renewal": "edit", resend: "mail",
+  "resend-invoice": "mail", "follow-up": "phone", nudge: "sparkles", voice: "whatsapp", "renew-anyway": "refresh",
+  "not-renewing": "x", "undo-wont-renew": "refresh", "view-subscription": "eye", "open-quote": "file", "send-renewal": "edit",
+};
+
+const MENU_TITLE: Partial<Record<StageMenuItem, string>> = {
+  "send-renewal": PRIMARY_TITLE["send-renewal"],
+  "send-as-is": "Email the customer the renewal quote as it is, with its accept / pay link (asks first)",
+  "bill-part": "Make the next period's proforma now — check seats, rate and how many periods first",
+  "change-renewal": "The customer already has this quote — make a revision to edit and send; the old one stops accepting once it is sent",
+  resend: "Email the renewal quote again (asks first)",
+  "follow-up": "Log a call / promise / next date for this renewal — nothing is sent to the customer",
+  "resend-invoice": "Open the invoice to send it or its payment link again",
+  nudge: "AI drafts a WhatsApp renewal message — you edit and send it yourself",
+  voice: "Send a Hindi voice-note renewal reminder on WhatsApp (asks first)",
+  "renew-anyway": "Owner / manager: renew at the vendor before payment (reason goes to the activity log)",
+  "not-renewing": "Before the renewal date: mark Won't renew. After it: cancel with a reason.",
+  "undo-wont-renew": "The customer will renew after all — back to a normal renewal",
+  "open-quote": "The renewal quote is closed — open it to revise it, or to release it before a new renewal",
+};
+
+function StageActions({ stage, sub, name, layout, strong, busy, disabled, pending = false, ctx, canQuotes, canPay, canInvoices, onRun, together = null }: {
+  stage: RenewalStage | null;
+  sub: RenewalActionsSub;
+  name: string;
+  layout: "card" | "table";
+  strong: boolean;
+  busy: boolean;
+  disabled: boolean;
+  /** R-2825: `disabled` only because the viewer / facts are still being read — says so (aria-busy + title). */
+  pending?: boolean;
+  ctx: PrimaryContext;
+  canQuotes: boolean;
+  canPay: boolean;
+  canInvoices: boolean;
+  onRun: (kind: StageRunKind, from: StageRunFrom) => void;
+  /** R-2859: the row is in a Bill together suggestion → that is its ONE button (withTogether decides). */
+  together?: TogetherRowAction | null;
+}) {
+  /* Documents still loading: a placeholder — never a button that could act on a half-known row. */
+  /* R-2825: a visibly disabled "Loading…" button (aria-busy + title) — not a grey block that looks like nothing and eats the click. */
+  if (!stage) {
+    return (
+      <Button variant="default" size="sm" className={cn("shrink-0", layout === "card" && "w-full", layout === "table" && "gap-1.5 px-2")}
+        loading disabled aria-busy="true" title="Loading the next step — this button works in a moment" data-testid="stage-action-loading">
+        Loading…
+      </Button>
+    );
+  }
+  /* R-2859: a row Bill together suggests with others bills them together — its own Bill next part moves to ⋯ */
+  const { primary, menu, together: tg } = withTogether(stageButtons(stage, sub, ctx, { canQuotes, canPay, canInvoices }), together);
+  const grow = layout === "card" ? "flex-1" : undefined;
+  /* R-2764 (R-2759 spec, 14 Nov): in the table the longest label ("Record payment") + ⋯ ran 4px past the
+     184px Action column at 1280 — the table button is 12px narrower (padding + gaps), same words and icon. */
+  const tight = layout === "table";
+  return (
+    <div className={cn("flex min-w-0 items-center", tight ? "gap-1" : "gap-1.5", layout === "card" && "w-full")} data-testid="stage-actions">
+      {primary && (
+        <Button
+          variant={strong && primary.kind !== "follow-up" ? "primary" : "default"}
+          size="sm"
+          className={cn("shrink-0", grow, tight && "gap-1.5 px-2")}
+          loading={busy}
+          disabled={disabled || !!tg?.pending}
+          aria-busy={pending || tg?.pending || undefined}
+          onClick={() => (tg ? tg.onClick() : onRun(primary.kind, "primary"))}
+          title={pending || tg?.pending ? "Loading… this button works in a moment" : tg ? tg.title : PRIMARY_TITLE[primary.kind]}
+          data-testid="stage-primary"
+          data-together={tg ? true : undefined}
+        >
+          <Icon name={tg ? "plus" : PRIMARY_ICON[primary.kind]} size={12} />
+          {tg ? tg.label : primary.label}
+        </Button>
+      )}
+      {menu.length > 0 && (
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={`More renewal actions for ${name}${sub.plan ? ` — ${sub.plan}` : ""}`}
+              title="More actions"
+              data-testid="stage-more"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+            >
+              <Icon name="more_h" size={16} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[13rem]">
+            {menu.map((k) => (
+              <DropdownMenuItem key={k} disabled={disabled && k !== "follow-up" && k !== "view-subscription"}
+                className={cn("gap-2.5 py-2 cursor-pointer", k === "not-renewing" && "text-rose-700")}
+                onClick={() => onRun(k, "menu")} title={MENU_TITLE[k]}>
+                <Icon name={MENU_ICON[k]} size={15} /> {STAGE_MENU_LABEL[k]}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
   );
 }

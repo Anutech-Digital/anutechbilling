@@ -33,10 +33,39 @@
  * The bar is deliberately higher than the page's. nav.ts opens /admin/feedback to owner and
  * manager, noting that reports quote whatever the reporter typed and that regularly
  * includes a customer's name. Crossing tenants means OTHER companies' customers.
+ *
+ * ─── R-2726: SEARCH, FILTERS, SORT, PAGING ──────────────────────────────────
+ * The list is now filtered, sorted and paged HERE (50 rows a page) instead of sending 500
+ * rows to the browser. The gate did not move: the 401/403 below are decided from the
+ * session alone, before the query string is looked at and before the service role exists —
+ * so the answer to anyone but the platform owner is the same for every parameter, and
+ * search or a workspace filter cannot be used to learn anything about another tenant.
+ * There is no "scope" parameter; `ws` only NARROWS what the platform owner already reads.
+ * Every value goes through lib/feedback/list-filters (fixed lists, validated ids/dates,
+ * escaped + quoted free text).
+ *   GET ?q=&status=&type=&sev=&reporter=&ws=&page=&from=&to=&card=&real=1&new=1&since=&sort=&p=
+ *        → { rows, total, counts, page, pageSize }
+ *   GET ?facets=1 → { facets: { reporters, pages, workspaces }, openToSend }
  */
 import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { canQueue } from "@/lib/feedback/platform-dispatch";
+import {
+  FACET_COLUMNS,
+  FEEDBACK_PAGE_SIZE,
+  buildFacets,
+  feedbackPageQueries,
+  looseFeedbackQuery,
+  parseFeedbackFilters,
+  parseSince,
+  tallyStatuses,
+  type FacetSourceRow,
+} from "@/lib/feedback/list-filters";
+import type { Database } from "@/lib/supabase/database.types";
+
+type FeedbackRow = Database["public"]["Tables"]["feedback"]["Row"];
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,7 +80,7 @@ export const runtime = "nodejs";
 const SCREENSHOT_BUCKET = "documents";
 const SIGNED_URL_TTL = 60 * 10;
 
-export async function GET() {
+export async function GET(req: Request) {
   /* Identity comes from the USER's session, never from a parameter — a tenant id in the
      query string would make this route its own bypass. */
   const supabase = createClient();
@@ -61,7 +90,7 @@ export async function GET() {
   }
 
   /* Checked BEFORE the admin client is created, so the service role is never instantiated
-     for a caller who is not allowed to use it. */
+     for a caller who is not allowed to use it — and before the query string is read. */
   if (!isPlatformAdmin(auth.user.email)) {
     /* §24 — say what would make it work, without describing what is behind it. */
     return NextResponse.json(
@@ -73,6 +102,7 @@ export async function GET() {
     );
   }
 
+  const params = new URL(req.url).searchParams;
   const admin = createAdminClient();
 
   const { data: me, error: meErr } = await admin
@@ -84,25 +114,37 @@ export async function GET() {
     return NextResponse.json({ error: "Could not read your account" }, { status: 500 });
   }
 
-  const { data: rows, error: rowsErr } = await admin
-    .from("feedback")
-    .select("*")
-    .order("severity_score", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .limit(500);
-  if (rowsErr) {
-    return NextResponse.json({ error: `Could not read feedback: ${rowsErr.message}` }, { status: 500 });
-  }
+  let list: FeedbackRow[];
+  let paging: { total: number; counts: ReturnType<typeof tallyStatuses>; page: number; pageSize: number };
+  try {
+    if (params.get("facets") === "1") return NextResponse.json(await readFacets(admin));
 
-  const list = rows ?? [];
-  if (list.length === 0) return NextResponse.json({ rows: [] });
+    const filters = parseFeedbackFilters(params);
+    const queries = feedbackPageQueries(
+      (cols) => admin.from("feedback").select(cols),
+      filters,
+      { scope: "all", since: parseSince(params.get("since")) },
+    );
+    const [pageRes, countRows] = await Promise.all([
+      queries.page(),
+      fetchAllRows<{ status: string; agent_claimed_at: string | null }>((a, b) => queries.counts(a, b) as never),
+    ]);
+    if (pageRes.error) throw pageRes.error;
+    list = (pageRes.data ?? []) as FeedbackRow[];
+    const counts = tallyStatuses(countRows);
+    paging = { total: counts[filters.status], counts, page: filters.pageNo, pageSize: FEEDBACK_PAGE_SIZE };
+  } catch (e) {
+    const message = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : "unknown error";
+    return NextResponse.json({ error: `Could not read feedback: ${message}` }, { status: 500 });
+  }
+  if (list.length === 0) return NextResponse.json({ rows: [], ...paging });
 
   /* Two follow-up queries rather than embeds. This codebase has been bitten by PostgREST
      relationship ambiguity (PGRST201) turning a working page into an empty one, and an
      empty page is exactly the failure this route exists to fix. */
   const [{ data: shots }, { data: tenants }] = await Promise.all([
     admin.from("feedback_screenshots").select("*").in("feedback_id", list.map((r) => r.id)),
-    admin.from("tenants").select("id, name"),
+    admin.from("tenants").select("id, name").in("id", [...new Set(list.map((r) => r.tenant_id))]),
   ]);
 
   const tenantName = new Map((tenants ?? []).map((t) => [t.id, t.name]));
@@ -133,5 +175,18 @@ export async function GET() {
       isOwnWorkspace: r.tenant_id === me.tenant_id,
       screenshots: byParent.get(r.id) ?? [],
     })),
+    ...paging,
   });
+}
+
+/** The picker choices (reporters, pages, workspaces) over every report, and the "Send all open" count. */
+async function readFacets(admin: ReturnType<typeof createAdminClient>) {
+  type Row = FacetSourceRow & { status: string; dispatched_at: string | null };
+  const [rows, { data: tenants }] = await Promise.all([
+    fetchAllRows<Row>((a, b) =>
+      looseFeedbackQuery(admin.from("feedback").select(FACET_COLUMNS)).order("id", { ascending: true }).range(a, b) as never),
+    admin.from("tenants").select("id, name"),
+  ]);
+  const names = new Map((tenants ?? []).map((t) => [t.id, t.name]));
+  return { facets: buildFacets(rows, names), openToSend: rows.filter(canQueue).length };
 }

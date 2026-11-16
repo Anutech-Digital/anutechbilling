@@ -56,6 +56,9 @@ import {
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canDeleteMoney } from "@/lib/auth/roles";
+import { useStaffLoansNonCurrent } from "@/lib/queries/loans-current-split";
+import { LoanDueWithin12m } from "@/components/features/accounting/loan-due-within-12m";
+import { canUseLoansGiven } from "@/lib/accounting/loans-given";
 import { istToday as todayISO } from "@/lib/dates/ist";
 
 const METHOD_LABEL: Record<LoanRepaymentMethod, string> = {
@@ -91,6 +94,13 @@ function EmployeeLoansInner() {
   /* R-885: deleting a staff loan or a claim is owner / accountant only (the database refuses the rest). */
   const myRole = useCurrentUser().data?.role;
   const canDelete = canDeleteMoney(myRole);
+  /* R-2674: a staff LOAN is a current asset unless the owner / accountant says it comes back after
+     12 months (advances are always current). null = the database is older than R-2674 → no control. */
+  const nonCurrent = useStaffLoansNonCurrent().data ?? null;
+  const canPlace = canUseLoansGiven(myRole);   // owner / accountant — the same rule the RPC checks
+  const placeOf = (l: EmployeeLoan, cls: string) => nonCurrent !== null && l.kind === "loan" && l.status === "active" && l.outstanding > 0
+    ? <div className={cls}><LoanDueWithin12m kind="employee_loan" loanId={l.id} name={l.employee_name} value={!nonCurrent.has(l.id)} canEdit={canPlace} /></div>
+    : null;
   /* R-1873: only the owner sees and removes payouts left behind by old loan deletes. */
   const isOwner = myRole === "owner";
   const confirm = useConfirm();
@@ -252,6 +262,7 @@ function EmployeeLoansInner() {
                       <Badge kind={l.status === "closed" ? "success" : "warning"} dot>
                         {l.status === "closed" ? "Cleared" : "Active"}
                       </Badge>
+                      {placeOf(l, "mt-1.5")}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end">
@@ -298,6 +309,7 @@ function EmployeeLoansInner() {
                     <Icon name="edit" size={11} className="text-ink-3" />
                     <span>{l.notes || <span className="italic text-ink-3">Add purpose</span>}</span>
                   </button>
+                  {placeOf(l, "mb-2")}
                   <div className="flex items-center justify-between">
                     <Badge kind={l.status === "closed" ? "success" : "warning"} dot>
                       {l.status === "closed" ? "Cleared" : "Active"}

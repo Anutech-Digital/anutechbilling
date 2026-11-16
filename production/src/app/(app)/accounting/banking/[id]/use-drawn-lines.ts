@@ -29,6 +29,19 @@ export function useDrawnBadges(drawnTxns: readonly BankTransactionRow[]) {
   return { isAdvanceTxn, splitPays };
 }
 
+/** R-2685: true at ≥ 1024 px (Tailwind `lg`, the table), false below (the card list), null when the
+ *  browser cannot say (no matchMedia — tests, server) → the page draws both and CSS hides one, as before. */
+const WIDE_QUERY = "(min-width: 1024px)";
+export function useIsWide(): boolean | null {
+  /* One MediaQueryList per page, read on every render (no new one each time). */
+  const [mq] = React.useState(() => (typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(WIDE_QUERY) : null));
+  const subscribe = React.useCallback((cb: () => void) => {
+    mq?.addEventListener("change", cb);
+    return () => mq?.removeEventListener("change", cb);
+  }, [mq]);
+  return React.useSyncExternalStore(subscribe, () => (mq ? mq.matches : null), () => null);
+}
+
 /** True once `ready` and the browser is idle (or 2 s / 0.5 s without requestIdleCallback); stays true.
  *  The Reconcile sheet: the page does not wait on it, yet its data is in before the operator picks
  *  anything (a read landing after a pick would re-run the sheet's pre-fill). */

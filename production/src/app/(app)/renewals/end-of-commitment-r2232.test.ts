@@ -118,8 +118,8 @@ describe("R-2232: one action per row — no second Generate, nothing on a Renewe
 
 describe("R-2232: the page wires the one rule", () => {
   const src = readFileSync(join(process.cwd(), "src/app/(app)/renewals/page.tsx"), "utf8");
-  it("both layouts read renewalRowAction; no disabled Generate/Send now on a settled row", () => {
-    expect(src.match(/renewalRowAction\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  it("the card layout reads renewalRowAction (R-2759: the table's Last invoice cell replaced its line); no disabled Generate/Send now on a settled row", () => {
+    expect(src.match(/renewalRowAction\(/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(src).not.toMatch(/disabled=\{isNonRenewing\(sub\) \|\| isTerminalRenewal/);
   });
   it("R-2431: the sidebar badge counts a flex part like any renewal (nav_badges SQL — R-2232's exclusion gone)", () => {

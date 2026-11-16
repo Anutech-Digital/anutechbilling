@@ -71,6 +71,14 @@ export interface EmailMessage {
    * applies; omit it and this behaves exactly as it did before.
    */
   route?: EmailRoute;
+  /**
+   * R-2696: the tenant the email_log row belongs to, for a send that must NOT use that tenant's
+   * own mail route (the R-2517 membership-invite email goes through the platform sender, so it
+   * carries no `route`). Only the log reads it — it never changes how or from where the mail
+   * goes. `route.tenantId` wins when both are given. Without either, recordEmail writes no row
+   * (staging, 12 Nov 2026: two invite 502s left no trace in email_log).
+   */
+  logTenantId?: string;
   /** Label for email_log — "renewal_reminder", "quote", "invoice", …
    *  Optional: an unlabelled send is still logged, just less searchable.
    *  Never required, because a log that can be skipped by forgetting an
@@ -235,7 +243,7 @@ export async function sendEmail(msg: EmailMessage): Promise<EmailSendResult> {
     ? { status: "failed", providerId: null, errorMessage: "not sent — .invalid address (demo/test data)", provider: "stub" }
     : await sendEmailInner(msg);
   await recordEmail({
-    tenantId: msg.route?.tenantId ?? null,
+    tenantId: msg.route?.tenantId ?? msg.logTenantId ?? null,
     recipient: msg.to,
     subject: msg.subject,
     kind: msg.kind ?? null,
@@ -428,10 +436,15 @@ async function sendEmailInner(msg: EmailMessage): Promise<EmailSendResult> {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "<no body>");
+      /* R-2696: a refusal was silent in the server log — Cloud Run showed only the caller's 502.
+         Recipient masked; the provider's reason as given. */
+      console.warn(`[email/send] resend FAILED to ${maskContactValue(msg.to)} (${msg.kind ?? "no kind"}): ${res.status} ${errText.slice(0, 300)}`);
       return {
         status:       "failed",
         providerId:   null,
-        errorMessage: `Resend ${res.status}: ${errText.slice(0, 200)}`,
+        /* R-2696: 400, not 200 — Resend's test-mode refusal is ~250 chars and was cut mid-JSON
+           (email_log keeps 500). */
+        errorMessage: `Resend ${res.status}: ${errText.slice(0, 400)}`,
         provider:     "resend",
       };
     }

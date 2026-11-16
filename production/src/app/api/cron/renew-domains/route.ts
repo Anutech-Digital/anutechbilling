@@ -41,7 +41,7 @@ import {
 import { commandsConfigured, sendEngineCommand } from "@/lib/dms-engine/commands";
 import { getEngineServices } from "@/lib/dms-engine/client";
 import { coverFromPaid } from "@/lib/provisioning/domain-registration";
-import { domainRenewalEnabled, expiryEpochSeconds, renewalCommandId } from "@/lib/domains/renewal";
+import { domainRenewalEnabled, expiryEpochSeconds, renewalCommandId, renewalYearsFromQuote } from "@/lib/domains/renewal";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { errorMessage } from "@/lib/ops/fetch-all";
 import { cronAuthFailure } from "@/app/api/cron/_lib/cron-auth";
@@ -107,10 +107,19 @@ async function handle(req: Request) {
     // Whose domain: the paid renewal quote's customer, whose DMS account holds it.
     const { data: quote } = await admin
       .from("quotes")
-      .select("id, customer_id")
+      .select("id, customer_id, extension_months")
       .eq("id", row.quote_id)
       .eq("tenant_id", row.tenant_id) // service-role client: this IS the tenant boundary
       .maybeSingle();
+    /* R-2710: the registrar renews the years the customer PAID for (the quote's extension_months,
+       which record_payment rolled the subscription by) — 3 years paid is never renewed for 1.
+       Not a whole 1–10 years (or the quote unread) → held for a person, never a guessed term. */
+    const term = renewalYearsFromQuote(quote ? (quote as { extension_months?: number | null }).extension_months : null);
+    if (!term.ok) {
+      await noteProvisioning(row.id, `Held: ${term.reason}. Nothing was renewed. Check renewal quote ${row.quote_id} and renew ${domain} by hand for the term the customer paid for.`);
+      summary.held += 1;
+      continue;
+    }
     const customerId = (quote as { customer_id?: string | null } | null)?.customer_id ?? null;
     const { data: customer } = customerId
       ? await admin.from("customers").select("contact_email").eq("id", customerId).eq("tenant_id", row.tenant_id).maybeSingle()
@@ -146,7 +155,7 @@ async function handle(req: Request) {
       subject: domain,
       mode: "live",
       payload: {
-        years: 1,
+        years: term.years,   // R-2710: was always 1
         expiryBefore,
         coverRupees: coverFromPaid(Number(row.amount_paid) || 0),
         paymentMode: "live",
@@ -178,7 +187,7 @@ async function handle(req: Request) {
           await alertOwner(
             row.tenant_id,
             `⚠️ Domain renewal needs checking — ${domain}`,
-            `The renewal of ${domain} (quote ${row.quote_id}) reached ResellerClub and no clear answer came back.\n\n${outcome.reason}\n\nIt has NOT been retried. Check ResellerClub: if the expiry moved a year, the renewal landed. Then settle the command in DMS (Admin → Engine commands). Do not renew it by hand until you have checked, or it may be renewed twice.\n\n— ResellerOS`,
+            `The renewal of ${domain} (quote ${row.quote_id}) reached ResellerClub and no clear answer came back.\n\n${outcome.reason}\n\nIt has NOT been retried. Check ResellerClub: if the expiry moved ${term.years === 1 ? "a year" : `${term.years} years`}, the renewal landed. Then settle the command in DMS (Admin → Engine commands). Do not renew it by hand until you have checked, or it may be renewed twice.\n\n— ResellerOS`,
           );
         }
         summary.reconciling += 1;

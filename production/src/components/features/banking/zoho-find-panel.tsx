@@ -15,7 +15,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
 import { formatForeign } from "@/lib/currency";
-import type { FindZohoResult, ZohoPaymentMatch, ZohoPaymentRow } from "@/lib/integrations/zoho-books/payment-match";
+import { FX_DATE_WINDOW_DAYS, type FindZohoResult, type MatchBy, type ZohoPaymentMatch, type ZohoPaymentRow } from "@/lib/integrations/zoho-books/payment-match";
 import type { CustomerSeed } from "@/components/features/customers/use-customer-form";
 import { zohoPrefill, zohoSaleNumber, type AppCustomerLite, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { zohoInvoiceGroups } from "@/lib/banking/zoho-sales-split";
@@ -58,7 +58,7 @@ type State =
   | { kind: "loading" }
   | { kind: "error"; error: string; why: string; next: Next }
   | { kind: "none"; utrs: string[]; from: string; to: string }
-  | { kind: "several"; by: "utr" | "amount_date"; candidates: ZohoPaymentRow[] }
+  | { kind: "several"; by: MatchBy; candidates: ZohoPaymentRow[] }
   | { kind: "match"; match: ZohoPaymentMatch; prefill: ZohoPrefill };
 
 /** R-2425: a Zoho figure in its own currency — USD payments are dollars, not rupees. */
@@ -141,7 +141,7 @@ export function ZohoFindPanel({ transactionId, txnDate, credit, customers, catal
       {state.kind === "several" && (
         <div className={box}>
           <p className="text-xs text-ink-2">
-            Zoho has {state.candidates.length} payments that could be this one ({state.by === "utr" ? "same UTR" : `${rupee(credit)} within 3 days`}) — pick the right one:
+            Zoho has {state.candidates.length} payments that could be this one ({state.by === "utr" ? "same UTR" : state.by === "fx_amount" ? `the same foreign amount within ${FX_DATE_WINDOW_DAYS} days` : `${rupee(credit)} within 3 days`}) — pick the right one:
           </p>
           <ul className="space-y-1">
             {state.candidates.map((c) => (
@@ -169,7 +169,7 @@ function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; 
     <div role="status" aria-label="Zoho match" className={box}>
       <p className="text-xs text-ink-2 break-words tabular-nums">
         <b>Zoho payment #{p.number}</b> · {formatDate(p.date)} · {zohoMoney(p.amount, p.currency)}{p.reference ? ` · Ref ${p.reference}` : ""}
-        {" "}({match.by === "utr" ? "matched by UTR" : match.by === "amount_date" ? "matched by amount and date" : "picked by you"})
+        {" "}({match.by === "utr" ? "matched by UTR" : match.by === "amount_date" ? "matched by amount and date" : match.by === "fx_amount" ? `matched by ${match.payment.currency ?? "foreign"} amount within ${FX_DATE_WINDOW_DAYS} days — check the customer` : "picked by you"})
       </p>
       <p className="text-xs text-ink break-words">
         Customer in Zoho: <b>{match.customer.name}</b>{match.customer.gstin ? ` · GSTIN ${match.customer.gstin}` : ""}

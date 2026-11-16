@@ -18,6 +18,11 @@ export function lineUnitLabel(line: SeatLineLike, perPeriod: boolean): string {
     const years = domainLineYears(line);
     return perPeriod ? "Per domain" : years > 1 ? `Per domain for ${years} years` : "Per domain per year";
   }
+  /* R-2712: a bulk line registered for several years — its rate is the whole term, so never
+     "per year". The unit word stays "seat", as on the same line at 1 year and in the Bulk dialog. */
+  if (line.bulk && line.commitment && line.commitment !== "monthly" && domainLineYears(line) > 1) {
+    return perPeriod ? "Per seat" : `Per seat for ${domainLineYears(line)} years`;
+  }
   if (isSeatLine(line)) return `Per seat${yearly}`;
   if (!line.commitment) return "One-time";
   return `Flat fee${yearly}`;

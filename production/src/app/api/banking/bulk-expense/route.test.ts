@@ -10,7 +10,11 @@ const ID = (n: number) => `11111111-0000-4000-8000-${String(n).padStart(12, "0")
 
 const state = vi.hoisted(() => ({
   role: "owner" as string,
-  lines: [] as Array<{ id: string; description: string | null; debit: number; matched_to_type: string | null }>,
+  lines: [] as Array<{ id: string; description: string | null; debit: number; matched_to_type: string | null; txn_date?: string }>,
+  /* R-2657: Zoho-imported purchases still without a bank line (expenses / vendor_bills). */
+  zohoExpenses: [] as Array<Record<string, unknown>>,
+  zohoBills: [] as Array<Record<string, unknown>>,
+  docsError: null as null | { message: string },
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcErrors: {} as Record<string, { message: string; code: string }>,
 }));
@@ -20,9 +24,14 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "U1", email: "u1@example.invalid" } } }) },
     from: (table: string) => {
       const q: Record<string, unknown> = {};
-      for (const m of ["select", "eq"]) q[m] = () => q;
+      for (const m of ["select", "eq", "not", "is", "gte", "lte", "or", "order"]) q[m] = () => q;
       q.maybeSingle = async () => ({ data: { tenant_id: "T1", role: state.role }, error: null });
-      q.in = async (_c: string, ids: string[]) => ({ data: table === "bank_transactions" ? state.lines.filter((l) => ids.includes(l.id)) : [], error: null });
+      q.in = async (_c: string, ids: string[]) => ({
+        data: table === "bank_transactions" ? state.lines.filter((l) => ids.includes(l.id)).map((l) => ({ txn_date: "2026-03-10", ...l })) : [],
+        error: null,
+      });
+      q.range = async () => (state.docsError ? { data: null, error: state.docsError }
+        : { data: table === "expenses" ? state.zohoExpenses : table === "vendor_bills" ? state.zohoBills : [], error: null });
       return q;
     },
     rpc: async (fn: string, args: Record<string, unknown>) => {
@@ -45,6 +54,9 @@ beforeEach(() => {
   state.role = "owner";
   state.rpcCalls = [];
   state.rpcErrors = {};
+  state.zohoExpenses = [];
+  state.zohoBills = [];
+  state.docsError = null;
   state.lines = [
     { id: ID(1), description: "POS FACEBK ADS", debit: 2000, matched_to_type: null },
     { id: ID(2), description: "UPI-SHARMA ASSOC", debit: 11800, matched_to_type: null },
@@ -119,6 +131,36 @@ describe("POST /api/banking/bulk-expense", () => {
     const res = await post({ rows });
     expect(res.status).toBe(400);
     expect(state.rpcCalls).toEqual([]);
+  });
+
+  it("R-2657 D1: a line a Zoho-imported expense already covers is refused (match it instead); others still booked", async () => {
+    state.zohoExpenses = [{ zoho_doc_id: "expenses:Z1", amount: 2000, gst_paid: 0, tds_amount: 0, expense_date: "2026-03-08", paid_date: "2026-03-08" }];
+    const body = await (await post({ rows: [{ txnId: ID(1), category: "Advertising" }, { txnId: ID(3), category: "Hosting" }] })).json();
+    expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/Zoho-imported/) });
+    expect(body.results[1]).toMatchObject({ ok: true });
+    expect(state.rpcCalls.map((c) => c.args.p_txn_id)).toEqual([ID(3)]);
+  });
+
+  it("R-2657 D1: an unpaid Zoho COGS bill of the same amount covers the line too", async () => {
+    state.zohoBills = [{ zoho_doc_id: "bills:B1", total: 11800, paid_amount: 0, bill_date: "2026-02-01", status: "unpaid" }];
+    const body = await (await post({ rows: [{ txnId: ID(2), category: "Professional Services" }] })).json();
+    expect(body.results[0].error).toMatch(/Zoho-imported/);
+    expect(state.rpcCalls).toEqual([]);
+  });
+
+  it("R-2657 D1: if the imported purchases cannot be read, nothing is booked", async () => {
+    state.docsError = { message: "boom" };
+    const res = await post({ rows: [{ txnId: ID(1), category: "Advertising" }] });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/Zoho-imported purchases/);
+    expect(state.rpcCalls).toEqual([]);
+  });
+
+  it("R-2657 D1: a bank GST (DPO … CGST) line is booked as Bank Charges with GST 0 — no input GST claimed", async () => {
+    state.lines.push({ id: ID(7), description: "300326I049903313 DPO2608902104710 CGST", debit: 122, matched_to_type: null });
+    const body = await (await post({ rows: [{ txnId: ID(7), category: "Bank Charges" }] })).json();
+    expect(body.booked).toBe(1);
+    expect(state.rpcCalls[0].args).toMatchObject({ p_category: "Bank Charges", p_gst: 0 });
   });
 
   it("a role that may not reconcile is refused", async () => {

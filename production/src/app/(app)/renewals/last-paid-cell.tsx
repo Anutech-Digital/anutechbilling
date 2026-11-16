@@ -1,15 +1,14 @@
 "use client";
 /**
  * R-2422 — the Renewals row's "Last paid" line (under the customer): invoice (link) · date, then
- * ₹ amount · method · History (a small popover with the last 3 payments). "— never paid in the
+ * ₹ amount · method. R-2842: the "History" popover is gone — the row's History button opens the drawer on Payments. "— never paid in the
  * app" when nothing was received against this subscription's quotes / invoices. Rules and words:
  * ./last-paid.ts; the batched read: ./last-paid-data.ts.
  */
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { lastPaidSummary, NEVER_PAID, type LastPaid, type PaidLine } from "./last-paid";
+import { lastPaidSummary, NEVER_PAID, paidNoReceipt, type LastPaid, type PaidLine } from "./last-paid";
 
 function DocLink({ line, canInvoices, canQuotes }: { line: PaidLine; canInvoices: boolean; canQuotes: boolean }) {
   const s = lastPaidSummary(line);
@@ -20,8 +19,10 @@ function DocLink({ line, canInvoices, canQuotes }: { line: PaidLine; canInvoices
     : <span className="font-mono">{s.doc}</span>;
 }
 
-export function LastPaidLine({ paid, loading, failed, canInvoices, canQuotes, className }: {
+export function LastPaidLine({ paid, paidInvoice, loading, failed, canInvoices, canQuotes, className }: {
   paid: LastPaid | undefined;
+  /** R-2752: the row's settled invoice (last-docs paidInvoiceOf) — shown when no receipt is linked. */
+  paidInvoice?: { id: string; words: string } | null;
   /** The read is still running — show nothing rather than a false "never paid". */
   loading: boolean;
   /** The read failed — say so; never a false "never paid". */
@@ -32,6 +33,18 @@ export function LastPaidLine({ paid, loading, failed, canInvoices, canQuotes, cl
 }) {
   if (loading) return null;
   if (failed) return <p className={cn("text-2xs text-ink-3", className)}>Last paid: couldn&apos;t load — reload the page</p>;
+  if (!paid && paidInvoice) {
+    /* R-2752: never "never paid" next to "Invoice … · Paid" — settled another way (advance, credit, old books) */
+    return (
+      <p className={cn("break-words text-2xs text-ink-3", className)} data-testid="renewal-last-paid-no-receipt">
+        Last paid{" "}
+        {canInvoices
+          ? <Link href={invoiceHref(paidInvoice.id) as never} className="font-mono underline underline-offset-2 hover:text-ink">{paidInvoice.id}</Link>
+          : <span className="font-mono">{paidInvoice.id}</span>}
+        {" "}{paidNoReceipt(paidInvoice.words)}
+      </p>
+    );
+  }
   if (!paid) return <p className={cn("text-2xs text-ink-3", className)}>Last paid {NEVER_PAID}</p>;
   const s = lastPaidSummary(paid.last);
   const full = `Last paid: ${s.doc ?? "—"} · ${s.date} · ${s.amount} · ${s.method}${s.shared ? ` (${s.shared})` : ""}`;
@@ -45,33 +58,6 @@ export function LastPaidLine({ paid, loading, failed, canInvoices, canQuotes, cl
       <p className="truncate">
         <span className="font-medium tabular-nums text-ink">{s.amount}</span> · {s.method}
         {s.shared ? ` · ${s.shared}` : ""}
-        {" · "}
-        <Popover>
-          <PopoverTrigger asChild>
-            <button type="button" className="underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm"
-              aria-label="Show the last 3 payments">
-              History
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-72 p-3">
-            <p className="mb-2 text-xs font-semibold text-ink">Last {paid.history.length} payment{paid.history.length === 1 ? "" : "s"}</p>
-            <ul className="space-y-1.5">
-              {paid.history.map((h) => {
-                const x = lastPaidSummary(h);
-                return (
-                  <li key={h.paymentId} className="flex items-baseline justify-between gap-2 text-xs">
-                    <span className="min-w-0 truncate text-ink-2">
-                      <span className="tabular-nums">{x.date}</span>{x.doc ? " · " : ""}
-                      <DocLink line={h} canInvoices={canInvoices} canQuotes={canQuotes} />
-                      {` · ${x.method}${x.shared ? ` · ${x.shared}` : ""}`}
-                    </span>
-                    <span className="shrink-0 font-medium tabular-nums text-ink">{x.amount}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </PopoverContent>
-        </Popover>
       </p>
     </div>
   );

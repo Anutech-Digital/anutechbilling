@@ -19,6 +19,16 @@ const st = vi.hoisted(() => ({
   rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcResult: { data: { dry_run: true, imported: 1 } as unknown, error: null as null | { message: string } },
   resets: 0,
+  /* R-2653: Read again keeps the scan — refresh(fy, { onlyAccount }) instead of reset. */
+  refreshes: [] as Array<string | null>,
+  /* R-2704: the company's saved Zoho account → app account choices (zoho_account_bank_map). */
+  saved: {} as Record<string, string>,
+  savedUse: [] as string[],
+}));
+
+vi.mock("@/lib/integrations/zoho-books/fy-import/account-choices", async (orig) => ({
+  ...(await orig<typeof import("@/lib/integrations/zoho-books/fy-import/account-choices")>()),
+  readAccountChoices: async (_db: unknown, _t: string, use: string) => { st.savedUse.push(use); return st.saved; },
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
@@ -30,7 +40,8 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
 vi.mock("@/lib/integrations/zoho-books/fy-import/store", () => ({
   supabaseScanStore: (_db: unknown, _t: string, kind: string) => {
     if (kind !== "customerpayments") throw new Error(`wrong kind ${kind}`);
-    return { readRun: async () => st.run, counts: async () => st.counts, reset: async () => { st.resets += 1; } };
+    return { readRun: async () => st.run, counts: async () => st.counts, reset: async () => { st.resets += 1; },
+      refresh: async (_fy: string, o: { onlyAccount: string | null }) => { st.refreshes.push(o.onlyAccount); } };
   },
   readScannedFacts: async () => st.facts,
   readImportBatches: async () => [],
@@ -69,6 +80,9 @@ vi.mock("@/lib/integrations/zoho-books/fy-import/bg-store", () => ({
         if (bgst.state) bgst.state.leaseUntil = new Date(until).toISOString();
         return true;
       },
+      release: async (_fy: string, end: { leaseUntilMs: number }) => {
+        if (bgst.state && bgst.state.leaseUntil === new Date(end.leaseUntilMs).toISOString()) bgst.state.leaseUntil = null;
+      },
     };
   },
 }));
@@ -91,7 +105,8 @@ function req(body: unknown) {
 }
 
 beforeEach(() => {
-  st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0;
+  st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0; st.refreshes = [];
+  st.saved = {}; st.savedUse = [];
   st.booked = new Map(); st.accountMapSeen = null;
   st.facts = [fact({}), fact({ zohoId: "p2", number: "102", problems: ["Zoho took bank charges off this payment and it is not a Razorpay payment — book it by hand."] })];
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
@@ -180,13 +195,50 @@ describe("R-2501 receipts-import route", () => {
     expect((await POST(req({ action: "undo", fy: "2025-26", batchId: "x' or 1=1" }))).status).toBe(400);
   });
 
-  it("the database's refusal comes back as the message; restart clears the scan", async () => {
+  it("the database's refusal comes back as the message; restart = Read again keeps the scan (R-2653); fresh forgets it", async () => {
     st.rpcResult = { data: null, error: { message: "Only the owner or an accountant can import FY receipts from Zoho. Ask one of them." } };
     const res = await POST(req({ action: "import", fy: "2025-26", part: 0, accounts: { za: "11111111-1111-4111-8111-111111111111" } }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/owner or an accountant/);
     await POST(req({ action: "restart", fy: "2025-26" }));
+    expect(st.resets).toBe(0);
+    expect(st.refreshes).toEqual([null]);
+    await POST(req({ action: "restart", fy: "2025-26", fresh: true }));
     expect(st.resets).toBe(1);
+  });
+
+  it("R-2653: Read again limited to one Zoho deposit account; a bad account id is refused", async () => {
+    const ok = await POST(req({ action: "restart", fy: "2025-26", onlyAccount: "460000000012345" }));
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).onlyAccount).toBe("460000000012345");
+    expect(st.refreshes).toEqual(["460000000012345"]);
+    const bad = await POST(req({ action: "restart", fy: "2025-26", onlyAccount: "x'); drop" }));
+    expect(bad.status).toBe(400);
+    expect(st.refreshes).toHaveLength(1);
+  });
+});
+
+/* R-2693 (p0): staging had 482 scanned payments not imported and no stored reason — the preview's
+   left-out list was cut at 500 without a word, and a USD payment showed its dollars as rupees. */
+describe("R-2693 nothing left out silently", () => {
+  it("every left-out payment is sent (600, not the first 500); the buckets add up to what was scanned", async () => {
+    st.facts = Array.from({ length: 600 }, (_, i) => fact({ zohoId: `s${i + 1}`, number: String(5000 + i),
+      lines: [{ zohoInvoiceId: `zmissing${i}`, invoiceNumber: `INV/25-26/${9000 + i}`, settle: 1180, tds: 0 }] }));
+    st.counts = { listed: 600, detailed: 600 };
+    const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.counts).toMatchObject({ scanned: 600, skip: 600 });
+    expect(body.skipped).toHaveLength(600);
+    expect(body.skippedMore).toBe(0);
+    expect(body.skipped[599].reason).toMatch(/INV\/25-26\/9599 is not an FY sale imported from Zoho here/);
+  });
+
+  it("a USD payment's left-out row carries its currency, its own amount and the ₹ at Zoho's rate", async () => {
+    st.facts = [fact({ zohoId: "pu1", number: "201", currency: "USD", foreignAmount: 663.05, fxRate: 88.2, amount: 58481, receivedPaise: 5848101,
+      problems: ["Received in USD in Zoho — not imported yet."] })];
+    st.counts = { listed: 1, detailed: 1 };
+    const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.skipped[0]).toMatchObject({ number: "201", currency: "USD", foreignAmount: 663.05, amount: 58481 });
+    expect(body.skipped[0].reason).toMatch(/USD/);
   });
 });
 
@@ -224,14 +276,48 @@ describe("R-2607 the read runs on the server", () => {
     const res = await POST(req({ action: "restart", fy: "2025-26" }));
     expect(res.status).toBe(409);
     expect(st.resets).toBe(0);
+    expect(st.refreshes).toEqual([]);
     bgst.state.leaseUntil = new Date(Date.now() - 1_000).toISOString();
     expect((await POST(req({ action: "restart", fy: "2025-26" }))).status).toBe(200);
-    expect(st.resets).toBe(1);
+    expect(st.refreshes).toEqual([null]);
+    /* R-2653: the restart lets go of its own lease at once — the next pass need not wait a minute. */
+    expect(bgst.state.leaseUntil).toBeNull();
   });
 
   it("a manager cannot start the read", async () => {
     st.role = "manager";
     expect((await POST(req({ action: "start", fy: "2025-26" }))).status).toBe(403);
     expect(bgst.requests).toEqual([]);
+  });
+});
+
+describe("R-2704 receipts-import route — the Zoho account choice is remembered per company", () => {
+  it("preview starts from the company's saved choice (reopen keeps it); what the dialog sends wins", async () => {
+    st.saved = { za: "22222222-2222-4222-8222-222222222222" };
+    await POST(req({ action: "preview", fy: "2025-26" }));
+    expect(st.savedUse).toEqual(["receipts"]);
+    expect(st.accountMapSeen).toEqual({ za: "22222222-2222-4222-8222-222222222222" });
+    await POST(req({ action: "preview", fy: "2025-26", accounts: { za: "none" } }));
+    expect(st.accountMapSeen).toEqual({ za: "none" });
+  });
+
+  it("import uses only what the dialog sent (the dialog shows the saved choice first) — no saved map behind the screen", async () => {
+    st.saved = { za: "11111111-1111-4111-8111-111111111111" };
+    expect((await POST(req({ action: "import", fy: "2025-26", part: 0 }))).status).toBe(409);
+    expect(st.savedUse).toEqual([]);
+  });
+
+  it("saveAccount remembers one choice through save_zoho_account_bank_choice; junk and a manager refused", async () => {
+    const res = await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "11111111-1111-4111-8111-111111111111" }));
+    expect(res.status).toBe(200);
+    expect(st.rpc[0]).toEqual({ fn: "save_zoho_account_bank_choice", args: { p_use: "receipts", p_key: "za", p_choice: "11111111-1111-4111-8111-111111111111" } });
+    await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "none" }));
+    await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "" }));
+    expect(st.rpc.map((r) => r.args.p_choice)).toEqual(["11111111-1111-4111-8111-111111111111", "none", ""]);
+    expect((await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "x' or 1=1" }))).status).toBe(400);
+    expect((await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "", choice: "none" }))).status).toBe(400);
+    st.role = "manager";
+    expect((await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "none" }))).status).toBe(403);
+    expect(st.rpc).toHaveLength(3);
   });
 });

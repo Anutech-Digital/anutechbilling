@@ -92,7 +92,8 @@ describe("R-2105: wiring in worker-lock.mjs", () => {
     expect(push).not.toMatch(/sh\("git rebase -q/);
   });
   it("claim and check settle green ci-wait locks first; check keeps derived files out of the lock", () => {
-    expect(src.match(/settleCiWaitLocks\(card, (areas|files), /g)).toHaveLength(2);
+    /* R-2718: claim settles with its hard paths (files + --move folders), check with its changed files + moves */
+    expect(src.match(/settleCiWaitLocks\(card, (hard|mineHard), /g)).toHaveLength(2);
     expect(src).toMatch(/const files = withoutDerived\(changedFiles\(\)\)/);
   });
 });

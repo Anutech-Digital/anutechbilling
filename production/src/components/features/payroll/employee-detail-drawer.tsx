@@ -10,6 +10,8 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import type { Route } from "next";
 
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
@@ -19,16 +21,22 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  useEmployeeDocuments, useUploadEmployeeDocument, useDeleteEmployeeDocument,
+  useEmployeeDocuments, useUploadEmployeeDocument, useDeleteEmployeeDocument, useEmployeeSalaryHistory, useSalaryRevisions,
   getEmployeeDocUrl, EMPLOYEE_DOC_TYPES,
   type Employee, type EmployeeDocument,
 } from "@/lib/queries/payroll";
 import { rupee, formatDate } from "@/lib/utils";
-import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { employeeCtc } from "@/lib/payroll/ctc";
+import { monthNetPay } from "@/lib/payroll/net-pay";
+import { revisionsByEmployee } from "@/lib/payroll/salary-revision";
+import { istMonth } from "@/lib/dates/ist";
+import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { EmployeeProperty } from "@/components/features/payroll/employee-property";
 import { EmployeeDirectorLink } from "@/components/features/company/employee-director-link";
+import { EmployeeSalaryPayments } from "@/components/features/accounting/employee-salary-payments";
+import { SalaryRevisions } from "@/components/features/payroll/salary-revisions";
 
 const DOC_LABEL = new Map(EMPLOYEE_DOC_TYPES.map((d) => [d.value, d.label]));
 
@@ -42,21 +50,43 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function EmployeeDetailDrawer({
-  employee, open, onOpenChange, onEdit,
+  employee, open, onOpenChange, onEdit, focusSalary = false, scorecard,
 }: {
+  /** R-2725: the Scorecard button. Left out for a viewer who may not open scorecards;
+   *  `href: null` = this employee has no linked login, so there is no scorecard to open. */
+  scorecard?: { href: string | null };
   employee: Employee | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Left out for a read-only viewer (R-254: billing sees employees, cannot save them). */
   onEdit?: () => void;
+  /** R-2701: opened from the delete refusal — scroll to "Salary & payments". */
+  focusSalary?: boolean;
 }) {
   const { data: docs, isLoading } = useEmployeeDocuments(open ? employee?.id : null);
   const upload = useUploadEmployeeDocument();
   const del = useDeleteEmployeeDocument();
+  const payrollPolicy = usePayrollPolicy();
+  /* R-2733 (owner: PT does not apply): the net shown here is the one Pay salary works out for a
+     full month (lib/payroll/net-pay.ts) — same as the Employees table and the CTC register. */
+  const netHistoryQ = useEmployeeSalaryHistory(open && employee ? employee.id : null);
+  const netRevisionsQ = useSalaryRevisions(open && Boolean(employee));
+  const netPeriod = istMonth();
+  const net = employee && netHistoryQ.isSuccess && netRevisionsQ.isSuccess
+    ? monthNetPay(employee, revisionsByEmployee(netRevisionsQ.data).get(employee.id) ?? [], netPeriod, netHistoryQ.data)
+    : null;
+  const netFailed = netHistoryQ.isError || netRevisionsQ.isError;
   const confirm = useConfirm();
   const [docType, setDocType] = React.useState("aadhaar");
   const [viewing, setViewing] = React.useState<EmployeeDocument | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
+  const salaryRef = React.useRef<HTMLDivElement>(null);
+  const employeeId = employee?.id;
+  React.useEffect(() => {
+    if (!open || !focusSalary || !employeeId) return;
+    const t = window.setTimeout(() => salaryRef.current?.scrollIntoView({ block: "start" }), 50);
+    return () => window.clearTimeout(t);
+  }, [open, focusSalary, employeeId]);
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -88,7 +118,16 @@ export function EmployeeDetailDrawer({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-semibold text-ink-2">Profile</p>
-                {onEdit && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit}>Edit</Button>}
+                <div className="flex items-center gap-1">
+                  {scorecard?.href ? (
+                    <Button asChild size="sm" variant="ghost" icon="award">
+                      <Link href={scorecard.href as Route}>Scorecard</Link>
+                    </Button>
+                  ) : scorecard ? (
+                    <span className="text-xs text-ink-3">No scorecard — no active login linked</span>
+                  ) : null}
+                  {onEdit && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit}>Edit</Button>}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-3 rounded-md border border-hairline bg-paper-2/30 p-3">
                 <Field label="Mobile" value={employee.phone} />
@@ -106,6 +145,14 @@ export function EmployeeDetailDrawer({
               </div>
             </div>
 
+            {/* R-2699: increments with the month they start from + history. */}
+            <SalaryRevisions employee={employee} canWrite={Boolean(onEdit)} />
+
+            {/* R-2701: every booked salary month + loans / advances — "which months?" answered here. */}
+            <div ref={salaryRef} className="scroll-mt-4">
+              <EmployeeSalaryPayments employee={{ id: employee.id, name: employee.name }} canWrite={Boolean(onEdit)} />
+            </div>
+
             {/* R-1852: a whole-time / managing director on the payroll → Director's Remuneration on the P&L. */}
             <EmployeeDirectorLink employeeId={employee.id} />
 
@@ -113,7 +160,17 @@ export function EmployeeDetailDrawer({
             {employee && (() => {
               /* R-1585: the employee's own structure (gross, Basic, DA, PF/ESI flags) — monthly
                  gross × 12 is not the CTC. */
-              const ctc = ctcFromEmployee(employee);
+              /* R-2700: the company's gratuity + CTC policy, same as the CTC register and the employee form. */
+              /* R-2770: one helper (this month's PF ceiling) — the same number as the Employees table's
+                 "CTC / month"; like the table, no default-policy guess while the policy loads / failed. */
+              if (!payrollPolicy.isSuccess) {
+                return (
+                  <div className="rounded-xl border border-hairline bg-paper p-3.5 text-sm text-ink-3" data-testid="drawer-ctc-pending">
+                    {payrollPolicy.isError ? "Monthly CTC: — (the payroll policy did not load)" : <span aria-label="Loading">Monthly CTC: …</span>}
+                  </div>
+                );
+              }
+              const ctc = employeeCtc(employee, payrollPolicy.data, netPeriod);
               return (
                 <div className="rounded-xl border border-hairline bg-paper p-3.5 space-y-3">
                   <div className="flex items-center justify-between pb-2 border-b border-hairline">
@@ -152,10 +209,12 @@ export function EmployeeDetailDrawer({
                       <span className="font-bold block uppercase text-3xs tracking-wider mb-1 text-emerald-800">3. Employee Net In-Hand Take Home</span>
                       <div className="flex items-center justify-between font-extrabold text-sm text-emerald-700">
                         <span>Net Payout / Month:</span>
-                        <span className="font-mono">{rupee(ctc.netTakeHomeMonthly)}</span>
+                        <span className="font-mono" data-testid="drawer-net-pay">{net ? rupee(net.net) : netFailed ? "—" : "…"}</span>
                       </div>
                       <div className="text-xs text-emerald-700 mt-1">
-                        Deductions: Employee PF -{rupee(ctc.employeePfMonthly)}{ctc.employeeEsiMonthly > 0 && <> · ESI -{rupee(ctc.employeeEsiMonthly)}</>} · PT -{rupee(ctc.professionalTaxMonthly)}
+                        {net
+                          ? <>Full month: Employee PF -{rupee(net.pf)}{net.esi > 0 && <> · ESI -{rupee(net.esi)}</>} · TDS -{rupee(net.tds)} — as Pay salary works it out.</>
+                          : netFailed ? "Payslips did not load — net pay is not shown." : "Working out the net…"}
                       </div>
                     </div>
                   </div>

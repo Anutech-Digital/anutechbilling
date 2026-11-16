@@ -35,6 +35,8 @@ import {
 } from "@/lib/collections/followup-rules";
 import { FollowupSaveError, useAddFollowup, useCustomerFollowups } from "@/lib/queries/payment-followups";
 import { FollowupHistory } from "./followup-history";
+import { RenewalContact } from "@/components/features/renewals/renewal-contact";
+import type { RenewalContactInput } from "@/components/features/renewals/renewal-contact-rules";
 
 const SELECT_CLS = "w-full min-h-[44px] md:min-h-0 rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber";
 
@@ -60,6 +62,8 @@ export interface FollowupDialogProps {
    * picker starts on the renewal's owner, and "Customer confirmed the renewal" can be ticked.
    */
   renewal?: { subscriptionId: string };
+  /** R-2824: who to call for this renewal (name · phone · email) — shown under the title. Only Renewals passes it. */
+  contact?: RenewalContactInput;
 }
 
 /** §24: the API's own sentence shows as written; database plumbing becomes plain words + next step. */
@@ -68,7 +72,7 @@ function errorText(err: unknown): string {
   return d.description ? `${d.message} ${d.description}` : d.message;
 }
 
-export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, payments, amountDue, onRemind, renewal }: FollowupDialogProps) {
+export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, payments, amountDue, onRemind, renewal, contact }: FollowupDialogProps) {
   const { data: me } = useCurrentUser();
   const { data: names } = useUserNames();
   const history = useCustomerFollowups(open ? customerId : null);
@@ -157,6 +161,7 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
             {amountDue && amountDue > 0 ? <>Still owes <b className="text-ink">{rupee(amountDue)}</b>. </> : null}
             Log what happened and when to follow up next — every entry needs a next date, so nobody is forgotten.
           </DialogDescription>
+          {renewal && <RenewalContact contact={contact} customerId={customerId} loading={!contact} />}
           {onRemind && stillOwes && !dispute && (
             <div>
               <Button type="button" size="sm" variant="default" icon="send" className="mt-2" onClick={onRemind}>

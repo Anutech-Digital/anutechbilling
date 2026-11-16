@@ -35,11 +35,14 @@ commit"). Commands run from a worktree's `production/` on a fresh `anutech/manag
 
 - [ ] Temp worktree pinned to that commit:
       `git worktree add <home>/reselleros-train-<sha7> --detach <commit>`.
+- [ ] `node scripts/ops/staging-train.mjs --db-wait` (R-2719) — waits (30 s a line, max 30 min) while it is
+      09:25–10:05 IST (daily Cloud SQL backup) or an operation is running. Exit 0 → go on; exit 7 → still
+      busy, do NOT run the DB script yet, run `--db-wait` again later.
 - [ ] `bash <that worktree>/production/supabase/cloudsql/staging/deploy-db-<date>.sh`
       (gcloud auth, no password typed; if the login expired, re-login the browser way — playbook b).
 - [ ] **Every peek prints `=true`, including the new migrations' keys.** Any false, or the script
       stops → STOP, show Pardeep the output, change nothing.
-      HTTP 409 = Cloud SQL backup running → wait for `gcloud sql operations list` DONE, re-run (safe).
+      HTTP 409 = Cloud SQL backup/operation running → `node scripts/ops/staging-train.mjs --db-wait`, then re-run (safe).
 - [ ] Remove the temp worktree with `git worktree remove <path>` (never `git worktree prune`).
 
 ## 3. Merge + push

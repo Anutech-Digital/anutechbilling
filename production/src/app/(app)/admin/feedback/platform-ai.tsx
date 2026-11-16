@@ -94,9 +94,10 @@ export function SendToAiButton({ row }: { row: AiRow }) {
   );
 }
 
-export function SendAllOpenButton({ rows }: { rows: AiRow[] }) {
+/** `count` (R-2726): the list is paged now, so the page passes the number the route counted over EVERY report. */
+export function SendAllOpenButton({ rows, count }: { rows: AiRow[]; count?: number }) {
   const send = useSendPlatformToAi();
-  const open = rows.filter(canQueue).length;
+  const open = count ?? rows.filter(canQueue).length;
   if (open === 0) return null;
   return (
     <button

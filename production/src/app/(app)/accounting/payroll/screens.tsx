@@ -9,6 +9,8 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { Card } from "@/components/ui/card";
@@ -29,32 +31,38 @@ import {
 import { daysElapsedInPeriod, prorateSalary } from "@/lib/payroll/proration";
 import { exitPayDays, onPayrollFor, employmentStatus } from "@/lib/payroll/exit";
 import { StartExitDialog } from "@/components/features/payroll/start-exit-dialog";
-import { AdjustSalaryLopDialog } from "@/components/features/payroll/adjust-salary-lop-dialog";
+import { SalaryRowActions } from "@/components/features/payroll/salary-row-actions";
+import { salaryEditPrefill, arrearsWhileEditing, loanOutstandingWhileEditing, rebookSalary, revisedSinceBookedInfo } from "@/lib/payroll/salary-edit";
 import { MergeEmployeeDialog } from "@/components/features/payroll/merge-employee-dialog";
 import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysForYear } from "@/lib/payroll/holidays-india";
-import { computeEsi, isEsiEligible, esiStickyCovered, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
-import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
-import { estimateMonthlyTds } from "@/lib/payroll/income-tax";
-import { calculateCtcBreakdown, ctcFromEmployee } from "@/lib/payroll/ctc";
-import { computePt } from "@/lib/payroll/pt";
+import { isEsiEligible, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
+import { pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
+import { salaryAutoDeductions, monthNetPay, payslipsByEmployee, fyFirstPeriod, annualFromMonthlyCtc, monthlyFromAnnualCtc, basicFromPct, basicShareText, type MonthNetPay } from "@/lib/payroll/net-pay";
+import { ctcTabBreakdown, ctcFormulaText, ctcFormFill, applyStructureBlockedReason, employeeCtc, type CtcFormBase } from "@/lib/payroll/ctc";
+import { DEFAULT_PAYROLL_POLICY, newEmployeeDefaults } from "@/lib/payroll/policy";
+import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
+import { bookedStatutoryMonths, bookedStatutoryText, esiRuleNote } from "@/lib/payroll/statutory";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { DeviceApprovals, RequireDeviceRow } from "@/components/features/attendance/device-approvals";
-import { canWriteMoney } from "@/lib/nav";
+import { canOpenRoute, canWriteMoney } from "@/lib/nav";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { downloadPayslipPDF } from "@/lib/pdf";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { toastError } from "@/lib/errors/toast-error";
 import { periodLabel } from "@/lib/payroll/period-label";
+import { salaryInForce, revisionMonth, revisionsByEmployee, arrearsPayableIn } from "@/lib/payroll/salary-revision";
+import { employeeBasicFill, employeeBasicToSave, employeeSaveBlockedReason, type BasicRuleInput } from "@/lib/payroll/basic-rule";
 import { SalaryStatusCell } from "./salary-status-cell";
 import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
 import {
-  useEmployees, useUpsertEmployee, useDeleteEmployee, useSetEmployeePin, useCancelEmployeeExit,
+  useEmployees, useUpsertEmployee, useSetEmployeePin, useCancelEmployeeExit,
   useLeaveEntries, useCreateLeaveEntry, useDeleteLeaveEntry,
   useHolidays, useCreateHoliday, useDeleteHoliday,
-  useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
+  useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useRefreshSalaryData, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
+  useSalaryRevisions, useSalaryArrears, usePayslipsSince, type SalaryRevision,
   useStatutoryDues, usePayStatutoryDues,
   useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl, useSetAttendanceAnywhere, useCorrectAttendance,
   LEAVE_TYPE_LABEL,
@@ -62,6 +70,11 @@ import {
 } from "@/lib/queries/payroll";
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
+import { usePerformance } from "@/lib/queries/performance";
+import {
+  nextScoreSort, scorePeriodNow, scorecardHref, scoresByEmployee, sortEmployeesByScore,
+  type EmployeeScore, type ScoreSort,
+} from "@/lib/performance/employee-score";
 import { useComplianceProfile } from "@/lib/compliance/profile";
 import { useFirmPartners } from "@/lib/queries/partners";
 import { showsPartnersRegister } from "@/lib/accounting/partners";
@@ -77,6 +90,7 @@ import { AttendanceChanges } from "@/components/features/attendance/attendance-c
 import { CorrectionTrail } from "@/components/features/attendance/correction-trail";
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
 import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-detail-drawer";
+import { EmployeeDeleteDialog } from "@/components/features/accounting/employee-delete-dialog";
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { SalaryBreakdownDialog } from "@/components/features/accounting/salary-breakdown-dialog";
@@ -194,7 +208,6 @@ export function PayrollScreen() {
 export function EmployeesTab() {
   const q = useEmployees();
   const leaveQ = useLeaveEntries();
-  const del = useDeleteEmployee();
   const confirm = useConfirm();
   const myRole = useCurrentUser().data?.role;
   const canWrite = canWriteMoney(myRole);
@@ -207,7 +220,63 @@ export function EmployeesTab() {
   const [exitEmp, setExitEmp] = React.useState<Employee | null>(null);
   /* R-2380: the same person added twice → merge the duplicate into the one to keep. */
   const [mergeEmp, setMergeEmp] = React.useState<Employee | null>(null);
-  const rows = q.data ?? [];
+  const [deleteEmp, setDeleteEmp] = React.useState<Employee | null>(null);
+  const [viewSalary, setViewSalary] = React.useState(false);
+  /* R-2725 (Hitesh): the Score lives here, not on a menu row. Same rows as the Scorecards page
+     (usePerformance, this IST month) — one read for the whole table, and only for the roles
+     that may open a scorecard (owner / manager; the accountant gets no column). */
+  const canSeeScores = !!myRole && canOpenRoute(myRole, "/scorecard"); // one rule: nav.ts OFF_MENU_ROLES
+  const perf = usePerformance(scorePeriodNow(), "month", { enabled: canSeeScores });
+  const scores = React.useMemo(() => scoresByEmployee(perf.data), [perf.data]);
+  const [scoreSort, setScoreSort] = React.useState<ScoreSort>(null);
+  const rows = React.useMemo(() => sortEmployeesByScore(q.data ?? [], scores, scoreSort), [q.data, scores, scoreSort]);
+  const scoreCell = (e: Employee) => (
+    <EmployeeScoreCell name={toTitleCase(e.name)} score={scores.get(e.id)} loading={perf.isLoading} failed={perf.isError} onRetry={perf.refetch} />
+  );
+  /* R-2733 (Hitesh): "In-hand / month" = the net Pay salary works out for this month (full month,
+     nothing typed) — lib/payroll/net-pay.ts, the function the Pay salary dialog uses. ONE read of
+     this FY's payslips + the revisions for the whole table; a row never queries on its own. */
+  const inHandPeriod = currentPeriod();
+  const payslipsQ = usePayslipsSince(fyFirstPeriod(inHandPeriod), rows.length > 0);
+  const revisionsQ = useSalaryRevisions(rows.length > 0);
+  const inHand = React.useMemo(() => {
+    const out = new Map<string, MonthNetPay | null>();
+    if (!payslipsQ.isSuccess || !revisionsQ.isSuccess) return out;
+    const slips = payslipsByEmployee(payslipsQ.data);
+    const revs = revisionsByEmployee(revisionsQ.data);
+    for (const e of rows) {
+      out.set(e.id, e.is_active ? monthNetPay(e, revs.get(e.id) ?? [], inHandPeriod, slips.get(e.id) ?? []) : null);
+    }
+    return out;
+  }, [rows, payslipsQ.isSuccess, payslipsQ.data, revisionsQ.isSuccess, revisionsQ.data, inHandPeriod]);
+  const inHandFailed = payslipsQ.isError || revisionsQ.isError;
+  /* R-2770 (Hitesh): "CTC / month" — the SAME number as the employee drawer and the Salary
+     Register CTC tab (lib/payroll/ctc.ts employeeCtc, company payroll policy, this month's PF
+     ceiling). "…" until the policy has loaded — never a ₹0 or a default-policy guess. */
+  const ctcPolicyQ = usePayrollPolicy();
+  const ctcHeaderTitle = (!ctcPolicyQ.data
+    ? "Monthly CTC by the company payroll policy."
+    : ctcPolicyQ.data.ctcIncludesEmployer === false
+    ? "Monthly CTC = monthly gross (company payroll policy: employer PF / ESI / gratuity are paid on top)."
+    : `Monthly CTC = gross + employer PF + employer ESI${ctcPolicyQ.data.gratuity ? " + gratuity" : ""} (company payroll policy).`)
+    + " Same figure as the employee's profile and the Salary Register CTC tab.";
+  const ctcCell = (e: Employee) => {
+    if (!e.is_active) return <span className="text-ink-3" title="Not on payroll.">—</span>;
+    if (!(e.monthly_gross > 0)) return <span className="text-ink-3" title="No salary set yet.">—</span>;
+    if (ctcPolicyQ.isError) return <span className="text-ink-3" title="The payroll policy did not load — CTC is not shown.">—</span>;
+    if (!ctcPolicyQ.isSuccess) return <span className="text-ink-3" aria-label="Loading">…</span>;
+    const c = employeeCtc(e, ctcPolicyQ.data, inHandPeriod);
+    return <span className="font-mono tabular-nums text-ink-2" data-testid="employee-ctc-month" title={`Annual CTC ${rupee(c.annualCtc)}`}>{rupee(c.monthlyCtc)}</span>;
+  };
+  const inHandCell = (e: Employee) => {
+    /* Code review: in the exit month Pay salary pays only up to the last working day — a full-month figure would not match it. */
+    if (exitPayDays(e, inHandPeriod)) return <span className="text-ink-3" title={`Exit month — Pay salary for ${periodLabel(inHandPeriod)} pays up to the last working day; see the figure there.`}>Exit month</span>;
+    const n = inHand.get(e.id);
+    if (n) return <span className="font-mono tabular-nums text-ink-2" title={`${periodLabel(inHandPeriod)} — ${n.explain}`} data-testid="employee-in-hand">{rupee(n.net)}</span>;
+    if (inHandFailed) return <span className="text-ink-3" title="Payslips did not load — in-hand pay is not shown.">—</span>;
+    if (!payslipsQ.isSuccess || !revisionsQ.isSuccess) return <span className="text-ink-3" aria-label="Loading">…</span>;
+    return <span className="text-ink-3" title={e.is_active ? "No salary set yet." : "Not on payroll."}>—</span>;
+  };
 
   const confirmCancelExit = async (e: Employee) => {
     if (await confirm({
@@ -219,16 +288,9 @@ export function EmployeesTab() {
     }
   };
 
-  const confirmDelete = async (e: Employee) => {
-    if (await confirm({
-      title: `Remove ${e.name}?`,
-      body: "This deletes the employee and their attendance/leave records. (Blocked if they have salary payments — deactivate those instead.)",
-      confirmLabel: "Remove",
-      danger: true,
-    })) {
-      del.mutate(e.id);
-    }
-  };
+  /* R-2698 + R-2701: ONE delete dialog — it checks what is booked first (salary months, project
+     labour, expense claims), names it, and offers Start exit / Edit employee + See salary months. */
+  const confirmDelete = (e: Employee) => setDeleteEmp(e);
 
   const paidLeaveTaken = (empId: string) => {
     const fy = fyStartISO();
@@ -239,13 +301,14 @@ export function EmployeesTab() {
 
   return (
     <>
-      {canWrite ? (
-        <div className="flex justify-end mb-3">
-          <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>
+      {(canWrite || canSeeScores) && (
+        <div className="flex justify-end gap-2 mb-3">
+          {/* R-2725: everyone's scorecards (also logins not linked to an employee) — was a menu row. */}
+          {canSeeScores && <Button asChild variant="outline" icon="award"><Link href="/scorecard">Scorecards</Link></Button>}
+          {canWrite && <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>}
         </div>
-      ) : (
-        <ViewOnlyNote what="add or edit employees" />
       )}
+      {!canWrite && <ViewOnlyNote what="add or edit employees" />}
       {q.isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
       ) : rows.length === 0 ? (
@@ -258,9 +321,26 @@ export function EmployeesTab() {
               <thead className="bg-paper-2/50 text-3xs uppercase tracking-wider text-ink-3 font-semibold">
                 <tr>
                   <th className="text-left px-4 py-3 whitespace-nowrap">Employee</th>
-                  <th className="text-right px-4 py-3 whitespace-nowrap">Monthly salary</th>
+                  {/* R-2770 (Hitesh): CTC just before Gross — same helper as the drawer + Salary Register. */}
+                  <th className="text-right px-2 py-3 whitespace-nowrap" title={ctcHeaderTitle}>CTC / month</th>
+                  {/* R-2733: this is the monthly GROSS (base for the pay slip) — not the CTC, which also has employer PF / ESI / gratuity. */}
+                  <th className="text-right px-2 py-3 whitespace-nowrap" title="Monthly gross salary — the base for the pay slip, before PF / ESI / TDS. Not the CTC: the CTC also has the employer's PF / ESI / gratuity.">Gross / month</th>
+                  <th className="text-right px-2 py-3 whitespace-nowrap" title={`Full month of ${periodLabel(inHandPeriod)}: gross − employee PF − employee ESI − TDS, as Pay salary works it out for a full month. Pay salary before the month ends pre-fills only the days so far, and LOP / advances / bonus change it.`}>In-hand / month</th>
                   <th className="text-left px-4 py-3 whitespace-nowrap">Joined</th>
                   <th className="text-right px-4 py-3 whitespace-nowrap">Paid leave left (FY)</th>
+                  {canSeeScores && (
+                    <th className="text-right px-4 py-3 whitespace-nowrap" aria-sort={scoreSort === "desc" ? "descending" : scoreSort === "asc" ? "ascending" : "none"}>
+                      <button
+                        type="button"
+                        onClick={() => setScoreSort(nextScoreSort(scoreSort))}
+                        title="This month's score, from each person's scorecard. Click to sort."
+                        className="inline-flex items-center gap-1 uppercase tracking-wider font-semibold hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded"
+                      >
+                        Score
+                        <Icon name={scoreSort === "desc" ? "arrow_down" : scoreSort === "asc" ? "arrow_up" : "sort"} size={12} />
+                      </button>
+                    </th>
+                  )}
                   <th className="text-left px-4 py-3 whitespace-nowrap">Status</th>
                   <th className="text-right px-4 py-3 whitespace-nowrap">Actions</th>
                 </tr>
@@ -292,7 +372,8 @@ export function EmployeesTab() {
                           {e.email && <span className="font-mono text-ink-2">{e.email}</span>}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-2 py-3 text-right whitespace-nowrap">{ctcCell(e)}</td>
+                      <td className="px-2 py-3 text-right">
                         {e.monthly_gross > 0 ? (
                           <span className="font-mono font-semibold tabular-nums text-ink">{rupee(e.monthly_gross)}</span>
                         ) : (
@@ -301,12 +382,16 @@ export function EmployeesTab() {
                           </span>
                         )}
                       </td>
+                      <td className="px-2 py-3 text-right whitespace-nowrap">{inHandCell(e)}</td>
                       <td className="px-4 py-3 text-ink-2 whitespace-nowrap">{e.joining_date ? formatDate(e.joining_date) : "—"}</td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums" title={leaveTitle}>
                         <span className={cn(left === 0 && allowance > 0 && "text-amber-ink")}>{left}</span>
                         <span className="text-ink-3"> / {allowance}</span>
                         {prorated && <span className="ml-1 text-3xs uppercase tracking-wide text-ink-3 font-sans not-italic" title={leaveTitle}>pro-rata</span>}
                       </td>
+                      {canSeeScores && (
+                        <td className="px-4 py-3 text-right">{scoreCell(e)}</td>
+                      )}
                       <td className="px-4 py-3"><EmployeeStatusBadge e={e} /></td>
                       <td className="px-4 py-3 text-right" onClick={(ev) => ev.stopPropagation()}>
                         <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} onMerge={rows.length > 1 ? setMergeEmp : undefined} />
@@ -346,7 +431,11 @@ export function EmployeesTab() {
                         )}
                       </div>
                       {e.monthly_gross > 0 ? (
-                        <div className="font-serif text-xl leading-none text-ink shrink-0">{rupee(e.monthly_gross)}</div>
+                        <div className="shrink-0 text-right">
+                          <div className="font-serif text-xl leading-none text-ink">{rupee(e.monthly_gross)}</div>
+                          <div className="text-xs text-ink-3 mt-1">gross · in-hand {inHandCell(e)}</div>
+                          <div className="text-xs text-ink-3">CTC / month {ctcCell(e)}</div>
+                        </div>
                       ) : (
                         <Badge kind="warning" size="sm">Salary pending</Badge>
                       )}
@@ -356,6 +445,7 @@ export function EmployeesTab() {
                     </div>
                     <div className="flex items-center justify-between gap-2" onClick={(ev) => ev.stopPropagation()}>
                       <EmployeeStatusBadge e={e} />
+                      {canSeeScores && <span className="ml-auto text-sm text-ink-3">Score {scoreCell(e)}</span>}
                       <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} onMerge={rows.length > 1 ? setMergeEmp : undefined} />
                     </div>
                   </Card>
@@ -370,13 +460,64 @@ export function EmployeesTab() {
       {offerEmp && <OfferLetterDialog employee={offerEmp} onClose={() => setOfferEmp(null)} />}
       {exitEmp && isOwner && <StartExitDialog employee={exitEmp} onClose={() => setExitEmp(null)} />}
       {mergeEmp && canWrite && <MergeEmployeeDialog employee={mergeEmp} employees={rows} onClose={() => setMergeEmp(null)} />}
+      {deleteEmp && canWrite && (
+        <EmployeeDeleteDialog
+          employee={deleteEmp}
+          isOwner={isOwner}
+          onStartExit={() => { setExitEmp(deleteEmp); setDeleteEmp(null); }}
+          onEdit={() => { setEdit(deleteEmp); setDeleteEmp(null); }}
+          onShowSalary={() => { setViewSalary(true); setViewEmp(deleteEmp); setDeleteEmp(null); }}
+          onClose={() => setDeleteEmp(null)}
+        />
+      )}
       <EmployeeDetailDrawer
         employee={viewEmp ? (rows.find((r) => r.id === viewEmp.id) ?? viewEmp) : null}
         open={viewEmp !== null}
-        onOpenChange={(o) => { if (!o) setViewEmp(null); }}
-        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); } } : undefined}
+        focusSalary={viewSalary}
+        onOpenChange={(o) => { if (!o) { setViewEmp(null); setViewSalary(false); } }}
+        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); setViewSalary(false); } } : undefined}
+        /* R-2725: scores failed to load → the button opens Scorecards itself (it shows the error + Try again). */
+        scorecard={!canSeeScores || !viewEmp || perf.isLoading ? undefined
+          : { href: perf.isError ? "/scorecard" : scores.has(viewEmp.id) ? scorecardHref(scores.get(viewEmp.id)!.userId) : null }}
       />
     </>
+  );
+}
+
+/** R-2725: one employee's score — a link to that person's scorecard. "—" when no login is
+ *  linked to the employee (a score counts work done in the app, so there is none to show).
+ *  A failed read is never shown as a number or as "no score". */
+function EmployeeScoreCell({ name, score, loading, failed, onRetry }: {
+  name: string; score: EmployeeScore | undefined; loading: boolean; failed: boolean; onRetry: () => void;
+}) {
+  /* Only the link / button keeps the row's "open profile" click away — the rest of the cell opens it.
+     On a phone the target is 44 px tall (the desktop table keeps its row height). */
+  const own = {
+    onClick: (ev: React.MouseEvent) => ev.stopPropagation(),
+    onKeyDown: (ev: React.KeyboardEvent) => ev.stopPropagation(),
+  };
+  const touch = "inline-flex items-center justify-end min-h-11 min-w-11 md:min-h-0 md:min-w-0";
+  if (loading) return <Skeleton className="inline-block h-4 w-8 align-middle" />;
+  if (failed) {
+    return (
+      <button type="button" {...own} onClick={(ev) => { ev.stopPropagation(); onRetry(); }} title="Scores did not load. Click to try again." className={cn(touch, "text-xs text-amber-ink underline")}>
+        Try again
+      </button>
+    );
+  }
+  if (!score) {
+    return <span className="text-ink-3" title="No score — this employee has no active login linked." aria-label={`${name}: no score, no active login linked`}>—</span>;
+  }
+  return (
+    <Link
+      href={scorecardHref(score.userId) as Route}
+      title="Open scorecard (this month)"
+      aria-label={`${name}: score ${score.score} — open scorecard`}
+      className={cn(touch, "font-mono font-semibold tabular-nums text-amber-ink underline-offset-2 hover:underline")}
+      {...own}
+    >
+      {score.score}
+    </Link>
   );
 }
 
@@ -471,6 +612,10 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const canSetPin = myRole === "owner" || myRole === "manager";
   const [name, setName] = React.useState(employee?.name ?? "");
   const [gross, setGross] = React.useState(String(employee?.monthly_gross ?? ""));
+  /* R-2699: once an employee has a salary revision, salary changes go through Revise salary only
+     (history + the old salary for earlier months); this form keeps the saved gross / Basic / DA. */
+  const revisionsQ = useSalaryRevisions(Boolean(employee));
+  const salaryByRevision = Boolean(employee) && (!revisionsQ.isSuccess || (revisionsQ.data ?? []).some((r) => r.employee_id === employee?.id));
   const [joined, setJoined] = React.useState(employee?.joining_date ?? "");
   const [allowance, setAllowance] = React.useState(String(employee?.leave_allowance ?? 18));
   const [active, setActive] = React.useState(employee?.is_active ?? true);
@@ -493,6 +638,14 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [esiApplicable, setEsiApplicable] = React.useState<boolean>(employee?.esi_applicable ?? false);
   const [esiTouched, setEsiTouched] = React.useState(false);
   const [pfApplicable, setPfApplicable] = React.useState<boolean>(employee?.pf_applicable ?? false);
+  /* R-2698: PF basis — false = capped at the month's statutory ceiling, true = full Basic + DA. */
+  const [pfFullWage, setPfFullWage] = React.useState<boolean>(employee?.pf_full_wage ?? false);
+  /* A switch change only reaches the NEXT salary booked — name the booked months that keep their PF / ESI. */
+  const statutoryChanged = Boolean(employee) && (
+    esiApplicable !== employee?.esi_applicable || pfApplicable !== employee?.pf_applicable
+    || (pfApplicable && pfFullWage !== (employee?.pf_full_wage ?? false)));
+  const salaryHistoryQ = useEmployeeSalaryHistory(employee?.id ?? null);
+  const bookedStatutory = bookedStatutoryMonths(salaryHistoryQ.data ?? []);
   /* PF wage components — PF is on Basic + DA, not gross (lib/payroll/pf.ts). */
   const [basicMonthly, setBasicMonthly] = React.useState(employee?.basic_monthly != null ? String(employee.basic_monthly) : "");
   const [daMonthly, setDaMonthly] = React.useState(String(employee?.da_monthly ?? 0));
@@ -501,60 +654,219 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [empTab, setEmpTab] = React.useState<"basic" | "ctc" | "statutory">("basic");
 
   // CTC Calculator State & Overrides
-  /* R-1585: an existing employee's CTC = their gross + employer PF/ESI + gratuity
-     (ctcFromEmployee) — monthly gross × 12 is the gross, not the CTC. */
-  const [annualCtc, setAnnualCtc] = React.useState<string>(
-    employee?.monthly_gross ? String(ctcFromEmployee(employee).annualCtc) : "600000"
-  );
+  /* R-2700 (Hitesh item 1): typing an Annual CTC fills Monthly Gross + Basic by the company
+     payroll policy (lib/payroll/policy.ts). Until a CTC is typed the tab shows the SAVED gross
+     (ctcTabBreakdown → ctcFromEmployee) — R-1585 / R-2698: the old tab ran the saved gross's CTC
+     back through the CTC-first calculator and showed another gross (30,000 → 31,347).
+     Monthly Gross typed by hand after a CTC is kept (grossByHand) until the CTC is typed again. */
+  const [annualCtc, setAnnualCtc] = React.useState<string>("");
+  /* R-2733 (Hitesh a): Monthly CTC is the same figure ÷ 12 — the form keeps the annual one; what
+     was typed in the Monthly box is kept only so the box does not jump while typing. */
+  const [monthlyCtcText, setMonthlyCtcText] = React.useState<string | null>(null);
+  const [ctcTyped, setCtcTyped] = React.useState(false);
+  const [grossByHand, setGrossByHand] = React.useState(false);
+  /* R-2722: the gross / Basic the form held when a CTC started being typed — an empty or
+     over-budget CTC goes back to it (a new employee's hand-typed gross is not emptied, G3). */
+  const [ctcBase, setCtcBase] = React.useState<CtcFormBase>({
+    gross: employee?.monthly_gross ? String(employee.monthly_gross) : "",
+    basic: employee?.basic_monthly != null ? String(employee.basic_monthly) : "",
+    da: String(employee?.da_monthly ?? 0),
+  });
+  /* R-2722 review: a CTC typed and then cleared is no CTC — editing the gross / Basic / DA after
+     that works on the form's own figures again (not the pre-CTC ones). */
+  const ctcCleared = ctcTyped && annualCtc.trim() === "";
+  /* R-2773 review F3: re-read on open / window focus so a % changed in another tab is the one used. */
+  const policyQ = usePayrollPolicy({ fresh: true });
+  const policy = policyQ.data ?? DEFAULT_PAYROLL_POLICY;
+  /* R-2773 review F1: the policy is "in" only once it was read for THIS dialog — a default 50% while
+     it loads / failed is never used for a new employee's Basic (Save waits, see saveBlocked). */
+  const policyReady = policyQ.isSuccess && policyQ.isFetchedAfterMount;
   const [isMetro, setIsMetro] = React.useState(false);
-  const [basicPct, setBasicPct] = React.useState<number>(0.5);
+  const [basicPct, setBasicPct] = React.useState<number>(DEFAULT_PAYROLL_POLICY.basicPct / 100);
   const [customBasic, setCustomBasic] = React.useState<string>("");
   const [customHra, setCustomHra] = React.useState<string>("");
   const [customConveyance, setCustomConveyance] = React.useState<string>("1600");
   const [customMedical, setCustomMedical] = React.useState<string>("1250");
   const [customSpecial, setCustomSpecial] = React.useState<string>("");
-  const [customPt, setCustomPt] = React.useState<string>(""); // empty = PT slab from lib/payroll/pt.ts
-  const [capPfCeiling, setCapPfCeiling] = React.useState<boolean>(true);
   const [includeGratuity, setIncludeGratuity] = React.useState<boolean>(true);
   const [showCustomControls, setShowCustomControls] = React.useState<boolean>(false);
 
-  const ctcBreakdown = React.useMemo(() => {
-    const val = Number(annualCtc) || (Number(gross) > 0
-      ? ctcFromEmployee({ monthly_gross: Number(gross), basic_monthly: basicMonthly !== "" ? Number(basicMonthly) : null, da_monthly: Number(daMonthly) || 0, pf_applicable: pfApplicable, esi_applicable: esiApplicable }).annualCtc
-      : 600000);
-    return calculateCtcBreakdown(val, {
+  /* R-2700: company policy, once it loads — gratuity + Basic % for the calculator; PF / PF basis
+     only for a NEW employee (an existing one keeps their saved switches). */
+  /* Code review: a choice made in the dialog before the policy arrives is never overwritten. */
+  const [policyApplied, setPolicyApplied] = React.useState(false);
+  const [pfTouched, setPfTouched] = React.useState(false);
+  const [basicPctTouched, setBasicPctTouched] = React.useState(false);
+  const [gratuityTouched, setGratuityTouched] = React.useState(false);
+  /* A Basic typed in Statutory & Access is used by the CTC split (it is not overwritten). */
+  const [basicByHand, setBasicByHand] = React.useState(false);
+  React.useEffect(() => {
+    if (policyApplied || !policyReady || !policyQ.data) return;
+    setPolicyApplied(true);
+    const d = newEmployeeDefaults(policyQ.data, false);
+    if (!gratuityTouched) setIncludeGratuity(d.includeGratuity);
+    if (!basicPctTouched) setBasicPct(d.basicPct);
+    if (!employee && !pfTouched) { setPfApplicable(d.pfApplicable); setPfFullWage(d.pfFullWage); }
+  }, [policyApplied, policyReady, policyQ.data, employee, pfTouched, basicPctTouched, gratuityTouched]);
+
+  /* R-2773: ONE Basic rule (lib/payroll/basic-rule.ts) — what the Basic box fills, what Save stores,
+     and what the CTC tab / Net Pay preview read (review F4: an empty box shows the Basic Save writes). */
+  const savedSalary = employee && employee.monthly_gross > 0
+    ? { monthly_gross: employee.monthly_gross, basic_monthly: employee.basic_monthly, da_monthly: employee.da_monthly ?? 0 }
+    : null;
+  const basicRule = (grossText: string, daText: string, daFixed: boolean): BasicRuleInput => ({
+    savedSalary, grossText, daText, daFixed, basicText: basicMonthly,
+    policyBasicPct: policy.basicPct, policyReady,
+    pctPicked: basicPctTouched ? Math.round(basicPct * 100) : null,
+  });
+  const basicForCalc = employeeBasicToSave(basicRule(gross, daMonthly, true));
+
+  /* R-2698: the breakdown follows the Statutory switches — PF / ESI off means none here. */
+  const ctcBreakdown = React.useMemo(() => ctcTabBreakdown({
+    ctcTyped,
+    annualCtc: Number(annualCtc) || 0,
+    gross: Number(gross) || 0,
+    basic: basicForCalc,
+    da: Number(daMonthly) || 0,
+    pfApplicable, esiApplicable, pfFullWage, includeGratuity,
+    ctcIncludesEmployer: policy.ctcIncludesEmployer,
+    /* Review M1: typing back the CTC shown gives the same gross; a typed CTC keeps the saved Basic.
+       R-2722: "saved" = the salary the form held when the CTC was started (ctcBase). */
+    saved: Number(ctcBase.gross) > 0
+      ? { gross: Math.round(Number(ctcBase.gross)), basic: ctcBase.basic.trim() !== "" ? Math.round(Number(ctcBase.basic) || 0) : null, da: Number(ctcBase.da) || 0 }
+      : null,
+    /* R-2722 review: only an EXISTING employee keeps a saved Basic (or "Basic not set"); a new
+       employee's gross typed before the CTC is split by the policy Basic %. */
+    keepSavedBasic: !basicPctTouched && Boolean(employee),
+    /* R-2722 review: a Basic typed by hand is what Save writes — the tab uses it. */
+    basicByHand,
+    calc: {
       isMetro,
       basicPct,
-      customBasicMonthly: Number(customBasic) || undefined,
+      customBasicMonthly: Number(customBasic) || (basicByHand ? Number(basicMonthly) || undefined : undefined),
       customHraMonthly: Number(customHra) || undefined,
       customConveyanceMonthly: Number(customConveyance) || 0,
       customMedicalMonthly: Number(customMedical) || 0,
       customSpecialMonthly: Number(customSpecial) || undefined,
-      customPtMonthly: customPt !== "" ? Number(customPt) : undefined,
-      capPfWageCeiling: capPfCeiling,
-      includeGratuity,
-    });
-  }, [annualCtc, gross, basicMonthly, daMonthly, pfApplicable, esiApplicable, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt, capPfCeiling, includeGratuity]);
-  // For a NEW employee, suggest ESI coverage from the wage ceiling until the
-  // user decides for themselves. Existing employees keep their saved value.
+      customPtMonthly: 0, // R-2733: PT does not apply (owner)
+    },
+  }), [employee, ctcBase, ctcTyped, annualCtc, gross, basicMonthly, basicForCalc, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial]);
+  /* R-2700: a typed CTC fills Monthly Gross + Basic at once (no Apply press) unless the gross was
+     typed by hand afterwards, or the salary is set by revisions (R-2699 — gross locked). */
+  /* Review M2 + code review: a split that is over budget, an empty CTC, or the CTC the saved salary
+     already gives never leaves a half-typed figure behind — the form goes back to the SAVED
+     gross / Basic (empty for a new employee). Runs on the figures, not the object, so typing a
+     Basic by hand is not overwritten. */
+  /* R-2722: the rule lives in lib/payroll/ctc.ts ctcFormFill (tested) — back to ctcBase, never
+     to an empty gross. */
+  const formFill = ctcFormFill({ ctcTyped, grossByHand, salaryByRevision, basicByHand, breakdown: ctcBreakdown, base: ctcBase });
+  const fillGross = formFill?.gross;
+  const fillBasic = formFill?.basic;
   React.useEffect(() => {
-    if (!esiTouched && !employee) setEsiApplicable(isEsiEligible(Math.round(Number(gross) || 0)));
-  }, [gross, esiTouched, employee]);
+    if (fillGross === undefined) return;
+    setGross(fillGross);
+    if (fillBasic !== undefined) setBasicMonthly(fillBasic);
+    // grossByHand / ctcTyped: retyping the same CTC after a hand-typed gross fills it again.
+  }, [fillGross, fillBasic, grossByHand, ctcTyped]);
+  /* R-2722 (R-2700 G1): Apply is off — with the reason — when it would write an over-budget split
+     or a salary that only Revise salary may change. */
+  const applyBlocked = applyStructureBlockedReason(ctcBreakdown, salaryByRevision);
+  /* R-2733 (Hitesh a): Monthly Net Pay = what Pay salary will work out for this month on the
+     salary in this form (lib/payroll/net-pay.ts — the same function as the Employees table's
+     "In-hand / month"): gross − employee PF − employee ESI − TDS (this FY's payslips). */
+  const netPeriod = currentPeriod();
+  const myRevisions = React.useMemo(
+    () => (employee ? revisionsByEmployee(revisionsQ.data ?? []).get(employee.id) ?? [] : []),
+    [employee, revisionsQ.data]);
+  const formNet = (!employee || salaryHistoryQ.isSuccess) ? monthNetPay({
+    monthly_gross: Math.round(Number(gross) || 0),
+    basic_monthly: basicForCalc,
+    da_monthly: Math.round(Number(daMonthly) || 0),
+    pf_applicable: pfApplicable, esi_applicable: esiApplicable, pf_full_wage: pfFullWage,
+  }, salaryByRevision ? myRevisions : [], netPeriod, salaryHistoryQ.data ?? []) : null;
+  /* R-2733 (Hitesh b): with no CTC typed the gross is the employee's own — a Basic % (or a Custom
+     Basic) then sets the form's Basic straight away, so the card AND Save follow it. Before this
+     the dropdown only mattered after a CTC was typed, and looked dead. */
+  function typeCtc(annualText: string) {
+    /* R-2722: remember the salary the form held before this CTC (the saved one, or a gross typed by hand). */
+    if (!ctcTyped || grossByHand) setCtcBase({ gross, basic: basicMonthly, da: daMonthly });
+    setCtcTyped(true); setGrossByHand(false); setAnnualCtc(annualText);
+    setBasicPctOfGross(null); // a typed CTC is split by the Basic % (of CTC ÷ 12 / gross, per policy)
+  }
+  const noCtc = !ctcTyped || ctcCleared;
+  /* Only the no-CTC write is locked for a revision-managed salary; a typed CTC stays a what-if
+     (Save keeps the saved Basic anyway). While revisions load, nothing is written either. */
+  const basicLocked = noCtc && salaryByRevision;
+  /* Code review: a Basic set from a % follows the gross typed after it (never a Basic above it). */
+  const [basicPctOfGross, setBasicPctOfGross] = React.useState<number | null>(null);
+  const [basicBeforeCustom, setBasicBeforeCustom] = React.useState<string | null>(null);
+  function setBasicFromPct(pct: number, grossText = gross, daText = daMonthly) {
+    if (!noCtc || basicLocked) return;
+    // Review LOW 3: a % picked before any gross is remembered and applied when the gross is typed.
+    setBasicPctOfGross(pct);
+    const b = basicFromPct(pct, Number(grossText) || 0, Number(daText) || 0);
+    if (b === null) return;
+    // A CTC typed then cleared is no CTC — leave the CTC fill rule so it cannot put the old Basic back.
+    if (ctcCleared) setCtcTyped(false);
+    setBasicMonthly(String(b)); setBasicByHand(false);
+  }
+  /* R-2773 (Hitesh 14 Nov, feedback 043e6753): a gross typed with no CTC brings its Basic along —
+     ONE rule with Revise salary (salary-revision.ts structureForGross): a NEW employee gets the
+     company policy Basic % (the box used to stay empty → saved as "not set" → payroll took the
+     whole gross as Basic, 100%); an existing employee keeps their own Basic share (not set stays
+     not set). A Basic typed by hand in this dialog (basicByHand), or a Basic % picked, wins; an
+     emptied Basic box follows the rule again. Basic is re-capped when DA changes (≤ gross − DA). */
+  /* An existing employee's DA follows its share too (as in Revise salary) until DA is typed here. */
+  const [daByHand, setDaByHand] = React.useState(false);
+  function fillBasicFor(grossText: string, daText: string, daFixed: boolean) {
+    if (!noCtc || basicLocked || basicByHand) return;
+    const f = employeeBasicFill(basicRule(grossText, daText, daFixed));
+    // Review F4: gross cleared → the auto-filled Basic goes too (also after a picked %).
+    if (f && f.basic === "" && !savedSalary) { if (ctcCleared) setCtcTyped(false); setBasicMonthly(""); return; }
+    if (basicPctOfGross !== null) { setBasicFromPct(basicPctOfGross, grossText, daText); return; }
+    if (f === null) return; // no salary yet and the policy is not in — Save says it is waiting
+    if (ctcCleared) setCtcTyped(false);
+    setBasicMonthly(f.basic);
+    if (f.da !== daText) setDaMonthly(f.da);
+  }
+  function basicForTypedGross(grossText: string) { fillBasicFor(grossText, daMonthly, daByHand); }
+  /* The policy can arrive after the gross of an employee with no salary yet was typed — the Basic follows it then. */
+  const policyBasicPct = policyQ.data?.basicPct;
+  React.useEffect(() => {
+    if (savedSalary || !policyReady) return;
+    fillBasicFor(gross, daMonthly, true);
+    // Only when the policy arrives / changes — typing goes through basicForTypedGross.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policyReady, policyBasicPct]);
+  /* Review F1: Save waits for the policy for an employee with no salary yet, unless the Basic was
+     typed by hand or a Basic % was picked (as Revise salary waits — policyReady there). */
+  const saveBlocked = salaryByRevision ? null : employeeSaveBlockedReason({
+    hasSalary: Boolean(savedSalary), grossText: gross,
+    basicByHand, pctPicked: basicPctTouched,
+    policyReady, policyFailed: policyQ.isError,
+  });
+  // For a NEW employee, suggest ESI coverage from the wage ceiling until the
+  // user decides for themselves — only when the company is ESI-registered (R-2700 policy).
+  // Existing employees keep their saved value.
+  React.useEffect(() => {
+    if (!esiTouched && !employee) setEsiApplicable(policy.esiDefault && isEsiEligible(Math.round(Number(gross) || 0)));
+  }, [gross, esiTouched, employee, policy.esiDefault]);
 
   const pinValid = pin === "" || /^[0-9]{4,6}$/.test(pin);
 
   async function submit() {
-    if (!name.trim() || !pinValid) return;
+    if (!name.trim() || !pinValid || saveBlocked) return;
     const id = await save.mutateAsync({
-      id: employee?.id, name: name.trim(), monthly_gross: Math.round(Number(gross) || 0),
+      id: employee?.id, name: name.trim(),
+      monthly_gross: salaryByRevision && employee ? employee.monthly_gross : Math.round(Number(gross) || 0),
       joining_date: joined || null, leave_allowance: Math.round(Number(allowance) || 0), is_active: active,
       email: email.trim() || null, phone: phone.trim() || null, designation: designation.trim() || null,
       date_of_birth: dob || null, address: address.trim() || null,
       emergency_contact_name: ecName.trim() || null, emergency_contact_phone: ecPhone.trim() || null,
       pan: pan.trim().toUpperCase() || null, pf_no: pfNo.trim() || null, esi_no: esiNo.trim() || null,
-      esi_applicable: esiApplicable, pf_applicable: pfApplicable,
-      basic_monthly: basicMonthly.trim() === "" ? null : Math.round(Number(basicMonthly) || 0),
-      da_monthly: Math.round(Number(daMonthly) || 0),
+      esi_applicable: esiApplicable, pf_applicable: pfApplicable, pf_full_wage: pfFullWage,
+      basic_monthly: salaryByRevision && employee ? employee.basic_monthly : basicForCalc,
+      da_monthly: salaryByRevision && employee ? (employee.da_monthly ?? 0) : Math.round(Number(daMonthly) || 0),
     });
     if (pin && id && canSetPin) await setPin.mutateAsync({ employeeId: id, pin });
     onClose();
@@ -646,14 +958,24 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
           {/* TAB 2: CTC & SALARY BREAKDOWN */}
           {empTab === "ctc" && (
             <section className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* R-2733 (Hitesh a): Monthly CTC and Annual CTC are one figure — either box fills the other (×12 / ÷12). */}
+                <Field htmlFor="payroll-monthly-ctc-mo" label="Monthly CTC (₹/mo)">
+                  <Input id="payroll-monthly-ctc-mo"
+                    type="number"
+                    min={0}
+                    placeholder="e.g. 25000"
+                    value={ctcTyped ? (monthlyCtcText ?? monthlyFromAnnualCtc(annualCtc)) : ctcBreakdown.source === "saved" ? String(ctcBreakdown.monthlyCtc) : ""}
+                    onChange={(e) => { typeCtc(annualFromMonthlyCtc(e.target.value)); setMonthlyCtcText(e.target.value); }}
+                  />
+                </Field>
                 <Field htmlFor="payroll-annual-ctc-yr" label="Annual CTC (₹/yr)">
                   <Input id="payroll-annual-ctc-yr"
                     type="number"
                     min={0}
                     placeholder="e.g. 600000"
-                    value={annualCtc}
-                    onChange={(e) => setAnnualCtc(e.target.value)}
+                    value={ctcTyped || ctcBreakdown.source !== "saved" ? annualCtc : String(ctcBreakdown.annualCtc)}
+                    onChange={(e) => { typeCtc(e.target.value); setMonthlyCtcText(null); }}
                   />
                 </Field>
                 <Field htmlFor="payroll-city-hra-standard" label="City HRA Standard">
@@ -669,8 +991,29 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
               </div>
 
               <Field htmlFor="payroll-monthly-gross-salary-base" label="Monthly Gross Salary (₹, Base for Pay Slip)">
-                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} onChange={(e) => setGross(e.target.value)} placeholder="e.g. 46997" />
+                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => { if (ctcCleared) setCtcTyped(false); else if (ctcTyped) setGrossByHand(true); setGross(e.target.value); basicForTypedGross(e.target.value); }} placeholder="e.g. 46997" />
+                {/* R-2700: one line — how this gross comes from the CTC (or that it is the saved / hand-typed one). */}
+                <p data-testid="ctc-formula" className="mt-1 text-xs text-ink-2">{ctcFormulaText(ctcBreakdown, salaryByRevision ? undefined : Number(gross) || 0)}{salaryByRevision && ctcTyped ? " This employee's gross is set by salary revisions — use Revise salary to change it." : ""}</p>
+                {/* R-2699: an increment from a month goes through Revise salary (history + old salary for earlier months). */}
+                {salaryByRevision ? (
+                  <p className="mt-1 text-xs text-amber-ink">This salary is set by salary revisions — change it with <b>Revise salary</b> in the employee profile (Basic and DA too).</p>
+                ) : employee ? (
+                  <p className="mt-1 text-xs text-ink-3">For an increment from a given month, use <b>Revise salary</b> in the employee profile — earlier months keep the old salary and the change is kept in history.</p>
+                ) : null}
               </Field>
+
+              {/* R-2733 (Hitesh a): take-home for this month, live — the same figure Pay salary will show. */}
+              <div data-testid="ctc-monthly-net-pay" className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-xl border border-emerald-200/60 bg-paper px-3 py-2">
+                <span className="text-xs font-bold text-emerald-900">Monthly Net Pay (in-hand)</span>
+                <span className="font-mono text-sm font-extrabold text-ink">{formNet ? rupee(formNet.net) : employee && salaryHistoryQ.isError ? "—" : employee && !salaryHistoryQ.isSuccess ? "…" : "—"}</span>
+                <p className="basis-full text-xs text-ink-3">
+                  {formNet
+                    ? `${periodLabel(netPeriod)} — ${formNet.explain}`
+                    : employee && salaryHistoryQ.isError
+                      ? "Payslips did not load — net pay is not shown."
+                      : "Type the Monthly or Annual CTC (or the Monthly Gross) — the take-home works out from it."}
+                </p>
+              </div>
 
               {/* Custom Component Override Accordion Toggle */}
               <div className="border-t border-hairline pt-1">
@@ -687,16 +1030,17 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                   <div className="mt-3 p-3.5 bg-paper-2/90 border border-hairline rounded-2xl space-y-3 text-xs shadow-2xs">
                     <p className="text-3xs uppercase tracking-wider text-ink-3 font-bold">⚙️ Component Overrides &amp; Custom Allowances</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                      <Field htmlFor="payroll-basic-salary" label="Basic Salary %">
+                      <Field htmlFor="payroll-basic-salary" label={noCtc ? "Basic Salary % (of gross)" : "Basic Salary %"}>
                         <select id="payroll-basic-salary"
                           value={basicPct}
-                          onChange={(e) => { setBasicPct(Number(e.target.value)); setCustomBasic(""); }}
+                          disabled={basicLocked}
+                          aria-describedby="payroll-basic-salary-note"
+                          onChange={(e) => { const p = Number(e.target.value); setBasicPctTouched(true); setBasicByHand(false); setBasicPct(p); setCustomBasic(""); setBasicFromPct(p); }}
                           className={selectCls}
                         >
-                          <option value={0.30}>30% Basic</option>
-                          <option value={0.40}>40% Basic</option>
-                          <option value={0.50}>50% Basic (Default)</option>
-                          <option value={0.60}>60% Basic</option>
+                          {[...new Set([0.3, 0.4, 0.5, 0.6, policy.basicPct / 100])].sort((a, b) => a - b).map((p) => (
+                            <option key={p} value={p}>{Math.round(p * 100)}% Basic{Math.round(p * 100) === policy.basicPct ? " (company policy)" : ""}</option>
+                          ))}
                         </select>
                       </Field>
 
@@ -705,10 +1049,41 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                           type="number"
                           min={0}
                           value={customBasic}
-                          onChange={(e) => setCustomBasic(e.target.value)}
+                          disabled={basicLocked}
+                          onChange={(e) => {
+                            setCustomBasic(e.target.value);
+                            /* R-2733: no CTC typed → this IS the employee's Basic (what Save writes); emptied → back to the Basic the form started with. */
+                            if (noCtc && !basicLocked) {
+                              if (ctcCleared) setCtcTyped(false);
+                              setBasicPctOfGross(null);
+                              const typed = e.target.value.trim() !== "";
+                              /* Review LOW 4: emptied → back to the Basic the form held just before the Custom Basic
+                                 was typed (a Basic typed in Statutory & Access this session stays), not the saved one. */
+                              if (typed && customBasic.trim() === "") setBasicBeforeCustom(basicMonthly);
+                              setBasicMonthly(typed ? e.target.value : (basicBeforeCustom ?? ctcBase.basic));
+                              if (!typed) setBasicBeforeCustom(null);
+                              setBasicByHand(typed);
+                            }
+                          }}
                           placeholder={`Auto (${rupee(ctcBreakdown?.basicMonthly ?? 0)})`}
                         />
                       </Field>
+                      {/* R-2733 (Hitesh b + c): say what the Basic % does here, and where the company default is set. */}
+                      <p id="payroll-basic-salary-note" data-testid="basic-pct-note" className="sm:col-span-2 md:col-span-4 text-xs text-ink-2">
+                        {basicLocked && !revisionsQ.isSuccess
+                          ? "Checking this employee's salary revisions…"
+                          : basicLocked
+                          ? "Basic is set by salary revisions — change it with Revise salary in the employee profile."
+                          : noCtc
+                            ? `No CTC typed: Basic % sets this employee's Basic as a share of the monthly gross (${rupee(Math.round(Number(gross) || 0))}). Type a CTC to split the CTC instead.`
+                            : `Basic % of the CTC split for this employee (${policy.ctcIncludesEmployer ? "of CTC ÷ 12" : "of the gross"}).`}
+                        {" "}Company default: {policy.basicPct}% —{" "}
+                        {/* Code review: a new tab — this dialog's unsaved edits stay, and it works from the Payroll page too. */}
+                        <a href="/accounting/employees#payroll-policy" target="_blank" rel="noopener" data-testid="open-payroll-policy" className="text-primary font-medium hover:underline">
+                          change it in Payroll policy
+                        </a>
+                        {" "}(Employees page, owner only; opens in a new tab).
+                      </p>
 
                       <Field htmlFor="payroll-custom-hra-mo" label="Custom HRA (₹/mo)">
                         <Input id="payroll-custom-hra-mo"
@@ -750,34 +1125,17 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                         />
                       </Field>
 
-                      <Field htmlFor="payroll-professional-tax-mo" label="Professional Tax (₹/mo)">
-                        <Input id="payroll-professional-tax-mo"
-                          type="number"
-                          min={0}
-                          value={customPt}
-                          onChange={(e) => setCustomPt(e.target.value)}
-                          placeholder={`Auto: ${rupee(computePt(ctcBreakdown.grossMonthly).monthly)} (PT slab)`}
-                        />
-                      </Field>
+                      {/* R-2733 (owner, 13 Nov): Professional Tax does not apply — no PT box; net = gross − PF − ESI − TDS. */}
 
                       <div className="flex flex-col justify-center space-y-1.5 pt-2">
                         <label className="flex items-center gap-2 cursor-pointer text-xs text-ink-2 font-medium">
                           <input
                             type="checkbox"
                             checked={includeGratuity}
-                            onChange={(e) => setIncludeGratuity(e.target.checked)}
+                            onChange={(e) => { setGratuityTouched(true); setIncludeGratuity(e.target.checked); }}
                             className="rounded border-hairline accent-amber"
                           />
                           <span>Include Gratuity (4.81%)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer text-xs text-ink-2 font-medium">
-                          <input
-                            type="checkbox"
-                            checked={capPfCeiling}
-                            onChange={(e) => setCapPfCeiling(e.target.checked)}
-                            className="rounded border-hairline accent-amber"
-                          />
-                          <span>Cap PF at the wage ceiling ({rupee(Math.round(pfWageCeiling() * PF_EMPLOYER_RATE))}/mo today)</span>
                         </label>
                       </div>
                     </div>
@@ -794,22 +1152,40 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                         <Badge kind="info" size="sm">Annual {rupee(ctcBreakdown.annualCtc)}</Badge>
                       </div>
                       <span className="text-xs text-ink-3 block mt-0.5">Itemized Indian Wage Code &amp; Statutory Breakdown</span>
+                      {/* R-2698: say which switches this breakdown uses — they are set in Statutory & Access. */}
+                      <span data-testid="ctc-statutory-switches" className="text-xs text-ink-2 block mt-0.5">
+                        PF: <b>{pfApplicable ? (pfFullWage ? "on — full Basic + DA" : `on — capped at ${rupee(pfWageCeiling())}`) : "off"}</b>
+                        {" · "}ESI: <b>{esiApplicable ? "on" : "off"}</b>
+                        {" · "}<button type="button" className="text-primary font-medium hover:underline" onClick={() => setEmpTab("statutory")}>Change in Statutory &amp; Access</button>
+                      </span>
                     </div>
-                    <Button
-                      type="button"
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        setGross(String(ctcBreakdown.grossMonthly));
-                        setBasicMonthly(String(ctcBreakdown.basicMonthly));
-                        setPfApplicable(true);
-                        if (ctcBreakdown.employerEsiMonthly > 0) setEsiApplicable(true);
-                        toast.success(`Applied Monthly Gross ${rupee(ctcBreakdown.grossMonthly)} & PF/ESI settings!`);
-                      }}
-                      className="text-xs font-extrabold"
-                    >
-                      ⚡ Apply Salary Structure
-                    </Button>
+                    <div className="flex flex-col items-end gap-1">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        disabled={applyBlocked !== null}
+                        aria-describedby={applyBlocked ? "apply-structure-blocked" : undefined}
+                        onClick={() => {
+                          if (applyBlocked) return;
+                          setGross(String(ctcBreakdown.grossMonthly));
+                          /* R-2722: no Basic set → leave it not set (PF / gratuity stay on the whole gross). */
+                          const keepBasic = ctcBreakdown.basicAssumed || Boolean(ctcBreakdown.basicUnchanged);
+                          if (!keepBasic) setBasicMonthly(String(ctcBreakdown.basicMonthly));
+                          setGrossByHand(false);
+                          /* R-2722 review: what was applied is the salary a later cleared CTC goes back to. */
+                          setCtcBase({ gross: String(ctcBreakdown.grossMonthly), basic: keepBasic ? basicMonthly : String(ctcBreakdown.basicMonthly), da: daMonthly });
+                          /* R-2698: this used to switch PF (and ESI) back ON — an owner who had just
+                             turned them off in Statutory & Access got them back. The switches live
+                             only there now. */
+                          toast.success(`Applied monthly gross ${rupee(ctcBreakdown.grossMonthly)}${ctcBreakdown.basicAssumed ? " (Basic not set)" : keepBasic ? " (Basic unchanged)" : ` and Basic ${rupee(ctcBreakdown.basicMonthly)}`}. PF / ESI stay as set in Statutory & Access.`);
+                        }}
+                        className="text-xs font-extrabold"
+                      >
+                        ⚡ Apply Salary Structure
+                      </Button>
+                      {applyBlocked && <span id="apply-structure-blocked" data-testid="apply-structure-blocked" className="text-xs text-ink-3 max-w-[16rem] text-right">{applyBlocked}</span>}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 text-xs">
@@ -821,13 +1197,27 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                       </div>
                       <div className="space-y-1.5 text-ink-2 text-xs">
                         <div className="flex items-center justify-between">
-                          <span className="text-ink-3">Basic Salary ({Math.round(ctcBreakdown.basicPct * 100)}%):</span>
+                          <span className="text-ink-3">
+                            Basic Salary ({basicShareText(ctcBreakdown)}):
+                            {/* R-2733 (Hitesh c): the Basic line says where it is changed. */}
+                            {!basicLocked && (
+                              <button type="button" data-testid="change-basic" className="ml-1 text-primary font-medium hover:underline" onClick={() => { setShowCustomControls(true); window.setTimeout(() => document.getElementById("payroll-basic-salary")?.focus(), 0); }}>Change</button>
+                            )}
+                          </span>
                           <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.basicMonthly)}</span>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-ink-3">HRA ({isMetro ? "50%" : "40%"}):</span>
-                          <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.hraMonthly)}</span>
-                        </div>
+                        {ctcBreakdown.source === "ctc" && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-ink-3">HRA ({isMetro ? "50%" : "40%"}):</span>
+                            <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.hraMonthly)}</span>
+                          </div>
+                        )}
+                        {ctcBreakdown.daMonthly > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-ink-3">DA:</span>
+                            <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.daMonthly)}</span>
+                          </div>
+                        )}
                         {ctcBreakdown.conveyanceMonthly > 0 && (
                           <div className="flex items-center justify-between">
                             <span className="text-ink-3">Conveyance:</span>
@@ -841,7 +1231,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                           </div>
                         )}
                         <div className="flex items-center justify-between pt-1 border-t border-hairline/60">
-                          <span className="text-ink-3">Special Allowance:</span>
+                          <span className="text-ink-3">{ctcBreakdown.source === "saved" ? "Allowances (above Basic + DA):" : "Special Allowance:"}</span>
                           <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.specialAllowanceMonthly)}</span>
                         </div>
                       </div>
@@ -850,7 +1240,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     {/* Column 2: Employer Retirals & Benefits */}
                     <div className="bg-paper p-3.5 rounded-xl border border-amber-200/60 shadow-2xs space-y-2.5">
                       <div className="flex items-center justify-between pb-2 border-b border-hairline">
-                        <span className="font-extrabold text-amber-900 uppercase tracking-wider text-3xs">2. Employer Retirals</span>
+                        <span className="font-extrabold text-amber-900 uppercase tracking-wider text-3xs">{ctcBreakdown.employerOnTop ? "2. Employer cost on top of CTC" : "2. Employer Retirals"}</span>
                         <Badge kind="warning" size="sm" className="font-mono font-bold">{rupee(ctcBreakdown.totalEmployerContributionMonthly)}/mo</Badge>
                       </div>
                       <div className="space-y-1.5 text-ink-2 text-xs">
@@ -877,23 +1267,35 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     <div className="bg-paper p-3.5 rounded-xl border border-emerald-200/60 shadow-2xs space-y-2.5">
                       <div className="flex items-center justify-between pb-2 border-b border-hairline">
                         <span className="font-extrabold text-emerald-900 uppercase tracking-wider text-3xs">3. Employee Net In-Hand</span>
-                        <Badge kind="success" size="sm" className="font-mono font-bold">{rupee(ctcBreakdown.netTakeHomeMonthly)}/mo</Badge>
+                        {/* R-2733: the same net as "Monthly Net Pay" above and Pay salary (lib/payroll/net-pay.ts). Professional Tax does not apply (owner). */}
+                        <Badge kind="success" size="sm" className="font-mono font-bold">{formNet ? `${rupee(formNet.net)}/mo` : "—"}</Badge>
                       </div>
                       <div className="space-y-1.5 text-ink-2 text-xs">
-                        <div className="flex items-center justify-between text-rose-700">
-                          <span>Employee PF (12%):</span>
-                          <span className="font-mono font-bold">-{rupee(ctcBreakdown.employeePfMonthly)}</span>
-                        </div>
-                        {ctcBreakdown.employeeEsiMonthly > 0 && (
+                        {formNet && formNet.gross !== ctcBreakdown.grossMonthly && (
+                          <p className="text-ink-3">On the Monthly Gross {rupee(formNet.gross)} in the form.</p>
+                        )}
+                        {formNet && formNet.pf > 0 && (
                           <div className="flex items-center justify-between text-rose-700">
-                            <span>Employee ESI (0.75%):</span>
-                            <span className="font-mono font-bold">-{rupee(ctcBreakdown.employeeEsiMonthly)}</span>
+                            <span>Employee PF (12%):</span>
+                            <span className="font-mono font-bold">-{rupee(formNet.pf)}</span>
                           </div>
                         )}
-                        <div className="flex items-center justify-between pt-2 border-t border-emerald-200 text-emerald-800 font-extrabold text-xs">
-                          <span>Annual Net Take Home:</span>
-                          <span className="font-mono">{rupee(ctcBreakdown.netTakeHomeAnnual)}</span>
-                        </div>
+                        {formNet && formNet.esi > 0 && (
+                          <div className="flex items-center justify-between text-rose-700">
+                            <span>Employee ESI (0.75%):</span>
+                            <span className="font-mono font-bold">-{rupee(formNet.esi)}</span>
+                          </div>
+                        )}
+                        {formNet && (
+                          <div className="flex items-center justify-between text-rose-700">
+                            <span>TDS (s.192 estimate):</span>
+                            <span className="font-mono font-bold">-{rupee(formNet.tds)}</span>
+                          </div>
+                        )}
+                        {formNet && formNet.pf === 0 && formNet.esi === 0 && (
+                          <p className="text-ink-3">No PF / ESI deducted.</p>
+                        )}
+                        <p className="pt-2 border-t border-emerald-200 text-ink-3">Net = gross − employee PF − employee ESI − TDS (full month).</p>
                       </div>
                     </div>
                   </div>
@@ -927,6 +1329,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                   />
                   <span className="text-xs text-ink-2">
                     <b className="text-ink">ESI applicable</b> — deduct 0.75% from salary + accrue 3.25% employer share each month.
+                    <span data-testid="esi-rule" className="block text-ink-3 mt-0.5">{esiRuleNote(Number(gross) || 0)}</span>
                   </span>
                 </label>
 
@@ -934,7 +1337,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                   <input
                     type="checkbox"
                     checked={pfApplicable}
-                    onChange={(e) => setPfApplicable(e.target.checked)}
+                    onChange={(e) => { setPfTouched(true); setPfApplicable(e.target.checked); }}
                     className="mt-0.5 rounded border-hairline"
                   />
                   <span className="text-xs text-ink-2">
@@ -944,23 +1347,42 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 {pfApplicable && (
                   <div className="rounded-md border border-hairline p-3 space-y-2">
                     <p className="text-xs text-ink-2">
-                      <b className="text-ink">What PF is charged on</b> — Basic + DA (not HRA / allowances), up to the ceiling.
+                      <b className="text-ink">What PF is charged on</b> — Basic + DA (not HRA / allowances).
                       {basicMonthly.trim() === "" && <span className="block text-amber-ink mt-0.5">Basic is empty → PF is charged on the full gross (old method). Fill it in and the next salary uses the right base.</span>}
                     </p>
+                    {/* R-2698: per-employee PF basis — capped at the statutory ceiling (default) or full Basic + DA. */}
+                    <div role="radiogroup" aria-label="PF wage" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="radio" name="pf-basis" checked={!pfFullWage} onChange={() => { setPfTouched(true); setPfFullWage(false); }} />
+                        Capped at the PF wage ceiling ({rupee(pfWageCeiling())} — PF max {rupee(Math.round(pfWageCeiling() * PF_EMPLOYER_RATE))}/mo each side)
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="radio" name="pf-basis" checked={pfFullWage} onChange={() => { setPfTouched(true); setPfFullWage(true); }} />
+                        Full Basic + DA (above the ceiling)
+                      </label>
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label htmlFor="payroll-basic-month" className="block text-xs font-medium text-ink-2 mb-1">Basic (₹/month)</label>
-                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => setBasicMonthly(e.target.value)} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
+                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setBasicPctOfGross(null); setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={savedSalary ? "Not set — PF on the whole gross" : (employeeBasicFill(basicRule(gross, daMonthly, true))?.basic || "e.g. 15000")} />
                       </div>
                       <div>
                         <label htmlFor="payroll-da-month" className="block text-xs font-medium text-ink-2 mb-1">DA (₹/month)</label>
-                        <Input id="payroll-da-month" type="number" min={0} value={daMonthly} onChange={(e) => setDaMonthly(e.target.value)} />
+                        <Input id="payroll-da-month" type="number" min={0} value={daMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setDaMonthly(e.target.value); setDaByHand(true); fillBasicFor(gross, e.target.value, true); }} />
                       </div>
                     </div>
                     {basicMonthly.trim() !== "" && (Number(basicMonthly) || 0) + (Number(daMonthly) || 0) > (Number(gross) || 0) && (
                       <p className="text-xs text-rose">Basic + DA is more than gross — please check.</p>
                     )}
                   </div>
+                )}
+                {statutoryChanged && (
+                  <p data-testid="statutory-from-now" className="text-xs text-ink-2 rounded-md bg-paper-2 border border-hairline px-3 py-2">
+                    Applies to salaries you pay from now on.
+                    {bookedStatutory.length > 0 && (
+                      <> Already booked with PF / ESI — not changed: {bookedStatutoryText(bookedStatutory)}. To correct a booked month, remove that salary in Payroll and pay it again.</>
+                    )}
+                  </p>
                 )}
               </div>
 
@@ -996,7 +1418,8 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={save.isPending || setPin.isPending}>Cancel</Button>
-          <Button variant="primary" loading={save.isPending || setPin.isPending} disabled={!name.trim() || !pinValid} onClick={submit}>Save</Button>
+          {saveBlocked && <p data-testid="employee-save-blocked" className="mr-auto self-center text-xs text-amber-ink">{saveBlocked}</p>}
+          <Button variant="primary" loading={save.isPending || setPin.isPending} disabled={!name.trim() || !pinValid || Boolean(saveBlocked)} onClick={submit}>Save</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1018,10 +1441,6 @@ export function PayrollTab() {
   const [attendanceEmp, setAttendanceEmp] = React.useState<Employee | null>(null);
   /* Click a Net → how it was reached (salary, LOP, incentive, deductions, paid so far). */
   const [breakdownFor, setBreakdownFor] = React.useState<{ name: string; p: SalaryPayment } | null>(null);
-  /* R-2428: part-paid salary → set LOP so the net is what was really paid. */
-  const [lopFor, setLopFor] = React.useState<{ name: string; p: SalaryPayment } | null>(null);
-  const undoSalary = useDeleteSalaryPayment();
-  const confirm = useConfirm();
 
   // "Reconcile in Banking" — jump to the bank account with the matching bank
   // debit (= net salary) opened for reconcile. If there's a single bank (non-
@@ -1032,29 +1451,10 @@ export function PayrollTab() {
     else router.push("/accounting/banking" as never);
   };
 
-  // Edit an UN-reconciled run: reverse it (tested delete_salary_payment RPC —
-  // itself blocked server-side once reconciled) then reopen the pay form to
-  // re-enter it. Only offered while paid_amount === 0 (not yet bank-matched).
-  const editSalary = async (e: Employee, p: SalaryPayment) => {
-    if (await confirm({
-      title: `Edit ${e.name}'s salary for this month?`,
-      body: "This reverses the current run (and its booked expense) and reopens the pay form so you can correct it. Only possible before it's reconciled to a bank line.",
-      confirmLabel: "Edit",
-    })) {
-      try { await undoSalary.mutateAsync(p.id); setPayFor(e); }
-      catch { /* the mutation surfaces its own error toast */ }
-    }
-  };
-  const undoSalaryFor = async (e: Employee, p: SalaryPayment) => {
-    if (await confirm({
-      title: `Undo ${e.name}'s salary for this month?`,
-      body: "This removes the salary + its booked expense so you can pay it again. (Blocked once it's reconciled to a bank line — un-reconcile that first.)",
-      confirmLabel: "Undo",
-      danger: true,
-    })) {
-      undoSalary.mutate(p.id);
-    }
-  };
+  /* R-2771: Edit salary / Edit salary — set LOP / Undo salary live in ONE shared menu
+     (components/features/payroll/salary-row-actions.tsx) — the Salary Register uses the same one.
+     Edit no longer undoes the run before the form opens: the form opens prefilled with the
+     booked figures and Save reverses + re-books (delete_salary_payment, then pay_salary). */
 
   const attQ = useAttendance(period);
   const holQ = useHolidays();
@@ -1071,8 +1471,22 @@ export function PayrollTab() {
   );
   const totalNet = (payQ.data ?? []).reduce((s, p) => s + p.net, 0);
   const acctName = new Map((accountsQ.data ?? []).map((a) => [a.id, a.name]));
+  /* R-2699: the salary in force for THIS month — a revision from a later month does not apply yet. */
+  const revQ = useSalaryRevisions();
+  const revsByEmp = React.useMemo(() => revisionsByEmployee(revQ.data ?? []), [revQ.data]);
+  const monthGross = React.useCallback(
+    (e: Employee) => salaryInForce(e, revsByEmp.get(e.id) ?? [], period).monthly_gross,
+    [revsByEmp, period],
+  );
+  /* A failed revisions read must not open Pay salary on the employee's forward salary. */
+  React.useEffect(() => {
+    if (payFor && revQ.isError) {
+      toastError(revQ.error, { fallback: "Could not load salary revisions — try again." });
+      setPayFor(null);
+    }
+  }, [payFor, revQ.isError, revQ.error]);
   // Summary: full monthly cost (all active gross) vs what's actually been run.
-  const estimatedMonthly = employees.reduce((s, e) => s + e.monthly_gross, 0);
+  const estimatedMonthly = employees.reduce((s, e) => s + monthGross(e), 0);
   const runCount = employees.filter((e) => paidByEmp.has(e.id)).length;
 
   // Attendance this month: days present vs working days so far (Sundays + company
@@ -1174,7 +1588,7 @@ export function PayrollTab() {
                         {employeeSubline(e) && <div className="text-xs text-ink-3 mt-0.5">{employeeSubline(e)}</div>}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-ink-2">
-                        {p ? rupee(p.gross) : e.monthly_gross > 0 ? rupee(e.monthly_gross) : <span className="text-ink-3">—</span>}
+                        {p ? rupee(p.gross) : monthGross(e) > 0 ? rupee(monthGross(e)) : <span className="text-ink-3">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
                         {p ? (() => {
@@ -1232,7 +1646,7 @@ export function PayrollTab() {
                               <PayrollRowMenu
                                 e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                                 paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
-                                onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)} onAdjustLop={() => setLopFor({ name: e.name, p })}
+                                onYear={() => setCalendarFor(e)}
                                 onReconcile={() => reconcileSalary(p)}
                               />
                             </>
@@ -1247,7 +1661,7 @@ export function PayrollTab() {
                               )}
                               <PayrollRowMenu
                                 e={e} canWrite={canWrite} me={meQ.data ?? null} paidVia={null}
-                                onYear={() => setCalendarFor(e)} onEdit={() => {}} onUndo={() => {}}
+                                onYear={() => setCalendarFor(e)}
                               />
                             </>
                           )}
@@ -1282,7 +1696,7 @@ export function PayrollTab() {
                           <button type="button" onClick={() => setBreakdownFor({ name: toTitleCase(e.name), p })} className="hover:text-amber-ink" title="How the net is worked out">
                             {rupee(p.net)}
                           </button>
-                        ) : e.monthly_gross > 0 ? rupee(e.monthly_gross) : <span className="text-ink-3">—</span>}
+                        ) : monthGross(e) > 0 ? rupee(monthGross(e)) : <span className="text-ink-3">—</span>}
                       </div>
                     </div>
                     <div className="text-xs text-ink-3 mb-2">
@@ -1300,7 +1714,7 @@ export function PayrollTab() {
                           <PayrollRowMenu
                             e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                             paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
-                            onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)} onAdjustLop={() => setLopFor({ name: e.name, p })}
+                            onYear={() => setCalendarFor(e)}
                             onReconcile={() => reconcileSalary(p)}
                           />
                         </>
@@ -1315,7 +1729,7 @@ export function PayrollTab() {
                           )}
                           <PayrollRowMenu
                             e={e} canWrite={canWrite} me={meQ.data ?? null} paidVia={null}
-                            onYear={() => setCalendarFor(e)} onEdit={() => {}} onUndo={() => {}}
+                            onYear={() => setCalendarFor(e)}
                           />
                         </div>
                       )}
@@ -1327,8 +1741,12 @@ export function PayrollTab() {
           </ul>
         </>
       )}
-      {payFor && canWrite && <PaySalaryDialog employee={payFor} period={period} onClose={() => setPayFor(null)} />}
-      {lopFor && canWrite && <AdjustSalaryLopDialog name={toTitleCase(lopFor.name)} salary={lopFor.p} onClose={() => setLopFor(null)} />}
+      {payFor && canWrite && revQ.isSuccess && (
+        <PaySalaryDialog
+          employee={payFor} period={period} onClose={() => setPayFor(null)}
+          revisions={revsByEmp.get(payFor.id) ?? []}
+        />
+      )}
       <SalaryBreakdownDialog name={breakdownFor?.name ?? ""} record={breakdownFor?.p ?? null} onClose={() => setBreakdownFor(null)} />
       {editFor && canWrite && <EmployeeDialog employee={editFor} onClose={() => setEditFor(null)} />}
       {attendanceEmp && <AttendanceRegisterDialog employee={attendanceEmp} initialPeriod={period} onClose={() => setAttendanceEmp(null)} />}
@@ -1495,83 +1913,74 @@ async function generatePayslip(employee: Employee, payment: SalaryPayment, me: C
   }
 }
 
-/** One "…" menu per payroll row — full-year payroll, payslip, edit/undo (or a
- *  reconciled lock). `p` undefined → row not yet run. */
-function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, onReconcile, onAdjustLop }: {
+/** One "…" menu per payroll row — full-year payroll, payslip, then the salary actions shared with
+ *  the Salary Register (R-2771 SalaryRowActions: edit / set LOP / undo, or the bank-line lock).
+ *  `p` undefined → row not yet run. */
+function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onReconcile }: {
   e: Employee; p?: SalaryPayment; canWrite: boolean; me: CurrentUserInfo | null; paidVia: string | null;
-  onYear: () => void; onEdit: () => void; onUndo: () => void; onReconcile?: () => void;
-  /** R-2428: part-paid → set loss of pay so the net is the amount actually paid. */
-  onAdjustLop?: () => void;
+  onYear: () => void; onReconcile?: () => void;
 }) {
   return (
-    <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild>
-        <button type="button" aria-label={`More actions for ${toTitleCase(e.name)}`}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">
-          <Icon name="more_h" size={18} />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[13rem]">
-        <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onYear}>
-          <Icon name="calendar" size={15} /> Full-year payroll
-        </DropdownMenuItem>
-        {p && (
-          <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => { void generatePayslip(e, p, me, paidVia); }}>
-            <Icon name="download" size={15} /> Download payslip
+    <SalaryRowActions
+      employee={e} p={p} canWrite={canWrite} onReconcile={onReconcile}
+      ariaLabel={`More actions for ${toTitleCase(e.name)}`}
+      leading={(
+        <>
+          <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onYear}>
+            <Icon name="calendar" size={15} /> Full-year payroll
           </DropdownMenuItem>
-        )}
-        {canWrite && p && p.paid_amount === 0 && (
-          <>
-            <DropdownMenuSeparator />
-            {/* Salary is booked but the bank debit isn't matched yet — jump to
-                Banking with the matching unmatched line opened for reconcile. */}
-            {onReconcile && (
-              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onReconcile}>
-                <Icon name="refresh" size={15} /> Reconcile in Banking →
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}>
-              <Icon name="edit" size={15} /> Edit salary
+          {p && (
+            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => { void generatePayslip(e, p, me, paidVia); }}>
+              <Icon name="download" size={15} /> Download payslip
             </DropdownMenuItem>
-            <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={onUndo}>
-              <Icon name="trash" size={15} /> Undo salary
-            </DropdownMenuItem>
-          </>
-        )}
-        {p && p.paid_amount > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            {/* R-2428: part-paid (e.g. a full & final smaller than the month) — the net can be
-                brought down to what was paid, as loss of pay, without un-reconciling. */}
-            {canWrite && onAdjustLop && p.paid_status !== "paid" && (
-              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onAdjustLop}>
-                <Icon name="edit" size={15} /> Edit salary — set LOP
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem disabled className="gap-2.5 py-2 text-ink-3">
-              <Icon name="lock" size={15} /> {p.paid_status === "paid" ? "Reconciled — un-reconcile to edit" : "Other changes — un-reconcile first"}
-            </DropdownMenuItem>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          )}
+        </>
+      )}
+    />
   );
 }
 
-function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; period: string; onClose: () => void }) {
+/** Pay salary for a month — or, with `editing` (R-2771), change a booked month: the form opens with
+ *  THAT month's booked figures and nothing changes until Save, which reverses the old run and books
+ *  these figures (delete_salary_payment, then pay_salary / pay_salary_with_arrears — the same RPCs). */
+export function PaySalaryDialog({ employee, period, onClose, revisions, editing }: {
+  employee: Employee; period: string; onClose: () => void; revisions: readonly SalaryRevision[];
+  editing?: SalaryPayment;
+}) {
+  const pre = editing ? salaryEditPrefill(editing) : null;
+  /* An earlier Save removed the old run but booking failed → the next Save only books. */
+  const [oldRemoved, setOldRemoved] = React.useState(false);
+  const stillBooked = editing && !oldRemoved ? editing : null;
+  /* R-2699: the salary in force for THIS month (a later revision does not apply yet; an earlier
+     one does). PF proration, LOP day-rate and "Pay full month" all use it (R-2698 FU1). */
+  const inForce = salaryInForce(employee, revisions, period);
+  const monthGross = inForce.monthly_gross;
+  const revisedThisMonth = inForce.revision && revisionMonth(inForce.revision) === period ? inForce.revision : null;
+  const arrearsQ = useSalaryArrears(employee.id);
+  /* R-2771: while the old run is booked its arrears count as paid — the edit may book them again. */
+  const arrearsInfo = arrearsWhileEditing(arrearsQ.data ?? null, stillBooked?.arrears ?? 0);
+  /* Arrears ride only on a month after the months they are for — never a backlog month before the raise. */
+  const arrearsHere = arrearsPayableIn(arrearsInfo, period);
   const accountsQ = useBankAccounts();
   const loansQ = useEmployeeLoans();
   const attQ = useAttendance(period);
   const leaveQ = useLeaveEntries();
   const holQ = useHolidays();
   const shiftQ = useShiftRules();
-  const pay = usePaySalary();
+  const pay = usePaySalary({ quiet: Boolean(editing) });
+  const undoOld = useDeleteSalaryPayment({ quiet: true, hold: true });
+  /* The held undo did not re-read the salary lists; if the form closes without the new run booked
+     (Cancel after a failed Save) re-read them so the month shows as it now is — not booked. */
+  const refreshSalaryData = useRefreshSalaryData();
+  const pendingRefresh = React.useRef(false);
+  React.useEffect(() => () => { if (pendingRefresh.current) refreshSalaryData(); }, [refreshSalaryData]);
   const accounts = (accountsQ.data ?? []).filter((a) => a.is_active);
 
-  // Active advances for this employee (matched by name).
-  const advances = (loansQ.data ?? []).filter(
-    (l) => l.status === "active" && l.outstanding > 0 && l.employee_name.trim().toLowerCase() === employee.name.trim().toLowerCase(),
-  );
+  // Active advances for this employee (matched by name). R-2771: the loan the edited run recovered
+  // from gets that recovery back (delete_salary_payment restores it), even if it closed the loan.
+  const advances = (loansQ.data ?? [])
+    .map((l) => ({ ...l, outstanding: loanOutstandingWhileEditing(l, stillBooked) }))
+    .filter((l) => (l.status === "active" || l.id === stillBooked?.advance_loan_id) && l.outstanding > 0 && l.employee_name.trim().toLowerCase() === employee.name.trim().toLowerCase());
 
   // Don't auto-pay days that haven't happened yet: for a not-yet-complete month
   // the salary defaults to only the days elapsed so far (owner can pay full).
@@ -1581,27 +1990,37 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
   const payPeriod = exitPay
     ? { elapsed: Math.min(monthSoFar.elapsed, exitPay.days), daysInMonth: monthSoFar.daysInMonth, complete: false }
     : monthSoFar;
-  const proratedDefault = prorateSalary(employee.monthly_gross, payPeriod.elapsed, payPeriod.daysInMonth);
-  const [gross, setGross]   = React.useState(String(payPeriod.complete ? employee.monthly_gross : proratedDefault));
-  const [bonus, setBonus]   = React.useState("0");
-  const [lopDays, setLopDays] = React.useState("0");
-  const [lopAmt, setLopAmt]   = React.useState("0");
-  const [advId, setAdvId]     = React.useState("");
-  const [advAmt, setAdvAmt]   = React.useState("0");
-  const [tds, setTds]         = React.useState("0");
-  const [tdsEdited, setTdsEdited] = React.useState(false);
-  const [pf, setPf]           = React.useState("0");
-  const [pfEdited, setPfEdited] = React.useState(false);
-  const [esi, setEsi]         = React.useState("0");
-  const [esiEdited, setEsiEdited] = React.useState(false);
-  const [other, setOther]     = React.useState("0");
-  const [accountId, setAccountId] = React.useState("");
-  const [date, setDate]       = React.useState(todayISO());
+  const proratedDefault = prorateSalary(monthGross, payPeriod.elapsed, payPeriod.daysInMonth);
+  const [gross, setGross]   = React.useState(String(pre ? pre.gross : payPeriod.complete ? monthGross : proratedDefault));
+  const [bonus, setBonus]   = React.useState(String(pre?.bonus ?? 0));
+  /* R-2699: arrears from a revision dated into already-paid months — prefilled, never above what is due. */
+  const [arrears, setArrears] = React.useState(String(pre?.arrears ?? 0));
+  const [arrearsEdited, setArrearsEdited] = React.useState(Boolean(pre));
+  React.useEffect(() => {
+    if (!arrearsEdited && arrearsInfo) setArrears(String(arrearsHere ? arrearsInfo.outstanding : 0));
+  }, [arrearsInfo, arrearsEdited, arrearsHere]);
+  const [lopDays, setLopDays] = React.useState(String(pre?.lopDays ?? 0));
+  const [lopAmt, setLopAmt]   = React.useState(String(pre?.lopAmount ?? 0));
+  const [advId, setAdvId]     = React.useState(pre?.advanceLoanId ?? "");
+  const [advAmt, setAdvAmt]   = React.useState(String(pre?.advanceRecovered ?? 0));
+  /* R-2771 edit: PF / ESI / TDS (and the employer shares + PF wage) stay as booked — a Gross change
+     moves only the net — until "Recalculate PF / ESI / TDS" hands them back to the auto figures. */
+  const [keptStatutory, setKeptStatutory] = React.useState(Boolean(pre));
+  const [tds, setTds]         = React.useState(String(pre?.tds ?? 0));
+  const [tdsEdited, setTdsEdited] = React.useState(Boolean(pre));
+  const [pf, setPf]           = React.useState(String(pre?.pf ?? 0));
+  const [pfEdited, setPfEdited] = React.useState(Boolean(pre));
+  const [esi, setEsi]         = React.useState(String(pre?.esi ?? 0));
+  const [esiEdited, setEsiEdited] = React.useState(Boolean(pre));
+  const [other, setOther]     = React.useState(String(pre?.other ?? 0));
+  const [accountId, setAccountId] = React.useState(pre?.bankAccountId ?? "");
+  const [date, setDate]       = React.useState(pre?.payDate ?? todayISO());
 
   // Default to the main bank account (current/savings), not Petty Cash — salary
   // normally goes out of the company bank.
   React.useEffect(() => {
-    if (!accountId && accounts.length > 0) {
+    /* R-2771: an edit keeps its booked account unless that account is no longer active. */
+    if (accounts.length > 0 && (!accountId || !accounts.some((a) => a.id === accountId))) {
       const bank = accounts.find((a) => a.account_type !== "cash" && a.account_type !== "credit_card");
       setAccountId((bank ?? accounts[0]).id);
     }
@@ -1610,7 +2029,9 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
 
   const n = (s: string) => Math.max(0, Math.round(Number(s) || 0));
   const grossN = n(gross), bonusN = n(bonus), lopN = n(lopAmt), advN = n(advAmt), tdsN = n(tds), pfN = n(pf), esiN = n(esi), otherN = n(other);
-  const earned = Math.max(0, grossN - lopN) + bonusN;
+  const arrearsN = n(arrears);
+  const arrearsTooMuch = arrearsN > (arrearsHere ? arrearsInfo?.outstanding ?? 0 : 0);
+  const earned = Math.max(0, grossN - lopN) + bonusN + arrearsN;
   const net = earned - advN - tdsN - pfN - esiN - otherN;
 
   // ── ESI (auto) — employee 0.75% (deducted from net) + employer 3.25% (extra
@@ -1619,39 +2040,61 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
   const esiWage = Math.max(0, grossN - lopN);
   /* Contribution-period rule: covered in Apr–Sep / Oct–Mar once → covered till its end,
      even above ₹21,000 (lib/payroll/esi.ts). Read from this employee's own payslips. */
-  const { data: esiHistory } = useEmployeeSalaryHistory(employee.id);
-  const esiSticky = esiStickyCovered(period, esiHistory ?? []);
-  const esiCalc = computeEsi(esiWage, employee.esi_applicable, esiSticky);
-
-  /* s.192 (lib/payroll/income-tax.ts): the year's projected tax, less TDS already
-     deducted this FY, spread over the months left — fills the TDS box until typed over. */
-  const tdsEstimate = React.useMemo(() => estimateMonthlyTds({
-    period,
-    thisMonthEarned: earned,
-    earlier: (esiHistory ?? []).map((p) => ({ period: p.period, earned: Math.max(0, p.gross - (p.lop_amount ?? 0)) + (p.incentive ?? 0), tds: p.tds ?? 0 })),
+  const { data: historyAll } = useEmployeeSalaryHistory(employee.id);
+  /* R-2771: an edit leaves its own month out — its TDS / ESI must not count as "earlier" ones. */
+  const esiHistory = React.useMemo(
+    () => (historyAll && editing ? historyAll.filter((h) => h.id !== editing.id) : historyAll),
+    [historyAll, editing],
+  );
+  /* R-2733: PF / ESI / TDS auto figures come from ONE function (lib/payroll/net-pay.ts) — the
+     Employees table's "In-hand / month" and the CTC tab's "Monthly Net Pay" read the same one.
+     s.192 TDS: the year's projected tax, less TDS already deducted this FY, over the months left. */
+  const auto = React.useMemo(() => salaryAutoDeductions({
+    period, gross: grossN, lopAmount: lopN, extraEarned: bonusN + arrearsN, monthGross,
+    basic: inForce.basic_monthly, da: inForce.da_monthly,
+    pfApplicable: employee.pf_applicable, pfFullWage: Boolean(employee.pf_full_wage), esiApplicable: employee.esi_applicable,
     monthlyGrossAhead: employee.monthly_gross,
-  }), [period, earned, esiHistory, employee.monthly_gross]);
+    history: esiHistory ?? [],
+  }), [period, grossN, lopN, bonusN, arrearsN, monthGross, inForce.basic_monthly, inForce.da_monthly, employee.pf_applicable, employee.pf_full_wage, employee.esi_applicable, employee.monthly_gross, esiHistory]);
+  const esiSticky = auto.esiSticky;
+  const esiCalc = auto.esi;
+  const tdsEstimate = auto.tds;
   React.useEffect(() => {
     if (!tdsEdited && esiHistory !== undefined) setTds(String(tdsEstimate.thisMonth));
   }, [tdsEstimate.thisMonth, tdsEdited, esiHistory]);
   React.useEffect(() => {
     if (!esiEdited) setEsi(String(esiCalc.employee));
   }, [esiCalc.employee, esiEdited]);
-  const esiEmployerN = esiCalc.employer;
+  /* Kept as booked only while the employee's ESI is still the booked figure — a hand-changed ESI
+     takes the worked-out employer share, as in Pay mode (employee and employer never out of step). */
+  const esiEmployerN = keptStatutory && pre && esiN === pre.esi ? pre.esiEmployer : esiCalc.employer;
 
   // ── PF (auto) — employee 12% (deducted from net) + employer 12% (extra company
   //    cost, NOT deducted). Computed on the wage capped at the ceiling for THIS
-  //    salary month (₹15,000 till Sep 2026, ₹25,000 from Oct 2026 — lib/payroll/pf.ts).
-  const pfWageNow = pfWage({ gross: grossN, lopAmount: lopN, basic: employee.basic_monthly, da: employee.da_monthly });
-  const pfCalc = computePf(pfWageNow.base, employee.pf_applicable, period);
+  //    salary month (₹15,000 till Sep 2026, ₹25,000 from Oct 2026 — lib/payroll/pf.ts), or on
+  //    the full Basic + DA when the employee's PF basis says so (R-2698). A part-month salary
+  //    (prorated "Salary to pay") prorates Basic + DA the same way (monthlyGross).
+  const pfWageNow = auto.pfWage;
+  const pfCalc = auto.pf;
   React.useEffect(() => {
     if (!pfEdited) setPf(String(pfCalc.employee));
   }, [pfCalc.employee, pfEdited]);
-  const pfEmployerN = pfCalc.employer;
+  const pfKept = Boolean(keptStatutory && pre && pfN === pre.pf);
+  const pfEmployerN = pfKept && pre ? pre.pfEmployer : pfCalc.employer;
+
+  /* R-2771 (Y2): the run was booked at an older salary and a revision now covers this month. A
+     re-booked row is stamped with the revised salary, so its arrears stop — say so, offer the raise. */
+  const revisedSinceBooked = revisedSinceBookedInfo(editing ?? null, monthGross, arrearsQ.data ?? null);
+
+  /* R-2771: kept-as-booked PF / ESI / TDS no longer match what these figures work out to → say so. */
+  const statutoryDiffers = keptStatutory && esiHistory !== undefined
+    && (pfCalc.employee !== pfN || esiCalc.employee !== esiN || tdsEstimate.thisMonth !== tdsN);
 
   const selectedAdv = advances.find((a) => a.id === advId);
   const advTooMuch = advN > 0 && selectedAdv ? advN > selectedAdv.outstanding : false;
-  const valid = grossN > 0 && net >= 0 && Boolean(accountId) && !advTooMuch && (advN === 0 || Boolean(advId));
+  /* R-2771: a run booked with no salary part (incentive only, gross 0) may be edited as such. */
+  const grossOk = grossN > 0 || Boolean(editing && editing.gross === 0 && earned > 0);
+  const valid = grossOk && net >= 0 && Boolean(accountId) && !advTooMuch && !arrearsTooMuch && (advN === 0 || Boolean(advId));
 
   // Auto-fill LOP amount from days. A day is valued at monthly ÷ actual days in
   // the month, so full attendance reconciles to exactly the full salary and
@@ -1659,7 +2102,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
   function onLopDays(v: string) {
     setLopDays(v);
     const d = Number(v) || 0;
-    setLopAmt(String(Math.round((employee.monthly_gross / payPeriod.daysInMonth) * d)));
+    setLopAmt(String(Math.round((monthGross / payPeriod.daysInMonth) * d)));
   }
 
   // Suggested LOP from attendance + unpaid leave. Non-working days (Sunday
@@ -1712,42 +2155,75 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
   const [pyGuard, pmGuard] = period.split("-").map(Number);
   const lastDayOfPeriod = new Date(pyGuard, pmGuard, 0).getUTCDate();
   const todayIso = todayISO();
-  const monthIncomplete = period >= todayIso.slice(0, 7) && Number(todayIso.slice(8, 10)) < lastDayOfPeriod;
+  const monthIncomplete = !editing && period >= todayIso.slice(0, 7) && Number(todayIso.slice(8, 10)) < lastDayOfPeriod;
+
+  const book = () => pay.mutateAsync({
+    employeeId: employee.id, period, payDate: date, gross: grossN,
+    lopDays: Number(lopDays) || 0, lopAmount: lopN, incentive: bonusN,
+    advanceRecovered: advN, advanceLoanId: advN > 0 ? advId : null,
+    tds: tdsN, pf: pfN, esi: esiN, esiEmployer: esiEmployerN, pfEmployer: pfEmployerN, other: otherN, bankAccountId: accountId,
+    pfWage: pfKept && pre ? pre.pfWage : employee.pf_applicable ? pfCalc.base : null,
+    arrears: arrearsN,
+    /* R-2771: an edit keeps the row's notes (LOP reason, "incentive from bank line …"). */
+    ...(editing ? { notes: editing.notes ?? null } : {}),
+  });
+  const [busy, setBusy] = React.useState(false);
+  const saving = busy || pay.isPending || undoOld.isPending;
 
   async function submit() {
-    if (!valid) return;
-    await pay.mutateAsync({
-      employeeId: employee.id, period, payDate: date, gross: grossN,
-      lopDays: Number(lopDays) || 0, lopAmount: lopN, incentive: bonusN,
-      advanceRecovered: advN, advanceLoanId: advN > 0 ? advId : null,
-      tds: tdsN, pf: pfN, esi: esiN, esiEmployer: esiEmployerN, pfEmployer: pfEmployerN, other: otherN, bankAccountId: accountId,
-      pfWage: employee.pf_applicable ? pfCalc.base : null,
+    if (!valid || saving) return;
+    if (!editing) {
+      await book();
+      onClose();
+      return;
+    }
+    /* R-2771: reverse the old run, then book these figures — never books if the reverse was refused. */
+    setBusy(true);
+    const r = await rebookSalary(stillBooked ? stillBooked.id : null, {
+      /* From here the lists are stale until the new run is booked — re-read them if the form goes away first. */
+      undo: async (id) => { await undoOld.mutateAsync(id); pendingRefresh.current = true; },
+      pay: book,
     });
-    onClose();
+    setBusy(false);
+    if (r.oldRemoved) setOldRemoved(true);
+    if (r.ok) {
+      pendingRefresh.current = false; // the booking itself re-read everything
+      toast.success(`Salary for ${periodLabel(period)} changed`, { description: "The register, payslip and 24Q / Form 16 working now read the new figures." });
+      onClose();
+    }
   }
 
   return (
-    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Dialog open onOpenChange={(v) => { if (!v && !saving) onClose(); }}>
       <DialogContent className="md:!max-w-xl">
         <DialogHeader>
-          <DialogTitle>Pay salary — {employee.name}</DialogTitle>
-          <DialogDescription>Period {period}. This books the salary + deductions now; the net pay clears your bank once you reconcile the debit in Banking.</DialogDescription>
+          <DialogTitle>{editing ? "Edit salary" : "Pay salary"} — {employee.name}</DialogTitle>
+          <DialogDescription>
+            {editing
+              ? <>{periodLabel(period)} as booked. Change any figure and Save — the booked salary and its expense are reversed and these figures are booked instead. Nothing changes until you Save.</>
+              : <>Period {period}. This books the salary + deductions now; the net pay clears your bank once you reconcile the debit in Banking.</>}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
+          {editing && oldRemoved && (
+            <p role="alert" className="rounded-md border border-rose/40 bg-rose-soft px-3 py-2 text-xs text-rose" data-testid="edit-salary-old-removed">
+              The old salary for {periodLabel(period)} was removed, but the new one could not be booked. Fix the figures and press Save again — if you cancel now, {periodLabel(period)} has no salary booked.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor="payroll-salary-to-pay" className="block text-xs font-medium text-ink-2 mb-1">Salary to pay (₹)</label>
               <Input id="payroll-salary-to-pay" type="number" min={0} value={gross} onChange={(e) => setGross(e.target.value)} />
-              {!payPeriod.complete && (
+              {!editing && !payPeriod.complete && (
                 <p className="text-xs text-ink-3 mt-1">
                   {exitPay
                     ? <>Final month — prorated to <b>{payPeriod.elapsed} of {payPeriod.daysInMonth} days</b>, last working day {formatDate(exitPay.lastDay)}.</>
                     : proratedDefault > 0
                     ? <>Prorated to <b>{payPeriod.elapsed} of {payPeriod.daysInMonth} days</b> (till today) — days not yet worked aren&apos;t paid.</>
                     : <>This month hasn&apos;t started yet — enter an amount to pay in advance.</>}
-                  {!exitPay && grossN !== employee.monthly_gross && (
-                    <>{" "}<button type="button" className="text-amber-ink font-medium hover:underline" onClick={() => setGross(String(employee.monthly_gross))}>Pay full month ({rupee(employee.monthly_gross)})</button></>
+                  {!exitPay && grossN !== monthGross && (
+                    <>{" "}<button type="button" className="text-amber-ink font-medium hover:underline" onClick={() => setGross(String(monthGross))}>Pay full month ({rupee(monthGross)})</button></>
                   )}
                 </p>
               )}
@@ -1756,6 +2232,28 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                   Full month · {payPeriod.daysInMonth} days ({periodLabel(period)}). Absences are deducted below as LOP.
                 </p>
               )}
+              {revisedSinceBooked && (
+                <p className="text-xs text-amber-ink mt-1" data-testid="edit-salary-revised-since">
+                  {periodLabel(period)} was booked at {rupee(revisedSinceBooked.bookedAt)}/month; the salary for this month was later revised to {rupee(monthGross)}/month.
+                  {revisedSinceBooked.arrears === "paid"
+                    ? <>Its revision arrears were already paid with a later salary — keep the booked salary: paying {periodLabel(period)} at the revised salary as well would pay the raise twice. After saving, the arrears already paid show as paid more than is due.</>
+                    : <>Saving books the month again under the revised salary — revision arrears for {periodLabel(period)} will not be offered afterwards.</>}{" "}
+                  {revisedSinceBooked.arrears === "due" && grossN !== revisedSinceBooked.atRevised && (
+                    <button type="button" className="font-medium underline" onClick={() => setGross(String(revisedSinceBooked.atRevised))}>
+                      Pay at the revised salary ({rupee(revisedSinceBooked.atRevised)})
+                    </button>
+                  )}
+                </p>
+              )}
+              {monthGross !== employee.monthly_gross ? (
+                <p className="text-xs text-ink-3 mt-1" data-testid="pay-salary-in-force">
+                  Salary for {periodLabel(period)}: {rupee(monthGross)}/month — the revised {rupee(employee.monthly_gross)} applies from a later month.
+                </p>
+              ) : revisedThisMonth ? (
+                <p className="text-xs text-emerald mt-1" data-testid="pay-salary-in-force">
+                  Revised from {periodLabel(period)}: {rupee(revisedThisMonth.prev_monthly_gross)} → {rupee(revisedThisMonth.monthly_gross)}/month.
+                </p>
+              ) : null}
             </div>
             <div>
               <label htmlFor="payroll-pay-from" className="block text-xs font-medium text-ink-2 mb-1">Pay from</label>
@@ -1775,6 +2273,27 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
               </div>
             </div>
             <p className="text-xs text-ink-3">One-time bonus/incentive for this month — added to net pay + the Salaries expense, shown separately on the payslip.</p>
+            {arrearsInfo && (arrearsHere || arrearsN > 0) && (
+              <div className="rounded border border-amber/40 bg-amber-soft/30 px-2.5 py-2 space-y-1.5" data-testid="pay-salary-arrears">
+                <div className="grid grid-cols-2 gap-3 items-end">
+                  <div>
+                    <label htmlFor="payroll-arrears" className="block text-xs font-medium text-ink-2 mb-1">Salary revision arrears (₹)</label>
+                    <Input id="payroll-arrears" type="number" min={0} max={arrearsInfo.outstanding} value={arrears} onChange={(e) => { setArrearsEdited(true); setArrears(e.target.value); }} />
+                  </div>
+                  <p className="text-xs text-ink-3 pb-1">Due {rupee(arrearsInfo.outstanding)} for {arrearsInfo.monthsLabel}{arrearsInfo.paid > 0 ? ` (${rupee(arrearsInfo.paid)} already paid)` : ""}.</p>
+                </div>
+                {arrearsTooMuch && <p className="text-xs text-rose">Max {rupee(arrearsInfo.outstanding)}.</p>}
+                <p className="text-xs text-amber-ink">
+                  Those months were booked at the old salary and stay as booked; the difference is added to this salary and booked in {periodLabel(period)}. PF / ESI on arrears are not added automatically — add them below if due.
+                </p>
+              </div>
+            )}
+            {arrearsInfo && !arrearsHere && arrearsInfo.outstanding > 0 && arrearsN === 0 && (
+              <p className="text-xs text-ink-3">Salary revision arrears of {rupee(arrearsInfo.outstanding)} ({arrearsInfo.monthsLabel}) are paid with a salary for a month after {periodLabel(arrearsInfo.lastMonth ?? period)}.</p>
+            )}
+            {arrearsInfo && arrearsInfo.overpaid > 0 && (
+              <p className="text-xs text-amber-ink">Revision arrears paid {rupee(arrearsInfo.overpaid)} more than is due now (a month was redone at the new salary) — recover it under Other if needed.</p>
+            )}
           </div>
 
           {(suggestedLopUnapplied || monthIncomplete) && (
@@ -1836,7 +2355,18 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                 </div>
               </div>
             )}
-            <p className="text-xs text-ink-3 -mt-1">{tdsEstimate.note}{tdsEdited ? " (tumne badla)" : ""}</p>
+            {keptStatutory ? (
+              <p className={cn("text-xs -mt-1", statutoryDiffers ? "text-amber-ink" : "text-ink-3")} data-testid="edit-salary-kept-statutory">
+                TDS, PF and ESI are kept as booked for {periodLabel(period)}.{" "}
+                {statutoryDiffers && <>For these figures the auto amounts are PF {rupee(pfCalc.employee)}, ESI {rupee(esiCalc.employee)}, TDS {rupee(tdsEstimate.thisMonth)}.{" "}</>}
+                <button type="button" className="text-amber-ink font-medium hover:underline"
+                  onClick={() => { setKeptStatutory(false); setTdsEdited(false); setPfEdited(false); setEsiEdited(false); }}>
+                  Recalculate PF / ESI / TDS
+                </button>
+              </p>
+            ) : (
+              <p className="text-xs text-ink-3 -mt-1">{tdsEstimate.note}{tdsEdited ? " (tumne badla)" : ""}</p>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="payroll-tds" className="block text-xs font-medium text-ink-2 mb-1">TDS (₹){!tdsEdited && <span className="text-emerald ml-1 font-normal">auto s.192</span>}</label>
@@ -1883,7 +2413,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                   <span>Total PF challan this month (employee + employer)</span>
                   <span className="font-mono text-ink font-semibold">{rupee(n(pf) + pfEmployerN)}</span>
                 </div>
-                <div className={pfWageNow.assumed ? "text-amber-ink" : "text-ink-3"}>{pfWageNow.note} PF wage {rupee(pfCalc.base)} (ceiling {rupee(pfCalc.ceiling)} for {period}). Admin/EDLI ~1% not included.</div>
+                <div className={pfWageNow.assumed ? "text-amber-ink" : "text-ink-3"}>{pfWageNow.note} PF wage {rupee(pfCalc.base)} {employee.pf_full_wage ? <>(full Basic + DA — this employee&apos;s PF basis; ceiling {rupee(pfCalc.ceiling)} not applied)</> : <>(ceiling {rupee(pfCalc.ceiling)} for {period})</>}. Admin/EDLI ~1% not included.</div>
               </div>
             )}
           </div>
@@ -1901,6 +2431,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
           <div className="rounded-md bg-paper-2/50 p-3 text-sm space-y-1">
             <Row label="Salary earned (gross − LOP)" value={rupee(Math.max(0, grossN - lopN))} />
             {bonusN > 0 && <Row label="+ Bonus / Incentive" value={`+${rupee(bonusN)}`} />}
+            {arrearsN > 0 && <Row label="+ Salary revision arrears" value={`+${rupee(arrearsN)}`} />}
             {advN > 0 && <Row label="− Advance recovery" value={`−${rupee(advN)}`} />}
             {(tdsN + pfN + esiN + otherN) > 0 && <Row label="− TDS / PF / ESI / other" value={`−${rupee(tdsN + pfN + esiN + otherN)}`} />}
             <div className="flex items-center justify-between pt-1 border-t border-hairline font-semibold text-ink">
@@ -1918,8 +2449,8 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={pay.isPending}>Cancel</Button>
-          <Button variant="primary" loading={pay.isPending} disabled={!valid} onClick={submit}>Pay {rupee(net > 0 ? net : 0)}</Button>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="primary" loading={saving} disabled={!valid} onClick={submit}>{editing ? "Save" : "Pay"} {rupee(net > 0 ? net : 0)}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

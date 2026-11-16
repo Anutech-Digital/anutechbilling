@@ -36,6 +36,7 @@
  * drive every rule with a fake git.
  */
 import fs from "node:fs";
+import { isHotFile } from "./worker-lock-hot.mjs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
@@ -232,7 +233,8 @@ export function checkScope(card, { git, areas = [], allowOutside = [], mode = "c
       continue;
     }
     if (isGenerated(p)) continue;
-    const inArea = claimed.some((a) => within(a, p));
+    /* R-2826: a hot file is never claimed (taken at push) — always in scope; the revert check below still runs. */
+    const inArea = isHotFile(p) || claimed.some((a) => within(a, p));
     if (claimed.length && !inArea) {
       if (c.status === "A") { if (!isTestFile(p)) warnings.push(`⚠ naya file claim ke bahar: ${p} — claim me jodo`); continue; }
       if (!testNextToClaim(p, claimed)) { refuse("area", c, `card ke claim ke bahar (${c.status === "D" ? "hatayi" : "badli"})`); continue; }
@@ -304,7 +306,7 @@ export function enforceScope(card, mode, { lockDir, allowOutside = [], cardPath 
 /* ── R-2106 (31 Oct 2026): moved here from worker-lock.mjs (max-lines); worker-lock re-exports them. ── */
 
 /** worker-lock's normPath: slashes, ./, trailing / and production/ off ("../x" stays — repo-root files). */
-function claimPath(p) {
+export function claimPath(p) {
   let s = String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   if (s.startsWith("production/")) s = s.slice("production/".length);
   return s;

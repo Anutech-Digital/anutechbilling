@@ -154,7 +154,7 @@ describe("R-2425: Zoho payment currency + matching by the foreign amount", () =>
   it("the bulk read (findInPaymentList) finds a USD payment by its dollar amount and date — no UTR in Zoho", () => {
     const pay = (id: string, amount: number, currency?: string) => ({ zohoId: id, number: id, date: "2026-08-06", amount, reference: "", customerZohoId: "z", customerName: "Design Box", ...(currency ? { currency } : {}) });
     const l = { txnDate: "2026-08-07", credit: 95846, description: "INW 070826I049902623 USD1024.0@93.6", reference: null };
-    expect(findInPaymentList(l, [pay("a", 1024, "USD"), pay("b", 95846, "USD"), pay("c", 1024, "EUR")])).toMatchObject({ kind: "one", by: "amount_date", payment: { zohoId: "a" } });
+    expect(findInPaymentList(l, [pay("a", 1024, "USD"), pay("b", 95846, "USD"), pay("c", 1024, "EUR")])).toMatchObject({ kind: "one", by: "fx_amount", payment: { zohoId: "a" } });   // R-2658: the one USD payment of that amount = a sure pair
   });
 });
 

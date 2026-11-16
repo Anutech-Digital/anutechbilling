@@ -33,7 +33,7 @@ const mail = vi.hoisted(() => ({ sendEmail: vi.fn(), loadOwnerAlert: vi.fn() }))
 vi.mock("@/lib/email/send", () => ({ sendEmail: mail.sendEmail }));
 vi.mock("@/lib/email/owner-alert.server", () => ({ loadOwnerAlert: mail.loadOwnerAlert }));
 
-const rows = vi.hoisted(() => ({ quote: { id: "Q9", customer_id: "C1" } as unknown, customer: { contact_email: "buyer@example.invalid" } as unknown }));
+const rows = vi.hoisted(() => ({ quote: { id: "Q9", customer_id: "C1", extension_months: 12 } as unknown, customer: { contact_email: "buyer@example.invalid" } as unknown }));
 vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: () => ({
     from: (table: string) => ({
@@ -64,7 +64,7 @@ beforeEach(() => {
   mail.loadOwnerAlert.mockResolvedValue({ alert: { ok: true, to: "owner@example.invalid" } });
   mail.sendEmail.mockResolvedValue({ status: "sent" });
   client.getEngineServices.mockResolvedValue(services("2027-09-25T00:00:00.000Z"));
-  rows.quote = { id: "Q9", customer_id: "C1" };
+  rows.quote = { id: "Q9", customer_id: "C1", extension_months: 12 };
   rows.customer = { contact_email: "buyer@example.invalid" };
 });
 afterEach(() => { process.env = { ...ENV }; });
@@ -206,5 +206,31 @@ describe("R-1587: a DMS outage is heard", () => {
     expect(res.status).toBeGreaterThanOrEqual(500);
     expect(hb.pingHeartbeat).toHaveBeenCalledWith("renew-domains", false);
     err.mockRestore();
+  });
+});
+
+describe("R-2710: the registrar renews the years the customer PAID for", () => {
+  it("a paid 36-month renewal quote sends years: 3", async () => {
+    rows.quote = { id: "Q9", customer_id: "C1", extension_months: 36 };
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: { orderId: "RC-3" } });
+    await GET(req());
+    expect(engine.sendEngineCommand.mock.calls[0][0].payload.years).toBe(3);
+  });
+  it("a paid 12-month renewal quote sends years: 1", async () => {
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: { orderId: "RC-1" } });
+    await GET(req());
+    expect(engine.sendEngineCommand.mock.calls[0][0].payload.years).toBe(1);
+  });
+  it("18 months (not whole years) → held for a person with the task, nothing sent", async () => {
+    rows.quote = { id: "Q9", customer_id: "C1", extension_months: 18 };
+    await GET(req());
+    expect(engine.sendEngineCommand).not.toHaveBeenCalled();
+    expect(prov.noteProvisioning).toHaveBeenCalledWith("R1", expect.stringMatching(/^Held: the paid renewal quote covers 18 months.*renew acme\.in by hand/));
+  });
+  it("the quote could not be read → held, never a guessed 1 year", async () => {
+    rows.quote = null;
+    await GET(req());
+    expect(engine.sendEngineCommand).not.toHaveBeenCalled();
+    expect(prov.noteProvisioning).toHaveBeenCalledWith("R1", expect.stringMatching(/^Held: the paid renewal quote covers an unknown number of months/));
   });
 });

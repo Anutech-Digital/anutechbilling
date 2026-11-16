@@ -16,7 +16,7 @@
  *     for the PREVIEW (shown in the dialog, changeable); the import uses only what the dialog sent.
  * Pure: no I/O.
  */
-import { OLD_BANK_CHARGES_PROBLEM, isRazorpayPayment, type ZohoReceiptFacts } from "./normalise";
+import { OLD_BANK_CHARGES_PROBLEM, foreignOf, inrAmountOf, isRazorpayPayment, type ZohoReceiptFacts } from "./normalise";
 import { defaultCashAccountId, depositAccounts, type DepositAccount as AppBankAccount } from "@/lib/payments/deposit-accounts";
 
 export type { AppBankAccount };
@@ -65,7 +65,9 @@ export interface PlannedReceipt {
   invoiceIds: (string | null)[];
 }
 
-export interface ZohoDeposit { zohoAccountId: string; zohoName: string; count: number; amount: number; appAccountId: string | null; suggested: boolean; leftOut: boolean }
+/** R-2693: amountUnknown = payments of this account whose ₹ is not known (a foreign-currency one read
+ *  before R-2693 or with no Zoho rate) — not in `amount`. */
+export interface ZohoDeposit { zohoAccountId: string; zohoName: string; count: number; amount: number; amountUnknown?: number; appAccountId: string | null; suggested: boolean; leftOut: boolean }
 
 export interface ReceiptsPlan {
   rows: PlannedReceipt[];
@@ -76,7 +78,10 @@ export interface ReceiptsPlan {
   skipReasons: { reason: string; count: number }[];
 }
 
-const reasonKey = (r: string) => r.replace(/₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}/g, "…");
+/** One skip reason per KIND (amounts, invoice numbers, names and dates taken out) — the "Left out, and
+ *  why" counts. R-2693: exported so the check's refusals are grouped the same way; also takes out ISO
+ *  dates ("Dated 2025-03-31, …") and Razorpay ids (pay_…), so one kind is one line with its count. */
+export const skipReasonKey = (r: string) => r.replace(/₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}|\d{4}-\d{2}-\d{2}|pay_[A-Za-z0-9]+/g, "…");
 const digits = (s: string) => s.replace(/\D+/g, "");
 
 /**
@@ -121,7 +126,11 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     const key = f.depositAccountId || "";
     const d = deposits.get(key) ?? { zohoAccountId: key, zohoName: f.depositAccountName || "(no account in Zoho)", count: 0, amount: 0, appAccountId: null, suggested: false, leftOut: false };
     d.count += 1;
-    d.amount += f.amount;
+    /* R-2693: a USD payment at Zoho's rate, never its dollars as ₹; one whose ₹ is not known is counted
+       apart (the screen says so) — never silently added as ₹0. */
+    const inr = inrAmountOf(f);
+    if (inr === null) d.amountUnknown = (d.amountUnknown ?? 0) + 1;
+    else d.amount += inr;
     deposits.set(key, d);
   }
   for (const d of deposits.values()) {
@@ -155,6 +164,12 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
         ? "Read from Zoho again — a Razorpay fee payment can be imported now (fee booked as Bank Charges)."
         : "Zoho took bank charges off this payment and it is not a Razorpay payment — book it by hand.");
     }
+    /* R-2694: a foreign payment read before it could be imported (no per-invoice foreign amounts) —
+       Read again fetches only these (fy-import receiptFactsIncomplete). */
+    const fx = foreignOf(f);
+    if (fx && !f.foreignLines && f.fxRate) {
+      return row("skip", `Read from Zoho again — a ${fx.currency} payment can be imported now (₹ at the invoice's rate, exchange gain / loss booked).`);
+    }
     if (f.problems.length) return row("skip", f.problems[0]);
     if (!f.date || f.date < ctx.fyStart || f.date > ctx.fyEnd) return row("skip", `Dated ${f.date || "?"}, outside the year.`);
     if (!ctx.booksStart) return row("skip", "The books start date is not set (Accounting → Overview → Books start).");
@@ -173,7 +188,10 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     const custs = new Set(invoiceIds.map((id) => customerOf.get(id!) ?? ""));
     if (custs.size !== 1 || custs.has("")) return row("skip", "Its invoices belong to different customers here.");
     const customerId = [...custs][0];
-    for (let k = 0; k < f.lines.length; k++) {
+    /* R-2694: a foreign payment's lines are in its currency — the ₹ (at each invoice's own rate) and the
+       "more than due" refusal are the import's (SQL knows the invoice's rate); here only ₹ lines. */
+    const inrSettle = (k: number) => (fx ? Math.round((f.foreignLines?.[k]?.foreign ?? 0) * (f.fxRate ?? 0)) : f.lines[k].settle);
+    for (let k = 0; !fx && k < f.lines.length; k++) {
       const id = invoiceIds[k]!;
       const due = left.get(id) ?? 0;
       if (f.lines[k].settle > due + 1) return row("skip", `${f.lines[k].invoiceNumber} has only ₹${due} due here, but Zoho settles ₹${f.lines[k].settle} with this payment.`, customerId);
@@ -181,7 +199,7 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     if (!bankAccountId) return row("skip", `Choose the app account for Zoho's "${f.depositAccountName || "no account"}".`, customerId);
     for (let k = 0; k < f.lines.length; k++) {
       const id = invoiceIds[k]!;
-      left.set(id, Math.max(0, (left.get(id) ?? 0) - f.lines[k].settle));
+      left.set(id, Math.max(0, (left.get(id) ?? 0) - inrSettle(k)));
     }
     return row("import", null, customerId);
   });
@@ -197,7 +215,7 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
       const fee = r.facts.fee ?? 0;   // facts read before R-2565 carry no fee
       if (fee > 0) { counts.withFee += 1; totals.fee += fee; }
     }
-    if (r.verdict === "skip" && r.reason) why.set(reasonKey(r.reason), (why.get(reasonKey(r.reason)) ?? 0) + 1);
+    if (r.verdict === "skip" && r.reason) why.set(skipReasonKey(r.reason), (why.get(skipReasonKey(r.reason)) ?? 0) + 1);
   }
   return {
     rows, counts, totals,

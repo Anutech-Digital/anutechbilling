@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
 import { useOutstandingReceivables, useResumeSubscription } from "@/lib/queries/payments";
 import { SuspendSubscriptionDialog } from "@/components/features/subscriptions/suspend-subscription-dialog";
-import { sheetHandledInvoice } from "@/lib/payments/record-payment-invoice";
+import { pageInvoiceStep } from "@/lib/payments/record-payment-invoice";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { initialSubscriptionSearch, SUBSCRIPTION_SEARCH_EVENT } from "./palette-links";
@@ -552,21 +552,27 @@ export default function SubscriptionsPage() {
 
   const raiseInvoiceFor = React.useCallback(async (
     quoteId: string,
-    res: { isFullyPaid: boolean; invoiceId?: string | null; invoiceAttempted?: boolean },
+    res: { isFullyPaid: boolean; invoiceId?: string | null; invoiceAttempted?: boolean; invoiceDeclined?: boolean },
   ) => {
     /* Set BEFORE anything else: the sheet closes right after this returns, and the
        close handler must not mistake a completed payment for an abandoned one. */
     recordedRef.current = true;
     setPendingPayment(null);
-    if (!res.isFullyPaid) {
+    /* ONE decision (lib/payments/record-payment-invoice.ts, tested):
+       part     — no invoice until the quote is fully paid;
+       handled  — R-2099: the sheet already issued it (or tried and said why) — one call, one toast;
+       declined — R-2715: the user UNTICKED "Issue GST invoice now" — no invoice from here either;
+                  the sheet's own result toast already offers "Generate invoice" (one toast, R-248);
+       raise    — the sheet offered no box: raise it here, as before. */
+    const step = pageInvoiceStep(res);
+    if (step === "part") {
       toast.info("Part payment recorded — the GST invoice is raised once the quote is fully paid.", {
         duration: 7000,
       });
       refetch();
       return;
     }
-    /* R-2099: the payment sheet already issued it (or tried and said why) — one call, one toast. */
-    if (sheetHandledInvoice(res)) {
+    if (step === "handled" || step === "declined") {
       refetch();
       return;
     }

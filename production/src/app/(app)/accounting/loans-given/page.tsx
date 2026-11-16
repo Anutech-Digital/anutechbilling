@@ -46,6 +46,9 @@ import {
 } from "@/lib/accounting/director-loans";
 import { S185Step, S185Footer } from "./s185-step";
 import { MoveBsLoansDialog } from "./move-bs-loans-dialog";
+import { useLoanGivenCurrentParts } from "@/lib/queries/loans-current-split";
+import { loanGivenSplitNote, type LoanGivenCurrentPart } from "@/lib/accounting/loans-current-split";
+import { LoanDueWithin12m } from "@/components/features/accounting/loan-due-within-12m";
 
 const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber";
 const labelCls = "block text-xs font-medium text-ink-2 mb-1";
@@ -57,6 +60,8 @@ export default function LoansGivenPage() {
   /* R-2603: loans given from Banking before R-2603 were booked as Balance Sheet lines
      ("Advance/loan given · <name>") — say so here, or the page looks empty while money is out. */
   const oldLines = useOldAdvanceGivenLines(allowed).data ?? { count: 0, total: 0, borrowers: [] };
+  /* R-2674: where each loan shows on the Balance Sheet (current / non-current) — from SQL. */
+  const parts = useLoanGivenCurrentParts(allowed).data ?? null;
   const [giveOpen, setGiveOpen] = React.useState(false);
   const [moveOpen, setMoveOpen] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(null);
@@ -100,6 +105,7 @@ export default function LoansGivenPage() {
   const totalOverdue = open.reduce((s, l) => s + l.overdue, 0);
   const overdueCount = open.filter((l) => l.overdue > 0).length;
   const interestIn = loans.reduce((s, l) => s + l.position.interestReceived, 0);
+  const undecided = parts ? open.filter((l) => parts.get(l.id)?.basis === "undecided" && (parts.get(l.id)?.principal_left ?? 0) > 0) : [];
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto pb-24 md:pb-8">
@@ -132,6 +138,13 @@ export default function LoansGivenPage() {
             {/* R-2604: move them here in one step (Check first, then Move). */}
             <Button variant="primary" size="sm" onClick={() => setMoveOpen(true)}>Move to Loans given</Button>
           </div>
+        </div>
+      )}
+
+      {undecided.length > 0 && (
+        <div role="note" data-testid="r2674-undecided" className="mb-4 rounded-md border border-amber/40 bg-amber-soft/25 px-3 py-2.5 text-sm text-ink-2 leading-relaxed">
+          <b>{undecided.length === 1 ? "1 loan has" : `${undecided.length} loans have`} no due date</b> ({rupee(undecided.reduce((s, l) => s + (parts?.get(l.id)?.principal_left ?? 0), 0))}).
+          Answer “Due back within 12 months?” on {undecided.length === 1 ? "it" : "each"} below — Yes shows it under Current assets on the Balance Sheet (it counts in the current ratio); until then it stays non-current.
         </div>
       )}
 
@@ -201,7 +214,7 @@ export default function LoansGivenPage() {
                           {l.position.interestDue > 0 && <div className="text-xs text-ink-3">incl. {rupee(l.position.interestDue)} interest</div>}
                           {l.repayments.length > 0 && <div className="text-xs text-ink-3">{l.repayments.length} {l.repayments.length === 1 ? "receipt" : "receipts"} got · {rupee(l.position.principalRepaid + l.position.interestReceived)}</div>}
                         </td>
-                        <td className="px-4 py-3 text-ink-2"><NextDueText loan={l} /></td>
+                        <td className="px-4 py-3 text-ink-2"><NextDueText loan={l} /><BalanceSheetPlace loan={l} part={parts?.get(l.id)} /></td>
                         <td className="px-4 py-3"><StatusBadge loan={l} /></td>
                         <td className="px-4 py-3">
                           <div className="flex justify-end gap-2">
@@ -230,7 +243,8 @@ export default function LoansGivenPage() {
                           {l.repayments.length > 0 && <> · {l.repayments.length} {l.repayments.length === 1 ? "receipt" : "receipts"} got</>}
                         </div>
                       </button>
-                      <div className="flex items-center justify-between gap-2">
+                      <BalanceSheetPlace loan={l} part={parts?.get(l.id)} />
+                      <div className="flex items-center justify-between gap-2 mt-2">
                         <StatusBadge loan={l} />
                         {l.status === "open" && <Button size="sm" variant="primary" className="min-h-[44px]" onClick={() => setRepayId(l.id)}>Record repayment</Button>}
                       </div>
@@ -284,6 +298,20 @@ function NextDueText({ loan }: { loan: LoanGiven }) {
   const due = n.amount !== undefined && n.unpaid === n.principal ? n.amount : n.unpaid;
   if (!n.dueOn) return <span>{rupee(due)} · no fixed date</span>;
   return <span className={cn(n.state === "overdue" && "text-rose font-medium")}>{rupee(due)} on {formatDate(n.dueOn)}</span>;
+}
+
+/** R-2674: where an open loan shows on the Balance Sheet — the schedule decides; with no due date, the owner / accountant answers. */
+function BalanceSheetPlace({ loan, part }: { loan: LoanGiven; part: LoanGivenCurrentPart | undefined }) {
+  if (loan.status !== "open" || !part || part.principal_left <= 0) return null;
+  if (part.basis === "schedule") {
+    return <div className="mt-1 text-xs text-ink-3" data-testid={`due-within-12m-${loan.id}`}>{loanGivenSplitNote(part, rupee)}</div>;
+  }
+  return (
+    <div className="mt-1">
+      <LoanDueWithin12m kind="loan_given" loanId={loan.id} name={loan.borrower_name} canEdit
+        value={part.basis === "undecided" ? null : part.current_part > 0} />
+    </div>
+  );
 }
 
 const STATE_LABEL: Record<ScheduleState, string> = { paid: "Paid", part: "Part paid", overdue: "Overdue", due: "Due" };

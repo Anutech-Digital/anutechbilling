@@ -10,16 +10,38 @@
  * screens whose owner has to add the call (CLAUDE.local.md: that area is changed by its owner;
  * the request is in docs/CROSS-TEAM-REQUESTS.md). Do not add a data export here — call
  * logExport instead.
+ *
+ * R-2678 (11 Nov 2026): R-2665's test fixture (lib/testing/fixtures/hdfc-card-statement.ts) builds a
+ * made-up .xls with XLSX.write() and turned this scan — and CI — red for two pushes. A test-only
+ * helper goes in TEST_ONLY below; the last test proves no app file imports it, so a real export
+ * cannot hide there. This file is on the push guard list now (scripts/ops/push-guard-suites.mjs)
+ * and reads through the shared source cache (R-2564 / R-2649).
  */
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { listSourceFiles } from "@/lib/testing/walk-source"; // R-2649: one walk, no stat per entry
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared fresh read cache
 
 const SRC = join(__dirname, "..", "..");
 
 const TRIGGER = /\.download\s*=|\bdownload=\{|XLSX\.(?:writeFile|write)\(|\bwindow\.print\(\)/;
 
+/** Test-only helpers under lib/testing: they build a file in memory for a test — no browser, no tenant data. */
+const TEST_ONLY: Record<string, string> = {
+  "lib/testing/fixtures/hdfc-card-statement.ts": "R-2665 test fixture: a made-up HDFC card .xls built in memory (XLSX.write gives bytes) for the statement-import tests",
+};
+
+/** True when `body` imports (or requires) the module whose file name, without extension, is `base`. */
+function importsModule(body: string, base: string): boolean {
+  const quoted = body.match(/["'`][^"'`\n]+["'`]/g) ?? [];
+  return quoted.some((q) => {
+    const spec = q.slice(1, -1).replace(/\.tsx?$/, "");
+    return spec === base || spec.endsWith(`/${base}`);
+  });
+}
+
 const ALLOW: Record<string, string> = {
+  ...TEST_ONLY,
   // the shared helpers — they call logExport for every caller
   "lib/csv.ts": "downloadCSV logs (download-logs.test.ts)",
   "lib/reports/print.ts": "printReport logs (download-logs.test.ts)",
@@ -42,17 +64,9 @@ const ALLOW: Record<string, string> = {
   // left this list; they call downloadCSV now, which logs.)
 };
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name.startsWith(".")) continue;
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name)) out.push(p);
-  }
-  return out;
-}
-
-const files = walk(SRC).map((p) => ({ rel: relative(SRC, p).split(sep).join("/"), body: readFileSync(p, "utf8") }));
+// Every non-test .ts/.tsx under src/ (Prisma's generated client skipped — not our code, R-2564).
+const files = listSourceFiles(SRC, (name) => /\.(ts|tsx)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name))
+  .map((p) => ({ rel: relative(SRC, p).split(sep).join("/"), body: readSource(p) }));
 const triggering = files.filter((f) => TRIGGER.test(f.body));
 
 describe("R-1006: every export is logged", () => {
@@ -83,5 +97,25 @@ describe("R-1006: every export is logged", () => {
       return !f || !TRIGGER.test(f.body) || (ALLOW[rel].startsWith("R-1006 pending") && /\blogExport\(/.test(f.body));
     });
     expect(stale, "remove these from ALLOW").toEqual([]);
+  });
+
+  it("R-2678: a test-only helper on the allowlist is imported by tests only, never by app code", () => {
+    expect(Object.keys(TEST_ONLY).length).toBeGreaterThan(0);
+    for (const rel of Object.keys(TEST_ONLY)) {
+      expect(rel, "TEST_ONLY is for src/lib/testing only — an app file calls logExport").toMatch(/^lib\/testing\//);
+      const base = rel.replace(/^.*\//, "").replace(/\.tsx?$/, "");
+      // `files` holds no *.test.ts(x), so every hit is app code pulling the fixture in.
+      const importers = files.filter((f) => f.rel !== rel && importsModule(f.body, base)).map((f) => f.rel);
+      expect(importers, `${rel} is a test fixture — app code must not import it`).toEqual([]);
+    }
+  });
+
+  it("R-2678: the importer check is not blind", () => {
+    expect(importsModule(`import { hdfcCardXls } from "@/lib/testing/fixtures/hdfc-card-statement";`, "hdfc-card-statement")).toBe(true);
+    expect(importsModule(`const m = await import('./hdfc-card-statement.ts');`, "hdfc-card-statement")).toBe(true);
+    expect(importsModule(`import { x } from "@/lib/banking/statement-hdfc-card";`, "hdfc-card-statement")).toBe(false);
+    // the real importer the app must never have: prove the scan sees a known import of a real module
+    const csvUsers = files.filter((f) => importsModule(f.body, "csv")).length;
+    expect(csvUsers).toBeGreaterThan(5);
   });
 });

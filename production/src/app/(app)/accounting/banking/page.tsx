@@ -33,6 +33,8 @@ import { CloseBankAccountDialog } from "@/components/features/banking/close-bank
 import { AddBankAccountForm } from "@/components/features/banking/add-bank-account-form";
 import { DeleteBankAccountDialog } from "@/components/features/banking/delete-bank-account-dialog";
 import { TransferDialog } from "@/components/features/banking/transfer-dialog";
+import { PairFinderButton } from "@/components/features/banking/pair-finder";
+import { ZohoExpenseMatchButton } from "@/components/features/banking/zoho-expense-match";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteMoney } from "@/lib/nav";
@@ -87,6 +89,12 @@ export default function BankingPage() {
           <Button icon="check" onClick={() => router.push("/accounting/banking/brs" as Route)}>
             Bank reconciliation
           </Button>
+          {/* R-2656: own-account transfers + reversals among the open lines, sure ones booked in one go —
+              owner / accountant (book_bank_pairs refuses the rest). */}
+          {canDeleteAccount && activeAccounts.length > 0 && <PairFinderButton />}
+          {/* R-2655: imported Zoho expenses against the open debits — which line is which expense, so a
+              paid Zoho expense is matched, not booked again. Owner / accountant (the RPC refuses the rest). */}
+          {canDeleteAccount && activeAccounts.length > 0 && <ZohoExpenseMatchButton />}
           {canWrite && activeAccounts.length >= 2 && (
             <Button icon="refresh" onClick={() => setTransferOpen(true)}>
               Move money / withdraw

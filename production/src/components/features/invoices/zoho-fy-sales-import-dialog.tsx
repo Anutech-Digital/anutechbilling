@@ -234,35 +234,58 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
   );
 }
 
+/** R-2704 — Zoho's adjustment / round-off: what the invoice total carries beyond taxable + GST (+ or −). */
+export function adjustmentOf(t: Pick<MonthTotals, "taxable" | "igst" | "cgst" | "sgst" | "amount">): number {
+  return Math.round((t.amount - t.taxable - t.igst - t.cgst - t.sgst) * 100) / 100;
+}
+
+/** R-2704 — one list's months added up (the table's total row). */
+function sumOf(list: readonly MonthTotals[]): MonthTotals | undefined {
+  if (!list.length) return undefined;
+  return list.reduce((s, t) => ({ month: "", count: s.count + t.count, taxable: s.taxable + t.taxable, igst: s.igst + t.igst,
+    cgst: s.cgst + t.cgst, sgst: s.sgst + t.sgst, amount: s.amount + t.amount }),
+  { month: "", count: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0, amount: 0 });
+}
+
 function MonthTable({ preview }: { preview: Preview }) {
   const months = [...new Set([...preview.zohoByMonth, ...preview.importByMonth, ...preview.appByMonth].map((m) => m.month))].sort();
   const get = (list: MonthTotals[], m: string) => list.find((x) => x.month === m);
-  const cell = (t: MonthTotals | undefined) => (t ? <>{rupee(t.taxable)}<span className="block text-3xs text-ink-3">GST {rupee(t.igst + t.cgst + t.sgst)} · {t.count}</span></> : "—");
+  /* R-2704: "Will come in" names the adjustment in its sub-line (Zoho's has its own column; the app's
+     invoices are not Zoho's — their taxable can be blank, so no adjustment is worked out there). */
+  const cell = (t: MonthTotals | undefined, showAdj = false) => {
+    if (!t) return "—";
+    const adj = showAdj ? adjustmentOf(t) : 0;
+    return <>{rupee(t.taxable)}<span className="block text-3xs text-ink-3">GST {rupee(t.igst + t.cgst + t.sgst)}{adj ? ` · adj. ${rupee(adj)}` : ""} · {t.count}</span></>;
+  };
+  const row = (key: string, label: React.ReactNode, z: MonthTotals | undefined, imp: MonthTotals | undefined, app: MonthTotals | undefined, total = false) => (
+    <tr key={key} data-testid={total ? "fy-sales-month-total" : `fy-sales-month-${key}`}
+      className={`border-b border-hairline last:border-0 tabular-nums${total ? " bg-paper-2 font-semibold" : ""}`}>
+      <td className="p-2 text-ink whitespace-nowrap">{label}</td>
+      <td className="p-2 text-right">{cell(z)}</td>
+      <td className="p-2 text-right text-ink-2 whitespace-nowrap">{z ? `${rupee(z.igst)} · ${rupee(z.cgst)} · ${rupee(z.sgst)}` : "—"}</td>
+      <td className="p-2 text-right text-ink-2 whitespace-nowrap">{z ? rupee(adjustmentOf(z)) : "—"}</td>
+      <td className="p-2 text-right whitespace-nowrap">{z ? rupee(z.amount) : "—"}</td>
+      <td className="p-2 text-right">{cell(imp, true)}</td>
+      <td className="p-2 text-right">{cell(app)}</td>
+    </tr>
+  );
   return (
     <div className="border border-hairline rounded-md overflow-x-auto max-h-72 overflow-y-auto">
-      <table className="w-full text-xs">
+      <table className="w-full text-xs" data-testid="fy-sales-months">
         <thead className="bg-paper-2 border-b border-hairline sticky top-0">
           <tr>
             <th scope="col" className="p-2 text-left font-semibold text-ink-3">Month</th>
-            <th scope="col" className="p-2 text-right font-semibold text-ink-3">Zoho sales (taxable)</th>
-            <th scope="col" className="p-2 text-right font-semibold text-ink-3">IGST · CGST · SGST (Zoho)</th>
+            <th scope="col" className="p-2 text-right font-semibold text-ink-3">Zoho taxable</th>
+            <th scope="col" className="p-2 text-right font-semibold text-ink-3">IGST · CGST · SGST</th>
+            <th scope="col" className="p-2 text-right font-semibold text-ink-3" title="Zoho's adjustment / round-off on the invoice total">Adjustment</th>
+            <th scope="col" className="p-2 text-right font-semibold text-ink-3" title="Taxable + GST + adjustment">Zoho total</th>
             <th scope="col" className="p-2 text-right font-semibold text-ink-3">Will come in</th>
             <th scope="col" className="p-2 text-right font-semibold text-ink-3">Already in the app</th>
           </tr>
         </thead>
         <tbody>
-          {months.map((m) => {
-            const z = get(preview.zohoByMonth, m);
-            return (
-              <tr key={m} className="border-b border-hairline last:border-0 tabular-nums">
-                <td className="p-2 text-ink whitespace-nowrap">{monthLabel(m)}</td>
-                <td className="p-2 text-right">{cell(z)}</td>
-                <td className="p-2 text-right text-ink-2 whitespace-nowrap">{z ? `${rupee(z.igst)} · ${rupee(z.cgst)} · ${rupee(z.sgst)}` : "—"}</td>
-                <td className="p-2 text-right">{cell(get(preview.importByMonth, m))}</td>
-                <td className="p-2 text-right">{cell(get(preview.appByMonth, m))}</td>
-              </tr>
-            );
-          })}
+          {months.map((m) => row(m, monthLabel(m), get(preview.zohoByMonth, m), get(preview.importByMonth, m), get(preview.appByMonth, m)))}
+          {months.length > 1 && row("total", "Total", sumOf(preview.zohoByMonth), sumOf(preview.importByMonth), sumOf(preview.appByMonth), true)}
         </tbody>
       </table>
     </div>

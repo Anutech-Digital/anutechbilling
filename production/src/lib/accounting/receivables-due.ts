@@ -164,10 +164,17 @@ export function subscriptionDuesLine(
   all: ToChaseSummary,
   renewalDues: number,
   projectsUnread = false,
+  /** R-2741: what the Renewals rows' own owed figures add up to (R-2818 rule); when given it leads the line instead of `renewalDues`. */
+  rowsOwed: number | null = null,
 ): string | null {
   const other = all.subscriptionDues - all.unlinked.value - renewalDues;
-  if (renewalDues <= 0 && all.companiesTotal <= 0 && !projectsUnread) return null;
-  let line = renewalDues > 0 ? `${rupee(renewalDues)} unpaid on these renewals` : "No renewal unpaid";
+  if (renewalDues <= 0 && (rowsOwed ?? 0) <= 0 && all.companiesTotal <= 0 && !projectsUnread) return null;
+  const shown = rowsOwed ?? renewalDues;
+  let line = rowsOwed != null
+    /* R-2855: names WHAT is owed — issued invoices still due + an instalment that is due and not invoiced yet (R-2818's
+       rule, lib/renewals/owed.ts) — so it is not read as the renewal value the tiles add up */
+    ? (shown > 0 ? `Bills and instalments due: ${rupee(shown)} unpaid on these renewals` : "No bill or instalment unpaid on these renewals")
+    : (renewalDues > 0 ? `${rupee(renewalDues)} unpaid on these renewals` : "No renewal unpaid");
   if (projectsUnread) {
     // The subscription part was read fine — still name it; only the Companies total is left out.
     if (other > 0) line += ` · ${rupee(other)} on subscriptions not listed here`;

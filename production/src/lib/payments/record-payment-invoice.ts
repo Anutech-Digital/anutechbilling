@@ -165,6 +165,28 @@ export function sheetHandledInvoice(r: { invoiceId?: string | null; invoiceAttem
 }
 
 /**
+ * R-2715 (Pratik audit 12 Nov, R-2099 leftover): what a caller that raises the invoice after
+ * onRecorded (Subscriptions onboarding) does next.
+ *   part     — not fully paid: no invoice yet;
+ *   handled  — the sheet issued it or tried (R-2099): never a second generate_invoice;
+ *   declined — the sheet OFFERED "Issue GST invoice now" and the user left it unticked: the
+ *              user's choice, so no invoice from the caller either (it stays on the quote's
+ *              Generate GST invoice button);
+ *   raise    — the sheet offered no box: the caller raises it, as before.
+ */
+export function pageInvoiceStep(r: {
+  isFullyPaid: boolean;
+  invoiceId?: string | null;
+  invoiceAttempted?: boolean;
+  invoiceDeclined?: boolean;
+}): "part" | "handled" | "declined" | "raise" {
+  if (!r.isFullyPaid) return "part";
+  if (sheetHandledInvoice(r)) return "handled";
+  if (r.invoiceDeclined) return "declined";
+  return "raise";
+}
+
+/**
  * The payment's one result toast, once the invoice WAS issued with it: the headline says so and
  * the button opens that invoice instead of offering "Generate invoice" for a quote that already
  * has one. Lines (TDS, credit, receipt) are kept as they are.

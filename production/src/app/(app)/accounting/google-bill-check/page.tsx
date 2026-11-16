@@ -25,6 +25,12 @@ import { AddFromBillDialog, createFromBill } from "@/components/features/reconci
 import { useItems } from "@/lib/queries/items";
 import { parseGoogleBill, checkBill, expectedPartnerBill, nameFromDomain, draftFromBill, type RowStatus, type CheckRow } from "@/lib/reconcile/google-bill";
 import { fetchGoogleBillBooks } from "./books";
+/* Text of a PDF, one line per row as it reads on the page (5 Oct 2026, Pardeep: "pdf file upload
+   ka option do") — items on the same baseline joined left to right, so the domain table comes out
+   as "accesstel.in C04e9zwp8 529.20" for parseGoogleBill. R-2662: the shared browser-only reader,
+   which also opens a password-protected PDF with its password (never sent or saved). */
+import { pdfTextPages, unlockMessage } from "@/lib/banking/pdf-unlock";
+import { StatementPasswordBox } from "@/components/features/banking/statement-password-box";
 
 const inr = (n: number) => rupee(n, { decimals: 2 });
 const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "success" | "info" }> = {
@@ -34,32 +40,6 @@ const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "s
   loss: { label: "Below cost", kind: "warning" },
   ok: { label: "OK", kind: "success" },
 };
-
-/**
- * Text of a PDF, one line per row as it reads on the page (5 Oct 2026, Pardeep: "pdf file upload
- * ka option do"). Items on the same baseline are joined left to right — the domain table comes
- * out as "accesstel.in C04e9zwp8 529.20", which is what parseGoogleBill reads. Same pdfjs set-up
- * as the document viewer; nothing leaves the browser.
- */
-async function pdfToText(file: File): Promise<string> {
-  const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
-  let out = "";
-  for (let p = 1; p <= pdf.numPages; p++) {
-    const tc = await (await pdf.getPage(p)).getTextContent();
-    const rows = new Map<number, { x: number; s: string }[]>();
-    for (const it of tc.items as { str?: string; transform?: number[] }[]) {
-      if (!it.str || !it.transform) continue;
-      const y = Math.round(it.transform[5]);
-      rows.set(y, [...(rows.get(y) ?? []), { x: it.transform[4], s: it.str }]);
-    }
-    for (const y of [...rows.keys()].sort((a, b) => b - a)) {
-      out += rows.get(y)!.sort((a, b) => a.x - b.x).map((i) => i.s).join(" ").replace(/\s+/g, " ").trim() + "\n";
-    }
-  }
-  return out;
-}
 
 function useBooks() {
   return useQuery({
@@ -92,18 +72,41 @@ export default function GoogleBillCheckPage() {
   const [readError, setReadError] = React.useState<string | null>(null);
   const [dragging, setDragging] = React.useState(false);
   const fileRef = React.useRef<HTMLInputElement>(null);
+  /* R-2662: a locked PDF waits here for its password (the bytes only). */
+  const [locked, setLocked] = React.useState<{ name: string; bytes: Uint8Array; failed: boolean } | null>(null);
+  const [unlocking, setUnlocking] = React.useState(false);
+
+  async function unlock(password: string) {
+    if (!locked) return;
+    setUnlocking(true);
+    const r = await pdfTextPages(locked.bytes, password, { mode: "plain" });
+    setUnlocking(false);
+    if (r.ok) { setText(r.pages.join("\n") + "\n"); setFileName(locked.name); setLocked(null); return; }
+    if (r.reason === "wrong-password" || r.reason === "need-password") { setLocked({ ...locked, failed: true }); return; }
+    setLocked(null);
+    setReadError(unlockMessage(r.reason, "document"));
+  }
 
   async function loadFile(f: File | undefined | null) {
     if (!f) return;
     setReadError(null);
+    setLocked(null);
     const isPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name);
     if (!isPdf && !/\.(txt|csv)$/i.test(f.name)) { setReadError("Choose the Google invoice PDF."); return; }
     setReading(true);
     try {
-      setText(isPdf ? await pdfToText(f) : await f.text());
+      if (isPdf) {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        const r = await pdfTextPages(bytes, "", { mode: "plain" });
+        if (!r.ok && r.reason === "need-password") { setLocked({ name: f.name, bytes, failed: false }); return; }
+        if (!r.ok) { setReadError(unlockMessage(r.reason, "document")); return; }
+        setText(r.pages.join("\n") + "\n");
+      } else {
+        setText(await f.text());
+      }
       setFileName(f.name);
     } catch {
-      setReadError("Could not read this PDF. If it is password-protected, open it and paste the text instead.");
+      setReadError("Could not read this PDF. Open it and paste the text instead.");
     } finally {
       setReading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -204,6 +207,16 @@ export default function GoogleBillCheckPage() {
           <div className="text-xs text-ink-3 mt-0.5">Drop it here or click to choose. Google&apos;s invoice CSV works too, and adds each domain&apos;s edition and users. It is read in your browser — nothing is uploaded or saved.</div>
         </div>
         {readError && <p className="text-xs text-rose">{readError}</p>}
+        {locked && (
+          <StatementPasswordBox
+            fileName={locked.name}
+            message={unlockMessage(locked.failed ? "wrong-password" : "need-password", "document")}
+            failed={locked.failed}
+            busy={unlocking}
+            onUnlock={unlock}
+            onCancel={() => setLocked(null)}
+          />
+        )}
         <details className="text-xs text-ink-3" open={!!text && !fileName}>
           <summary className="cursor-pointer">Or paste the text (PDF → Ctrl + A → Ctrl + C)</summary>
         <textarea id="gbc-text" aria-label="Google invoice text" value={text} onChange={(e) => { setText(e.target.value); setFileName(null); }} rows={6}

@@ -13,8 +13,8 @@
  *  - every expired row said "Grace over" at 2 days, because the company grace is 0–1 day: the
  *    grace line now shows only when there IS a grace (> 0 days) to be in or out of.
  *  - the amount was MRR "/mo" even for a yearly renewal: the row shows what the customer will be
- *    asked to pay for the term — the open renewal quote's total (incl. GST), else the term amount
- *    (+ GST).
+ *    asked to pay for the term — the term amount (+ GST). R-2751: one basis everywhere; a renewal
+ *    quote never changes it (its total incl. GST is only a note once it is sent).
  *
  * No second copy of the rules: buckets/grace/at-risk come from classify.ts, the paid rule from
  * reminders.ts (isTerminalRenewal), the parts-due count from lib/renewals/split-billed-next-part,
@@ -26,12 +26,14 @@ import { partsDue } from "@/lib/renewals/split-billed-next-part";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { termAmountOf } from "@/lib/billing/subscription-schedule";
 import { nonRenewingLabel } from "@/lib/subscriptions/non-renewing";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee, formatDate, foreignAmount } from "@/lib/utils";
 import { RENEWAL_URGENT_DAYS, RENEWAL_UPCOMING_DAYS, RENEWAL_FUTURE_DAYS, RENEWAL_EXCLUDED_STATUS } from "@/lib/renewals/buckets";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { expiredGraceText, isStopped, type RenewalGroups } from "./classify";
 import { isSettledRenewed } from "./row-action";
+import { renewalDueText } from "./last-docs";
 import { renewalActionSet, type RenewalActionSub } from "@/components/features/renewals/renewal-actions-rules";
+import { bulkSendDecision, type RenewalStage, type StageKey } from "@/lib/renewals/stage";
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
@@ -61,6 +63,17 @@ export const QUEUE_TAB_LABEL: Record<QueueTab, string> = {
   later: "Later (91+ days)",
 };
 
+/**
+ * R-2755: a search / filter emptied the open tab — the OTHER tabs that do have matches, in tab
+ * order ("1 match in 8–30"), so the empty tab offers to open them instead of a dead end.
+ */
+export function matchesElsewhere(open: QueueTab, counts: Record<QueueTab, number>): { tab: QueueTab; label: string; count: number; words: string }[] {
+  return QUEUE_TABS.filter((t) => t !== open && counts[t] > 0).map((t) => ({
+    tab: t, label: QUEUE_TAB_LABEL[t], count: counts[t],
+    words: `${counts[t]} ${counts[t] === 1 ? "match" : "matches"} in ${QUEUE_TAB_LABEL[t]}`,
+  }));
+}
+
 /** The tab for a row that is due (not overdue): by IST days to the renewal date. */
 export function windowTab(daysUntil: number): QueueTab {
   if (daysUntil < 0) return "overdue";
@@ -87,14 +100,17 @@ export function noRenewalDate<T extends { status: string; renewal_date: string |
  * one of them): Overdue = expired + service stopped; the windows = Next 7 days / upcoming /
  * future + the Won't-renew rows still running, split by date. R-2422: a flex (monthly-commitment)
  * subscription is a renewal like any other (R-2232's exclusion reversed by the owner, 3 Nov).
+ * R-2858: the window is the Due column's own day count (`dueDays` — a part due before the renewal date
+ * counts from ITS date; absent = the renewal date), so a Won't renew row with a late part is in Overdue.
  */
-export function queueTabs<T extends { daysUntil: number }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
+export function queueTabs<T extends { daysUntil: number; dueDays?: number | null }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
   const out: Record<QueueTab, T[]> = { overdue: [], due7: [], d30: [], d60: [], d90: [], later: [] };
   out.overdue.push(...g.expired, ...g.stopped);
   /* R-2586: g.later = chased renewals past 90 days (classify.ts); a far Won't renew row lands in later too. */
   for (const r of [...g.due7, ...g.upcoming, ...g.future, ...g.later, ...g.nonRenewing]) {
-    const t = windowTab(r.daysUntil);
-    if (t !== "overdue") out[t].push(r);
+    const t = windowTab(r.dueDays ?? r.daysUntil);
+    /* by the renewal date alone a row here is never overdue (classify.ts) — only a late part (dueDays) makes it so */
+    if (t !== "overdue" || r.dueDays != null) out[t].push(r);
   }
   return out;
 }
@@ -122,7 +138,8 @@ export function resolveBucket(
 
 // ─── One status per row ─────────────────────────────────────────────────────
 
-export type RowStatusKey = "stopped" | "non-renewing" | "renewed" | "bills-not-raised" | "overdue" | "due";
+/* R-2728: "quote-sent" — the renewal quote (or the renewal's part proforma) is with the customer, unpaid. */
+export type RowStatusKey = "stopped" | "non-renewing" | "renewed" | "quote-sent" | "bills-not-raised" | "overdue" | "due";
 
 export interface RowStatus {
   key: RowStatusKey;
@@ -133,15 +150,36 @@ export interface RowStatus {
   note: string | null;
 }
 
+/** R-2728: the row status (and status filter value) once the renewal quote / part bill went to the customer. */
+export const RENEWAL_QUOTE_SENT = "Renewal quote sent";
+
 /** Status filter options (the chip labels are per row; the filter groups them). */
 export const STATUS_FILTER_LABEL: Record<RowStatusKey, string> = {
   overdue: "Overdue",
+  "quote-sent": RENEWAL_QUOTE_SENT,
   "bills-not-raised": "Bill not raised",
   due: "Due",
   renewed: "Renewed",
   "non-renewing": "Non-renewing",
   stopped: "Service stopped",
 };
+
+/**
+ * R-2760 (R-2738 followUp): the status filter on the row's ONE stage (lib/renewals/stage.ts) — the
+ * words the chip says. Tiles still add up by time window (tiles.ts).
+ */
+export const STAGE_FILTER_LABEL: Record<StageKey, string> = {
+  due: "Not sent",
+  "part-due": "Part not billed",
+  draft: "Draft part quote",
+  sent: "Quote sent",
+  "quote-closed": "Quote closed",
+  invoiced: "Invoiced",
+  renewed: "Renewed",
+  ending: "Won't renew / ended",
+  stopped: "Stopped / cancelled",
+};
+export const STAGE_FILTER_ORDER = Object.keys(STAGE_FILTER_LABEL) as StageKey[];
 
 export interface StatusSub {
   status?: string | null;
@@ -158,8 +196,12 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 /**
  * The row's ONE status. First match wins:
- *   Service stopped → Non-renewing · ends <date> → Renewed (paid: settled, or its renewal quote
- *   is paid) → billed in parts and a part is due: "<Mon> bill not raised" / "N bills not raised"
+ *   Service stopped → Non-renewing · ends <date> → Renewed (its renewal quote is paid) →
+ *   R-2728 "Renewal quote sent" for the renewal's part proforma that Bill next part raised and is
+ *   unpaid (it beats the 'renewed' state Bill next part's roll leaves — the money is not in) →
+ *   Renewed (settled — a stale open renewal quote does not undo it) → billed in parts and a part
+ *   is due → R-2728 "Renewal quote sent" (the renewal quote is with the customer, unpaid; past the
+ *   date it keeps the grace line, and the date cell says "Overdue Nd"): "<Mon> bill not raised" / "N bills not raised"
  *   → past the date: "Overdue Nd" (+ the grace line only when the grace is > 0 days)
  *   → "Due today" / "Due in Nd".
  * A stale 'renewed' state on a row whose date has passed is NOT "Renewed": the new term was not
@@ -168,30 +210,34 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 export function renewalRowStatus(
   sub: StatusSub,
   daysUntil: number,
-  opts: { tenantGraceDays: number; today?: Date; renewalPaid?: boolean },
+  opts: { tenantGraceDays: number; today?: Date; renewalPaid?: boolean; quoteSent?: { quoteId: string; kind: "renewal" | "part" } | null },
 ): RowStatus {
   const today = opts.today ?? new Date();
   if (isStopped({ ...sub, mrr: 0 })) return { key: "stopped", label: "Service stopped", tone: "danger", note: null };
   if (sub.auto_renew === false) return { key: "non-renewing", label: nonRenewingLabel(sub), tone: "warning", note: null };
-  if (opts.renewalPaid || isSettledRenewed(sub, today)) return { key: "renewed", label: "Renewed", tone: "success", note: null };
+  if (opts.renewalPaid) return { key: "renewed", label: "Renewed", tone: "success", note: null };
+  /* R-2728: past the date and in / out of grace — the overdue line, also under "Renewal quote sent". */
+  const graceNote = (): string | null => {
+    if (daysUntil >= 0 || !sub.renewal_date) return null;
+    const grace = effectiveGraceDays({ tenantGraceDays: opts.tenantGraceDays, renewalDate: sub.renewal_date, graceUntil: sub.grace_until ?? null });
+    /* R-2403: with no grace at all, "Grace over" on every row was noise (audit problem 2). */
+    return grace > 0 ? expiredGraceText(sub, daysUntil, opts.tenantGraceDays) : null;
+  };
+  const sent: RowStatus = { key: "quote-sent", label: RENEWAL_QUOTE_SENT, tone: "info", note: null };
+  /* R-2728: Bill next part's roll leaves renewal_state 'renewed' while the part proforma is unpaid — not Renewed. */
+  if (opts.quoteSent?.kind === "part") return sent;
+  if (isSettledRenewed(sub, today)) return { key: "renewed", label: "Renewed", tone: "success", note: null };
 
   const behind = billsNotRaised(sub, today);
   /* R-2095 kept: more than one part behind → Bill next part bills them one by one, oldest first. */
   if (behind) return { key: "bills-not-raised", label: behind.label, tone: "danger", note: behind.count > 1 ? `From ${formatDate(behind.from)} — billed oldest first` : null };
 
-  if (daysUntil < 0) {
-    const days = Math.abs(daysUntil);
-    const grace = sub.renewal_date
-      ? effectiveGraceDays({ tenantGraceDays: opts.tenantGraceDays, renewalDate: sub.renewal_date, graceUntil: sub.grace_until ?? null })
-      : 0;
-    /* R-2403: with no grace at all, "Grace over" on every row was noise (audit problem 2). */
-    const note = grace > 0 ? expiredGraceText(sub, daysUntil, opts.tenantGraceDays) : null;
-    return { key: "overdue", label: `Overdue ${days}d`, tone: "danger", note };
-  }
-  if (daysUntil === 0) return { key: "due", label: "Due today", tone: "danger", note: null };
+  if (opts.quoteSent) return { ...sent, note: graceNote() };
+  if (daysUntil < 0) return { key: "overdue", label: renewalDueText(daysUntil), tone: "danger", note: graceNote() };
+  if (daysUntil === 0) return { key: "due", label: renewalDueText(0), tone: "danger", note: null };
   return {
     key: "due",
-    label: `Due in ${daysUntil}d`,
+    label: renewalDueText(daysUntil),
     tone: daysUntil <= RENEWAL_URGENT_DAYS ? "danger" : daysUntil <= RENEWAL_UPCOMING_DAYS ? "warning" : "muted",
     note: null,
   };
@@ -229,6 +275,20 @@ export interface RenewalQuoteInfo {
   amount: number | null;
   status: string | null;
   payment_status?: string | null;
+  /** R-2767: the quote's customer currency and its ₹ rate (quotes.amount stays the ₹ books figure). */
+  currency?: string | null;
+  exchange_rate?: number | null;
+}
+
+/** R-2767: a foreign-currency customer's renewal is shown in their currency — the sale's (or renewal's) quote says which. */
+export const EXPORT_GST = "no GST (LUT)";
+
+/** A quote's own foreign currency + ₹ rate; null = ₹, or no real rate (quotes.exchange_rate defaults to 1 —
+    the builder treats ≤ 1 as "rate missing" too, so ₹ is never printed with a $ sign). */
+function foreignOf(q: RenewalQuoteInfo | null | undefined): { currency: string; rate: number } | null {
+  const cur = (q?.currency ?? "").trim().toUpperCase() || "INR";
+  const rate = Number(q?.exchange_rate);
+  return cur !== "INR" && Number.isFinite(rate) && rate > 1 ? { currency: cur, rate } : null;
 }
 
 const CLOSED_QUOTE = new Set(["rejected", "expired", "cancelled", "void", "invoiced"]);
@@ -244,30 +304,65 @@ export function termSuffix(termMonths: number | null | undefined): string {
 }
 
 export interface RenewalAmount {
-  /** Rupees, for sorting and the bulk total. */
+  /** Rupees BEFORE GST — sorting, the tiles, the forecast and the bulk total all read this. */
   value: number;
-  /** "₹78,000/yr" or "₹92,040". */
+  /** "₹78,000/yr". */
   text: string;
-  /** "+ GST" (term amount, ex-GST) or "incl. GST · Q-x" (the renewal quote's total). */
+  /** Always "+ GST" — the one basis (R-2751). */
   gst: string;
-  fromQuote: boolean;
+  /** R-2751: "Quote ₹92,040 incl. GST" once the renewal quote is sent / viewed / accepted; null otherwise (a draft adds nothing). */
+  quoteNote: string | null;
+  /** The same quote, short: "quote ₹92,040" (incl. GST; R-2854: full figure, no "K" — not printed in the table's Amount column any more). */
+  quoteShort: string | null;
 }
 
+/** R-2751: a renewal quote still being prepared ("Review renewal quote" makes one) — changes nothing on Renewals. */
+const DRAFT_QUOTE = "draft";
+
 /**
- * What the customer is asked to pay for the term: the linked open renewal quote's total
- * (incl. GST) when there is one, else the term amount (ex-GST, "+ GST") — the same choice
- * Payment Follow-up makes for its renewal rows (lib/queries/collections.ts, R-2401).
+ * R-2751 (user audit 14 Nov, job 7) — ONE amount basis on Renewals: every row's figure is the
+ * renewal's TERM AMOUNT BEFORE GST ("₹21,600/yr + GST"), whether or not a renewal quote exists.
+ * Before, a linked open quote — even a draft, which just opening "Review renewal quote" makes —
+ * swapped the row to the quote total incl. GST: SCN Kochi jumped from ₹21,600 to ₹25,488 and
+ * "Due in 30 days" from ₹39.9K to ₹43.8K while every other row stayed before GST. Rows, Sort:
+ * amount, the tiles, the forecast and the bulk/CSV total read `value`. A sent / viewed / accepted
+ * quote only adds `quoteNote` (its total incl. GST); a draft adds nothing.
  */
-export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | null }, quote: RenewalQuoteInfo | null | undefined): RenewalAmount {
+export function renewalAmount(
+  sub: AmountSub & { renewal_quote_id?: string | null },
+  quote: RenewalQuoteInfo | null | undefined,
+  /** R-2767: the subscription's own (sale) quote — its currency decides a foreign customer's figure. */
+  saleQuote?: RenewalQuoteInfo | null,
+): RenewalAmount {
   /* R-2422: how it is paid ("Annual · paid quarterly · ₹19,500 each") is frequency.ts — one wording. */
-  const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(quote.status ?? "") && (quote.amount ?? 0) > 0
-    ? quote : null;
-  if (q) {
-    const v = Math.round(q.amount ?? 0);
-    return { value: v, text: rupee(v), gst: `incl. GST · ${q.id}`, fromQuote: true };
-  }
   const v = termAmountOf({ mrr: sub.mrr, term_months: sub.term_months ?? 12, term_amount: sub.term_amount ?? null });
-  return { value: v, text: `${rupee(v)}${termSuffix(sub.term_months)}`, gst: "+ GST", fromQuote: false };
+  /* code-review: only a real draft is hidden — a quote with no status (imported) is treated as live. */
+  const status = quote?.status ?? "";
+  const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(status) && status !== DRAFT_QUOTE && (quote.amount ?? 0) > 0
+    ? quote : null;
+  /* R-2767 (audit P11): a USD / foreign customer reads their own currency, never "₹… + GST" (exports carry no GST
+     under the LUT). value stays ₹ — sorting, tiles, forecast and CSV add up rupees. */
+  /* The row's currency is the SALE quote's (what this customer is billed in) — a draft / closed renewal quote
+     never changes the row (R-2751). The sent quote's note is in THAT quote's own currency: a renewal quote made
+     in ₹ for a USD customer reads "Quote ₹…", the figure the customer holds. */
+  const qfx = q ? foreignOf(q) : null;
+  const qForeign = q && qfx ? foreignAmount(qfx.currency, Number(q.amount ?? 0), qfx.rate) : null;
+  const quoteNote = !q ? null : qForeign ? `Quote ${qForeign}` : `Quote ${rupee(Math.round(q.amount ?? 0))} incl. GST`;
+  /* R-2854 (from R-2857): the full Indian figure "₹92,040", never "₹92.0K". The TABLE no longer prints it in the Amount
+     column — the quote's total is said once, on the row's quote line (row-quote.tsx). */
+  const quoteShort = !q ? null : qForeign ? `quote ${qForeign}` : `quote ${rupee(Math.round(q.amount ?? 0))}`;
+  const fx = foreignOf(saleQuote);
+  const foreign = fx ? foreignAmount(fx.currency, v, fx.rate) : null;
+  if (foreign) {
+    return { value: v, text: `${foreign}${termSuffix(sub.term_months)}`, gst: EXPORT_GST, quoteNote, quoteShort };
+  }
+  return {
+    value: v,
+    text: `${rupee(v)}${termSuffix(sub.term_months)}`,
+    gst: "+ GST",
+    quoteNote,
+    quoteShort,
+  };
 }
 
 /** A renewal quote that is paid — the row is renewed even if its date has not moved yet. */
@@ -289,6 +384,8 @@ export interface QueueRow {
   plan: string | null;
   vendor: string | null;
   statusKey: RowStatusKey;
+  /** R-2760: the row's stage (null while its documents load — it matches no stage filter until then). */
+  stageKey?: StageKey | null;
   atRisk: boolean;
   customer: string;
   /** R-2422: Annual / Monthly (flex) commitment (frequency.ts renewalCommitment); null = unknown. */
@@ -305,7 +402,8 @@ export function sortQueue<T extends QueueRow>(rows: readonly T[], by: QueueSort)
 
 export interface QueueFilters {
   product: string;   // "" = all
-  status: RowStatusKey | "";
+  /** R-2760: a stage (STAGE_FILTER_LABEL); "" = all. */
+  status: StageKey | "";
   vendor: string;    // "" = all
   atRisk: boolean;
   /** R-2422: All · Annual · Monthly. */
@@ -317,7 +415,7 @@ export const NO_FILTERS: QueueFilters = { product: "", status: "", vendor: "", a
 export function filterQueue<T extends QueueRow>(rows: readonly T[], f: QueueFilters): T[] {
   return rows.filter((r) =>
     (!f.product || (r.plan ?? "") === f.product)
-    && (!f.status || r.statusKey === f.status)
+    && (!f.status || r.stageKey === f.status)
     && (!f.vendor || (r.vendor ?? "") === f.vendor)
     && (!f.atRisk || r.atRisk)
     && (f.commitment === "all" || r.commitment === f.commitment));
@@ -328,7 +426,42 @@ export function filterOptions(values: readonly (string | null | undefined)[]): s
   return [...new Set(values.filter((v): v is string => !!v && v.trim() !== ""))].sort((a, b) => a.localeCompare(b));
 }
 
-// ─── Bulk: Send renewal quote ───────────────────────────────────────────────
+// ─── Bulk: Send renewal (R-2760, on the stage) ──────────────────────────────
+
+/** R-2738 followUp: stage.ts has no input for it — a row with no customer email cannot be sent a renewal. */
+export const NO_EMAIL_REASON = "no email on file — add one on the customer first";
+
+/**
+ * R-2760: bulk Send renewal takes exactly the rows whose ONE stage says the whole-term renewal is
+ * still to send (bulkSendDecision — never a split row, R-808; never one sent / invoiced / renewed,
+ * R-2232; not 91+ days out, R-2586) AND that have an email to send to. Every other row is named
+ * with its reason. A row still loading its documents is skipped (never sent on a half-known stage).
+ */
+export function bulkStageTargets<T extends { stage: RenewalStage | null }>(
+  rows: readonly T[],
+  /** undefined = contacts not read yet; null / "" = none on file. */
+  emailOf: (row: T) => string | null | undefined,
+  /** The documents read failed (no stage can be known) — say so, not "loading". */
+  docsFailed = false,
+): { send: T[]; skipped: { row: T; reason: string }[] } {
+  const send: T[] = [];
+  const skipped: { row: T; reason: string }[] = [];
+  for (const r of rows) {
+    if (!r.stage) {
+      skipped.push({ row: r, reason: docsFailed ? "its quotes / invoices couldn't load — reload the page" : "still loading — try again in a moment" });
+      continue;
+    }
+    const d = bulkSendDecision(r.stage);
+    if (!d.send) { skipped.push({ row: r, reason: d.reason }); continue; }
+    const email = emailOf(r);
+    if (email === undefined) { skipped.push({ row: r, reason: "contact details still loading — try again in a moment" }); continue; }
+    if (!(email ?? "").trim()) { skipped.push({ row: r, reason: NO_EMAIL_REASON }); continue; }
+    send.push(r);
+  }
+  return { send, skipped };
+}
+
+// ─── Bulk: Send renewal quote (older rule — no page caller since R-2760; queue.test.ts keeps its rules) ──
 
 /** R-2586: why bulk Send renewal quote skips a Later row — named in its confirm. */
 export const LATER_SKIP_REASON = "renews in 91+ days — too early to send";
@@ -387,14 +520,72 @@ export function bulkQuoteConfirm(
  * R-2422: Actions is ONE next-step button + ⋯ now (was up to six stacked buttons), so it gives
  * 24px back to Customer, which also carries the "Last paid" line.
  */
-export const QUEUE_TABLE_BUDGET_PX = 944;
-export const QUEUE_FLEX_MIN_PX = 140;
-export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: "select" | "customer" | "product" | "date" | "amount" | "status" | "actions"; width: number | null }> = [
-  { key: "select", width: 36 },
-  { key: "customer", width: null },
-  { key: "product", width: null },
-  { key: "date", width: 104 },
-  { key: "amount", width: 128 },
-  { key: "status", width: 140 },
-  { key: "actions", width: 224 },
+/* R-2759 (R-2739b, 14 Nov): the table now shows from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX) — a
+   1280 laptop has a 1264–1276px inner width, so the old xl (1280px) switch showed it the card list.
+   Measured (R-2759 card spec): the table box is 974px at a 1280 window with an overlay scrollbar; a
+   classic Windows scrollbar takes ~17px and a 1260 window 20px more → ~936px was the budget.
+   R-2821 (14 Nov): the page's side padding is 16px (was 32px) below 2xl, so the budget is 968px; Customer and Product get ≥200px
+   each (names wrap to 2 lines), so Status / Last invoice are 92px and wrap (chip text, "Overdue 12d · ₹…"). Eight
+   columns, every cell at most two lines:
+   ☐ · Customer · Product & period · Due · Amount · Status · Last bill · Action. R-2840: Last bill has a 3rd line (last payment). */
+/* R-2854 (Chrome human test on staging, 16 Nov — a 1920 window): the fixed 92px Status / Last bill made every row
+   119–161px tall while Customer and Product stretched to 518px each, half empty; "₹63,855/mo" broke as "…/m" + "o"
+   and "INV-A378-…" was cut. Now every column but Product has a width that GROWS with the window — `width` at a
+   1260 window up to `max` at 1920 (queueColCss: a CSS clamp() on vw, so no breakpoint list to keep in step) — and
+   Product & period, which also carries the renewal's quote line, takes what is left (never under QUEUE_FLEX_MIN_PX).
+   At 1260–1280 the 968px budget still holds with no sideways scroll: Last bill is 128px so a full invoice number
+   ("INV-A378-27-0046", 16 mono characters ≈ 115px + 12px cell padding) shows uncut, and Amount is 100px so "₹63,855/mo" is one line
+   — paid for by Customer (152px; names wrap to two lines, R-2821). Measured boxes: 968–988px at 1260–1280,
+   1614px at 1920 (the page's side padding is 32px from 2xl, queueTableBoxPx). */
+export const QUEUE_TABLE_MIN_VIEWPORT_PX = 1260;
+export const QUEUE_TABLE_BUDGET_PX = 968;
+/** Product & period — the one flexible column — never gets less than this. */
+export const QUEUE_FLEX_MIN_PX = 188;
+/** The window widths the column widths grow between (`width` → `max`). */
+export const QUEUE_SCALE_FROM_PX = 1260;
+export const QUEUE_SCALE_TO_PX = 1920;
+export type QueueColKey = "select" | "customer" | "product" | "due" | "amount" | "status" | "invoice" | "actions";
+export interface QueueCol {
+  key: QueueColKey;
+  label: string;
+  /** px at a 1260 window; null = takes the rest */
+  width: number | null;
+  /** px from a 1920 window on (absent = the same at every width) */
+  max?: number;
+  align?: "right";
+}
+export const QUEUE_TABLE_COLS: ReadonlyArray<QueueCol> = [
+  { key: "select", label: "", width: 28 },
+  { key: "customer", label: "Customer", width: 152, max: 320 },
+  { key: "product", label: "Product & period", width: null },
+  { key: "due", label: "Due", width: 76, max: 96 },
+  { key: "amount", label: "Amount", width: 100, max: 128, align: "right" },
+  /* 112px: "Hold at Google — unpaid" is two lines at a 1280 laptop (three at 104px, measured) */
+  { key: "status", label: "Status", width: 112, max: 200 },
+  /* R-2840 / R-2854: "Last bill" — the invoice number (never cut) · period / its state or the last payment / History */
+  { key: "invoice", label: "Last bill", width: 128, max: 260 },
+  /* "Record payment" + ⋯ on one line (the card spec checks no cell overflows) */
+  { key: "actions", label: "Action", width: 184 },
 ];
+
+/** A column's width in px at a window width (the same line the CSS clamp() draws). null = the flexible column. */
+export function queueColPx(col: Pick<QueueCol, "width" | "max">, viewportPx: number): number | null {
+  if (col.width == null) return null;
+  if (col.max == null) return col.width;
+  const t = Math.min(1, Math.max(0, (viewportPx - QUEUE_SCALE_FROM_PX) / (QUEUE_SCALE_TO_PX - QUEUE_SCALE_FROM_PX)));
+  return col.width + (col.max - col.width) * t;
+}
+
+/** The `<col>` width as CSS: fixed px, or clamp(width, width + (100vw − 1260px) × slope, max). undefined = the flexible column. */
+export function queueColCss(col: Pick<QueueCol, "width" | "max">): string | undefined {
+  if (col.width == null) return undefined;
+  if (col.max == null) return `${col.width}px`;
+  const slope = Math.round(((col.max - col.width) / (QUEUE_SCALE_TO_PX - QUEUE_SCALE_FROM_PX)) * 10000) / 10000;
+  return `clamp(${col.width}px, calc(${col.width}px + (100vw - ${QUEUE_SCALE_FROM_PX}px) * ${slope}), ${col.max}px)`;
+}
+
+/** The table box at a window width, worst case: a classic 17px scrollbar, the sidebar open, 32px more side padding
+    from 2xl (measured: 968 at 1260; 1614 at 1920 with an overlay scrollbar). */
+export function queueTableBoxPx(viewportPx: number): number {
+  return viewportPx - 17 - 275 - (viewportPx >= 1536 ? 32 : 0);
+}

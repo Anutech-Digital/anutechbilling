@@ -1637,6 +1637,7 @@ model employees {
   emergency_contact_phone   String?
   esi_applicable            Boolean               @default(false)
   pf_applicable             Boolean               @default(false)
+  pf_full_wage              Boolean               @default(false)
   biometric_id              String?
   attendance_consent_at     DateTime?             @db.Timestamptz(6)
   attendance_consent_source String?

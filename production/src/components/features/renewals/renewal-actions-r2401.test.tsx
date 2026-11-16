@@ -42,13 +42,13 @@ function openMenu() {
 }
 
 describe("R-2401 RenewalActions", () => {
-  it("expired in grace: Send renewal quote; ⋯ has Create quote (don't send) / Customer not renewing", () => {
+  it("expired in grace (R-2710): Send renewal; ⋯ has Send as is (no changes) / Customer not renewing", () => {
     render(<RenewalActions sub={SUB} daysUntil={-6} layout="card" />);
-    expect(screen.getByRole("button", { name: /Send renewal quote/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Send renewal/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Generate/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Send now/ })).toBeNull();
     openMenu();
-    expect(screen.getByRole("menuitem", { name: /Create quote \(don't send\)/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Send as is \(no changes\)/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /Customer not renewing/ })).toBeTruthy();
   });
 
@@ -81,12 +81,13 @@ describe("R-2401 RenewalActions", () => {
     render(<RenewalActions sub={{ ...SUB, customer_id: "c-1" }} daysUntil={-6} layout="table" onFollowup={onFollowup} messaging />);
     const buttons = screen.getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
     expect(buttons).toHaveLength(2);
-    expect(buttons[0]).toMatch(/Send renewal quote/);
+    expect(buttons[0]).toMatch(/Send renewal/);
     expect(buttons[1]).toMatch(/More renewal actions for REDOQ — Workspace Business/);
     openMenu();
     const items = screen.getAllByRole("menuitem").map((i) => i.textContent?.trim());
-    expect(items).toEqual(["Create quote (don't send)", "Follow-up", "Nudge", "Voice note", "Customer not renewing"]);
-    fireEvent.click(screen.getByRole("menuitem", { name: /Follow-up/ }));
+    /* R-2856: the three say their action (lib/renewals/stage.ts MENU_LABEL) — were "Follow-up", "Nudge", "Voice note"; these older rows' button reads "Follow-up", so the item starts with it */
+    expect(items).toEqual(["Send as is (no changes)", "Follow-up — log a call or promise", "Draft a WhatsApp message (AI)", "Send a WhatsApp voice note", "Customer not renewing"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: /Follow-up — log a call or promise/ }));
     expect(onFollowup).toHaveBeenCalledTimes(1);
   });
 

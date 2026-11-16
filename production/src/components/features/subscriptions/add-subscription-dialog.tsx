@@ -70,7 +70,9 @@ import { findPlanProduct, type LeadPrefill } from "@/lib/subscriptions/lead-pref
    the field cannot disagree with the chip the operator sees a second later. */
 import { paymentDueState, todayIST } from "@/lib/subscriptions/payment-due";
 import { onboardingQuoteLine } from "./onboarding-line";
-import { duplicateSubscriptionText, findDuplicateSubscription, matchCustomers, type ExistingSub } from "./duplicate-subscription";
+import { duplicateSubscriptionText, findDuplicateSubscription, type ExistingSub } from "./duplicate-subscription";
+import { findCustomerMatches } from "@/lib/customers/duplicate-match";
+import { DuplicateCustomerHint } from "@/components/features/customers/duplicate-customer-hint";
 import { subscriptionHref, searchFromSubscriptionHref, SUBSCRIPTION_SEARCH_EVENT } from "@/app/(app)/subscriptions/palette-links";
 
 /** GST on SaaS in India — CGST 9% + SGST 9%, or IGST 18%. CLAUDE.md §13. */
@@ -274,14 +276,15 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
   const [selectedCustomerId, setSelectedCustomerId] = React.useState<string>("");
   const [submitting, setSubmitting] = React.useState(false);
-  const [existingCustomers, setExistingCustomers] = React.useState<Array<{ id: string; name: string; domain?: string | null }>>([]);
+  const [existingCustomers, setExistingCustomers] = React.useState<Array<{ id: string; name: string; display_name?: string | null; domain?: string | null; gstin?: string | null; contact_email?: string | null }>>([]);
 
   // Fetch existing customers for autocomplete selection
   React.useEffect(() => {
     if (!open) return;
     (async () => {
       const supabase = createClient();
-      const { data } = await supabase.from("customers").select("id, name, domain").order("name");
+      /* R-2715: + display_name, gstin, contact_email — the duplicate check also matches on those. */
+      const { data } = await supabase.from("customers").select("id, name, display_name, domain, gstin, contact_email").order("name");
       setExistingCustomers(data ?? []);
       /* Everyone already in the address book, so the contact name box can offer them.
          Capped: this is a picker, not a report, and a tenant with thousands of contacts
@@ -475,10 +478,17 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
      picked customer's live subscriptions are loaded so a duplicate shows BEFORE submit,
      and submit re-checks against the database (the picker may be stale). */
   const [custQueryOpen, setCustQueryOpen] = React.useState(false);
+  /* R-2715: one rule with /customers/new (lib/customers/duplicate-match.ts) — "Pvt Ltd" =
+     "Private Limited", punctuation/spacing ignored, plus the typed GSTIN and a business email's
+     domain. Each hit shows under the field that found it (name / GSTIN / email), once. */
   const customerMatches = React.useMemo(
-    () => (selectedCustomerId ? [] : matchCustomers(existingCustomers, customerName, 5)),
-    [existingCustomers, customerName, selectedCustomerId],
+    () => (selectedCustomerId ? [] : findCustomerMatches(existingCustomers, { name: customerName, gstin: newCustGstin, email: contactEmail }, 5)),
+    [existingCustomers, customerName, newCustGstin, contactEmail, selectedCustomerId],
   );
+  const nameMatches = customerMatches.filter((m) => m.reason === "name" || (custQueryOpen && m.reason === "typing"));
+  const gstinMatches = customerMatches.filter((m) => m.reason === "gstin");
+  const emailMatches = customerMatches.filter((m) => m.reason === "email-domain");
+  const pickMatch = (c: { id: string }) => { handleSelectExistingCustomer(c.id); setCustQueryOpen(false); };
   const [customerSubs, setCustomerSubs] = React.useState<ExistingSub[]>([]);
   React.useEffect(() => {
     if (!selectedCustomerId) { setCustomerSubs([]); return; }
@@ -1341,25 +1351,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               />
               {/* R-1443: an existing customer, offered while typing — pick to reuse it (its
                   contacts and state are already on file) instead of creating a second one. */}
-              {custQueryOpen && customerMatches.length > 0 && (
-                <ul className="mt-1 rounded-lg border border-amber/60 bg-paper shadow-sm overflow-hidden" aria-label="Existing customers">
-                  <li className="px-2.5 py-1 text-3xs uppercase tracking-wider text-ink-2 bg-amber-soft">
-                    Already a customer? Pick to use it
-                  </li>
-                  {customerMatches.map((c) => (
-                    <li key={c.id}>
-                      <button
-                        type="button"
-                        onClick={() => { handleSelectExistingCustomer(c.id); setCustQueryOpen(false); }}
-                        className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-paper-2 focus:bg-paper-2 focus:outline-none flex items-center justify-between gap-2"
-                      >
-                        <span className="font-semibold text-ink truncate">{c.name}</span>
-                        <span className="font-mono text-2xs text-ink-3 truncate">{c.domain ?? ""}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {/* R-2715: same box as /customers/new — "Looks like <customer> — Use it". */}
+              <DuplicateCustomerHint matches={nameMatches} actionLabel="Use it" onPick={pickMatch} />
+
             </FormField>
           </div>
 
@@ -1453,6 +1447,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                   onChange={(e) => { setContactEmail(e.target.value); setPickedContactId(null); setContactQueryOpen(true); }}
                   required
                 />
+                <DuplicateCustomerHint matches={emailMatches} actionLabel="Use it" onPick={pickMatch} />
               </FormField>
               <FormField label="Customer's state (GST)" required htmlFor="newCustState">
                 <GstStateSelect id="newCustState" value={newCustState} onChange={setNewCustState} allowExport />
@@ -1479,6 +1474,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 ) : (
                   <p role="alert" className="mt-1 text-3xs text-rose">{newGstinCheck.message}</p>
                 )}
+                <DuplicateCustomerHint matches={gstinMatches} actionLabel="Use it" onPick={pickMatch} />
               </FormField>
               <FormField label="Contact Phone" required htmlFor="contactPhone">
                 <Input

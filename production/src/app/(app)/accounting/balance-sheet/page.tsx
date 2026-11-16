@@ -50,6 +50,7 @@ import { useBusinessLoans } from "@/lib/queries/business-loans";
 import { showsDirectorLoans, splitLoansTaken, undeclaredDirectorLoans } from "@/lib/accounting/director-loans";
 import { useEmployeeAdvances } from "@/lib/queries/advances";
 import { splitPrepaidAdvances } from "@/lib/accounting/employee-advance";
+import { loansAdvancesSplit, loanSplitLines, loanSplitLineHint } from "@/lib/accounting/loans-current-split";
 import { SectionTitle, Ratio, BSLine, ManualLines, TotalLine, equityCsvRows } from "./bs-lines";
 import { StatementRow } from "@/components/ui/statement-row";
 import { OpeningBalancesCard } from "./opening-balances-card";
@@ -63,6 +64,10 @@ export default function BalanceSheetPage() {
      shown as their own line by taking them out of Prepaid, so total assets do not move. */
   const { data: employeeAdvances } = useEmployeeAdvances();
   const advanceSplit = splitPrepaidAdvances(auto?.prepaidAdvances ?? 0, employeeAdvances ?? []);
+  /* R-2674: loans given / staff loans — the part due back within 12 months is a current asset.
+     The same split feeds the current ratio (balanceSheetTotals), these lines and the CSV. */
+  const loanSplit = loansAdvancesSplit(auto);
+  const loanLines = loanSplitLines(loanSplit);
   const del = useDeleteBalanceSheetItem();
   const confirm = useConfirm();
   /* D16 (27 Sep 2026): the unexplained difference is almost always the owner's money that
@@ -213,8 +218,7 @@ export default function BalanceSheetPage() {
         ["Accounts receivable", auto.receivables ?? 0],
         ["Project receivable", auto.projectReceivable ?? 0],
         ["TDS receivable", auto.tdsReceivable ?? 0],
-        ["Employee loans", auto.employeeLoans ?? 0],
-        ["Loans given", auto.loansGiven ?? 0],
+        ...loanLines.map((l): [string, number] => [l.label, l.amount]),
         ["Advances to employees", advanceSplit.employee],
         ["Prepaid / vendor advances", advanceSplit.vendor],
         ["Fixed assets", auto.fixedAssets ?? 0],
@@ -335,7 +339,7 @@ export default function BalanceSheetPage() {
               <div className="flex gap-x-6 gap-y-2 flex-wrap mt-2.5">
                 <Ratio label="Current ratio"  value={currentRatio == null ? "—" : currentRatio.toFixed(2)}
                   good={currentRatio != null && currentRatio >= 1}
-                  tip="Current assets ÷ current liabilities. ≥ 1 means short-term dues are covered." />
+                  tip="Current assets ÷ current liabilities. ≥ 1 means short-term dues are covered. Loans count only for the part due back within 12 months." />
                 <Ratio label="Debt-to-equity" value={debtToEquity == null ? "n/a" : debtToEquity.toFixed(2)}
                   good={debtToEquity != null && debtToEquity <= 2}
                   tip="Total liabilities ÷ net worth. Lower = less leveraged. n/a when equity is negative." />
@@ -372,12 +376,11 @@ export default function BalanceSheetPage() {
                   <BSLine label="Project receivables" hint="one-time / custom project sales, unpaid" amount={auto?.projectReceivable ?? 0} kind="auto" source="project invoices" href="/invoices" />
                 )}
                 <BSLine label="TDS receivable" hint="credits from customers' TDS" amount={auto?.tdsReceivable ?? 0} kind="auto" source="TDS Receivable" href="/accounting/tds-receivable" />
-                {(auto?.employeeLoans ?? 0) > 0 && (
-                  <BSLine label="Employee loans" hint="lent to staff, owed back (office-expense advances are their own line)" amount={auto?.employeeLoans ?? 0} kind="auto" source="Loans" href="/accounting/loans" />
-                )}
-                {(auto?.loansGiven ?? 0) > 0 && (
-                  <BSLine label="Loans given" hint="lent to outside parties, still owed back" amount={auto?.loansGiven ?? 0} kind="auto" source="Loans given" href="/accounting/loans-given" />
-                )}
+                {loanLines.map((l) => (
+                  <BSLine key={l.label} label={l.label} amount={l.amount} kind="auto"
+                    hint={loanSplitLineHint(l, loanSplit.undecidedCount)}
+                    source={l.key === "staff" ? "Loans" : "Loans given"} href={l.key === "staff" ? "/accounting/loans" : "/accounting/loans-given"} />
+                ))}
                 {advanceSplit.employee > 0 && (
                   <BSLine label="Advances to employees" hint="office-expense money still with staff (given − bills − returned)" amount={advanceSplit.employee} kind="auto" source="Advances" href="/accounting/advances" />
                 )}

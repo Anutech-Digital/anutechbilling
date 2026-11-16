@@ -28,6 +28,38 @@ const FROM = "20261001";
 const R2389 = "20261102184319_r2389_ist_today_grant.sql";
 
 const EXEMPT_CALLERS: Record<string, string> = {
+  r2768_customer_quote_notes:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_freeze_allows:
+    "DEFINER_INTERNAL in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_invoice_line_period_plan:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_js_trim:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_lines_period_months:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_lines_without:
+    "DEFINER_INTERNAL in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_months_words:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_note_lead:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_quote_notes_plan:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_repair_invoice_line_periods:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_repair_quote_notes:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_repaired_notes:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_safe_lines_with_periods:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_scrub_customer_text:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_strip_ids:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2768_undo:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
   customer_names_agree:
     "DEFINER_INTERNAL in invoker-function-grants.test.ts — only called inside match_existing_customer (definer).",
   subscription_dues_drift:

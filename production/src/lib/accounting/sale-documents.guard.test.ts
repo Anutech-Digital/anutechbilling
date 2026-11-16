@@ -33,6 +33,8 @@ const SQL_SALE = new Set([
   "correct_invoice_date",  // R-2173: re-dates one issued sale of ours - an opening balance (not a sale) is refused
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  r2768_invoice_line_period_plan: "R-2768: owner-approved one-off data repair — reads issued quote-made invoices' line_items and amounts only to decide whether storing each line's service_period keeps the printed invoice identical; it totals nothing and no report or GST figure reads it",
+  invoice_note_gst_split: "R-2717: reads tax_rate / taxable_value / tax_amount / line_items of the ONE invoice a credit or debit note is being issued on (by id, same tenant), to split that note's GST — issue_credit_note_core / issue_debit_note only; no list or total (a note on a Zoho opening invoice is split the same way)",
   reduce_subscription_seats: "R-2252: the ONE invoice of a subscription part (by its quote / billing row) a seat cut credits — its open and settled amounts for the split, then issue_credit_note_core; no list or total",
   r2626_plan_change_vs_later_part: "R-2626: only checks whether a LATER billing part of one subscription has a live (non-void) invoice, to refuse paying a plan-change quote — no amounts, lists or totals",
   cancel_quote: "R-2519: only checks whether a quote already has a live (non-void) invoice, to refuse cancelling it — no amounts, lists or totals",
@@ -112,6 +114,13 @@ const SQL_NOT_SALE: Record<string, string> = {
   unreconcile_bank_receipt: "money in",
   project_receipt_undo_preview: "R-1999: one invoice status by id per kist, before / after a rolled-back dry run of un-reconciling a project line — not GST or revenue",
   waive_late_charges: "late fee",
+  roll_paid_renewal_terms: "R-2735: is a renewal part's own tax invoice paid — moves renewal_date, not GST or revenue",
+  tg_r2735_invoice_paid_renews: "R-2735: invoice turned paid → renew its marked part's subscription — not GST or revenue",
+  unroll_unpaid_renewal_terms: "R-2749: is a renewal part's own tax invoice still paid — moves renewal_date back, not GST or revenue",
+  tg_r2749_wont_renew_open_part: "R-2749: is the renewal part's own invoice unpaid — refuses Won't renew, not GST or revenue",
+  r2848_together_paid: "R-2848: is a together renewal quote's own invoice paid / credited in full — decides renew or move back, not GST or revenue",
+  r2848_roll_together: "R-2848: copies the together quote's invoice id onto the renewal move log — not GST or revenue",
+  tg_r2848_credit_note: "R-2848: finds the together quote of a credit note's invoice to re-check its renewals — not GST or revenue",
   // R-1739's own functions
   _opening_invoice_settle: "keeps an opening invoice's paid amount",
   _record_opening_invoice_payment: "payment on an opening invoice",
@@ -185,7 +194,9 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/lib/integrations/zoho-books/receipts-import/store.ts": "R-2501: invoices that came from Zoho (Zoho id / number, customer, what is still due) to place FY receipts on them — not a revenue or GST report",
   "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: every invoice's number / Zoho number / Zoho id (skip what is already in the books) and the per-month recount of what came in from Zoho — not a revenue or GST report",
   "src/lib/payments/payment-link.server.ts": "R-2415: the open invoices (by id) a Send-reminder pay link may carry, and their due for the stale-link sweep — not a list or a total",
-  "src/app/(app)/renewals/last-paid-data.ts": "R-2422: the invoice numbers raised from one subscription's own quotes (by quote_id), to name what a payment paid on the Renewals row's Last paid — not a list or a total",
+  "src/app/(app)/renewals/last-docs-data.ts": "R-2728: the newest invoice raised from one subscription's own quotes / billed parts (number, date, paid or unpaid) for the Renewals row's 'Invoice …' link — not a list, GST or revenue",
+  "src/lib/renewals/bill-next.server.ts": "R-2757: the tax invoices (by id) of one subscription's own EARLIER billed parts, to name any still unpaid in the Bill next part dialog — not a list, GST or revenue",
+  "src/app/(app)/renewals/last-paid-data.ts":"R-2422: the invoice numbers raised from one subscription's own quotes (by quote_id), to name what a payment paid on the Renewals row's Last paid — not a list or a total",
   "src/lib/payments/online-fee.server.ts": "R-2416: one invoice's online-fee waiver flag (by id) for the fee policy on capture — not a list or a total",
   "src/app/(app)/collections/leftover-tds-dialog.tsx": "R-2410: one invoice by id, to open its Record payment sheet in TDS mode — not a list or a total",
   "src/app/(public)/buy/workspace/thanks/fetch-order.ts": "R-1971: the number of this order's own GST invoice (by quote_id) for the buyer's thanks page — not a list or a total",

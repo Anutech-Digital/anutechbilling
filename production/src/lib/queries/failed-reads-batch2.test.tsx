@@ -39,7 +39,10 @@ vi.mock("@/lib/queries/team", () => ({
   useTeamMembers: () => ({ ...h.members, refetch: h.refetchMembers }),
   memberLabel: (m: { full_name?: string }) => m.full_name ?? "",
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(), // R-2725: Scorecards reads ?user=
+}));
 vi.mock("@/lib/queries/cold-calling", () => ({ useBolnaAgents: () => ({ data: { agents: [] } }) }));
 
 afterEach(() => {

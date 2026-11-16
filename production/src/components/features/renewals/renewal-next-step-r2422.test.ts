@@ -22,7 +22,7 @@ describe("R-2422 renewalNextStep — one button + ⋯", () => {
   it("no quote yet: button Send renewal quote; ⋯ = Create quote (don't send), Follow-up, Nudge, Voice, Customer not renewing", () => {
     const s = renewalNextStep(renewalActionSet(sub(), null, { ...OWNER, daysUntil: 17 }), RENEWALS);
     expect(s.button).toEqual({ kind: "send-now", label: SEND_RENEWAL_QUOTE });
-    expect(s.menu).toEqual(["create-quote", "followup", "nudge", "voice", "not-renewing"]);
+    expect(s.menu).toEqual(["secondary", "followup", "nudge", "voice", "not-renewing"]);
   });
 
   it("billed in parts: button Bill next part (R-2548: the renewal label when the next part starts the next term); no Create quote in ⋯", () => {
@@ -55,7 +55,7 @@ describe("R-2422 renewalNextStep — one button + ⋯", () => {
   it("Payment Follow-up (no follow-up / messaging hooks): ⋯ only has the renewal's own actions", () => {
     const s = renewalNextStep(renewalActionSet(sub(), null, { ...OWNER, daysUntil: -3 }), { followup: false, messaging: false });
     expect(s.button?.label).toBe(SEND_RENEWAL_QUOTE);
-    expect(s.menu).toEqual(["create-quote", "not-renewing"]);
+    expect(s.menu).toEqual(["secondary", "not-renewing"]);
   });
 
   it("monthly flex before its date: no Bill next part (the billing job raises that part on its date) — the button is Follow-up", () => {

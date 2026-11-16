@@ -80,7 +80,7 @@ describe("the /invoices/[id] page", () => {
   it("exists and renders the shared InvoiceDetail", () => {
     expect(existsSync(pagePath)).toBe(true);
     const page = readFileSync(pagePath, "utf8");
-    expect(page).toMatch(/<InvoiceDetail invoice=\{invoice\} \/>/);
+    expect(page).toMatch(/<InvoiceDetail invoice=\{invoice\} period=\{period\} \/>/);   // R-2853: + the period under the number
   });
 
   it("reads under the [\"invoices\"] key, so payments/notes/deletes refresh it", () => {

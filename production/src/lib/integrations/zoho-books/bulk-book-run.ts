@@ -5,6 +5,10 @@
  *   • a CLEAN pair = a plan row with a booking, a customer, no problem, ticked by the plan, and
  *     paired to its Zoho payment by the bank UTR / RRN (R-2534 ref first). A row paired only by
  *     amount + date is never "clean" — a person ticks it (research item 2 safety rule);
+ *     R-2658: an inward remittance paired by its FOREIGN amount ("fx_amount": the one Zoho payment
+ *     of that USD amount within 10 days, no other open line it could be) is clean ONLY when it pays
+ *     an open invoice in that currency through the FX path — bank USD = Zoho USD = the invoice's USD
+ *     due, one customer. A NEW export sale paired that way is never clean (a person ticks it);
  *   • the server books a row only when the database says the line is this company's, in this
  *     account, unmatched and after the books lock (bank_recon_run_screen), and when the row's
  *     amount and date ARE the line's (money exact — never the browser's figure);
@@ -29,7 +33,29 @@ export function screenText(reason: ScreenReason | null): string {
 /** Plan rows a person need not look at: book them all in one go. A row the person UNTICKED is
  *  never clean (review: "Book all clean" must not book what they took out). */
 export function isCleanPair(r: PlanRow, unticked?: ReadonlySet<string>): boolean {
-  return Boolean(r.book && r.customer && r.ticked && r.problems.length === 0 && r.zoho.by === "utr" && !unticked?.has(r.txnId));
+  return Boolean(r.book && r.customer && r.ticked && r.problems.length === 0 && (r.zoho.by === "utr" || isSureFxPay(r)) && !unticked?.has(r.txnId));
+}
+
+/** R-2658: how long an only-candidate pair is trusted — a new statement line or Zoho payment can
+ *  make it ambiguous later (a UTR pair never goes stale). After this: Start again, or tick it. */
+export const FX_SURE_MAX_AGE_MS = 60 * 60_000;
+
+/**
+ * R-2658: an inward remittance paired by its foreign amount that settles ONE open invoice in that
+ * currency (reconcile_bank_credit_fx_invoice — the SQL reads the narration and the invoice itself).
+ * Sure only when ALL hold: nothing made the pairing doubtful (notSure), it was made within
+ * FX_SURE_MAX_AGE_MS, and the three foreign figures are the SAME — what the bank got = Zoho's
+ * payment = the invoice's due (no charges kept abroad, no "within 1 unit").
+ */
+export function isSureFxPay(r: PlanRow, now: number = Date.now()): boolean {
+  const fx = r.book?.kind === "pay_item" ? r.book.item?.fx ?? null : null;
+  if (r.zoho.by !== "fx_amount" || r.zoho.notSure || !r.remittance || !fx || !r.book?.item?.invoiceId) return false;
+  const at = r.zoho.matchedAt ? Date.parse(r.zoho.matchedAt) : NaN;
+  if (!(now - at <= FX_SURE_MAX_AGE_MS) || now < at - 60_000) return false;
+  const same = (a: number, b: number | null | undefined) => typeof b === "number" && Math.abs(a - b) <= 0.005;
+  return fx.currency === r.remittance.currency && r.zoho.currency === fx.currency
+    && fx.bankCharges === 0 && same(fx.foreignAmount, r.zoho.amount) && same(fx.foreignAmount, r.remittance.amount)
+    && Math.abs(fx.foreignDue - fx.foreignAmount) <= 0.02;
 }
 
 export interface RunPreview { clean: number; cleanTotal: number; needLook: number }

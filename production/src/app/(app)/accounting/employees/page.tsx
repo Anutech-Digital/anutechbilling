@@ -7,6 +7,7 @@
 
 import { EmployeesTab, HrPageShell } from "../payroll/screens";
 import { EmployeeLoginsPanel } from "./employee-logins-panel";
+import { PayrollPolicyCard } from "@/components/features/payroll/payroll-policy-card";
 
 export default function EmployeesPage() {
   return (
@@ -14,6 +15,8 @@ export default function EmployeesPage() {
       title="Employees"
       sub="Your team — profiles, salary, ID documents (Aadhaar / PAN / resume) and paid-leave balance."
     >
+      {/* R-2700: company PF / ESI / gratuity + CTC rule — defaults for new employees. */}
+      <PayrollPolicyCard />
       <EmployeesTab />
       {/* R-1436: owner links each employee to a login so they can check in at /attendance/me. */}
       <EmployeeLoginsPanel />

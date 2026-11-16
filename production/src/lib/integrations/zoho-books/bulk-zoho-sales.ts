@@ -9,6 +9,7 @@ import type { SplitRest } from "@/lib/banking/credit-pay-for-multi";
 import { rupee } from "@/lib/utils";
 import { planAll, type BookSpec, type BulkMatchRow, type PlanContext, type PlanRow } from "./bulk-reconcile-plan";
 import type { ZohoPaymentMatch } from "./payment-match";
+import type { LineMemo } from "@/lib/banking/line-memo";
 
 /** The part of a plan line this needs (bulk-reconcile-plan's PlanLine). */
 interface PlanLineLite {
@@ -106,10 +107,13 @@ export function withZohoSales(row: PlanRow, match: ZohoPaymentMatch): PlanRow {
   return { ...row, book: next, problems, notes: [...row.notes, ...zs.notes], ticked: row.ticked && problems.length === 0 };
 }
 
+/** R-2685: the sheet's plan memo — per row, its plan per demotion ("" = none), kept across pages. */
+export type PlanMemo = LineMemo<Map<string, PlanRow | null>>;
+
 /** planAll + withZohoSales for each row (the screen's plan). */
-export function planAllWithZohoSales(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRow[] {
+export function planAllWithZohoSales(rows: readonly BulkMatchRow[], ctx: PlanContext, memo?: PlanMemo): PlanRow[] {
   const byTxn = new Map(rows.map((r) => [r.line.id, r]));
-  return planAll(rows, ctx).map((p) => {
+  return planAll(rows, ctx, memo).map((p) => {
     const r = byTxn.get(p.txnId);
     return r && r.result.kind === "match" ? withZohoSales(p, r.result.match) : p;
   });

@@ -36,6 +36,12 @@ export interface RenewalTemplateContext {
   stopDate?:      string;
   paymentLink?:   string | null;   // Razorpay link (Phase 2)
   acceptLink?:    string;          // /quote/[id]/accept link
+  /**
+   * R-2852: a renewal quote billed TOGETHER (2+ subscriptions) — one line per plan
+   * ("Business Standard · 20 seats · 1 Jan 2027 to 31 Dec 2027"). The mail then lists them all,
+   * so `amount` (the quote's total) is never read as one plan's price. Absent on a single quote.
+   */
+  planLines?:     string[];
 }
 
 export interface RenewalTemplate {
@@ -47,6 +53,22 @@ export interface RenewalTemplate {
 const rupee = (n: number) => "₹" + n.toLocaleString("en-IN");
 
 export function renderTemplate(tone: CadenceTone, ctx: RenewalTemplateContext): RenewalTemplate {
+  const tpl = baseTemplate(tone, ctx);
+  const lines = ctx.planLines ?? [];
+  if (lines.length < 2) return tpl;
+  /* R-2852: the together list goes right after the greeting (before any amount line) and ends with
+     the quote's own total — never on the early notice, which quotes no price. */
+  const block = [
+    "This renewal quote covers:",
+    ...lines.map((l) => `  • ${l}`),
+    ...(tone === "early" ? [] : [`Total for all of them: ${rupee(ctx.amount)} (one quote, one payment)`]),
+  ].join("\n");
+  const at = tpl.body.indexOf("\n\n");
+  const body = at < 0 ? `${tpl.body}\n\n${block}` : `${tpl.body.slice(0, at)}\n\n${block}${tpl.body.slice(at)}`;
+  return { subject: tpl.subject, body };
+}
+
+function baseTemplate(tone: CadenceTone, ctx: RenewalTemplateContext): RenewalTemplate {
   switch (tone) {
     // T-30 (migration 0228). Deliberately the least pushy message in the ladder:
     // a month out nothing is wrong yet, and what the customer actually needs is

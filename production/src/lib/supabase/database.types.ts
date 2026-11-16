@@ -1254,6 +1254,7 @@ type ArgNullable = {
   pay_vendor_bill: "p_method";
   record_employee_loan_repayment: "p_bank_account_id" | "p_notes";
   pay_salary: "p_advance_loan_id" | "p_notes" | "p_pf_wage";
+  pay_salary_with_arrears: "p_advance_loan_id" | "p_notes" | "p_pf_wage";
   book_bank_txn_as_vendor_bill: "p_method";
   book_bank_txn_as_statutory: "p_notes" | "p_challan_no" | "p_period";
   add_project_receipt_milestone: "p_label";

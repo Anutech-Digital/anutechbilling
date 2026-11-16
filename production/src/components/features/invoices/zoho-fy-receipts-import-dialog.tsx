@@ -27,7 +27,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { formatDate, rupee } from "@/lib/utils";
-import { LEAVE_OUT, type ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
+import { formatForeign, isForeignCurrency } from "@/lib/currency";
+import { LEAVE_OUT, skipReasonKey, type ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
 
 const API = "/api/integrations/zoho-books/receipts-import";
@@ -35,18 +36,26 @@ const FY = "2025-26";
 /** R-2607: between two server passes of the open dialog (each pass reads up to ~40 s itself). */
 const STEP_GAP_MS = 5_000;
 /** R-2607: the server's read — progress, whether it is still asked for, why it stopped. */
-interface ReadState { listed: number; detailed: number; complete: boolean; running?: boolean; error?: string | null }
+/* R-2653: onlyAccount = the last Read again was limited to this Zoho deposit account. */
+interface ReadState { listed: number; detailed: number; complete: boolean; running?: boolean; error?: string | null; onlyAccount?: string | null }
 
-/** R-2607 — the read's progress line. */
-export function readStatusText(r: ReadState): string {
+/** R-2607 — the read's progress line. R-2653: `onlyName` = the read was limited to that Zoho account. */
+export function readStatusText(r: ReadState, onlyName?: string | null): string {
   const n = (x: number) => x.toLocaleString("en-IN");
-  if (r.complete) return `Read all ${n(r.listed)} payments.`;
+  const only = onlyName ? ` (Read again: only ${onlyName})` : "";
+  if (r.complete) return `Read all ${n(r.listed)} payments.${only}`;
   if (r.running) {
-    const where = r.listed ? `Read ${n(r.detailed)} of ${n(r.listed)}` : "Reading the list from Zoho";
-    return `${where} — on the server; you can close this window and come back.`;
+    /* R-2653: Read again keeps what is read — while it checks Zoho's list everything listed is still read. */
+    const where = !r.listed ? "Reading the list from Zoho"
+      : r.detailed >= r.listed ? "Checking Zoho for new or changed payments"
+        : `Read ${n(r.detailed)} of ${n(r.listed)}`;
+    return `${where}${only} — on the server; you can close this window and come back.`;
   }
   return r.listed ? `Read ${n(r.detailed)} of ${n(r.listed)} — stopped.` : "Not read yet.";
 }
+
+/** R-2653 — the "Read again" choice: all accounts, or only the payments deposited to one Zoho account. */
+export const ALL_ACCOUNTS = "";
 
 interface Preview {
   /* R-2565: withFee / fee — Razorpay payments whose fee Zoho took off (optional: an older server sends none). */
@@ -56,12 +65,72 @@ interface Preview {
   deposits: ZohoDeposit[];
   accounts: { id: string; name: string }[];
   skipReasons: { reason: string; count: number }[];
-  skipped: { number: string; date: string; customer: string; amount: number; reason: string | null }[];
+  /* R-2693: amount = ₹ (null = not known, a foreign payment read before R-2693); currency / foreignAmount
+     for a foreign-currency payment (optional: an older server sends none). skippedMore = not listed. */
+  skipped: LeftOutRow[];
+  skippedMore?: number;
   batches: ImportBatch[];
   canRemove: boolean;
 }
+interface LeftOutRow { number: string; date: string; customer: string; amount: number | null; currency?: string | null; foreignAmount?: number | null; reason: string | null }
+
+/** R-2693 — a left-out payment's money: a foreign-currency one in its own currency (+ the ₹ at Zoho's
+ *  rate when known), never its dollars shown as rupees. */
+export function leftOutMoney(s: Pick<LeftOutRow, "amount" | "currency" | "foreignAmount">): string {
+  if (isForeignCurrency(s.currency) && s.currency && s.foreignAmount !== null && s.foreignAmount !== undefined) {
+    return `${formatForeign(s.foreignAmount, s.currency)}${s.amount ? ` (${rupee(s.amount)})` : ""}`;
+  }
+  return s.amount === null ? "—" : rupee(s.amount);
+}
+
+/**
+ * R-2693 — the check's sum line: every scanned Zoho payment is in exactly one bucket — to record,
+ * already recorded, refused by the check (the database's own reasons) or left out before the check
+ * (the preview's reasons). When the buckets do not make the scanned count, it says so — never hidden.
+ */
+/** The SQL import's one double-count: a payment recorded earlier whose bank line could not be linked is
+ *  counted as already AND listed with this reason (import_zoho_fy_receipts) — not a second payment. */
+export const BOOKED_EARLIER_PREFIX = "Booked earlier; its bank line could not be matched";
+
+export function accountedText(scanned: number, leftOut: number, r: Pick<PartResult, "imported" | "already" | "skipped">): string {
+  const n = (x: number) => x.toLocaleString("en-IN");
+  const refused = r.skipped.filter((s) => !(s.reason ?? "").startsWith(BOOKED_EARLIER_PREFIX)).length;
+  const sum = r.imported + r.already + refused + leftOut;
+  const parts = `${n(r.imported)} to record · ${n(r.already)} already recorded · ${n(refused)} refused by the check · ${n(leftOut)} left out before the check`;
+  return sum === scanned
+    ? `All ${n(scanned)} Zoho payments accounted for: ${parts} (reasons above).`
+    : `${n(scanned)} Zoho payments read, but the numbers do not add up (${parts} = ${n(sum)}) — press Check first again; if it stays, tell support.`;
+}
+
+/** R-2693 — the check's refusals by kind (same grouping as "Left out, and why"), most first. */
+export function refusalGroups(skipped: readonly { reason: string }[]): { reason: string; count: number }[] {
+  const by = new Map<string, number>();
+  for (const s of skipped) { const k = skipReasonKey(s.reason ?? ""); by.set(k, (by.get(k) ?? 0) + 1); }
+  return [...by.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count);
+}
+
 /** R-2565: withFee / fee = Razorpay payments booked with their fee as Bank Charges (they wait for their Razorpay settlement line). */
-interface PartResult { imported: number; already: number; banked: number; bankLater: number; withFee: number; fee: number; skipped: { number: string; reason: string }[] }
+/* R-2693: scanned / leftOut = the counts of the plan the server cut the parts from (the last part's;
+   absent from an older server → the preview's), so the sum line never mixes two snapshots. */
+interface PartResult { imported: number; already: number; banked: number; bankLater: number; withFee: number; fee: number; skipped: { number: string; reason: string }[]; scanned?: number; leftOut?: number }
+
+/**
+ * R-2704 — the check / import count line, adding up: every NEW receipt is either matched to its bank line
+ * or waits for it (imported = matched + waiting). The SQL's `banked` also counts an EARLIER receipt whose
+ * bank line came in since (import_zoho_fy_receipts "already" path) — said apart, under already recorded.
+ * Staging 12 Nov: "62 receipts · 49 matched · 14 wait" = 48 new matched + 14 waiting + 1 earlier one matched now.
+ */
+export function receiptsCountText(r: Pick<PartResult, "imported" | "banked" | "bankLater" | "already">): string {
+  const n = (x: number) => x.toLocaleString("en-IN");
+  const newMatched = Math.max(0, r.imported - r.bankLater);
+  const earlierMatched = Math.max(0, r.banked - newMatched);
+  const fresh = `${n(r.imported)} new receipt${r.imported === 1 ? "" : "s"}`
+    + (r.imported > 0 ? ` (${n(newMatched)} matched to bank lines · ${n(r.bankLater)} wait for their bank line)` : "");
+  const already = r.already > 0
+    ? ` · ${n(r.already)} already recorded${earlierMatched > 0 ? ` (${n(earlierMatched)} of them matched to ${earlierMatched === 1 ? "its bank line" : "their bank lines"} now)` : ""}`
+    : "";
+  return fresh + already;
+}
 
 /** R-2565 — the Razorpay fee line for the summary / check result: shown apart, never taken off the receipts. */
 export function razorpayFeeText(count: number, fee: number): string | null {
@@ -113,6 +182,9 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
   const [read, setRead] = React.useState<ReadState | null>(null);
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [accounts, setAccounts] = React.useState<Record<string, string>>({});
+  /* R-2653: Read again — all accounts (default) or one Zoho deposit account (e.g. Razorpay Clearing). */
+  const [onlyAccount, setOnlyAccount] = React.useState<string>(ALL_ACCOUNTS);
+  const [depositNames, setDepositNames] = React.useState<Record<string, string>>({});
   const [check, setCheck] = React.useState<PartResult | null>(null);
   const [done, setDone] = React.useState<PartResult | null>(null);
   const stop = React.useRef(false);
@@ -126,12 +198,27 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     try {
       const p = await call<Preview>({ action: "preview", accounts: map });
       setPreview(p);
+      /* R-2653: the Zoho deposit accounts the "Read again" choice offers (kept while a read runs). */
+      /* ("" = payments Zoho gave no account — not something a read can be limited to.) */
+      setDepositNames((prev) => ({ ...prev, ...Object.fromEntries(p.deposits.filter((d) => d.zohoAccountId).map((d) => [d.zohoAccountId, d.zohoName])) }));
       /* The screen's choice = what the server used (owner's pick, Leave these out, else its suggestion)
          — and exactly what the import sends: the import maps nothing the screen did not show. An
          account the owner set to "Choose…" stays "" (no suggestion fills it later). */
       setAccounts(Object.fromEntries(p.deposits.flatMap((d): [string, string][] =>
         d.leftOut ? [[d.zohoAccountId, LEAVE_OUT]] : d.appAccountId ? [[d.zohoAccountId, d.appAccountId]] : map[d.zohoAccountId] === "" ? [[d.zohoAccountId, ""]] : [])));
     } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+  }, []);
+
+  /* R-2704: save one Zoho account's choice for this company. A failed save is said, but the screen still
+     uses the choice now (the import sends what the screen shows). */
+  /* One save at a time, in the order chosen (two quick changes never land out of order). Payments Zoho gave
+     no deposit account ("" key) are not remembered — there is no Zoho account to remember them by. */
+  const saveChain = React.useRef<Promise<void>>(Promise.resolve());
+  const saveAccountChoice = React.useCallback((zohoKey: string, choice: string) => {
+    if (!zohoKey) return saveChain.current;
+    saveChain.current = saveChain.current.then(() => call({ action: "saveAccount", zohoKey, choice }).then(() => {},
+      (e) => setError(`Your choice is used now but was not saved for next time: ${(e as Error).message}`)));
+    return saveChain.current;
   }, []);
 
   /* R-2607: follow the server's read while this window is open — each "step" is one server pass
@@ -156,7 +243,8 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     const again = !!(read?.complete || preview);
     setBusy("read"); setError(null); setPartError(null); setResumeAt(null); setPreview(null); setCheck(null); setDone(null);
     try {
-      if (again) await call({ action: "restart" });
+      /* R-2653: Read again keeps what is read — only new / changed payments (of the chosen account) are read. */
+      if (again) await call({ action: "restart", onlyAccount: onlyAccount || null });
       setRead(await call<ReadState>({ action: "start" }));
     } catch (e) { setError((e as Error).message); setBusy(null); return; }
     await followRead(accounts);
@@ -168,11 +256,13 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     const parts = preview?.parts ?? 0;
     for (let part = from; part < parts && !stop.current; part++) {
       try {
-        const r = await call<{ result: { imported: number; already: number; banked: number; bank_later: number; with_fee?: number; fee?: number; skipped: { number: string; reason: string }[] } }>(
+        const r = await call<{ scanned?: number; leftOut?: number; result: { imported: number; already: number; banked: number; bank_later: number; with_fee?: number; fee?: number; skipped: { number: string; reason: string }[] } }>(
           { action: "import", part, dryRun, accounts });
         sum.imported += r.result.imported; sum.already += r.result.already; sum.banked += r.result.banked; sum.bankLater += r.result.bank_later;
         sum.withFee += r.result.with_fee ?? 0; sum.fee += r.result.fee ?? 0;
         sum.skipped.push(...r.result.skipped);
+        if (r.scanned !== undefined) sum.scanned = r.scanned;
+        if (r.leftOut !== undefined) sum.leftOut = r.leftOut;
       } catch (e) {
         throw new PartFailed(partFailedMessage(part, parts, (e as Error).message, dryRun ? null : sum), sum, part);
       }
@@ -246,12 +336,33 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
             <Button type="button" icon="download" loading={busy === "read"} disabled={!!busy && busy !== "read"} onClick={readZoho}>
               {read?.complete || preview ? "Read from Zoho again" : "Read from Zoho"}
             </Button>
+            {(read?.complete || preview) && Object.keys(depositNames).length > 0 && (
+              <label className="flex items-center gap-2 text-xs text-ink-2">
+                Read again
+                <select
+                  data-testid="fy-receipts-only-account"
+                  className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
+                  value={onlyAccount}
+                  disabled={!!busy}
+                  onChange={(e) => setOnlyAccount(e.target.value)}
+                >
+                  <option value={ALL_ACCOUNTS}>All accounts</option>
+                  {Object.entries(depositNames).map(([id, name]) => <option key={id} value={id}>Only {name}</option>)}
+                </select>
+              </label>
+            )}
             {read && (
               <span className="text-xs text-ink-2" role="status">
-                {readStatusText(read)}
+                {readStatusText(read, read.onlyAccount ? depositNames[read.onlyAccount] ?? read.onlyAccount : null)}
               </span>
             )}
           </div>
+          {onlyAccount && (read?.complete || preview) && (
+            <p className="text-xs text-ink-2" data-testid="fy-receipts-only-hint">
+              Only payments deposited to {depositNames[onlyAccount] ?? "this account"} are checked in Zoho. Payments to other
+              accounts stay as last read — choose All accounts to check them too.
+            </p>
+          )}
 
           {partError && <p role="alert" data-testid="fy-receipts-part-error" className="text-xs text-rose-ink">{partError}</p>}
           {error && <p role="alert" className="text-xs text-rose-ink">{error}</p>}
@@ -273,7 +384,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                   <ul className="space-y-1.5">
                     {preview.deposits.map((d) => (
                       <li key={d.zohoAccountId} className="flex items-center gap-2 flex-wrap text-xs">
-                        <span className="text-ink-2 min-w-48">Zoho: <b className="text-ink">{d.zohoName}</b> · {d.count} · {rupee(d.amount)}</span>
+                        <span className="text-ink-2 min-w-48">Zoho: <b className="text-ink">{d.zohoName}</b> · {d.count} · {rupee(d.amount)}{d.amountUnknown ? ` + ${d.amountUnknown} foreign-currency ₹ not known` : ""}</span>
                         <label htmlFor={`acct-${d.zohoAccountId}`} className="sr-only">App account for Zoho&apos;s {d.zohoName}</label>
                         <select
                           id={`acct-${d.zohoAccountId}`}
@@ -282,7 +393,10 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                           onChange={(e) => {
                             /* R-2547: another account choice = another plan — the old part message / carry-on point no longer fit. */
                             const next = { ...accounts, [d.zohoAccountId]: e.target.value };
-                            setAccounts(next); setPartError(null); setResumeAt(null); void loadPreview(next);
+                            setAccounts(next); setPartError(null); setResumeAt(null);
+                            /* R-2704: remembered for this company — reopening starts from it ("Choose…" forgets it). */
+                            void saveAccountChoice(d.zohoAccountId, e.target.value);
+                            void loadPreview(next);
                           }}
                           className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
                         >
@@ -306,15 +420,16 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                   </ul>
                   <details className="mt-1 text-xs">
                     <summary className="cursor-pointer text-ink-3">Show the payments left out</summary>
-                    <ul className="max-h-48 overflow-y-auto mt-1 space-y-0.5">
-                      {preview.skipped.map((s) => (
-                        <li key={s.number + s.date}><span className="font-mono">{s.number}</span> · {formatDate(s.date)} · {s.customer} · {rupee(s.amount)} — {s.reason}</li>
+                    <ul className="max-h-48 overflow-y-auto mt-1 space-y-0.5" data-testid="fy-receipts-left-out">
+                      {preview.skipped.map((s, i) => (
+                        <li key={`${s.number}-${s.date}-${i}`}><span className="font-mono">{s.number}</span> · {formatDate(s.date)} · {s.customer} · {leftOutMoney(s)} — {s.reason}</li>
                       ))}
+                      {(preview.skippedMore ?? 0) > 0 && <li className="text-ink-3">… and {preview.skippedMore!.toLocaleString("en-IN")} more not listed here (counted above).</li>}
                     </ul>
                   </details>
                 </div>
               )}
-              {check && <PartSummary title="Check result (nothing saved)" r={check} />}
+              {check && <PartSummary title="Check result (nothing saved)" r={check} accounted={accountedText(check.scanned ?? preview.counts.scanned, check.leftOut ?? preview.counts.skip, check)} />}
               {done && <PartSummary title="Recorded" r={done} />}
               {preview.batches.length > 0 && (
                 <div>
@@ -346,19 +461,27 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
   );
 }
 
-function PartSummary({ title, r }: { title: string; r: PartResult }) {
+function PartSummary({ title, r, accounted }: { title: string; r: PartResult; accounted?: string }) {
   const feeText = razorpayFeeText(r.withFee, r.fee);
+  const groups = refusalGroups(r.skipped);
   return (
     <div className="rounded-md border border-hairline px-3 py-2 text-xs" role="status">
       <p className="font-semibold text-ink">
-        {title}: {r.imported.toLocaleString("en-IN")} receipts · {r.banked} matched to bank lines
-        {r.bankLater ? ` · ${r.bankLater} wait for their bank line` : ""}{r.already ? ` · ${r.already} already recorded` : ""}{r.skipped.length ? ` · ${r.skipped.length} refused` : ""}
+        {/* R-2704: new = matched + waiting; an earlier receipt matched now is counted under already recorded. */}
+        {title}: {receiptsCountText(r)}{r.skipped.length ? ` · ${r.skipped.length} refused` : ""}
       </p>
       {feeText && <p className="text-ink-2" data-testid="fy-receipts-part-fee">{feeText}</p>}
+      {accounted && <p className="text-ink-2" data-testid="fy-receipts-accounted">{accounted}</p>}
       {r.skipped.length > 0 && (
-        <ul className="mt-1 max-h-32 overflow-y-auto text-ink-2">
-          {r.skipped.slice(0, 200).map((s, i) => <li key={`${s.number}-${i}`}><span className="font-mono">{s.number}</span> — {s.reason}</li>)}
-        </ul>
+        <>
+          {/* R-2693: the refusals by kind with a count, then every one (was cut at 200 without a word). */}
+          <ul className="mt-1 max-h-32 overflow-y-auto text-ink-2" data-testid="fy-receipts-refused-reasons">
+            {groups.map((g) => <li key={g.reason}><b>{g.count.toLocaleString("en-IN")}</b> · {g.reason}</li>)}
+          </ul>
+          <ul className="mt-1 max-h-32 overflow-y-auto text-ink-2">
+            {r.skipped.map((s, i) => <li key={`${s.number}-${i}`}><span className="font-mono">{s.number}</span> — {s.reason}</li>)}
+          </ul>
+        </>
       )}
     </div>
   );

@@ -31,6 +31,7 @@ import { Icon } from "@/components/ui/icon";
 import { STATEMENT_ROW } from "@/components/ui/statement-row";
 import { rupee, formatDate } from "@/lib/utils";
 import { buildGstr1, buildAdvances, docHeads, gstr1Csv, gstr1Json, isExportDoc, GSTR1_HEADERS } from "@/lib/gst/gstr1";
+import { outputRateLabel } from "@/lib/gst/line-rates";
 import { gstr3bRows } from "@/lib/gst/gstr3b";
 import { parseGstr2b, reconcile2b, type Reconciliation } from "@/lib/gst/gstr2b";
 import { Term } from "@/components/shared/term";
@@ -181,7 +182,7 @@ function GstReportInner() {
           r.invoiceId, r.invoiceDate, r.customerName, r.customerGstin ?? "",
           isExportDoc(r)
             ? "Export (zero-rated)" : r.interState ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)",
-          r.taxableValue, r.taxRate, s.cgst, s.sgst, s.igst, r.gst, r.amount,
+          r.taxableValue, r.rates?.length ? r.rates.join(" + ") : r.taxRate, s.cgst, s.sgst, s.igst, r.gst, r.amount,
         ];
       }),
     );
@@ -617,11 +618,8 @@ function GstReportInner() {
                     <td className="px-4 py-3 font-mono text-ink-3 text-xs">{r.customerGstin ?? "—"}</td>
                     <td className="px-4 py-3 text-right font-mono text-ink-2">{rupee(r.taxableValue)}</td>
                     <td className="px-4 py-3 text-ink-3 text-xs">
-                      {isExportDoc(r)
-                        ? (r.gst ? `Export · IGST ${r.taxRate}%` : "Export · LUT (0%)")
-                        : r.interState
-                        ? `IGST ${r.taxRate}%`
-                        : `CGST ${r.taxRate / 2}% + SGST ${r.taxRate / 2}%`}
+                      {/* R-2717: lines at different GST rates → every rate named. */}
+                      {outputRateLabel({ isExport: isExportDoc(r), gst: r.gst, interState: r.interState, taxRate: r.taxRate, rates: r.rates })}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-emerald">
                       {rupee(r.gst)}

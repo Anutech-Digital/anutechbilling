@@ -23,7 +23,7 @@
  * Same FAQ: the recipient's GSTIN cannot be amended in GSTR-1A — only in a later GSTR-1
  * (B2BA / CDNRA). Such rows say so instead of "amend in GSTR-1A".
  */
-import { buildGstr1, type Gstr1Doc, type Gstr1Sections, type Seller, type TaxHeads } from "./gstr1";
+import { buildGstr1, expItems, rowItems, type Gstr1Doc, type Gstr1Sections, type Seller, type TaxHeads } from "./gstr1";
 
 export type ReturnTable = "B2B" | "B2CL" | "EXP" | "CDNR" | "CDNUR";
 
@@ -150,11 +150,11 @@ export function parseGstr1Json(input: unknown): ParsedReturn {
 export function returnFromSections(s: Gstr1Sections): Pick<ParsedReturn, "docs" | "b2cs"> {
   const pos2 = (p: string) => p.slice(0, 2);
   const docs: ReturnDoc[] = [
-    ...s.b2b.map((r): ReturnDoc => ({ table: "B2B", num: r.id, date: r.date, ctin: r.gstin, noteType: null, pos: pos2(r.pos), value: r.value, taxable: r.taxable, heads: r.heads, rates: [r.rate] })),
-    ...s.b2cl.map((r): ReturnDoc => ({ table: "B2CL", num: r.id, date: r.date, ctin: null, noteType: null, pos: pos2(r.pos), value: r.value, taxable: r.taxable, heads: r.heads, rates: [r.rate] })),
-    ...s.exp.map((r): ReturnDoc => ({ table: "EXP", num: r.id, date: r.date, ctin: null, noteType: null, pos: "", value: r.value, taxable: r.taxable, heads: { igst: r.igst, cgst: 0, sgst: 0 }, rates: [r.rate] })),
-    ...s.cdnr.map((r): ReturnDoc => ({ table: "CDNR", num: r.id, date: r.date, ctin: r.gstin, noteType: r.noteType, pos: pos2(r.pos), value: r.value, taxable: r.taxable, heads: r.heads, rates: [r.rate] })),
-    ...s.cdnur.map((r): ReturnDoc => ({ table: "CDNUR", num: r.id, date: r.date, ctin: null, noteType: r.noteType, pos: r.urType === "B2CL" ? pos2(r.pos) : "", value: r.value, taxable: r.taxable, heads: r.heads, rates: [r.rate] })),
+    ...s.b2b.map((r): ReturnDoc => ({ table: "B2B", num: r.id, date: r.date, ctin: r.gstin, noteType: null, pos: pos2(r.pos), value: r.value, taxable: r.taxable, heads: r.heads, rates: rowItems(r).map((it) => it.rate) })),
+    ...s.b2cl.map((r): ReturnDoc => ({ table: "B2CL", num: r.id, date: r.date, ctin: null, noteType: null, pos: pos2(r.pos), value: r.value, taxable: r.taxable, heads: r.heads, rates: rowItems(r).map((it) => it.rate) })),
+    ...s.exp.map((r): ReturnDoc => ({ table: "EXP", num: r.id, date: r.date, ctin: null, noteType: null, pos: "", value: r.value, taxable: r.taxable, heads: { igst: r.igst, cgst: 0, sgst: 0 }, rates: expItems(r).map((it) => it.rate) })),
+    ...s.cdnr.map((r): ReturnDoc => ({ table: "CDNR", num: r.id, date: r.date, ctin: r.gstin, noteType: r.noteType, pos: pos2(r.pos), value: r.value, taxable: r.taxable, heads: r.heads, rates: rowItems(r).map((it) => it.rate) })),
+    ...s.cdnur.map((r): ReturnDoc => ({ table: "CDNUR", num: r.id, date: r.date, ctin: null, noteType: r.noteType, pos: r.urType === "B2CL" ? pos2(r.pos) : "", value: r.value, taxable: r.taxable, heads: r.heads, rates: rowItems(r).map((it) => it.rate) })),
   ];
   const b2cs = s.b2cs.map((r): B2csLine => ({ pos: pos2(r.pos), rate: r.rate, taxable: r.taxable, heads: r.heads }));
   return { docs, b2cs };

@@ -18,6 +18,10 @@ const st = vi.hoisted(() => ({
   role: "owner" as string | null,
   conn: { refreshToken: "rt" as string | null, orgId: "600" as string | null, orgName: "Org", connectedAt: null },
   lines: [] as Array<Record<string, unknown>>,
+  /* R-2658: what the rival read (the company's remittance lines — the query with .or) answers; null = st.lines. */
+  rivalLines: null as Array<Record<string, unknown>> | null,
+  rivalOr: [] as string[],
+  rivalRanges: [] as Array<[number, number]>,
   customers: [] as Array<Record<string, unknown>>,
   filters: [] as Array<[string, string, string, unknown]>,
   writes: 0,
@@ -50,7 +54,8 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
         return { data: fn === "gst_filed_days" ? st.gstFiled : null, error: null };
       },
       from: (table: string) => {
-        const rows = table === "customers" ? st.customers : table === "bank_transactions" ? st.lines : (st.tables[table] ?? []);
+        let rows = table === "customers" ? st.customers : table === "bank_transactions" ? st.lines : (st.tables[table] ?? []);
+        let rival = false;
         const q: Record<string, unknown> = {
           select: () => q,
           eq: (k: string, v: unknown) => { st.filters.push([table, "eq", k, v]); return q; },
@@ -58,8 +63,9 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
           gt: (k: string, v: unknown) => { st.filters.push([table, "gt", k, v]); return q; },
           in: (k: string, v: unknown) => { st.filters.push([table, "in", k, v]); return q; },
           not: () => q, gte: () => q, lte: () => q, limit: () => q,
+          or: (f: string) => { if (table === "bank_transactions") { rival = true; st.rivalOr.push(f); if (st.rivalLines) rows = st.rivalLines; } return q; },
           order: () => q,
-          range: async () => ({ data: rows, error: null }),
+          range: async (a: number, b: number) => { if (rival) st.rivalRanges.push([a, b]); return { data: rows.slice(a, b + 1), error: null }; },
           then: (res: (v: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(res),
           update: () => { st.writes += 1; return q; },
           insert: () => { st.writes += 1; return q; },
@@ -77,6 +83,8 @@ import { POST } from "./route";
 import { clearZohoBatchCache } from "@/lib/integrations/zoho-books/payment-batch";
 
 const zohoCalls: string[] = [];
+/* R-2658: a test's own Zoho payment list (null = the R-2402 one below). */
+const r2658 = { payments: null as Array<Record<string, unknown>> | null };
 const json = (b: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify({ code: 0, ...(b as object) }), { status }));
 function fakeFetch(input: string | URL | Request) {
   const url = new URL(String(input));
@@ -84,6 +92,14 @@ function fakeFetch(input: string | URL | Request) {
   if (st.busyOn && url.pathname.includes(st.busyOn)) {
     return Promise.resolve(new Response(JSON.stringify({ code: 44, message: "too many requests" }), { status: 429 }));
   }
+  if (url.pathname.endsWith("/customerpayments") && r2658.payments) {
+    return json({ customerpayments: r2658.payments, page_context: { has_more_page: false } });
+  }
+  if (url.pathname.includes("/customerpayments/fx")) {
+    const row = r2658.payments?.find((x) => url.pathname.endsWith(`/${String(x.payment_id)}`));
+    return json({ payment: { ...row, invoices: [] } });
+  }
+  if (url.pathname.endsWith("/contacts/zc-dbox")) return json({ contact: { contact_id: "zc-dbox", contact_name: "Design Box", gst_treatment: "overseas", billing_address: { country: "U.S.A" } } });
   if (url.pathname.endsWith("/customerpayments")) {
     return json({
       customerpayments: [
@@ -116,6 +132,8 @@ beforeEach(() => {
   ];
   st.customers = [];
   st.filters = []; st.writes = 0; st.busyOn = null; zohoCalls.length = 0;
+  r2658.payments = null;
+  st.rivalLines = null; st.rivalOr = []; st.rivalRanges = [];
   st.tables = {}; st.rpcs = []; st.adminRpcs = []; st.gstFiled = []; st.gstFiledError = false;
   vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "test-id");
   vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "test-secret");
@@ -240,5 +258,81 @@ describe("R-2402 bulk-match route", () => {
     const res = await POST(req({ accountId: ACCOUNT }));
     expect(res.status).toBe(409);
     expect(zohoCalls).toEqual([]);
+  });
+});
+
+describe("R-2658 bulk-match: a USD inward line paired by its USD amount", () => {
+  const usdPay = (id: string, date: string) => ({ payment_id: id, payment_number: id.toUpperCase(), date, amount: 1024, reference_number: "", customer_id: "zc-dbox", customer_name: "Design Box", currency_code: "USD", exchange_rate: 93.1 });
+  const inw = (id: string, date: string) => ({ id, txn_date: date, credit: 95846, reference: null, description: "INW 070826I049902623 USD1024.0@93.6" });
+
+  it("one USD payment 6 days before the bank date → by fx_amount; Zoho is asked for ±10 days round the line", async () => {
+    st.lines = [inw(L1, "2026-08-07")];
+    r2658.payments = [usdPay("fx1", "2026-08-01")];
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(body.rows[0].result).toMatchObject({ kind: "match", match: { by: "fx_amount", payment: { zohoId: "fx1", currency: "USD", amount: 1024 } } });
+    expect(st.writes).toBe(0);
+  });
+
+  it("two candidates → several, nothing matched", async () => {
+    st.lines = [inw(L1, "2026-08-07")];
+    r2658.payments = [usdPay("fx1", "2026-08-01"), usdPay("fx2", "2026-08-10")];
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(body.rows[0].result.kind).toBe("several");
+  });
+
+  it("another unmatched line of the account with the same USD amount (not on this page) → matched, but not sure", async () => {
+    st.lines = [inw(L1, "2026-08-07"), inw(L2, "2026-08-03")];
+    r2658.payments = [usdPay("fx1", "2026-08-01")];
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(body.rows[0].result).toMatchObject({ kind: "match", match: { by: "fx_amount", notSure: expect.stringContaining("Another bank line (2026-08-03") } });
+  });
+  /* The company's other foreign receipts: fillers of another USD amount, ids unlike the account's lines. */
+  const filler = (n: number) => ({ id: `cccccccc-0000-4000-8000-${String(n).padStart(12, "0")}`, txn_date: "2026-08-05", credit: 9310, reference: null, description: "INW 050826I049900000 USD100.0@93.1" });
+  const rivalLine = { id: OTHER, txn_date: "2026-08-03", credit: 95334, reference: null, description: "INW 030826I049902000 USD1024.0@93.1" };
+
+  it("the rival read asks only for remittance narrations (not every '@' / UPI handle), paged and ordered", async () => {
+    st.lines = [inw(L1, "2026-08-07")];
+    r2658.payments = [usdPay("fx1", "2026-08-01")];
+    await POST(req({ accountId: ACCOUNT, txnIds: [L1] }));
+    expect(st.rivalOr).toHaveLength(1);
+    expect(st.rivalOr[0]).toContain("description.ilike.%USD%@%");
+    expect(st.rivalOr[0]).toContain("description.ilike.%EUR%@%");
+    expect(st.rivalOr[0]).not.toContain("description.ilike.%@%");
+    expect(st.rivalRanges[0]).toEqual([0, 999]);
+  });
+
+  it("a rival that sits beyond the first 1,000 rows of the company's foreign receipts is still found → not sure", async () => {
+    st.lines = [inw(L1, "2026-08-07")];
+    st.rivalLines = [...Array.from({ length: 1000 }, (_, n) => filler(n)), rivalLine];
+    r2658.payments = [usdPay("fx1", "2026-08-01")];
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(body.rows[0].result).toMatchObject({ kind: "match", match: { by: "fx_amount", notSure: expect.stringContaining("Another bank line (2026-08-03") } });
+    expect(st.rivalRanges).toEqual([[0, 999], [1000, 1999]]);
+  });
+
+  it("a UPI line with an '@' handle is never a rival, whatever the read returns", async () => {
+    st.lines = [inw(L1, "2026-08-07")];
+    st.rivalLines = [{ id: OTHER, txn_date: "2026-08-03", credit: 1024, reference: null, description: "UPI-NAVAS K-navas1024@oksbi-SBIN0000001-630466843630-PAY" }];
+    r2658.payments = [usdPay("fx1", "2026-08-01")];
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(body.rows[0].result.match.by).toBe("fx_amount");
+    expect(body.rows[0].result.match.notSure ?? null).toBeNull();
+  });
+
+  it("FAILS CLOSED: the rival read stops at its cap (3,000 rows) → every fx_amount pair is not sure, with the reason", async () => {
+    st.lines = [inw(L1, "2026-08-07")];
+    st.rivalLines = Array.from({ length: 3000 }, (_, n) => filler(n));
+    r2658.payments = [usdPay("fx1", "2026-08-01")];
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(body.rows[0].result).toMatchObject({ kind: "match", match: { by: "fx_amount", notSure: expect.stringContaining("too many bank lines to check") } });
+    expect(st.rivalRanges).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
+  });
+
+  it("FAILS CLOSED: the account's own unmatched lines stop at their cap (3,000) → not sure", async () => {
+    st.lines = [inw(L1, "2026-08-07"), ...Array.from({ length: 2999 }, (_, n) => ({ ...filler(n), description: "IMPS-1-SOMEONE-x", credit: 999 }))];
+    st.rivalLines = [];
+    r2658.payments = [usdPay("fx1", "2026-08-01")];
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(body.rows[0].result).toMatchObject({ kind: "match", match: { by: "fx_amount", notSure: expect.stringContaining("too many bank lines to check") } });
   });
 });

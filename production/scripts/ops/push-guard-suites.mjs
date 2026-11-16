@@ -108,6 +108,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/auth/no-passwords-in-source.test.ts",
   "src/lib/security/no-public-admin-env.test.ts", // R-730: admin allowlists never NEXT_PUBLIC_
   "src/lib/email/no-hardcoded-recipient.test.ts",
+  "src/lib/export-log/export-log-scan.test.ts", // R-2678: R-2665's test fixture (XLSX.write) turned it red in CI for two pushes — every export is logged (R-1006)
   "src/lib/feedback/internal-links.test.ts",
   "src/lib/feedback/route-map.test.ts",
   "src/lib/inbound/api-auth.wiring.test.ts",
