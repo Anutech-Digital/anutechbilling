@@ -91,6 +91,8 @@ describe("R-2743 (3): Basic % follows a DA change", () => {
     const da = src.slice(src.indexOf('id="payroll-da-month"'));
     const onChange = da.slice(0, da.indexOf("/>"));
     expect(onChange).toContain("setDaMonthly(e.target.value)");
-    expect(onChange).toContain("if (basicPctOfGross !== null) setBasicFromPct(basicPctOfGross, gross, e.target.value)");
+    /* base (R-2773): fillBasicFor re-applies the Basic % in force (basicPctOfGross) with the new DA */
+    expect(onChange).toContain("fillBasicFor(gross, e.target.value, true)");
+    expect(src).toContain("if (basicPctOfGross !== null) { setBasicFromPct(basicPctOfGross, grossText, daText); return; }");
   });
 });

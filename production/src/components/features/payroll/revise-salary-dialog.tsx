@@ -17,14 +17,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { rupee } from "@/lib/utils";
-<<<<<<< HEAD
 import { ctcFromEmployee, employeeCtcOptions } from "@/lib/payroll/ctc";
+import { revisedTakeHome } from "@/lib/payroll/net-pay";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { DEFAULT_PAYROLL_POLICY } from "@/lib/payroll/policy";
-=======
-import { ctcFromEmployee } from "@/lib/payroll/ctc";
-import { revisedTakeHome } from "@/lib/payroll/net-pay";
->>>>>>> 972eab671 (WIP R-2743: net total loading state, Revise salary take-home from net-pay, Basic % follows DA)
 import { periodLabel } from "@/lib/payroll/period-label";
 import {
   arrearsForMonth, defaultEffectiveMonth, grossForAnnualCtc, nextPeriod, revisionBookedNote, revisionMonth, salaryInForce, structureForGross,
@@ -105,15 +101,11 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
   const basicN = basic.trim() === "" ? null : Math.max(0, Math.round(Number(basic) || 0));
   const daN = Math.max(0, Math.round(Number(da) || 0));
   const next = { monthly_gross: grossN, basic_monthly: basicN, da_monthly: daN };
-<<<<<<< HEAD
   const breakdown = ctcFromEmployee({ ...next, ...switches }, ctcOpts);
-=======
-  const breakdown = ctcFromEmployee({ ...next, ...switches }, { asOf });
   /* R-2743: take-home from the ONE net-pay source (gross − PF − ESI − TDS, no PT — owner 13 Nov),
      the same as the Employees table's In-hand; it used ctc.ts netTakeHomeMonthly (PT, no TDS).
      The TDS reads this employee's payslips, so it waits for them. */
   const takeHome = historyQ.isSuccess ? revisedTakeHome(next, switches, asOf, booked) : null;
->>>>>>> 972eab671 (WIP R-2743: net total loading state, Revise salary take-home from net-pay, Basic % follows DA)
 
   const same = grossN === employee.monthly_gross && basicN === employee.basic_monthly && daN === (employee.da_monthly ?? 0);
   const splitTooBig = (basicN ?? 0) + daN > grossN;
