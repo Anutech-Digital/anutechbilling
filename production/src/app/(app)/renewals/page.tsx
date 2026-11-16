@@ -73,7 +73,7 @@ import { NoRenewalDateCard } from "./no-date-card";
 import { chasedRenewal } from "./classify";
 import {
   QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, matchesElsewhere, LEGACY_BUCKETS, STAGE_FILTER_LABEL, STAGE_FILTER_ORDER, NO_FILTERS, TILE_TABS,
-  noRenewalDate, resolveBucket, renewalAmount, QUEUE_TABLE_MIN_VIEWPORT_PX,
+  noRenewalDate, resolveBucket, renewalAmount, QUEUE_TABLE_MIN_VIEWPORT_PX, queueColCss,
   sortQueue, filterQueue, filterOptions, bulkStageTargets, bulkQuoteConfirm,
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RenewalAmount,
 } from "./queue";
@@ -109,9 +109,10 @@ import {
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { type RenewalStage, type StageKey } from "@/lib/renewals/stage";
-import { StageFlagIcon } from "./stage-flag";
+import { StageFlagLine } from "./stage-flag";
+import { RenewalQuoteLine } from "./row-quote";
 import { dueCellFacts } from "./due-anchor";
-import { CustomerCell, ProductCell, DueCell, HistoryButton, LastInvoiceCell, LastPaidRowLine, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
+import { AmountTableCell, CustomerCell, ProductCell, DueCell, HistoryButton, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
 import type { DrawerView } from "./drawer";
 import { BillTogetherGroups, togetherHint, useBillTogether } from "@/components/features/renewals/bill-together";
@@ -161,9 +162,11 @@ function StageChip({ stage, size, compact = false, canQuotes = false }: { stage:
         {quoteHref
           ? <Link href={quoteHref as never} className="max-w-full rounded-full hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" aria-label={`${stage.label} — open ${stage.quoteId}`} data-testid="stage-chip-quote">{badge}</Link>
           : badge}
-        {stage.flags.map((f) => <StageFlagIcon key={f.key} flag={f} />)}
       </div>
-      {c.line2 && <p className="mt-1 break-words text-2xs text-ink-3 tabular-nums" data-testid="stage-line2">{c.line2}</p>}
+      {/* R-2854: ONE line under the chip — its flag in words (never an icon-only pill; "+N more" for the rest), else the
+          chip's note. In the table a flagged row's note stays in the tooltip (the Due column shows the same day count). */}
+      {stage.flags.length > 0 && <div className="mt-1"><StageFlagLine flags={stage.flags} all={!compact} /></div>}
+      {c.line2 && !(compact && stage.flags.length > 0) && <p className="mt-1 break-words text-2xs leading-4 text-ink-3 tabular-nums" data-testid="stage-line2">{c.line2}</p>}
     </div>
   );
 }
@@ -496,13 +499,13 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
       )}
 
       {/* Desktop table — R-2759: from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX; a 1280 laptop's inner width
-          is 1264–1276), eight columns on the queue.ts budget, every cell at most two lines (row-cells.tsx). */}
+          is 1264–1276), eight columns on the queue.ts budget; R-2854: their widths grow with the window (queueColCss) and a cell is at most three short lines. */}
       {table && (
       <div data-testid="renewals-table">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             {QUEUE_TABLE_COLS.map((c) => (
-              <col key={c.key} style={c.width != null ? { width: c.width } : undefined} />
+              <col key={c.key} style={{ width: queueColCss(c) }} />
             ))}
           </colgroup>
           <thead>
@@ -538,22 +541,22 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                       onChange={(e) => onSelect([sub.id], e.target.checked)}
                     />
                   </td>
-                  <td className="min-w-0 px-1.5 py-1.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
-                  <td className="min-w-0 px-1.5 py-1.5">
-                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null} />
+                  <td className="min-w-0 px-1.5 py-1.5 leading-[1.125rem]"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
+                  <td className="min-w-0 px-1.5 py-1.5 leading-[1.125rem]">
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null}
+                      quoteLine={<RenewalQuoteLine docs={item.docs} stage={stage} loading={docsState.loading || (!stage && !docsState.failed)} failed={docsState.failed} canQuotes={canQuotes} todayIst={todayIst} />} />
                   </td>
                   <td className="px-1.5 py-1.5"><DueCell date={dueOf(item).date} days={dueOf(item).days} title={dueOf(item).title} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-1.5 py-1.5 text-right">
-                    <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
-                    <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : amount.gst}>{amount.quoteShort ? `${amount.gst} · ${amount.quoteShort}` : amount.gst}</p>
+                    <AmountTableCell text={amount.text} gst={amount.gst} title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : undefined} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
                   <td className="min-w-0 px-1.5 py-1.5">
-                    {/* R-2840: Last bill = invoice line(s) → the last payment (same Last paid read as the cards) → R-2841 quote note */}
-                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} prior={item.prior} stage={stage}
-                      paidLine={<LastPaidRowLine paid={paid} docs={item.docs} loading={lastPaid.loading || docsState.loading} failed={lastPaid.failed || (!paid && docsState.failed)} todayIst={todayIst} />} />
-                    {/* R-2839: History (replaced "+N earlier") — the row drawer on its History section */}
-                    <HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} />
+                    {/* R-2840 / R-2854: Last bill = the invoice → the last payment (same Last paid read as the cards); the quote is Product's quote line */}
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} todayIst={todayIst} prior={item.prior}
+                      paid={{ paid, loading: lastPaid.loading || docsState.loading, failed: lastPaid.failed || (!paid && docsState.failed) }}
+                      /* R-2839: History (replaced "+N earlier") — the row drawer on its History section */
+                      historyButton={<HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} />} />
                   </td>
                   <td className="min-w-0 px-1.5 py-1.5">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} />

@@ -5,14 +5,17 @@
  * horizontal scroll, Action always on screen) and about ten renewals show per screen.
  *
  *   Customer         name (link) / phone · email
- *   Product & period plan · seats · vendor / the next term's period · how it is paid
+ *   Product & period plan · seats · vendor / domain · the next term's period /
+ *                    R-2854: this renewal's quote "Quote Q-… · Sent 3 Oct · ₹3,823" or "No renewal quote yet" (row-quote.tsx)
  *   Due              date / "in 6d" · "today" · "6d ago" (grey — the chip says Overdue / Due in)
- *   Amount           the renewal amount / + GST | incl. GST
- *   Status           ONE stage chip (R-2758) + flag icons; its note is the tooltip
- *   Last bill        the newest invoice's state (never cut) / its number · period /
- *                    R-2840: the last payment "Paid ₹40,000 · 2 Oct" or "No payment yet" (a 3rd line) /
- *                    R-2839: "History" (its own last line — opens the drawer on History; "+N earlier" removed)
+ *   Amount           the renewal amount (one line, never broken) / + GST
+ *   Status           ONE stage chip (R-2758) / ONE line: its flag in words (stage-flag.tsx), else the chip's note
+ *   Last bill        R-2854: the invoice number (never cut) · period / its state — or, when it is Paid, the last
+ *                    payment "Paid ₹40,000 · 2 Oct" ("Paid" said once) / R-2839: "History". No quote here (one fact once).
  *   Action           ONE button + ⋯ (RenewalActions)
+ *
+ * R-2854 (Chrome human test on staging, 16 Nov): rows were 119–161px tall at a 1920 window — the column widths now
+ * grow with the window (queue.ts queueColCss) and every cell is at most three short lines there.
  *
  * Every cell is min-w-0; ids, names and periods may truncate (the full text is the tooltip) —
  * money and status never do (owner rule: no ellipsis on money / status; they wrap instead).
@@ -28,9 +31,10 @@ import { termEndInclusive } from "@/lib/billing/schedule";
 import type { RenewalStage } from "@/lib/renewals/stage";
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { renewalTermStart } from "./stage-input";
+import { seatsAfterPlan } from "./plan-seats";
 import {
-  daysBetweenIst, docMoney, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryNote, quoteStateLabel, rowQuoteNote, shownInvoices,
-  type ChipQuote, type DocTone, type LastDocs, type LastInvoice, type LastQuote,
+  daysBetweenIst, docMoney, invoiceStatusWords, invoiceTotalWords, periodWords, priorDueInvoiceGap, quoteExpiryNote, shownInvoices,
+  type DocTone, type LastDocs, type LastInvoice,
 } from "./last-docs";
 import type { RowContact } from "./queue-data";
 import { lastPaidSummary, type LastPaid } from "./last-paid";
@@ -99,7 +103,8 @@ export function lastInvoiceOf(docs: LastDocs | undefined): { invoice: LastInvoic
 const TONE: Record<DocTone, string> = {
   ok: "text-ink-2",
   warn: "font-medium text-ink",
-  danger: "font-medium text-rose-600",
+  /* R-2854 (accessibility-review, measured): rose-600 on the page background is 4.46:1 at 12px — the rose-ink token passes and follows the theme */
+  danger: "font-medium text-rose-ink",
   muted: "text-ink-3",
 };
 
@@ -115,7 +120,7 @@ export function CustomerCell({ name, customerId, contact, more }: { name: string
         <p className="line-clamp-2 break-words font-semibold text-ink" title={nameTitle}>{name}</p>
       )}
       {parts.length ? (
-        <p className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs text-ink-3" title={parts.join(" · ")}>
+        <p className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs leading-4 text-ink-3" title={parts.join(" · ")}>
           {contact?.phone && (
             <a href={`tel:${contact.phone.replace(/\s+/g, "")}`} className="inline-flex min-w-0 items-center gap-1 hover:text-ink">
               <Icon name="phone" size={11} className="shrink-0" /><span className="truncate">{contact.phone}</span>
@@ -128,7 +133,7 @@ export function CustomerCell({ name, customerId, contact, more }: { name: string
           )}
         </p>
       ) : (
-        <p className="mt-0.5 text-2xs text-ink-3">No contact on file</p>
+        <p className="mt-0.5 text-2xs leading-4 text-ink-3">No contact on file</p>
       )}
     </div>
   );
@@ -140,7 +145,29 @@ export function subscriptionDomain(sub: { domain?: string | null }): string | nu
   return d ? d : null;
 }
 
-export function ProductCell({ plan, seats, vendor, term, termShort, frequency, domain = null, onOpen, together = null }: {
+/** R-2854 / R-2857: "· 5 seats" — "1 seat" for one — and nothing when the plan name already carries a seat count
+    ("Business Starter (1 seats)" printed "… (1 seats) · 1 seats"). ONE rule for the row, the card and the drawer: plan-seats.ts. */
+export const seatsWords = seatsAfterPlan;
+
+/** R-2854: the table's Amount cell — "₹63,855/mo" on ONE line (it printed "₹63,855/m" + "o" in the 88px column);
+    only when a very large figure cannot fit does the "/yr" part move to the next line as a whole — never mid-word.
+    The quote's total is not repeated here (it is on the row's quote line). */
+export function AmountTableCell({ text, gst, title }: { text: string; gst: string; /** e.g. "+ GST · Quote ₹92,040 incl. GST" (R-2751's note stays on hover) */ title?: string }) {
+  const at = text.lastIndexOf("/");
+  const [money, per] = at > 0 ? [text.slice(0, at), text.slice(at)] : [text, ""];
+  return (
+    <div data-cell="amount" title={title}>
+      <p className="flex flex-wrap justify-end font-medium tabular-nums text-ink" data-testid="renewal-row-amount">
+        <span className="whitespace-nowrap">{money}</span>{per && <span className="whitespace-nowrap">{per}</span>}
+      </p>
+      <p className="whitespace-nowrap text-2xs leading-4 text-ink-3">{gst}</p>
+    </div>
+  );
+}
+
+export function ProductCell({ plan, seats, vendor, term, termShort, frequency, domain = null, onOpen, together = null, quoteLine = null }: {
+  /** R-2854: this renewal's quote line (RenewalQuoteLine) — the cell's last line, on every row. */
+  quoteLine?: ReactNode;
   plan: string | null; seats: number | null; vendor: string | null; term: string | null; termShort: string | null; frequency: string | null;
   /** R-2755: the subscription's domain (subscriptionDomain) — line 2, before the period. */
   domain?: string | null;
@@ -150,7 +177,7 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
   together?: { text: string; title?: string; onClick: () => void } | null;
 }) {
   const vendorWord = vendor ? vendor[0].toUpperCase() + vendor.slice(1) : null;
-  const line1 = [plan, seats != null ? `${seats} seats` : null, vendorWord].filter(Boolean).join(" · ");
+  const line1 = [plan, seatsWords(plan, seats), vendorWord].filter(Boolean).join(" · ");
   /* line 2 = the domain (R-2755) + the period (short); the full period + how it is paid are its tooltip */
   const title2 = [term ? `Renews for ${term}` : null, frequency].filter(Boolean).join(" · ");
   return (
@@ -166,7 +193,7 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
       {together ? (
         /* R-2808: billed together last cycle — "Bills with <other plan>" takes the period's place (the period
            stays in the tooltip and the Due column shows when it starts); the button opens Bill together. */
-        <p className="mt-0.5 flex min-w-0 items-baseline gap-x-1 text-2xs" title={title2 || undefined}>
+        <p className="mt-0.5 flex min-w-0 items-baseline gap-x-1 text-2xs leading-4" title={title2 || undefined}>
           {domain && <span className="min-w-0 max-w-[55%] shrink truncate text-ink-2" title={domain} data-testid="renewal-row-domain">{domain} ·</span>}
           <button type="button" onClick={together.onClick} data-testid="renewal-bills-with" title={together.title ?? `${together.text} — bill them on one proforma`}
             className="min-w-0 shrink truncate rounded-sm text-left font-medium text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
@@ -177,11 +204,12 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
         /* R-2755: one line — the domain first (cut with its full text on hover when long); the period follows
            where it fits and otherwise wraps out of sight (max-h one line): it stays in the tooltip, and the
            Due column shows the date it starts. */
-        <p className="mt-0.5 flex max-h-[1lh] flex-wrap gap-x-1 overflow-hidden text-2xs" title={title2 || undefined}>
+        <p className="mt-0.5 flex max-h-[1lh] flex-wrap gap-x-1 overflow-hidden text-2xs leading-4" title={title2 || undefined}>
           <span className="min-w-0 max-w-full truncate text-ink-2" title={domain} data-testid="renewal-row-domain">{domain}</span>
           {termShort && <span className="shrink-0 whitespace-nowrap text-ink-3 tabular-nums">· {termShort}</span>}
         </p>
-      ) : termShort && <p className="mt-0.5 truncate text-2xs text-ink-3 tabular-nums" title={title2}>{termShort}</p>}
+      ) : termShort && <p className="mt-0.5 truncate text-2xs leading-4 text-ink-3 tabular-nums" title={title2}>{termShort}</p>}
+      {quoteLine}
     </div>
   );
 }
@@ -203,77 +231,91 @@ export function DueCell({ date, days, note, title }: { date: string | null; days
     <div className="min-w-0 tabular-nums" data-cell="due" title={title ?? undefined}>
       {/* "26 Nov 26" — the 88px column (measured: "26 Nov 2026" spilled at 1280); the full date is the tooltip */}
       <p className="whitespace-nowrap text-ink" title={title ? undefined : date ? formatDate(date) : undefined}>{date ? shortDate(date.slice(0, 10)) : "—"}</p>
-      {sub && <p className="mt-0.5 whitespace-nowrap text-2xs text-ink-3" title={note?.title} data-testid={note ? "due-quote-expiry" : undefined}>{sub}</p>}
+      {sub && <p className="mt-0.5 whitespace-nowrap text-2xs leading-4 text-ink-3" title={note?.title} data-testid={note ? "due-quote-expiry" : undefined}>{sub}</p>}
     </div>
   );
 }
 
-export function LastInvoiceCell({ docs, loading, failed, canInvoices, canQuotes, todayIst, prior = null, stage = null, paidLine = null }: {
+/** R-2854: the Last bill cell's payment — the same Last paid read as the cards (useRenewalLastPaid), with its loading / failed state. */
+export interface RowPaid { paid: LastPaid | undefined; loading: boolean; failed: boolean }
+
+/**
+ * R-2854 — which of the two status lines the Last bill cell prints ("Paid" was said three times on one row):
+ *  - the invoice is Paid and the payment line starts with "Paid" ("Paid ₹40,000 · 2 Oct", "Paid on invoice, no
+ *    receipt") → the payment line alone;
+ *  - the invoice says what is owed ("Unpaid · ₹…", "Overdue 12d · ₹…") and nothing was received → that state alone
+ *    (no "No payment yet" under "Unpaid");
+ *  - otherwise both (e.g. "Part paid · ₹700 due" + "Part paid on invoice, no receipt", "Unpaid" + "Earlier bill paid…").
+ */
+export function lastBillLines(state: { text: string } | null, paid: { kind: "paid" | "no-receipt" | "none"; text: string } | null): { state: boolean; paid: boolean } {
+  if (!state) return { state: false, paid: !!paid };
+  if (!paid) return { state: true, paid: false };
+  if (paid.kind === "none") return { state: true, paid: false };
+  return { state: !(state.text === "Paid" && paid.text.startsWith("Paid")), paid: true };
+}
+
+export function LastInvoiceCell({ docs, loading, failed, canInvoices, todayIst, prior = null, paid = null, historyButton = null }: {
   docs: LastDocs | undefined;
   loading: boolean;
   failed: boolean;
   canInvoices: boolean;
-  canQuotes: boolean;
   todayIst: string;
   /** R-2747 / R-2818: what the previous term still owes (queue item `prior`, the one owed rule); null = none / not read. */
   prior?: SubscriptionOwed | null;
-  /** R-2841: the row's stage (null = not read yet: no quote line) — a quote its chip names is not repeated here. */
-  stage?: ChipQuote | null;
-  /** R-2840: the last payment line (LastPaidRowLine) — after the invoice line(s), before R-2841's quote note. */
-  paidLine?: ReactNode;
+  /** R-2840: the last payment (the SAME Last paid read as the cards); null = the cell shows the invoice only. */
+  paid?: RowPaid | null;
+  /** R-2839 / R-2854: the row's History button — after the cell's last line, on that line where it fits (a wide window), else under it. */
+  historyButton?: ReactNode;
 }) {
-  if (loading) return <p className="text-2xs text-ink-3" role="status" aria-busy="true" title="Last bill is loading…" data-testid="last-invoice-loading">Loading…</p>;
-  if (failed) return <><p className="text-2xs text-ink-3" title="Last invoice couldn't load — reload the page">Couldn&apos;t load</p>{paidLine}</>;
+  /* the last line + History share one wrapping row */
+  const tail = (last: ReactNode) => <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">{last}{historyButton}</div>;
+  if (loading) return tail(<p className="text-2xs leading-4 text-ink-3" role="status" aria-busy="true" title="Last bill is loading…" data-testid="last-invoice-loading">Loading…</p>);
+  const paidRow = (hide = false) => (paid && !hide ? <LastPaidRowLine paid={paid.paid} docs={docs} loading={paid.loading} failed={paid.failed} todayIst={todayIst} /> : null);
+  if (failed) {
+    const line = <p className="text-2xs leading-4 text-ink-3" title="Last invoice couldn't load — reload the page">Couldn&apos;t load</p>;
+    return paid ? <>{line}{tail(paidRow())}</> : tail(line);
+  }
   const { invoice, earlier } = lastInvoiceOf(docs);
   /* R-2747 / R-2752 (R-2760: kept in the table): money owed on the subscription with no unpaid invoice
-     linked — say why, also next to a Paid / Cancelled invoice (line 2) */
+     linked — say why, also next to a Paid / Cancelled invoice (its own line) */
   const gap = priorDueInvoiceGap(docs, prior, todayIst);
-  const gapSpan = gap ? <span title={gap} data-testid="renewal-prior-due-no-invoice"> · {gap}</span> : null;
-  if (!invoice && gap && !docs?.quote) {
+  const gapLine = gap ? <p className="break-words text-ink-3" title={gap} data-testid="renewal-prior-due-no-invoice">{gap}</p> : null;
+  if (!invoice) {
+    /* R-2854: no quote here any more — this renewal's quote is the Product column's quote line (one fact once) */
     return (
-      <div className="min-w-0 text-2xs" data-cell="invoice" title={gap}>
-        <p className="text-ink-2">No unpaid invoice</p>
-        <p className="mt-0.5 truncate text-ink-3" data-testid="renewal-prior-due-no-invoice">{gap}</p>
-        {paidLine}
+      <div className="min-w-0 text-2xs leading-4" data-cell="invoice" title={gap ?? undefined}>
+        <p className="text-ink-3">{gap ? "No unpaid invoice" : "No invoice yet"}</p>
+        {gapLine}
+        {tail(paidRow())}
       </div>
     );
   }
-  if (!invoice) return <><QuoteInstead quote={docs?.quote ?? null} canQuotes={canQuotes} todayIst={todayIst} gapLine={gapSpan} />{paidLine}</>;
   const state = invoiceStatusWords(invoice, todayIst);
   const total = invoiceTotalWords(invoice);
+  const settled = paid && !paid.loading && !paid.failed ? lastPaidRowFacts({ paid: paid.paid, docs, todayIst }) : null;
+  const show = paid && !settled ? { state: true, paid: true } : lastBillLines(state, settled);
   /* R-2839: "+N earlier" is gone — the row's History button (under this cell) opens every document; the earlier
      invoices stay in this cell's tooltip */
-  const note = rowQuoteNote(docs, stage);
-  const noteState = note ? quoteStateLabel(note, todayIst) : "";
   const title = [
     `Last invoice ${invoice.id}${invoice.date ? ` · dated ${formatDate(invoice.date)}` : ""} · ${total} · ${state.text}${invoice.period ? ` · for ${invoice.period}` : ""}`,
     ...earlier.map((e) => `Earlier invoice ${e.id} · ${invoiceTotalWords(e)} · ${invoiceStatusWords(e, todayIst).text}${e.period ? ` · for ${e.period}` : ""}`),
     ...(gap ? [gap] : []),
-    ...(note ? [`Quote ${note.id} · ${formatDate(note.date)} · ${noteState}${note.period ? ` · for ${note.period}` : ""}`] : []),
   ].join("\n");
   return (
-    <div className="min-w-0 text-2xs" data-cell="invoice" data-testid="renewal-last-invoice-cell" title={title}>
-      <p className={cn("break-words tabular-nums", TONE[state.tone])} data-testid="renewal-last-invoice-status">{state.text}</p>
-      <p className="mt-0.5 truncate text-ink-3 tabular-nums">
+    <div className="min-w-0 text-2xs leading-4" data-cell="invoice" data-testid="renewal-last-invoice-cell" title={title}>
+      {/* the number is never cut (nowrap, shrink-0); the period follows where it fits and otherwise wraps out of
+          sight (max-h one line) — it stays in the tooltip and in Product & period */}
+      <p className="flex max-h-[1lh] min-w-0 flex-wrap gap-x-1 overflow-hidden text-ink-3 tabular-nums">
         {canInvoices
-          ? <Link href={invoiceHref(invoice.id) as never} className="font-mono underline underline-offset-2 hover:text-ink">{invoice.id}</Link>
-          : <span className="font-mono">{invoice.id}</span>}
-        {gapSpan ?? (invoice.period ? ` · ${invoice.period}` : "")}
+          ? <Link href={invoiceHref(invoice.id) as never} className="shrink-0 whitespace-nowrap font-mono underline underline-offset-2 hover:text-ink" data-testid="renewal-last-invoice-no">{invoice.id}</Link>
+          : <span className="shrink-0 whitespace-nowrap font-mono" data-testid="renewal-last-invoice-no">{invoice.id}</span>}
+        {invoice.period && <span className="whitespace-nowrap">· {invoice.period}</span>}
       </p>
-      {paidLine}
-      {/* R-2841: a newer quote the chip does not name (e.g. accepted add-seats, not invoiced) — muted, linked.
-          The ~80px column at 1280 (measured) cannot hold "Quote Q-F588-27-0031 · Rejected" on one line: "Quote <no.>"
-          may truncate like the invoice number above (full text is the cell's tooltip); the state is its own line, never cut. */}
-      {note && (
-        <div className="mt-0.5 text-ink-3 tabular-nums" data-testid="renewal-row-quote-note">
-          <p className="truncate">
-            Quote {canQuotes
-              ? <Link href={`/quotes/${encodeURIComponent(note.id)}` as never} className="font-mono underline underline-offset-2 hover:text-ink">{note.id}</Link>
-              : <span className="font-mono">{note.id}</span>}
-          </p>
-          <p className="break-words" data-testid="renewal-row-quote-note-state">{noteState}</p>
-        </div>
-      )}
+      {(() => {
+        const stateLine = show.state ? <p className={cn("min-w-0 break-words tabular-nums", TONE[state.tone])} data-testid="renewal-last-invoice-status">{state.text}</p> : null;
+        const paidLine = paidRow(!show.paid);
+        return paidLine ? <>{stateLine}{gapLine}{tail(paidLine)}</> : gapLine ? <>{stateLine}{tail(gapLine)}</> : tail(stateLine);
+      })()}
     </div>
   );
 }
@@ -341,13 +383,13 @@ export function LastPaidRowLine({ paid, docs, loading, failed, todayIst }: {
   failed: boolean;
   todayIst: string;
 }) {
-  if (loading) return <p className="mt-0.5 text-2xs text-ink-3" data-testid="renewal-row-last-paid">…</p>;
+  if (loading) return <p className="text-2xs leading-4 text-ink-3" data-testid="renewal-row-last-paid">…</p>;
   if (failed) {
-    return <p className="mt-0.5 break-words text-2xs text-ink-3" data-testid="renewal-row-last-paid" title="Last payment couldn't load — reload the page">Last payment couldn&apos;t load</p>;
+    return <p className="break-words text-2xs leading-4 text-ink-3" data-testid="renewal-row-last-paid" title="Last payment couldn't load — reload the page">Last payment couldn&apos;t load</p>;
   }
   const f = lastPaidRowFacts({ paid, docs, todayIst });
   return (
-    <p className={cn("mt-0.5 break-words text-2xs tabular-nums", f.kind === "paid" ? "text-ink-2" : "text-ink-3")} data-testid="renewal-row-last-paid" title={f.title}>{f.text}</p>
+    <p className={cn("min-w-0 break-words text-2xs leading-4 tabular-nums", f.kind === "paid" ? "text-ink-2" : "text-ink-3")} data-testid="renewal-row-last-paid" title={f.title}>{f.text}</p>
   );
 }
 
@@ -359,24 +401,8 @@ export function LastPaidRowLine({ paid, docs, loading, failed, todayIst }: {
 export function HistoryButton({ onOpen, name, className }: { onOpen: () => void; name: string; className?: string }) {
   return (
     <button type="button" onClick={onOpen} data-testid="renewal-open-history" aria-label={`History — ${name}`}
-      className={cn("mt-0.5 rounded-sm text-2xs font-medium text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber", className)}>
+      className={cn("rounded-sm text-2xs font-medium leading-4 text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber", className)}>
       History
     </button>
-  );
-}
-
-function QuoteInstead({ quote, canQuotes, todayIst, gapLine }: { quote: LastQuote | null; canQuotes: boolean; todayIst: string; gapLine?: ReactNode }) {
-  if (!quote) return <p className="text-2xs text-ink-3" data-cell="invoice">No invoice yet</p>;
-  const state = quoteStateLabel(quote, todayIst);
-  return (
-    <div className="min-w-0 text-2xs" data-cell="invoice" title={`No invoice yet · last quote ${quote.id} · ${formatDate(quote.date)} · ${state}${quote.period ? ` · for ${quote.period}` : ""}`}>
-      <p className="break-words text-ink-2">No invoice · quote {state}</p>
-      <p className="mt-0.5 truncate text-ink-3 tabular-nums">
-        {canQuotes
-          ? <Link href={`/quotes/${encodeURIComponent(quote.id)}` as never} className="font-mono underline underline-offset-2 hover:text-ink">{quote.id}</Link>
-          : <span className="font-mono">{quote.id}</span>}
-        {gapLine ?? (quote.period ? ` · ${quote.period}` : "")}
-      </p>
-    </div>
   );
 }

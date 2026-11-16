@@ -28,13 +28,18 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
     expect(page).not.toMatch(/"hidden xl:block"|"xl:hidden/);
   });
 
-  it("column budget: fixed columns + flexible minimums ≤ the ~968px card, Action inside it; R-2821: Customer and Product get ≥ 200px each", () => {
+  /* R-2854 (changed expectation — Chrome human test 16 Nov + Pardeep's quote line): the R-2821 "Customer and Product ≥ 200px
+     each" gave way at 1260–1280 — Last bill needs 128px for a whole invoice number, Amount 100px for "₹63,855/mo" on one
+     line — so Customer is 152px (names still wrap to two lines) and Product, the one flexible column, ≥ 188px. From wider
+     windows every column grows (row-r2854.test.tsx). */
+  it("column budget at 1260: the fixed columns + Product's minimum ≤ the ~968px card, Action inside it", () => {
     const fixed = QUEUE_TABLE_COLS.reduce((s, c) => s + (c.width ?? 0), 0);
     const flex = QUEUE_TABLE_COLS.filter((c) => c.width == null);
-    expect(flex.map((c) => c.key)).toEqual(["customer", "product"]);
-    /* R-2821: page side padding 32 → 16px below 2xl gives the card 32px more (936 → 968); the fixed columns shrank */
+    expect(flex.map((c) => c.key)).toEqual(["product"]);
+    /* R-2821: page side padding 32 → 16px below 2xl gives the card 32px more (936 → 968) */
     expect(QUEUE_TABLE_BUDGET_PX).toBeLessThanOrEqual(968);
-    expect(QUEUE_FLEX_MIN_PX).toBeGreaterThanOrEqual(200);
+    expect(QUEUE_FLEX_MIN_PX).toBeGreaterThanOrEqual(188);
+    expect(QUEUE_TABLE_COLS.find((c) => c.key === "customer")!.width).toBeGreaterThanOrEqual(152);
     expect(fixed + flex.length * QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
     expect(QUEUE_TABLE_COLS.map((c) => c.key)).toEqual(["select", "customer", "product", "due", "amount", "status", "invoice", "actions"]);
     /* R-2840 (changed expectation): "Last invoice" → "Last bill" (the invoice + its last payment) */
@@ -43,6 +48,8 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
 
   it("the table is fixed-layout, driven by that budget; the header row comes from the same list; no min-width", () => {
     expect(page).toMatch(/<table className="w-full table-fixed text-sm">\s*<colgroup>\s*\{QUEUE_TABLE_COLS\.map/);
+    /* R-2854: each <col> takes its width from queueColCss (grows with the window) */
+    expect(page).toContain("<col key={c.key} style={{ width: queueColCss(c) }} />");
     expect(page).not.toMatch(/<table className="[^"]*min-w-/);
     const head = page.slice(page.indexOf("<thead>"), page.indexOf("</thead>"));
     expect(head).toMatch(/QUEUE_TABLE_COLS\.map\(\(c\) => c\.key === "select"/);
@@ -53,27 +60,30 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
     expect(cells).toMatch(/className="line-clamp-2 break-words font-semibold text-ink hover:underline" title=\{nameTitle\}/);
     expect(cells).toContain('<span className="line-clamp-2 break-words">{line1}</span>');
     /* the invoice state (money + status) wraps, never cut */
-    expect(cells).toMatch(/className=\{cn\("break-words tabular-nums", TONE\[state\.tone\]\)\} data-testid="renewal-last-invoice-status"/);
+    expect(cells).toMatch(/className=\{cn\("min-w-0 break-words tabular-nums", TONE\[state\.tone\]\)\} data-testid="renewal-last-invoice-status"/);
     /* the stage chip may wrap in the table (Badge is whitespace-nowrap by default); its period is in
        Product & period and its day count / amount is line 2 (compactStage) */
     expect(page).toContain('className={compact ? "max-w-full whitespace-normal text-left" : undefined}');
     expect(page).toContain("<StageChip stage={stage} size=\"sm\" compact canQuotes={canQuotes} />");
     expect(page).toContain("const c = compact ? compactStage(stage)");
-    /* the amount is never cut (it may wrap) */
-    expect(page).toContain('<p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>');
+    /* R-2854 (changed expectation): the amount is ONE line, never broken mid-word (AmountTableCell — "₹63,855/m" + "o" on staging) */
+    expect(page).toContain("<AmountTableCell text={amount.text} gst={amount.gst} title={amount.quoteNote ?");
   });
 
   it("R-2840: Last bill line 3 = the last payment from the SAME Last paid read (no new query); it wraps, never cut", () => {
     const table = page.slice(page.indexOf('data-testid="renewals-table"'), page.indexOf("</table>"));
     expect(table).toContain("const paid = lastPaid.data?.get(sub.id);");
-    /* order inside Last bill: invoice line(s) → the paid line → the R-2841 quote note (row-cells LastInvoiceCell) */
-    expect(table).toMatch(/<LastInvoiceCell [^>]*\s+paidLine=\{<LastPaidRowLine paid=\{paid\} docs=\{item\.docs\}/);
-    const cell = cells.slice(cells.indexOf("export function LastInvoiceCell"), cells.indexOf("function QuoteInstead"));
-    expect(cell.search(/\{paidLine\}\s*\{\/\* R-2841: a newer quote/)).toBeGreaterThan(0);
+    /* R-2854 (changed expectation): the cell takes the Last paid read itself (paid={{…}}) and decides which lines show
+       ("Paid" once); no quote note in the table cell any more (the quote is Product's quote line) */
+    expect(table).toMatch(/<LastInvoiceCell [^>]*\s+paid=\{\{ paid, loading: lastPaid\.loading \|\| docsState\.loading/);
+    const cell = cells.slice(cells.indexOf("export function LastInvoiceCell"), cells.indexOf("export function lastPaidRowFacts"));
+    expect(cell).toContain("<LastPaidRowLine paid={paid.paid} docs={docs}");
+    expect(cell).not.toMatch(/rowQuoteNote|renewal-row-quote-note/);
+    expect(table).toContain("quoteLine={<RenewalQuoteLine docs={item.docs} stage={stage}");
     /* never "No payment yet" while either read is loading (R-2752: no false "never paid") */
     /* both reads: a USD payment needs its invoice (fx) — no ₹ → $ jump */
-    expect(table).toContain("loading={lastPaid.loading || docsState.loading}");
-    expect(cells).toMatch(/className=\{cn\("mt-0\.5 break-words text-2xs tabular-nums"/);
+    expect(table).toContain("loading: lastPaid.loading || docsState.loading");
+    expect(cells).toMatch(/className=\{cn\("min-w-0 break-words text-2xs leading-4 tabular-nums"/);
     expect((page.match(/useRenewalLastPaid\(/g) ?? []).length).toBe(1);
   });
 
