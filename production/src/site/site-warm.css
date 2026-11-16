@@ -461,6 +461,9 @@
    bottom, so keep the laptop, the padlock shield and the icons around them in view — they sit a
    little below the middle (the top third is sky). */
 .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(4) .hc-card-img img { object-position: center 62%; }
+/* Business email photo (public/email-card.webp, 941×1672) is portrait too, its scene — the app icons,
+   the envelope, the laptop — in the lower half (the top is sky): aim every crop there. */
+.anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-img img { object-position: center 72%; }
 /* Bento (owner, 16 Nov 2026: "improve it further"), from 1100px: Business email — the lead product —
    is the tall featured card (two rows, the photo takes the extra height); Domains and Web hosting sit
    beside it; SSL & security runs wide under them, photo on the left and its text on the right. The
@@ -480,9 +483,6 @@
   /* Featured: Business email */
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) { grid-row: 1 / span 2; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-img { flex: 1 1 auto; height: auto; min-height: 300px; }
-  /* The photo is landscape in a tall frame: keep the laptop, the secured envelope and the chat
-     bubbles in view (they sit right of centre; the left third is sky). */
-  .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-img img { object-position: 62% center; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-name { font-size: 26px; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-price span { font-size: 40px; }
   .anutech-site[data-site-theme="warm"] .hc .hc-grid4 > .hc-card:nth-child(1) .hc-card-body { flex: 0 0 auto; font-size: 15.5px; max-width: 420px; }
