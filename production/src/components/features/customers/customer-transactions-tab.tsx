@@ -20,6 +20,7 @@ import { paymentMethodLabel } from "@/lib/payments/method-label";
 import { istToday } from "@/lib/dates/ist";
 import { noteTotalsByInvoice } from "@/lib/invoices/note-totals";
 import { useCustomerInstalmentBillings } from "@/lib/queries/customer-instalment-links";
+import { invoicePeriodLine, partRowsByInvoice } from "@/lib/invoices/invoice-period";
 import { Badge } from "@/components/ui/badge";
 import { IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -58,7 +59,8 @@ export interface CustomerTransactionsTabProps {
   linkOpts: { canQuotes: boolean };
   canDeletePay: boolean;
   onDeletePayment: (id: string) => void;
-  invoices: readonly LinkInvoice[];
+  /** R-2853: line_items (the stored line periods, R-2744) — the subscription period under the number. */
+  invoices: readonly (LinkInvoice & { line_items?: unknown })[];
   payments: readonly CustPayment[];
   quotes: readonly Quote[];
   projects: readonly Project[];
@@ -92,6 +94,8 @@ interface HRow {
   invoiceStatus?: InvoiceStatusView;
   /** Small text after the reference: method, "part of ₹X", the quote. */
   note?: string;
+  /** R-2853: invoice rows — the subscription period it covers, under the number. */
+  period?: string | null;
   /** Show the TDS line (on the payment's first row when it is split). */
   tds?: boolean;
   /** The amount the TDS line splits — the whole payment, also on a split payment's first row. */
@@ -147,6 +151,9 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
     return linkPaymentsToInvoices({ invoices, payments, quotes, instalments });
   }, [invoices, payments, quotes, subs, billingsQ.data]);
 
+  /* R-2853: the billed parts come with the instalment rows above (same read) — "Part 2 of 12 · 1–31 Oct 2026". */
+  const partsByInvoice = React.useMemo(() => partRowsByInvoice(billingsQ.data), [billingsQ.data]);
+
   const today = istToday();
   const payById = new Map(payments.map((p) => [p.id, p]));
   const quoteById = new Map(quotes.map((q) => [q.id, q]));
@@ -175,13 +182,14 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
   const byDate = (a: { date: string }, b: { date: string }) => (a.date ?? "").localeCompare(b.date ?? "");
 
   /** An invoice row and its payments (customer receipts + project receipts), oldest payment first. */
-  const invoiceBlock = (i: LinkInvoice, parentKey: string | null, indent: number): HRow[] => {
+  const invoiceBlock = (i: LinkInvoice & { line_items?: unknown }, parentKey: string | null, indent: number): HRow[] => {
     const key = `inv:${i.id}`;
     const view = invoiceStatusView(i, today);
     const kids: HRow[] = (links.byInvoice[i.id] ?? []).map((s) => shareRow(s, key, indent + 1));
     for (const p of projPayments.filter((pp) => pp.invoice_id === i.id)) kids.push(projectReceiptRow(p, key, indent + 1));
     return [
-      { key, parentKey, indent, date: i.invoice_date, type: "Invoice", ref: i.id, amount: i.amount, status: view.label, invoiceStatus: view, href: txnHref({ kind: "invoice", invoiceId: i.id }, linkOpts) },
+      { key, parentKey, indent, date: i.invoice_date, type: "Invoice", ref: i.id, amount: i.amount, status: view.label, invoiceStatus: view, href: txnHref({ kind: "invoice", invoiceId: i.id }, linkOpts),
+        period: invoicePeriodLine(i, partsByInvoice.get(i.id)) },
       ...kids.sort(byDate),
     ];
   };
@@ -305,7 +313,15 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
                 ) : t.indent > 0 ? <span aria-hidden className="text-ink-3">↳</span> : null}
                 {t.group
                   ? <span className="font-semibold text-ink">{t.ref}</span>
-                  : <span className="font-mono"><RowLink href={t.href}>{t.ref}</RowLink></span>}
+                  : t.period
+                    ? (
+                      <span className="inline-flex flex-col min-w-0">
+                        <span className="font-mono"><RowLink href={t.href}>{t.ref}</RowLink></span>
+                        {/* R-2853: the subscription term this invoice covers, under the number. */}
+                        <span className="text-3xs text-ink-3 break-words" data-testid="invoice-period">{t.period}</span>
+                      </span>
+                    )
+                    : <span className="font-mono"><RowLink href={t.href}>{t.ref}</RowLink></span>}
                 {t.note ? <span className="text-3xs text-ink-3 truncate">· {t.note}</span> : null}
               </span>,
             ];

@@ -28,6 +28,8 @@ import { invoiceIdFromParam } from "../invoice-href";
 import { quoteKindFor } from "@/lib/quotes/quote-kind";
 import { useInvoiceKindSource, usePartFacts } from "@/lib/quotes/quote-kind-facts";
 import { QuoteKindStamp } from "@/components/features/quotes/quote-kind-stamp";
+import { invoicePeriodLine } from "@/lib/invoices/invoice-period";
+import { useInvoicePartRows } from "@/lib/queries/invoice-part-periods";
 
 export default function InvoiceDetailPage() {
   const params = useParams<{ id: string }>();
@@ -53,6 +55,9 @@ export default function InvoiceDetailPage() {
   const partId = kindSource?.quote?.subscription_billing_id ?? null;
   const { data: partFacts } = usePartFacts([partId]);
   const kindStamp = quoteKindFor(kindSource?.quote ?? null, partId ? partFacts?.get(partId)?.facts ?? null : null);
+  /* R-2853: the subscription period under the invoice number — its billed part(s), else its stored line periods. */
+  const { data: partRows } = useInvoicePartRows({ invoiceId: invoice?.id });
+  const period = invoice ? invoicePeriodLine(invoice, partRows) : null;
 
   if (isLoading) {
     return (
@@ -113,7 +118,7 @@ export default function InvoiceDetailPage() {
           )}
         </div>
       )}
-      <InvoiceDetail invoice={invoice} />
+      <InvoiceDetail invoice={invoice} period={period} />
     </>
   );
 }

@@ -79,7 +79,11 @@ import {
   useNetworkSentStatus,
 } from "@/components/features/invoices/network-status";
 
-export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
+export function InvoiceDetail({ invoice, period }: {
+  invoice: Invoice;
+  /** R-2853: the subscription period it covers ("<plan> · 1 Oct 2026 – 30 Sep 2027"), under the number; null = none. */
+  period?: string | null;
+}) {
   const router = useRouter();
   const [pdfDialogOpen, setPdfDialogOpen] = React.useState(false);
   const [showItems, setShowItems] = React.useState(true);
@@ -273,6 +277,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   {statusBadge?.label ?? invoice.status}
                 </Badge>
               </div>
+              {period && <p className="text-2xs text-ink-3 mt-0.5 break-words" data-testid="invoice-period">{period}</p>}
               <p className="text-xs font-medium text-ink-2 mt-0.5">
                 {cleanDisplayName(invoice.customer_name)}
               </p>
