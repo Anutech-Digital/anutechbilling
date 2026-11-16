@@ -258,7 +258,15 @@ function isExportedBinding(sy: Syms, id: ts.Identifier): boolean {
   if (!d) return false;
   const stmt = ts.isVariableDeclaration(d) ? d.parent.parent : d;
   if (ts.canHaveModifiers(stmt) && ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) return true;
-  return sy.usesOf(id).some((u) => ts.isExportSpecifier(u.parent) || ts.isExportAssignment(u.parent));
+  // `export { X }` / `export { X as Y }` / `export default X` — by the local NAME (the checker's alias symbol is a different symbol)
+  let found = false;
+  const walk = (n: ts.Node): void => {
+    if (ts.isExportSpecifier(n) && !n.parent.parent.moduleSpecifier && (n.propertyName ?? n.name).text === id.text) found = true;
+    if (ts.isExportAssignment(n) && ts.isIdentifier(unwrapExpr(n.expression)) && (unwrapExpr(n.expression) as ts.Identifier).text === id.text) found = true;
+    ts.forEachChild(n, walk);
+  };
+  walk(id.getSourceFile());
+  return found;
 }
 
 /**

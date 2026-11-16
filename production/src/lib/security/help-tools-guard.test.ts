@@ -839,7 +839,6 @@ describe("R-2879 guard holes closed before H-02", () => {
  * file + source text, so any `builder[m]` in reader.ts passed whatever `builder` and `m` were.
  */
 describe("R-2882 guard: computed reads by declaration, followed files, zod internals", () => {
-  const READER = `${HELP_DIR}/reader.ts`;
 
   it("finding 2: files the help tools reach may not reflect on the prototype chain, name a way to Function, or read a computed key off a parameter (self-test)", () => {
     const NAV = "src/lib/nav.ts";
@@ -962,6 +961,9 @@ describe("R-2882 round 3 guard: a computed member read is a literal key or an al
       importedCallResult: 'import { make } from "@/lib/utils"; export const f = (c: any) => make().map((_r: unknown, i: any) => c[i]("return 1")());',
       mutateImportedMember: `import { arr } from "@/lib/utils"; (arr as any).map = (cb: any) => cb(0, ${MKCTOR});`,
       mutateImportedLiteral: 'import { arr } from "@/lib/utils"; (arr as any).x = 1;',
+      mutateImportedDeep: 'import { arr } from "@/lib/utils"; (arr as any).a.b = 1;',
+      mutateImportedElementChain: 'import { arr } from "@/lib/utils"; (arr as any)[0].b = 1;',
+      deleteImportedDeep: 'import { arr } from "@/lib/utils"; delete (arr as any).a.b;',
       deleteImportedMember: 'import { arr } from "@/lib/utils"; delete (arr as any).map;',
       assignImportedTarget: 'import { arr } from "@/lib/utils"; Object.assign(arr, { map: 1 });',
       arrayLengthZero: 'const arr: string[] = ["a"]; arr.length = 0; export const f = (c: any) => arr.map((_r, i: any) => c[i]());',
@@ -1016,6 +1018,13 @@ describe("R-2882 round 3 guard: a computed member read is a literal key or an al
     expect(scanFile(e.file, body("", "export ", "iso")).problems, "exported object").not.toEqual([]);
     expect(scanFile(e.file, body("", "", "other")).problems, "other key").not.toEqual([]);
     expect(scanFile("src/lib/zz-phone.ts", body("", "", "iso")).problems, "other file").not.toEqual([]);
+    // an entry on a module-PRIVATE const (FORMAT_OPTIONS in utils.ts, not marked exported) stops matching when the module exports it
+    const priv = COMPUTED_READ_ALLOWED.find((x) => x.file === "src/lib/utils.ts" && x.object === "FORMAT_OPTIONS")!;
+    expect(priv && !priv.exported, "FORMAT_OPTIONS entry is private").toBe(true);
+    const fmt = (exp: string) => `${exp}const FORMAT_OPTIONS: Record<string, number> = { a: 1 }; export function enIn(key: string) { return FORMAT_OPTIONS[key]; }`;
+    expect(scanFile("src/lib/utils.ts", fmt("")).problems, "private const").toEqual([]);
+    expect(scanFile("src/lib/utils.ts", fmt("export ")).problems, "exported const").not.toEqual([]);
+    expect(scanFile("src/lib/utils.ts", `${fmt("")} export { FORMAT_OPTIONS };`).problems, "re-exported const").not.toEqual([]);
   });
 
   it("principal_amount is not a session key; principal and principal_id are", () => {
