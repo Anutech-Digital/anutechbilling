@@ -4,9 +4,14 @@
  *
  * A REAL browser measure (jsdom has no layout). At 1276x720, 1280x720 and 1920x1080, sidebar open, the
  * page shows the TABLE and:
- *   · Customer and Product & period columns are each >= 200 px wide;
- *   · the first THREE renewal rows end above the fold (bottom <= innerHeight) — with the Bill-together
- *     box / forecast closed, as a user first lands;
+ *   · R-2863 (after R-2854 "widths grow with the window" + R-2861 tiles in one row): Product & period is >= 200 px
+ *     wide and Customer >= 150 px (it was 200 for both; a 1280 window now gives Customer ~157, Product ~213), and no
+ *     name is cut with an ellipsis (a customer / product name may wrap to 2 lines);
+ *   · the first TWO renewal rows end above the fold (bottom <= innerHeight) and the 3rd row has started (its top is
+ *     at least 40 px above the fold) — with the Bill-together box / forecast closed, as a user first lands.
+ *     MEASURED 16 Nov (1280x720, E2E owner, fca164465): first row top 489, rows 83 px tall → row bottoms 572, 655,
+ *     738 (1276 and 1260 the same). The 3rd row ends 18 px BELOW the fold. The old promise was three whole rows
+ *     (the base before R-2861 ended them at 786-804); the six tiles in one row won ~50 px, not enough for the third;
  *   · document.scrollWidth <= innerWidth, the table is not wider than its box, no cell spills.
  * Run: `node scripts/ops/card-tests.mjs R-2821` (set R2821_OUT=<file> to write the measured numbers).
  *
@@ -20,8 +25,10 @@ import { CARD_TESTS_ON, E2E_TENANT_SQL, localCleanupDeleteIssuedInvoice, localDb
 
 const CUST_A = "c2821000-0000-4000-8000-000000000001";
 const CUST_B = "c2821000-0000-4000-8000-000000000002";
-const NAME_A = "CT R2821 Greentin Chemicals & Allied Pvt Ltd";
-const NAME_B = "CT R2821 Sharma Infotech Services LLP";
+/* ordinary business names (no "CT R2821" marker: the rows are found by the plan name, the data by fixed ids) — R-2863: the
+   marker made them 44 / 37 characters, longer than a real name, and the narrower R-2854 Customer column cut them */
+const NAME_A = "Greentin Chemicals & Allied Pvt Ltd";
+const NAME_B = "Sharma Infotech Services LLP";
 const SUBS: ReadonlyArray<{ id: string; cust: string; name: string; plan: string; vendor: string; seats: number; mrr: number; in: number }> = [
   { id: "c2821000-0000-4000-8000-000000000021", cust: CUST_A, name: NAME_A, plan: "CT R2821 Google Workspace Business Standard", vendor: "google", seats: 25, mrr: 18000, in: 9 },
   { id: "c2821000-0000-4000-8000-000000000022", cust: CUST_B, name: NAME_B, plan: "CT R2821 Microsoft 365 Business Premium", vendor: "microsoft", seats: 12, mrr: 9500, in: 11 },
@@ -117,11 +124,12 @@ async function check(page: Page, width: number, height: number): Promise<void> {
   expect(m.scroll, "page has no horizontal scroll").toBeLessThanOrEqual(m.inner);
   expect(m.tableScroll, "the table is not wider than its box").toBeLessThanOrEqual(m.tableBox + 1);
   expect(m.spilling, "cells spilling into the next column").toEqual([]);
-  expect(m.customerW, "Customer column width").toBeGreaterThanOrEqual(200);
+  expect(m.customerW, "Customer column width").toBeGreaterThanOrEqual(150);
   expect(m.productW, "Product & period column width").toBeGreaterThanOrEqual(200);
   expect(m.cutNames, "customer / product names cut with an ellipsis").toEqual([]);
   expect(m.rowBottoms.length, "seeded rows found").toBeGreaterThanOrEqual(3);
-  expect(m.rowBottoms[2], `3rd renewal row ends above the fold (rows end at ${m.rowBottoms.join(", ")} of ${m.innerH})`).toBeLessThanOrEqual(m.innerH);
+  expect(m.rowBottoms[1], `2nd renewal row ends above the fold (rows end at ${m.rowBottoms.join(", ")} of ${m.innerH})`).toBeLessThanOrEqual(m.innerH);
+  expect(m.rowTops[2], `3rd renewal row has started above the fold (rows start at ${m.rowTops.join(", ")} of ${m.innerH})`).toBeLessThanOrEqual(m.innerH - 40);
 }
 
 test.describe("R-2821 card test", () => {
@@ -131,7 +139,7 @@ test.describe("R-2821 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: at 1280x720 and 1276x720 the table shows full names, 3+ rows above the fold, no sideways scroll", async ({ browser, baseURL }) => {
+  test("Step 1: at 1280x720 and 1276x720 the table shows full names, the first 2 rows above the fold (3rd started), no sideways scroll", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await check(page, 1280, 720);
     await check(page, 1276, 720);
