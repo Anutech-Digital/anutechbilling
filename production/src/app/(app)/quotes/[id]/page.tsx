@@ -991,7 +991,7 @@ export default function QuoteDetailPage() {
   );
   const forSub = leadPart?.sub ?? (allSubs ?? []).find((s) => s.id === forSubId) ?? null;
   const forSubText = subscriptionForLine(forSub);
-  const togetherSubs = quote.is_renewal ? togetherMembers(items, allSubs) : [];
+  const togetherSubs = quote.is_renewal ? togetherMembers(items as Array<{ subscription_id?: unknown }>, allSubs) : [];
   /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
      "₹851/yr" as if it recurred yearly. No per-period suffix on those lines. */

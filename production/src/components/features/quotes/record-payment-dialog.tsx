@@ -1940,7 +1940,7 @@ export function RecordPaymentDialog({
                       .filter((n): n is string => typeof n === "string" && n.trim() !== ""),
                     renewsSubscription: isRenewal,
                     /* R-2871: a together renewal quote names every subscription it renews. */
-                    renewsSubscriptions: isRenewal ? togetherPlanNames(lineItems) : undefined,
+                    renewsSubscriptions: isRenewal ? togetherPlanNames(lineItems as Array<{ name?: string | null; subscription_id?: unknown }> | null | undefined) : undefined,
                     upgradesPlan: isUpgrade,
                     addsSeats: isAddSeatsQuote,
                   },
