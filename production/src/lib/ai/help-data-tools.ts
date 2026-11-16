@@ -69,11 +69,13 @@ export interface HelpToolResult {
  * the page) and its text, unchanged. The name list above is FROZEN to the R-421 six (test): a new
  * tool goes only on the registry path, so its `roles` always apply.
  */
-const TOOLS = Object.fromEntries(HELP_DATA_TOOL_NAMES.map((n) => {
+/* R-2882: a map with NO prototype — `TOOLS[tool]` with any string reads only a real tool (an `Object.fromEntries` map also answers "constructor" and "__proto__"). */
+const TOOLS: Record<HelpDataToolName, (typeof DATA_TOOLS)[number]> = Object.create(null);
+for (const n of HELP_DATA_TOOL_NAMES) {
   const def = DATA_TOOLS.find((t) => t.name === n);
   if (!def) throw new Error(`help-data-tools: ${n} is not in lib/ai/help-tools/data-tools.ts`);
-  return [n, def];
-})) as Record<HelpDataToolName, (typeof DATA_TOOLS)[number]>;
+  TOOLS[n] = def;
+}
 
 /**
  * May this role read this tool? The same answer as "may this role open the page the number is

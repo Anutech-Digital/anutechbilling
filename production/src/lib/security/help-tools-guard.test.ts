@@ -60,7 +60,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { readSource } from "@/lib/testing/source-cache";
-import { FORBIDDEN_MEMBERS, REFLECT_MEMBERS, FOLLOWED_FORBIDDEN_STRINGS, SCHEMA_INTERNALS, FOLLOWED_COMPUTED_SITES, symbolsFor, computedReadProblem, type Syms } from "@/lib/testing/help-guard-computed";
+import { FORBIDDEN_MEMBERS, REFLECT_MEMBERS, FOLLOWED_FORBIDDEN_STRINGS, SCHEMA_INTERNALS, FOLLOWED_COMPUTED_SITES, symbolsFor, computedReadProblem, shadowedGlobalProblems, type Syms } from "@/lib/testing/help-guard-computed";
 import { listSourceFiles } from "@/lib/testing/walk-source";
 import { SECRET_COLUMNS } from "./secret-columns";
 import { HELP_READ_TABLES, HELP_NEVER_TABLES } from "@/lib/ai/help-tools/reader";
@@ -285,6 +285,7 @@ function scanFile(f: string, src: string, used?: Set<string>): FileScan {
       /* R-2882 (finding 2): no reflection on the prototype chain, no string that names a way to Function,
          and a computed member read only where its declaration says what the key can be. */
       if (fm && REFLECT_MEMBERS.has(fm)) problems.push(`${at(node)}: .${fm} (reads or rewrites the prototype chain / property descriptors)`);
+      if (ts.isIdentifier(node) && node.text === "__proto__") problems.push(`${at(node)}: __proto__ (sets a prototype — a key in an object literal, a member, a name)`);
       if (ts.isStringLiteralLike(node) && FOLLOWED_FORBIDDEN_STRINGS.has(node.text)) problems.push(`${at(node)}: the string "${node.text}" (a name that reaches Function / the prototype chain)`);
       if (ts.isElementAccessExpression(node)) {
         sy ??= symbolsFor(sf);
@@ -311,6 +312,7 @@ function scanFile(f: string, src: string, used?: Set<string>): FileScan {
     ts.forEachChild(node, visit);
   };
   visit(sf);
+  problems.push(...shadowedGlobalProblems(sf, at)); // R-2882: no file declares its own Object / Reflect / JSON / Function …
   if (help) problems.push(...helpFileProblems(f, sf));
 
   for (const imp of imports) {
@@ -861,7 +863,7 @@ describe("R-2882 guard: computed reads by declaration, followed files, zod inter
     expect(scanFile(SESSION, 'export function bearers(c: { headers?: Record<string, unknown> } | null): unknown[] { const out: unknown[] = []; for (const h of [c?.headers]) { if (!h) continue; for (const k of ["Authorization", "authorization"]) { const v = h[k]; if (typeof v === "string") out.push(v); } } return out; }').problems).toEqual([]);
     expect(scanFile(LEGACY, [
       'import { runHelpTools } from "@/lib/ai/help-tools/runner";',
-      'const TOOLS = Object.fromEntries([["a", 1]]) as Record<string, number>;',
+      'const TOOLS: Record<string, number> = Object.create(null);',
       "export async function f(list: string[], tool: string, session: never, ctx: never) {",
       "  const res = await runHelpTools(session, ctx, list.map((name) => ({ name })));",
       "  return res.map((r, i) => ({ tool: list[i], n: TOOLS[tool], r }));",
@@ -890,7 +892,7 @@ describe("R-2882 guard: computed reads by declaration, followed files, zod inter
     // a reviewed per-site entry matches by file + function + object + declaration — none of them alone is enough
     const SUMMARY = "src/lib/company/summary.ts";
     const want = "Readonly<Record<string, number>> | null | undefined";
-    expect(scanFile(SUMMARY, `export function openTicketCount(counts: ${want}, s: string) { return counts?.[s]; }`).problems).toEqual([]);
+    expect(scanFile(SUMMARY, `const OPEN_TICKET_STATUSES = ["a", "b"] as const; export function openTicketCount(counts: ${want}) { return OPEN_TICKET_STATUSES.reduce((n, s) => n + (counts?.[s] ?? 0), 0); }`).problems).toEqual([]);
     expect(scanFile(SUMMARY, "export function openTicketCount(counts: any, s: string) { return counts?.[s]; }").problems).not.toEqual([]); // declared differently
     expect(scanFile(SUMMARY, `export function otherName(counts: ${want}, s: string) { return counts?.[s]; }`).problems).not.toEqual([]); // another function
     expect(scanFile("src/lib/zz-summary.ts", `export function openTicketCount(counts: ${want}, s: string) { return counts?.[s]; }`).problems).not.toEqual([]); // another file
@@ -906,5 +908,87 @@ describe("R-2882 guard: computed reads by declaration, followed files, zod inter
     // and the real types.ts is the only help file that holds them
     const holders = helpFiles().filter((f) => /\b(_def|_cached|unknownKeys)\b/.test(readSource(f)) && f !== TYPES_FILE);
     expect(holders).toEqual([]);
+  });
+});
+
+/**
+ * R-2882 round 2 — the independent checker BLOCKed b8208e6b4. Every plant below is one of its probes
+ * (chk2882) and came back "PASSES" from that guard: a file declaring its own Object, a local array
+ * whose `map` was replaced, a function name reassigned, `{ __proto__: fn }` in a followed file, a
+ * `{}` map read by any key, a per-site entry that never looked at the KEY.
+ */
+describe("R-2882 round 2 guard: shadowed globals, rewritten local names, prototype-less maps, pinned keys", () => {
+  const FOLLOWED = "src/lib/zz-planted.ts";
+  const MKCTOR = '["con", "structor"].join("")';
+
+  it("BLOCK 1: `Object` counts only when it is the global; no file declares its own Object / Reflect / JSON / Function … (self-test)", () => {
+    const plants: [string, string][] = [
+      ["Object.create shadowed", "const Object = { create: (_: null): any => () => 0 }; const o = Object.create(null); export const g = (k: string) => o[k];"],
+      ["Object.freeze shadowed", `const w = ${MKCTOR}; const Object = { freeze: (_: unknown): any => [w] }; const L = Object.freeze(["eq"]); export function f(b: any) { for (const m of L) b[m]("return 1")(); }`],
+      ["Object as a parameter", "export const f = (Object: any, k: string) => Object.create(null)[k];"],
+      ["Object as an import", 'import { Object } from "@/lib/utils"; export const o = Object.create(null);'],
+      ["Object as a function", "function Object(): any { return () => 0; } export const o = Object();"],
+      ["Reflect declared", "const Reflect = { get: (_a: unknown, _b: string): any => 1 }; export const r = Reflect;"],
+      ["JSON declared", "const JSON = { parse: (s: string): any => s }; export const j = JSON;"],
+      ["Function declared", "class Function {} export const f = Function;"],
+      ["globalThis declared", "const globalThis = 1; export const g = globalThis;"],
+      ["Symbol in a destructuring", "const { Symbol } = { Symbol: 1 }; export const s = Symbol;"],
+    ];
+    for (const [name, src] of plants) {
+      expect(scanFile(PLANTED, src).problems, `help: ${name}`).not.toEqual([]);
+      expect(scanFile(FOLLOWED, src).problems, `followed: ${name}`).not.toEqual([]);
+    }
+    // the real global is fine, and so is a type that merely has the name
+    expect(scanFile(PLANTED, "interface Object { x: 1 } export const o = Object.create(null) as Record<string, number>; export const g = (k: string) => o[k];").problems).toEqual([]);
+  });
+
+  it("BLOCK 2: a local array / function the guard trusts must only be READ — a replaced map, a reassigned name, a mutated list is refused (self-test)", () => {
+    const plants: [string, string, string][] = [
+      ["array map replaced", PLANTED, `const arr: any = []; arr.map = (cb: any) => cb(0, ${MKCTOR}); export const f = (c: any) => arr.map((_r: unknown, i: any) => c[i]("return 1")());`],
+      ["array map replaced (followed)", FOLLOWED, `const arr: any = []; arr.map = (cb: any) => cb(0, ${MKCTOR}); export const f = (c: any) => arr.map((_r: unknown, i: any) => c[i]("return 1")());`],
+      ["result of an imported call, map replaced", PLANTED, `import { runHelpTools } from "@/lib/ai/help-tools/runner"; export async function f(c: any, s: never, x: never) { const res: any = await runHelpTools(s, x, []); res.map = (cb: any) => cb(0, ${MKCTOR}); return res.map((_r: unknown, i: any) => c[i]("return 1")()); }`],
+      ["array handed to a function that rewrites it", PLANTED, `const arr: string[] = ["a"]; function evil(a: any) { a.map = (cb: any) => cb(0, ${MKCTOR}); } evil(arr); export const f = (c: any) => arr.map((_r, i: any) => c[i]());`],
+      ["array mutated by a method", PLANTED, `const arr: string[] = []; arr.push(${MKCTOR}); export const f = (c: any) => arr.map((_r, i: any) => c[i]());`],
+      ["array member deleted", PLANTED, 'const arr: string[] = ["a"]; delete (arr as any).map; export const f = (c: any) => arr.map((_r, i: any) => c[i]());'],
+      ["function name reassigned", PLANTED, "function mk(): any { return {}; } export function setup() { (mk as any) = () => () => 0; } export const g = (k: string) => mk()[k];"],
+      ["function name reassigned (followed)", FOLLOWED, "function mk(): any { return {}; } export function setup() { (mk as any) = () => () => 0; } export const g = (k: string) => mk()[k];"],
+      ["function handed on", FOLLOWED, "function mk(): any { return {}; } export const keep = mk; export const g = (k: string) => mk()[k];"],
+      ["__proto__ in an object literal (followed)", FOLLOWED, "const o: any = { __proto__: () => 0 }; export const g = (k: string) => o[k];"],
+      ["__proto__ string key (followed)", FOLLOWED, 'const o: any = { "__proto__": () => 0 }; export const g = (k: string) => o[k];'],
+    ];
+    for (const [name, file, src] of plants) expect(scanFile(file, src).problems, name).not.toEqual([]);
+    // read-only local arrays and builders still pass
+    expect(scanFile(PLANTED, 'const arr = ["a", "b"]; export const f = (c: any) => arr.map((_r, i) => c[i]);').problems).toEqual([]);
+    expect(scanFile(FOLLOWED, "function mk(): Record<string, number> { const out: Record<string, number> = {}; out.a = 1; return out; } export const g = (k: string) => mk()[k];").problems).toEqual([]);
+  });
+
+  it("review item 6: in a help file a computed read of a map needs a map with no prototype — `{}`, a literal or fromEntries read by any key is refused (self-test)", () => {
+    const plants: [string, string][] = [
+      ["empty object", "const M: Record<string, unknown> = {}; export const g = (k: string) => M[k];"],
+      ["object with a function value", "const o: any = { a: () => 0 }; export const g = (k: string) => o[k];"],
+      ["fromEntries of a function", 'export const g = (k: string, fn: any) => Object.fromEntries([["a", fn]])[k];'],
+      ["fromEntries in a const", 'const T = Object.fromEntries([["a", 1]]); export const g = (k: string) => T[k];'],
+      ["Object.create of something else", "const o: any = Object.create(() => 0); export const g = (k: string) => o[k];"],
+    ];
+    for (const [name, src] of plants) expect(scanFile(PLANTED, src).problems, name).not.toEqual([]);
+    expect(scanFile(PLANTED, "const T: Record<string, number> = Object.create(null); T.a = 1; export const g = (k: string) => T[k];").problems).toEqual([]);
+    // outside help-tools the app's own literal maps keep working (their keys are the app's)
+    expect(scanFile(FOLLOWED, "const M: Record<string, number> = { a: 1 }; export const g = (k: string) => M[k];").problems).toEqual([]);
+  });
+
+  it("review item 7: a per-site entry pins the KEY's declaration too — another key on the same object is refused (self-test)", () => {
+    const SUMMARY = "src/lib/company/summary.ts";
+    const ROLES = "src/lib/auth/roles.ts";
+    const UTILS = "src/lib/utils.ts";
+    const want = "Readonly<Record<string, number>> | null | undefined";
+    // the real shapes stay clean
+    expect(scanFile(SUMMARY, `const OPEN_TICKET_STATUSES = ["a", "b"] as const; export function openTicketCount(counts: ${want}): number { return OPEN_TICKET_STATUSES.reduce((n, s) => n + (counts?.[s] ?? 0), 0); }`).problems).toEqual([]);
+    expect(scanFile(ROLES, "const PERMISSIONS: Record<string, Record<string, boolean>> = { owner: { a: true } }; export function can(role: string, permission: string): boolean { return PERMISSIONS[role][permission]; }").problems).toEqual([]);
+    expect(scanFile(UTILS, "export function gstinChecksum(first14: string): string { let sum = 0; for (let i = first14.length - 1; i >= 0; i--) { sum += first14[i].length; } return String(sum); }").problems).toEqual([]);
+    // the same object, a different key
+    expect(scanFile(SUMMARY, `export function openTicketCount(counts: ${want}, s: string): number { return counts?.[s] ?? 0; }`).problems).not.toEqual([]);
+    expect(scanFile(SUMMARY, `export function openTicketCount(counts: ${want}, k: string): number { return ["a"].reduce((n, s) => n + (counts?.[k] ?? 0), 0); }`).problems).not.toEqual([]);
+    expect(scanFile(ROLES, "const PERMISSIONS: Record<string, Record<string, boolean>> = { owner: { a: true } }; export function can(role: string, permission: string, other: string): boolean { return PERMISSIONS[role][other]; }").problems).not.toEqual([]);
+    expect(scanFile(UTILS, `export function gstinChecksum(first14: string): string { const k = ${MKCTOR}; return String(first14[k]); }`).problems).not.toEqual([]);
   });
 });
