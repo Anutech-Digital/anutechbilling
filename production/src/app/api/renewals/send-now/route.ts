@@ -30,7 +30,7 @@ import {
   firstReminderDaysOut,
   serviceStopDate,
 } from "@/lib/renewals/cadence";
-import { formatIstDate } from "@/lib/dates/ist";
+import { formatIstDate, daysBetweenISO, istToday } from "@/lib/dates/ist";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { manualRenewalStep } from "@/lib/renewals/manual-send-step";
 import { createOrGetRenewalQuote, isRenewalQuoteHold, draftRenewalQuoteBlock, markRenewalQuoteSent } from "@/lib/renewals/create-renewal-quote";
@@ -47,6 +47,8 @@ import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { togetherLead, togetherTemplateFields, type TogetherQuote } from "@/lib/renewals/together-reminder";
+import { readTogetherQuotes, type TogetherReadClient } from "@/lib/renewals/together-reminder.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -205,6 +207,25 @@ export async function POST(req: Request) {
   };
   const lineItems: QuoteLineItem[] = quoteResult.lineItems ?? [];
 
+  /* R-2852: a renewal quote billed TOGETHER (R-2847) — whichever member was pressed, ONE email for the
+     quote: every plan · seats · period and the quote total (never the whole amount against this one
+     plan). It is logged on every member below, so the nightly run does not mail it again today. */
+  let together: TogetherQuote | null = null;
+  try {
+    together = (await readTogetherQuotes(supabase as unknown as TogetherReadClient, [renewalQuoteId])).get(renewalQuoteId) ?? null;
+  } catch {
+    return NextResponse.json(
+      { error: "Could not read which subscriptions this renewal quote covers, so no reminder was sent. Try again in a minute." },
+      { status: 503 }
+    );
+  }
+  if (together && !together.members.some((m) => m.subscriptionId === sub.id)) together = null;
+  const togetherText = together ? togetherTemplateFields(together) : null;
+  /* R-2852: the together quote's own due date (its earliest member's term — the nightly lead's), never
+     the pressed row's later one, so every reminder of the quote names the same, earliest deadline. */
+  const dueDate = together ? togetherLead(together)?.renewalTermDate ?? sub.renewal_date : sub.renewal_date;
+  const daysUntilDue = together ? daysBetweenISO(istToday(), dueDate) : decision.daysUntilRenewal;
+
   // Public accept-link token (SEC-1) — the link needs the quote's opaque token.
   let renewalToken: string | null = null;
   if (renewalQuoteId) {
@@ -244,14 +265,15 @@ export async function POST(req: Request) {
     tenantName:      tenant.name,
     tenantEmail:     tenant.email,
     tenantPhone:     tenant.phone,
-    planName:        sub.plan,
-    seats:           sub.seats,
+    planName:        togetherText?.planName ?? sub.plan,
+    seats:           togetherText?.seats ?? sub.seats,
     amount:          renewalQuote.amount,
-    renewalDate:     formatIstDate(sub.renewal_date),
-    daysUntil:       Math.abs(decision.daysUntilRenewal),
+    planLines:       togetherText?.planLines,   // R-2852: plan · seats · period per member + the quote total
+    renewalDate:     formatIstDate(dueDate),
+    daysUntil:       Math.abs(daysUntilDue),
     graceDays,
     /* R-1621: the exact IST day the service stops if still unpaid. */
-    stopDate:        formatIstDate(serviceStopDate(sub.renewal_date, graceDays)),
+    stopDate:        formatIstDate(serviceStopDate(dueDate, graceDays)),
     acceptLink:      renewalQuoteId && renewalToken
       /* `?? undefined` because quoteAcceptUrl now returns null when NEXT_PUBLIC_APP_URL is
          missing or has no scheme. NO LINK is the right outcome there — the template omits
@@ -321,16 +343,19 @@ export async function POST(req: Request) {
   });
 
   // ── Log + update sub ────────────────────────────────────────────
-  await supabase.from("renewal_email_log").insert({
+  /* R-2852: a together quote's one email is logged on EVERY member (its drawer shows it; the nightly
+     lead checks every member's log for a send today, at any step). Only the pressed row's state moves. */
+  const loggedOn = together ? together.members.map((m) => m.subscriptionId) : [sub.id];
+  await supabase.from("renewal_email_log").insert(loggedOn.map((subscriptionId) => ({
     tenant_id:       sub.tenant_id,
-    subscription_id: sub.id,
+    subscription_id: subscriptionId,
     cadence_step:    step,
     recipient_email: recipient,
     subject:         tpl.subject,
     status:          sendResult.status,
     provider_id:     sendResult.providerId,
     error_message:   sendResult.errorMessage,
-  });
+  })));
 
   if (sendResult.status === "sent" || sendResult.status === "stubbed") {
     await supabase

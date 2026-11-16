@@ -11,9 +11,10 @@
  * - total.tax = round(total taxable × the one GST rate) — the RPC's own rule (GST on the bill's taxable), so the
  *   total shown is the proforma's to the rupee, not a sum of per-line roundings.
  */
-import type { BillTogetherLine, BillTogetherPreview, BillTogetherReason, BillTogetherReasonCode, BillTogetherSub, TogetherBillRef } from "./bill-together";
+import type { BillTogetherKind, BillTogetherLine, BillTogetherPreview, BillTogetherReason, BillTogetherReasonCode, BillTogetherSub, TogetherBillRef } from "./bill-together";
 import type { UnpaidEarlierPart } from "@/lib/billing/proforma";
 import { isSplitBilled } from "@/lib/billing/instalments";
+import { isOwnRenewalVendor, OWN_RENEWAL_TEXT } from "./bill-together";
 
 /*
  * Reasons use the contract's ONE code list (BillTogetherReasonCode, ./bill-together.ts — R-2845): "not_billable"
@@ -34,6 +35,11 @@ export interface TogetherFact {
     status: string | null;
     auto_renew?: boolean | null;
     renewal_quote_id: string | null;
+    /** R-2849 (yearly): the renewal date and term length. */
+    renewal_date?: string | null;
+    term_months?: number | null;
+    /** R-2849 (rev H1): domain / hosting renew on their own quote. */
+    vendor?: string | null;
   } | null;
   /** Its next unbilled part (Bill next part's own preview, one period); null when it was not worked out. */
   next: (BillTogetherLine & { unpaidEarlier: UnpaidEarlierPart[] }) | null;
@@ -44,6 +50,25 @@ export interface TogetherFact {
   togetherBills: TogetherBillOn[];
   /** R-2831: what the RPC's sale-quote refusals need (the sub was sold on sale quote `quoteId`); absent = none. */
   sale?: TogetherSaleFacts | null;
+  /** R-2849: a yearly subscription's next-term renewal (filled only when the group is "renewal"). */
+  renewal?: TogetherRenewalFacts | null;
+}
+
+/**
+ * R-2849 — what the server worked out for a YEARLY subscription's renewal on the together quote: its line, priced by
+ * the ONE renewal pricing (priceRenewalQuote — createRenewalQuote's), or why not; whether it is already renewed; and the
+ * renewal quote its renewal_quote_id points at.
+ */
+export interface TogetherRenewalFacts {
+  /** The line the renewal quote would carry (its next term's period, seats × ₹ a seat, GST). Null = not priced. */
+  line: BillTogetherLine | null;
+  /** Why it could not be priced — plain words (never raw database text). */
+  priceError?: string | null;
+  /** "Already renewed — …": paid for this term, the next term's renewal quote is not open yet. */
+  settled?: string | null;
+  /** The renewal quote its renewal_quote_id points at: open (live) or closed, and the subscriptions it renews
+   *  together (empty = a single renewal / extension / plan-change quote). */
+  linked?: { quoteId: string; live: boolean; subscriptionIds: string[]; withPlans: string[] } | null;
 }
 
 /** R-2831 — the facts behind bill_parts_together's two sale-quote refusals, so the preview shows them first. */
@@ -91,6 +116,72 @@ function cycleWord(cycle: string | null): string {
   return cycle === "yearly" || !cycle ? "yearly" : cycle.replace("_", "-");
 }
 
+/** R-2849: the bill's kind — the first found subscription's: billed in parts → "parts", else "renewal". */
+export function togetherKind(facts: readonly TogetherFact[]): BillTogetherKind {
+  const first = facts.find((f) => f.sub)?.sub;
+  return first && !isSplitBilled(first.billing_cycle as Parameters<typeof isSplitBilled>[0]) ? "renewal" : "parts";
+}
+
+/** R-2849: the renewal quote this yearly subscription is already on with others (live), or null. */
+function onTogetherRenewal(f: TogetherFact): NonNullable<TogetherRenewalFacts["linked"]> | null {
+  const l = f.renewal?.linked;
+  return l && l.live && l.subscriptionIds.length >= 2 ? l : null;
+}
+
+/**
+ * R-2849 — a YEARLY subscription on ONE renewal quote with the others (create_renewal_quote_together's rules, shown
+ * before anything is made; the RPC still decides): one customer, renewed once a year for 12 months, active, renewing,
+ * a renewal date, no other renewal quote open, not already renewed for this term, priced.
+ */
+function renewalReasons(f: TogetherFact, firstCustomer: { id: string | null; name: string | null } | null, notReady: string | null): BillTogetherReason[] {
+  const s = f.sub;
+  if (!s) return [reason("not_found", "This subscription was not found in your company — refresh Renewals and tick it again.")];
+  const out: BillTogetherReason[] = [];
+  if (firstCustomer && (s.customer_id ?? null) !== firstCustomer.id) {
+    out.push(reason("other_customer", `It is ${s.customer_name ?? "another customer"}'s, not ${firstCustomer.name ?? "the first customer"}'s — one bill is for one customer.`));
+  }
+  if (isSplitBilled(s.billing_cycle as Parameters<typeof isSplitBilled>[0])) {
+    out.push(reason("mixed_billing", `It is billed ${cycleWord(s.billing_cycle)} in parts, the others are renewed once a year — parts and yearly renewals cannot be on one bill. Bill its part with Bill next part.`));
+    return out;
+  }
+  if (isOwnRenewalVendor(s.vendor)) {
+    out.push(reason("not_billable", OWN_RENEWAL_TEXT));
+    return out;
+  }
+  if (s.status !== "active") {
+    out.push(reason("not_billable", `It is ${s.status ?? "not active"} — only an active subscription can be renewed.`));
+    return out;
+  }
+  if (s.auto_renew === false) {
+    out.push(reason("not_billable", "It is marked Won't renew — press Undo Won't renew on the subscription first."));
+    return out;
+  }
+  if (!s.renewal_date) {
+    out.push(reason("not_billable", "It has no renewal date — set it on the subscription first."));
+    return out;
+  }
+  if (s.billing_cycle !== "yearly" || (s.term_months ?? 12) !== 12) {
+    const months = s.term_months ?? 12;
+    const len = months === 1 ? "1 month" : `${months} months`;
+    out.push(reason("not_billable", `It renews for ${len} — only one-year renewals can be on one renewal quote together. Use Review renewal quote on its row.`));
+    return out;
+  }
+  const on = onTogetherRenewal(f);
+  if (on) {
+    const withText = on.withPlans.length > 0 ? ` with ${on.withPlans.join(", ")}` : "";
+    out.push(reason("already_together", `Its renewal is already on renewal quote ${on.quoteId}${withText} — open that quote (cancel it to make a new one).`));
+  } else if (s.renewal_quote_id && f.renewal?.linked?.live !== false) {
+    out.push(reason("open_renewal_quote", `Renewal quote ${s.renewal_quote_id} is still open (or has money received on it) for it — cancel it, or record the rest of the payment on it, first; then renew together.`));
+  }
+  if (f.renewal?.settled) out.push(reason("not_billable", f.renewal.settled));
+  if (out.length === 0 && notReady) out.push(reason("not_billable", notReady));
+  if (out.length === 0 && !f.renewal?.line) {
+    const why = f.renewal?.priceError ? ` (${f.renewal.priceError})` : "";
+    out.push(reason("not_billable", `Its renewal price could not be worked out${why} — use Review renewal quote on its row.`));
+  }
+  return out;
+}
+
 /** The reasons that depend on this subscription alone (and the first one's customer). */
 function ownReasons(f: TogetherFact, firstCustomer: { id: string | null; name: string | null } | null, asked: ReadonlyMap<string, string | null>): BillTogetherReason[] {
   const s = f.sub;
@@ -100,7 +191,7 @@ function ownReasons(f: TogetherFact, firstCustomer: { id: string | null; name: s
     out.push(reason("other_customer", `It is ${s.customer_name ?? "another customer"}'s, not ${firstCustomer.name ?? "the first customer"}'s — one bill is for one customer.`));
   }
   if (!isSplitBilled(s.billing_cycle as Parameters<typeof isSplitBilled>[0])) {
-    out.push(reason("yearly", `It is billed ${cycleWord(s.billing_cycle)}, not in parts — use Create quote for it.`));
+    out.push(reason("yearly", `It is renewed ${cycleWord(s.billing_cycle)}, the others are billed in parts — a yearly renewal and parts cannot be on one bill. Tick only yearly subscriptions to renew them on one quote.`));
     return out;
   }
   if (s.status !== "active") {
@@ -168,23 +259,36 @@ function saleReasons(f: TogetherFact, asked: ReadonlyMap<string, string | null>)
   return out;
 }
 
-/** The preview for the asked ids, in the asked order (duplicates dropped). */
-export function buildTogetherPreview(facts: readonly TogetherFact[], todayISO: string): BillTogetherPreview {
+/**
+ * The preview for the asked ids, in the asked order (duplicates dropped). R-2849: the first found subscription decides
+ * the kind — billed in parts → each one's next part on one proforma; renewed once a year → each one's next term on ONE
+ * renewal quote (`renewalNotReady` = the server cannot make one yet: every yearly line says so).
+ */
+export function buildTogetherPreview(facts: readonly TogetherFact[], todayISO: string, opts: { renewalNotReady?: string | null } = {}): BillTogetherPreview {
+  const kind = togetherKind(facts);
   const firstFound = facts.find((f) => f.sub)?.sub ?? null;
   const firstCustomer = firstFound ? { id: firstFound.customer_id ?? null, name: firstFound.customer_name } : null;
   const asked = new Map(facts.filter((f) => f.sub).map((f) => [f.sub!.id, f.next?.periodStart ?? null] as const));
-  const rows = facts.map((f) => ({ f, reasons: ownReasons(f, firstCustomer, asked) }));
+  const lineFor = (f: TogetherFact): BillTogetherLine | null => (kind === "renewal" ? f.renewal?.line ?? null : f.next);
+  const rows = facts.map((f) => ({
+    f, reasons: kind === "renewal" ? renewalReasons(f, firstCustomer, opts.renewalNotReady ?? null) : ownReasons(f, firstCustomer, asked),
+  }));
 
-  /* One GST rate on one bill — the first joinable one's rate decides (as the RPC refuses a mix). */
-  const joinable = () => rows.filter((r) => r.reasons.length === 0 && r.f.next);
-  const rate0 = joinable()[0]?.f.next?.taxRate;
+  /* One GST rate on one bill — the first joinable one's rate decides (as the RPCs refuse a mix). */
+  const joinable = () => rows.filter((r) => r.reasons.length === 0 && lineFor(r.f));
+  const first = joinable()[0];
+  const rate0 = first ? lineFor(first.f)!.taxRate : undefined;
   for (const r of joinable()) {
-    if (r.f.next!.taxRate !== rate0) {
-      r.reasons.push(reason("different_gst", `Its GST is ${r.f.next!.taxRate}%, the others' ${rate0}% — parts with different GST rates cannot be on one bill.`));
+    const rate = lineFor(r.f)!.taxRate;
+    if (rate !== rate0) {
+      r.reasons.push(reason("different_gst", kind === "renewal"
+        ? `Its GST is ${rate}%, the others' ${rate0}% — renewals with different GST rates cannot be on one quote. Make its renewal quote on its own.`
+        : `Its GST is ${rate}%, the others' ${rate0}% — parts with different GST rates cannot be on one bill.`));
     }
   }
-  /* R-2519b (the RPC's rule): a part not started yet is never billed with a started one. */
-  const begun = joinable().find((r) => r.f.next!.periodStart <= todayISO);
+  /* R-2519b (the RPC's rule): a part not started yet is never billed with a started one. Parts only — a renewal quote
+     is made before its term starts. */
+  const begun = kind === "parts" ? joinable().find((r) => r.f.next!.periodStart <= todayISO) : undefined;
   if (begun) {
     for (const r of joinable()) {
       if (r.f.next!.periodStart > todayISO) {
@@ -194,21 +298,44 @@ export function buildTogetherPreview(facts: readonly TogetherFact[], todayISO: s
   }
 
   const subs: BillTogetherSub[] = rows.map(({ f, reasons }) => {
-    const on = onNextPart(f);
+    const line = lineFor(f);
+    let onBill: TogetherBillRef | null = null;
+    if (kind === "renewal") {
+      const t = onTogetherRenewal(f);
+      if (t) onBill = { quoteId: t.quoteId, status: "open", withPlans: t.withPlans };
+    } else {
+      const t = onNextPart(f);
+      if (t) onBill = { quoteId: t.quoteId, status: t.status, withPlans: t.withPlans };
+    }
     return {
       subscriptionId: f.sub?.id ?? f.id,
       plan: f.sub?.plan ?? null,
       customerId: f.sub?.customer_id ?? null,
       customerName: f.sub?.customer_name ?? null,
-      line: reasons.length === 0 && f.next ? lineOf(f.next) : null,
+      line: reasons.length === 0 && line ? lineOf(line) : null,
       reasons,
-      onTogetherBill: on ? { quoteId: on.quoteId, status: on.status, withPlans: on.withPlans } : null,
+      onTogetherBill: onBill,
     };
   });
+  /* Money (R-2832 F3): ₹ with paise summed as whole paise; GST once, on the bill's taxable (the RPCs' rule). */
   const lines = subs.map((s) => s.line).filter((l): l is BillTogetherLine => !!l);
-  const taxable = lines.reduce((a, l) => a + l.taxable, 0);
+  const taxableP = lines.reduce((a, l) => a + Math.round(l.taxable * 100), 0);
+  const taxable = taxableP / 100;
   const tax = lines.length > 0 ? Math.round((taxable * lines[0].taxRate) / 100) : 0;
-  return { subs, total: { taxable, tax, gross: taxable + tax }, currency: "INR" };
+  return { kind, subs, total: { taxable, tax, gross: (taxableP + Math.round(tax * 100)) / 100 }, currency: "INR" };
+}
+
+/**
+ * R-2849 — double submit / retry of a yearly group: every asked subscription's renewal_quote_id is the SAME live
+ * together renewal quote, and it renews exactly these subscriptions → that quote (alreadyExisted), nothing priced.
+ */
+export function existingTogetherRenewal(facts: readonly TogetherFact[]): string | null {
+  if (facts.length === 0 || facts.some((f) => !f.sub)) return null;
+  const first = onTogetherRenewal(facts[0]);
+  if (!first || facts.some((f) => f.sub!.renewal_quote_id !== first.quoteId || onTogetherRenewal(f)?.quoteId !== first.quoteId)) return null;
+  const asked = new Set(facts.map((f) => f.sub!.id));
+  const on = new Set(first.subscriptionIds);
+  return asked.size === on.size && [...asked].every((id) => on.has(id)) ? first.quoteId : null;
 }
 
 function lineOf(n: BillTogetherLine): BillTogetherLine {
@@ -276,6 +403,11 @@ export function periodsChanged(preview: BillTogetherPreview, periods: ReadonlyMa
   for (const s of preview.subs) {
     const shown = periods.get(s.subscriptionId);
     const now = s.line?.periodStart ?? null;
+    if (shown && now !== shown && preview.kind === "renewal") {
+      /* R-2849: a yearly renewal's term moved (its renewal date was changed, or it was renewed meanwhile) */
+      return `What will be renewed changed since you opened it — you saw ${s.plan ?? "a subscription"}'s renewal from ${dayMonYear(shown)}, `
+        + `${now ? `now it would renew from ${dayMonYear(now)}` : "now it cannot be renewed together"}. Nothing was made — refresh Renewals and check again.`;
+    }
     if (shown && now !== shown) {
       return `What will be billed changed since you opened it — you saw ${s.plan ?? "a subscription"}'s part from ${dayMonYear(shown)}, `
         + `${now ? `now it would bill the part from ${dayMonYear(now)}` : "now it cannot be billed"}. Nothing was billed — refresh Renewals and check again.`;

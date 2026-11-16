@@ -10,7 +10,7 @@ import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { createClient } from "@/lib/supabase/client";
 import { loadInvoicePeriodRuleFrom } from "@/lib/quotes/line-period-context";
 import {
-  quoteLinePeriodContext, renewedSubscription, invoicePeriodSubscription, R2727_PERIOD_RULE_KEY, type LinePeriodContext,
+  quoteLinePeriodContext, renewedSubscription, invoicePeriodSubscription, togetherLineSubscriptions, R2727_PERIOD_RULE_KEY, type LinePeriodContext,
 } from "@/lib/quotes/service-period";
 import type { Invoice, Quote } from "@/lib/supabase/database.types";
 
@@ -37,10 +37,12 @@ export function useQuotePeriodContext(
   const needsSub = !!quote && (quote.is_renewal || quote.is_extension);
   const { data: subs } = useCustomerSubscriptions(needsSub ? (quote?.customer_id ?? undefined) : undefined);
   const ruleFrom = useInvoicePeriodRuleFrom(invoice !== undefined && needsSub);
-  return React.useMemo(
-    () => (quote ? quoteLinePeriodContext(quote, invoice !== undefined
-      ? invoicePeriodSubscription(invoice ?? {}, ruleFrom, quote, needsSub ? renewedSubscription(quote, subs) : null)
-      : needsSub ? renewedSubscription(quote, subs) : null) : null),
-    [quote, needsSub, subs, invoice, ruleFrom],
-  );
+  return React.useMemo(() => {
+    if (!quote) return null;
+    /* R-2849: a together renewal quote — each line's own subscription (start + term, domain) from the same list */
+    const lines = needsSub ? togetherLineSubscriptions(quote.line_items as Array<{ subscription_id?: unknown }> | null, subs) : null;
+    const renewed = needsSub ? renewedSubscription(quote, subs) : null;
+    const facts = lines ? { ...(renewed ?? {}), lines } : renewed;
+    return quoteLinePeriodContext(quote, invoice !== undefined ? invoicePeriodSubscription(invoice ?? {}, ruleFrom, quote, facts) : facts);
+  }, [quote, needsSub, subs, invoice, ruleFrom]);
 }

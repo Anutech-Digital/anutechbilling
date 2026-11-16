@@ -23,7 +23,9 @@ import type { TogetherFact, TogetherSaleFacts } from "./bill-together-preview";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const TOGETHER_SUB_SELECT =
-  "id, tenant_id, customer_id, customer_name, plan, seats, mrr, billing_cycle, term_months, term_amount, start_date, renewal_date, renewal_quote_id, status, auto_renew, billed_externally_until, quote_id";
+  "id, tenant_id, customer_id, customer_name, plan, seats, mrr, billing_cycle, term_months, term_amount, start_date, renewal_date, renewal_quote_id, status, auto_renew, billed_externally_until, quote_id, "
+  /* R-2849: what a yearly renewal is priced from (priceRenewalQuote) and the already-renewed check */
+  + "item_id, vendor, domain, renewal_state";
 
 export interface TogetherSubRow extends BillNextSub {
   customer_name: string | null;
@@ -32,6 +34,11 @@ export interface TogetherSubRow extends BillNextSub {
   status: string | null;
   auto_renew: boolean | null;
   quote_id: string | null;
+  /* R-2849 (yearly renewal pricing) */
+  item_id?: string | null;
+  vendor?: string | null;
+  domain?: string | null;
+  renewal_state?: string | null;
 }
 
 /** A fact plus what POST needs to lay the part (the subscription row as read). */

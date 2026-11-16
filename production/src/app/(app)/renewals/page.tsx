@@ -693,7 +693,8 @@ export default function RenewalsPage() {
     return { mine: c({ mine: true }), due: c({ followUpDue: true }), broken: c({ promiseBroken: true }) };
   }, [built, me?.userId]);
   /* R-2808 Bill together: only once R-2807's route answers (404 before it lands → nothing shows). */
-  const togetherProbe = useBillTogetherProbe(!!built?.allItems.some((i) => i.stage?.split));
+  /* R-2849: yearly rows bill together too (one renewal quote) — any row, not only split ones */
+  const togetherProbe = useBillTogetherProbe(!!built && built.allItems.length > 0);
   const togetherOn = togetherProbe === "on";
   /* R-2832 F6: while the check is out the groups box already holds its place (nothing pressable), so it does not
      pop in and push the table down — only for the money roles the route allows (others get 403 → never shown) */

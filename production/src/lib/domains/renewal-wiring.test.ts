@@ -15,14 +15,20 @@ describe("the payment webhook", () => {
   const w = code("app/api/webhooks/razorpay/webhook.server.ts");
 
   it("finds the domain subscription being renewed BEFORE record_payment rolls it forward", () => {
-    const lookup = w.indexOf('.eq("renewal_quote_id", quote.id)');
+    const lookup = w.indexOf("renewedSubscriptionsOf(admin");
     const rpc = w.indexOf('admin.rpc("record_payment"');
     expect(lookup).toBeGreaterThan(-1);
     expect(rpc).toBeGreaterThan(lookup);
+    /* R-2852: a single quote by its link; a quote billed together by its live renewal_quote_subscriptions rows. */
+    const r = code("app/api/webhooks/razorpay/renewed-subscriptions.server.ts");
+    expect(r).toContain('.eq("renewal_quote_id", quote.id)');
+    expect(r).toMatch(/from\("renewal_quote_subscriptions"\)[\s\S]*?\.eq\("quote_id", quote\.id\)\s*\.is\("released_at", null\)/);
   });
 
   it("a paid renewal is queued with its renewal plan, behind the renewal switch — domain and hosting alike", () => {
-    expect(w).toMatch(/renewedSub\?\.vendor === "domain" \? DOMAIN_RENEWAL_PLAN : renewedSub\?\.vendor === "hosting" \? HOSTING_RENEWAL_PLAN : null/);
+    expect(w).toMatch(/vendor === "domain" \? DOMAIN_RENEWAL_PLAN : vendor === "hosting" \? HOSTING_RENEWAL_PLAN : null/);
+    // R-2852: each product's own plan marker (a together quote can renew more than one)
+    expect(w).toMatch(/const renewalPlan = isRenewal \? renewalPlanOf\(product\.vendor\) : null/);
     // The renewal plan still wins first; a new sale's hosting account then carries its own
     // plan (R-032), and only after that the quote's.
     expect(w).toMatch(/plan:\s*renewalPlan \?\? product\.plan \?\? quote\.plan/);
@@ -31,8 +37,10 @@ describe("the payment webhook", () => {
   });
 
   it("a renewal is never read from the lines as a new sale; a Workspace renewal queues nothing", () => {
-    expect(w).toMatch(/const products = isRenewal\s*\?\s*renewalPlan && renewalDomain/);
-    expect(w).toMatch(/:\s*\[\]\s*:\s*provisioningProducts\(/);
+    expect(w).toMatch(/= isRenewal\s*\?\s*renewalProducts\s*:\s*provisioningProducts\(/);
+    // R-2852: a Workspace member (no renewal plan) and a named problem both queue nothing
+    expect(w).toMatch(/const renewalProducts = renewed\.problem \? \[\] : renewed\.subs\.flatMap\(\(s\) => \{[\s\S]{0,200}?renewalPlanOf\(s\.vendor\) && renewalDomain\s*\?\s*\[\{[^\]]*\}\]\s*:\s*\[\];/);
+    expect(w).toMatch(/amountPaid:\s*isRenewal \? product\.renewalShare \?\? paymentAmount/);
   });
 
   it("creates domain subscriptions only on a first sale, never on a renewal", () => {

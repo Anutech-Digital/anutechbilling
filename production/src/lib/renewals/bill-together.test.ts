@@ -18,7 +18,7 @@ describe("suggestBillTogether", () => {
       row({ id: "other", customerId: "c-x", lastInvoiceId: "INV-1" }),
       row({ id: "sta", plan: "Business Starter", seats: 49, lastInvoiceId: "INV-1", domain: "b.in", nextPartStart: "2026-10-15" }),
     ]);
-    expect(g).toEqual([{ customerId: "c-itbuzz", customerName: "ITBUZZ Technologies", subIds: ["std", "sta"], why: "same-bill" }]);
+    expect(g).toEqual([{ customerId: "c-itbuzz", customerName: "ITBUZZ Technologies", subIds: ["std", "sta"], why: "same-bill", kind: "parts" }]);
   });
 
   it("same last proforma (quote) also groups", () => {
@@ -27,7 +27,7 @@ describe("suggestBillTogether", () => {
 
   it("same domain + same next part + same cycle groups (same-domain); a different start or cycle does not", () => {
     expect(suggestBillTogether([row({ id: "a" }), row({ id: "b" })])).toEqual([
-      { customerId: "c-itbuzz", customerName: "ITBUZZ Technologies", subIds: ["a", "b"], why: "same-domain" },
+      { customerId: "c-itbuzz", customerName: "ITBUZZ Technologies", subIds: ["a", "b"], why: "same-domain", kind: "parts" },
     ]);
     expect(suggestBillTogether([row({ id: "a" }), row({ id: "b", nextPartStart: "2026-10-15" })])).toEqual([]);
     expect(suggestBillTogether([row({ id: "a" }), row({ id: "b", billingCycle: "quarterly" })])).toEqual([]);

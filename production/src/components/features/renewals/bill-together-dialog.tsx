@@ -116,6 +116,8 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
   const total = tickedTotal(subs, ticked);
   /* R-2832 F3: paise shown — a bill's lines and total are to the paisa, never rounded to whole rupees */
   const money = (n: number) => (preview && isForeignCurrency(preview.currency) ? formatForeign(n, preview.currency) : rupee(n, { decimals: 2 }));
+  /* R-2849: yearly subscriptions → ONE renewal quote (the route's preview says which) */
+  const renewal = preview?.kind === "renewal";
   const toggle = (id: string, on: boolean) => setTicked((t) => {
     const n = new Set(t);
     if (on) n.add(id); else n.delete(id);
@@ -125,10 +127,12 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
-        <DialogTitle className="font-serif text-xl text-ink">{BILL_TOGETHER} — one proforma</DialogTitle>
+        <DialogTitle className="font-serif text-xl text-ink">{BILL_TOGETHER} — {renewal ? "one renewal quote" : "one proforma"}</DialogTitle>
         <DialogDescription className="text-sm text-ink-2">
-          {customerName}. One proforma with a line for each ticked subscription&apos;s next part. Untick one to bill it on its own.
-          Nothing is emailed now.
+          {renewal
+            ? <>{customerName}. One renewal quote with a line for each ticked subscription&apos;s next year. Untick one to renew it on its own.</>
+            : <>{customerName}. One proforma with a line for each ticked subscription&apos;s next part. Untick one to bill it on its own.</>}
+          {" "}Nothing is emailed now.
         </DialogDescription>
 
         {isLoading && <p className="mt-4 text-sm text-ink-3">Loading what will be billed…</p>}
@@ -181,10 +185,14 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
               </span>
             </p>
             {chosen.length < 2 && (
-              <p className="text-2xs text-ink-3" role="status">Tick at least two subscriptions — one alone is billed with Bill next part.</p>
+              <p className="text-2xs text-ink-3" role="status">
+                {renewal ? "Tick at least two subscriptions — one alone is renewed with Review renewal quote." : "Tick at least two subscriptions — one alone is billed with Bill next part."}
+              </p>
             )}
             <p className="text-2xs text-ink-3">
-              One proforma from the PI series. When it is paid, ONE tax invoice is raised and each subscription moves to its next part.
+              {renewal
+                ? "One renewal quote. When it is paid in full, ONE tax invoice is raised and each subscription renews for its own next year; a part payment renews none."
+                : "One proforma from the PI series. When it is paid, ONE tax invoice is raised and each subscription moves to its next part."}
             </p>
           </div>
         )}
@@ -192,7 +200,7 @@ export function BillTogetherDialog({ ids, customerName, open, onOpenChange, onCo
         <DialogFooter className="mt-4">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
           <Button variant="primary" onClick={() => onConfirm(chosen, periods)} disabled={!preview || chosen.length < 2} loading={busy}>
-            Create proforma
+            {renewal ? "Create renewal quote" : "Create proforma"}
           </Button>
         </DialogFooter>
       </DialogContent>
