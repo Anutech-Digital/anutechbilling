@@ -502,7 +502,7 @@
 /* "Resell licences yourself?" — a soft bar under the cards, the two links as teal text buttons. */
 .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller {
   margin: 20px 0 0; padding: 14px 20px; border-radius: 16px; background: var(--w-mint-soft); border: 1px solid #D6EAE2;
-  font-size: 15px; color: var(--w-ink-2);
+  font-size: 15px; color: var(--w-ink-2); text-align: center;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller a { color: var(--w-teal); font-weight: 700; text-underline-offset: 3px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-it > .hc-reseller a:hover { color: var(--w-teal-dark); text-decoration: underline; }
