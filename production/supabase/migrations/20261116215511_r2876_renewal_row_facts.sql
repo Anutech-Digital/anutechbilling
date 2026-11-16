@@ -1,6 +1,6 @@
 -- deploy-peek: to_regprocedure('public.renewal_row_facts(uuid[],text[])') is not null
 -- deploy-key: r2876renewalrowfacts
--- 20261116194229_r2876_renewal_row_facts.sql
+-- 20261116215511_r2876_renewal_row_facts.sql
 --
 -- R-2876 (16 Nov 2026): the Renewals page's Status / Last bill waited for FOUR trips in a row after the table showed
 -- (R-2861 measured it: quotes + billing parts, then part proformas + invoices, then quote lines + credit / debit notes,

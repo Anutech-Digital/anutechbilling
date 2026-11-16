@@ -461,7 +461,7 @@ describe("R-2876 the stand-in answers only what the function covered", () => {
 
 describe("R-2876 wiring + the function's contract", () => {
   const src = (f: string) => readFileSync(`src/app/(app)/renewals/${f}`, "utf8");
-  const migration = readFileSync("supabase/migrations/20261116194229_r2876_renewal_row_facts.sql", "utf8");
+  const migration = readFileSync("supabase/migrations/20261116215511_r2876_renewal_row_facts.sql", "utf8");
 
   it("both page hooks go through the one read, with the old reads as the fallback", () => {
     for (const f of ["last-docs-data.ts", "last-paid-data.ts"]) {

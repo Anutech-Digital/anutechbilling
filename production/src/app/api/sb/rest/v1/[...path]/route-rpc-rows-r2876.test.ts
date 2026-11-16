@@ -106,7 +106,7 @@ describe("R-2876 the row budget counts the rows inside renewal_row_facts' answer
 
   test("every row list the function returns is on the counter's list (a new list must be added there too)", async () => {
     const { readFileSync } = await import("node:fs");
-    const sql = readFileSync("supabase/migrations/20261116194229_r2876_renewal_row_facts.sql", "utf8").split("select jsonb_build_object(")[1];
+    const sql = readFileSync("supabase/migrations/20261116215511_r2876_renewal_row_facts.sql", "utf8").split("select jsonb_build_object(")[1];
     const keys = [...sql.matchAll(/^\s{4}'([a-z_]+)', coalesce\(/gm)].map((m) => m[1]);
     expect(keys).toHaveLength(9);
     expect(keys.filter((k) => k !== "invoice_ids").sort()).toEqual([...RPC_ROW_LISTS.renewal_row_facts].sort());
