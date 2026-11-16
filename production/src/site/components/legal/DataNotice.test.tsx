@@ -36,6 +36,23 @@ describe("DataNotice", () => {
     expect(screen.queryByTestId("adult-line")).toBeNull();
   });
 
+  it("the full notice is collapsible: closed at first, opens on its heading; the offers box stays outside it", () => {
+    render(<Harness adultLine />);
+    const details = screen.getByTestId("data-notice-details") as HTMLDetailsElement;
+    expect(details.tagName).toBe("DETAILS");
+    expect(details.open).toBe(false);
+    const summary = details.querySelector("summary")!;
+    expect(summary.textContent?.trim()).toBe("How we use your data");
+    // the itemised points and the links are inside it…
+    expect(details.contains(screen.getByText(/We collect your name, email, mobile/))).toBe(true);
+    expect(details.contains(screen.getByRole("link", { name: "Privacy policy" }))).toBe(true);
+    // …the choices are not: never hidden behind the toggle
+    expect(details.contains(screen.getByRole("checkbox", { name: new RegExp(MARKETING_OPT_IN_LABEL) }))).toBe(false);
+    expect(details.contains(screen.getByTestId("adult-line"))).toBe(false);
+    fireEvent.click(summary);
+    expect(details.open).toBe(true);
+  });
+
   it("checkout shows the 18+ line", () => {
     render(<Harness adultLine />);
     expect(screen.getByTestId("adult-line").textContent).toBe("I am 18+ or buying for my business.");

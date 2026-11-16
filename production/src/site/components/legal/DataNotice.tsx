@@ -8,6 +8,11 @@
  * Wording, version and links live in lib/consent/data-notice.ts. Links open in a new tab so a
  * half-filled form is never lost. Styles are inline with the page's own colour inherited: the
  * notice sits in forms built with three different CSS systems (site.css, Tailwind, gw-*).
+ *
+ * The full notice is collapsible (owner, 16 Nov 2026): its heading "How we use your data" is a
+ * native <details> summary, closed at first, one click/Enter to read the itemised points and the
+ * links (the text stays in the page, so find-in-page and screen readers still reach it). The
+ * offers box and the 18+ line stay OUTSIDE it, always visible — they are choices, not reading.
  */
 import * as React from "react";
 import {
@@ -60,14 +65,16 @@ export function DataNotice({ purpose, optIn, onOptIn, adultLine, idPrefix = "dn"
           <b>How we use your data:</b> we collect {n.collects} {n.use}. <Links />
         </p>
       ) : (
-        <>
-          <p style={{ margin: "0 0 2px", fontWeight: 600 }}>How we use your data</p>
-          <ul style={{ margin: 0, paddingLeft: 18, listStyle: "disc" }}>
+        <details data-testid="data-notice-details" style={{ margin: 0 }}>
+          <summary style={{ display: "list-item", fontWeight: 600, cursor: "pointer", width: "fit-content", padding: "2px 0" }}>
+            How we use your data
+          </summary>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18, listStyle: "disc" }}>
             <li>We collect {n.collects}.</li>
             <li>We use it {n.use}. We do not sell it.</li>
             <li>You can ask to see, correct or delete it, or complain: <Links /></li>
           </ul>
-        </>
+        </details>
       )}
       {adultLine && <p data-testid="adult-line" style={{ margin: "6px 0 0" }}>{ADULT_OR_BUSINESS_LINE}</p>}
       {showBox && (
