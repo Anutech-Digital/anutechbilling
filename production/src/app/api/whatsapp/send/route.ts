@@ -25,7 +25,7 @@ import { withRoute } from "@/lib/api/with-route";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { classifySendFailure } from "@/lib/whatsapp/send-failure";
 import { renderQuotePDF } from "@/lib/pdf";
-import { isPartRequest } from "@/lib/billing/part-requests";
+import { partRequestOf } from "@/lib/billing/part-request-of.server";
 import { quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
@@ -94,7 +94,7 @@ export const POST = withRoute({
           id, tenant_id, customer_id, customer_name, line_items, subtotal,
           discount_pct, tax_rate, amount, notes, expires_date, is_renewal, is_add_seats, is_one_off,
           is_extension, extension_months, billing_cycle, currency, exchange_rate,
-          payment_status, invoice_id, created_date, domain, renewal_term_date, renewal_subscription_id, subscription_billing_id
+          payment_status, invoice_id, created_date, domain, renewal_term_date, renewal_subscription_id
         `)
         .eq("id", attach_quote_id)
         .single();
@@ -141,7 +141,7 @@ export const POST = withRoute({
       });
 
       const blob = await renderQuotePDF({
-        partRequest:   isPartRequest(quote as { subscription_billing_id?: string | null }), // R-2869
+        partRequest:   !!(await partRequestOf(admin, quote.id, tenantId)), // R-2869: same test as the quote page (subscription_billing_id)
         upiQrDataUrl:  upi?.dataUrl ?? null,
         upiVpa:        upi?.vpa ?? null,
         tenantName:    tenant?.name    ?? "Workspace",
