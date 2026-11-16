@@ -233,7 +233,7 @@ describe("item 5: workspace facts, trail, findings and outline reach the model a
     const ends = turn.split("\n").filter((l) => l.startsWith(HELP_UNTRUSTED_END));
     expect(begins).toHaveLength(4);
     expect(ends).toHaveLength(4);
-    const ids = new Set([...begins, ...ends].map((l) => /id=(\S+)/.exec(l)?.[1]));
+    const ids = new Set([...begins, ...ends].map((l) => /id=([0-9a-f-]+)/.exec(l)?.[1]));
     expect(ids.size).toBe(1);
     expect([...ids][0]).not.toBe(ID);
     for (const h of ["WHAT THE APP RECORDED", "AUTOMATIC FINDINGS", "PAGE OUTLINE", "WORKSPACE FACTS"]) {
