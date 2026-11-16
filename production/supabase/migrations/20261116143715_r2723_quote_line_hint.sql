@@ -1,4 +1,4 @@
--- deploy-peek: (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname in ('subscription_term_follows_line', 'record_payment', 'activate_quote_on_credit', 'file_invoiced_quote_subscriptions') and p.prosrc like '%app.r2723_quote_line%') >= 4
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.subscription_term_follows_line()') and prosrc like '%app.r2723_quote_line%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%app.r2723_quote_line%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%app.r2723_quote_line%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.file_invoiced_quote_subscriptions(text,integer)') and prosrc like '%app.r2723_quote_line%')
 -- deploy-key: r2723quotelinehint
 -- 20261116143715_r2723_quote_line_hint.sql
 --
