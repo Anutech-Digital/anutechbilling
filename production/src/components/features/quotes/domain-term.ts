@@ -35,6 +35,18 @@ export function lineForYears(line: QuoteLineItem, years: number): QuoteLineItem 
 }
 
 /**
+ * R-2723 — the line as it goes into a commitment change. Flexible (monthly) has no "Register for
+ * N years": a line that carried years 2–10 kept them (hidden — the picker is not shown on a
+ * monthly line) and its WHOLE-term rate was divided by 12, so a 3-year ₹2,400 domain became ₹200 a
+ * month, three times one year's month. It is brought back to ONE year first (rate, list rate and
+ * cost = the yearly figure, `years` removed); the builder then converts the unit as for any line.
+ * Every other change returns the line untouched.
+ */
+export function lineForCommitment(line: QuoteLineItem, commitment: QuoteLineItem["commitment"] | null): QuoteLineItem {
+  return commitment === "monthly" && domainLineYears(line) > 1 ? lineForYears(line, 1) : line;
+}
+
+/**
  * Does this line get the "Register for N years" picker? The existing rule (a domain purchase,
  * or a name saying domain / registration) OR a catalogue item from the Domain vendor — the
  * catalogue names its domain items ".in", ".com", and those had no picker.
