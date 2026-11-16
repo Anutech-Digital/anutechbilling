@@ -38,10 +38,10 @@ const tool = (name: string, run: (i: unknown) => Promise<unknown>, extra: Record
   run, ...extra,
 } as never);
 
-const SECRET_ROW = "SECRET-CUSTOMER-ROW-9f3";
-const okTool = tool("log_ok", async () => ({ text: "3 invoices", rows: [{ id: "r1", name: SECRET_ROW }, { id: "r2", name: "b" }, { id: "r3", name: "c" }], total: 3, sources: [] }));
+const PRIVATE_ROW = "PRIVATE-CUSTOMER-ROW-9f3";
+const okTool = tool("log_ok", async () => ({ text: "3 invoices", rows: [{ id: "r1", name: PRIVATE_ROW }, { id: "r2", name: "b" }, { id: "r3", name: "c" }], total: 3, sources: [] }));
 const slowTool = tool("log_slow", async () => { await new Promise((r) => setTimeout(r, 200)); return { text: "late", sources: [] }; });
-const brokenTool = tool("log_broken", async () => { throw new Error(`db said ${SECRET_ROW}`); });
+const brokenTool = tool("log_broken", async () => { throw new Error(`db said ${PRIVATE_ROW}`); });
 const confirmTool = tool("log_confirm", async () => ({ text: "x", sources: [] }), { tier: "confirm" });
 const registry = buildRegistry([okTool, slowTool, brokenTool, confirmTool] as never);
 
@@ -67,10 +67,10 @@ describe("outcomes and rows", () => {
   it("a tool row carries the name, tier, outcome, count and ms — never the rows or the text", () => {
     const row = log.toolLogRow({
       name: "log_ok", tier: "read", ms: 42,
-      result: { name: "log_ok", ok: true, text: `3 invoices ${SECRET_ROW}`, rows: [{ id: "r1", name: SECRET_ROW }], shown: { shown: 1, total: 3 }, sources: [{ table: "invoices", ids: ["r1"], href: "/invoices", label: "x" }], href: "/invoices", label: "x" },
+      result: { name: "log_ok", ok: true, text: `3 invoices ${PRIVATE_ROW}`, rows: [{ id: "r1", name: PRIVATE_ROW }], shown: { shown: 1, total: 3 }, sources: [{ table: "invoices", ids: ["r1"], href: "/invoices", label: "x" }], href: "/invoices", label: "x" },
     });
     expect(row).toMatchObject({ kind: "tool", tool: "log_ok", tier: "read", outcome: "did", rowCount: 3, durationMs: 42 });
-    expect(JSON.stringify(row)).not.toContain(SECRET_ROW);
+    expect(JSON.stringify(row)).not.toContain(PRIVATE_ROW);
     expect(row.rowIds).toBeUndefined();
   });
 
@@ -114,7 +114,7 @@ describe("the log writes through one function, as the person", () => {
     // the answer row, last
     expect(rpcCalls[rpcCalls.length - 1].args).toMatchObject({ p_kind: "answer", p_outcome: "did", p_model: "test-model", p_duration_ms: 10 });
     // no tool row, no text, no error message ever carries a result row or a db error text
-    expect(JSON.stringify(rpcCalls)).not.toContain(SECRET_ROW);
+    expect(JSON.stringify(rpcCalls)).not.toContain(PRIVATE_ROW);
   });
 
   it("without an onCall nothing is written and the run is unchanged", async () => {
@@ -139,14 +139,14 @@ describe("the log writes through one function, as the person", () => {
   it("the old R-421 path: results become tool rows (read, did / refused / failed), no text kept", async () => {
     const hl = log.createHelpLog(() => fake, { conversationId: CONV });
     hl.legacy([
-      { tool: "overdue_receivables", ok: true, text: `₹1,00,000 ${SECRET_ROW}`, href: "/invoices", label: "x" },
+      { tool: "overdue_receivables", ok: true, text: `₹1,00,000 ${PRIVATE_ROW}`, href: "/invoices", label: "x" },
       { tool: "payroll_total", ok: false, text: "payroll_total: not allowed for your role.", href: null, label: null },
       { tool: "open_quotes", ok: false, text: "open_quotes: could not be read just now — try again in a minute.", href: null, label: null },
     ] as never, 30);
     await hl.finish({ ok: true, ms: 5 });
     const rows = rpcCalls.map((c) => c.args).filter((a) => a.p_kind === "tool");
     expect(rows.map((r) => [r.p_tool, r.p_outcome, r.p_tier])).toEqual([["overdue_receivables", "did", "read"], ["payroll_total", "refused", "read"], ["open_quotes", "failed", "read"]]);
-    expect(JSON.stringify(rpcCalls)).not.toContain(SECRET_ROW);
+    expect(JSON.stringify(rpcCalls)).not.toContain(PRIVATE_ROW);
   });
 
   it("a log that fails (error result, thrown, no session) never throws into the answer", async () => {
