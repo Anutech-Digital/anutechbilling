@@ -42,6 +42,16 @@
  *      be called, never stored or passed on; runHelpTools takes a custom registry (4th argument)
  *      only inside help-tools tests; the route opens ONE session per question.
  *
+ * R-2882 / H-01c (17 Nov 2026) — the review of R-2879 left two guard holes, closed here:
+ *  10. a computed member read (`obj[expr]`) passes only by DECLARATION, resolved by the TypeScript
+ *      checker, not by file + text: the key is a const loop variable over a fixed frozen list of names,
+ *      or an array callback's index, or the object is a plain data map (a literal, Object.create(null),
+ *      a local builder that returns one); outside help-tools an explicit per-site entry may add one;
+ *  11. files the help tools reach may not reflect on the prototype chain (getOwnPropertyDescriptor(s),
+ *      getPrototypeOf, setPrototypeOf, defineProperty …) or hold the strings constructor / __proto__ /
+ *      prototype; a help file other than types.ts may not touch a zod schema's _def / _cached /
+ *      unknownKeys (the tool's `input` is a private parser — see types.ts).
+ *
  * Runtime locks are tested in src/lib/ai/help-tools/runner.test.ts (forged session refused,
  * service-role key refused, reader refuses secret columns, query has no write methods).
  */
@@ -147,15 +157,208 @@ const HELP_GLOBALS = new Map<string, GlobalUse>(Object.entries({
   crypto: { members: ["randomUUID"] },
   setTimeout: { call: true }, clearTimeout: { call: true },
 } satisfies Record<string, GlobalUse>));
-/** `obj[expr]` with a computed key is refused in help files except at these reviewed sites (file|text). */
-const COMPUTED_ACCESS_ALLOWED = new Set<string>([
-  `${HELP_DIR}/reader.ts|builder[m]`, // m runs over SCALAR_FILTERS, a const list of method names
-  `${HELP_DIR}/reader.ts|q[m]`,
-  `${HELP_DIR}/session.ts|h[k]`, // k is "Authorization" / "authorization"
-  `${LEGACY}|TOOLS[tool]`, // tool is a HelpDataToolName
-  `${LEGACY}|TOOLS[n]`,
-  `${LEGACY}|list[i]`,
+/**
+ * Reflection helpers that read or rewrite the prototype chain or property descriptors (R-2882,
+ * review of R-2879 finding 2): refused as a member name in every spelling, and as a string, in
+ * every file the help tools reach.
+ */
+const REFLECT_MEMBERS = new Set([
+  "getOwnPropertyDescriptor", "getOwnPropertyDescriptors", "getPrototypeOf", "setPrototypeOf", "defineProperty", "defineProperties",
 ]);
+/** Strings that name a way to Function / the prototype chain — refused in followed files (finding 2). */
+const FOLLOWED_FORBIDDEN_STRINGS = new Set(["constructor", "__proto__", "prototype", ...REFLECT_MEMBERS]);
+/**
+ * zod internals: a help file other than types.ts may not read them — `tool.input._def.unknownKeys =
+ * "passthrough"` turns strictness off (R-2882, review of R-2879 finding 4). types.ts walks the schema
+ * with them at registration and again before every parse.
+ */
+const SCHEMA_INTERNALS = new Set(["_def", "_cached", "unknownKeys"]);
+const TYPES_FILE = `${HELP_DIR}/types.ts`;
+
+/**
+ * R-2882 (review of R-2879 findings 1 and 2): `obj[expr]` with a computed key is judged by what the
+ * key and the object are DECLARED as, resolved by the TypeScript checker — never by the text, which
+ * let any `builder[m]` in reader.ts through whatever `builder` and `m` were. A computed read passes
+ * when ONE of these holds:
+ *   B. the key is a `const` loop variable of a for-of over a fixed list of string literals (written
+ *      in place, or a local const `Object.freeze([...])`) — the key can only be one of those words;
+ *   C. the key is the INDEX parameter of an array callback (map, forEach, filter …) whose receiver is
+ *      an array literal, a fixed list, or the result of calling an imported function — a number;
+ *   D. the object is a plain DATA MAP: a local const written as an object / array / string literal,
+ *      Object.create(null), Object.fromEntries(...), or built by a local function that returns one.
+ *      Reading such an object by any key gives a value or an Object.prototype member, never Function —
+ *      and the next step (`.constructor`, another computed read of a non-map) is refused by the rules
+ *      above and below.
+ *   E. (files OUTSIDE help-tools only) an explicit entry on FOLLOWED_COMPUTED_SITES: file, enclosing
+ *      function, object text and what the object is declared as must all still match.
+ * Everything else — a parameter, an `any`, a function, a computed key built by `join` / `+` — fails.
+ */
+interface ComputedSite { file: string; fn: string; object: string; decl: string; why: string }
+const FOLLOWED_COMPUTED_SITES: readonly ComputedSite[] = [
+  { file: "src/lib/company/summary.ts", fn: "openTicketCount", object: "counts", decl: "param Readonly<Record<string, number>> | null | undefined", why: "the key runs over OPEN_TICKET_STATUSES, three fixed status words" },
+  { file: "src/lib/auth/roles.ts", fn: "can", object: "PERMISSIONS[role]", decl: "element of PERMISSIONS", why: "role has just passed isUserRole() and permission is keyof Permissions — both closed sets" },
+  { file: "src/lib/utils.ts", fn: "gstinChecksum", object: "first14", decl: "param string", why: "the key is the loop counter over the string's own length (a number)" },
+];
+const ITERATION_METHODS = new Set(["map", "forEach", "filter", "some", "every", "find", "findIndex", "flatMap"]);
+
+/** What the checker says about names in ONE file: no lib, no module resolution — "local" means declared in this very file. */
+interface Syms {
+  isLocalName(id: ts.Identifier): boolean;
+  declOf(id: ts.Identifier): ts.Declaration | undefined;
+}
+function symbolsFor(sf: ts.SourceFile): Syms {
+  const host: ts.CompilerHost = {
+    getSourceFile: (name) => (name === sf.fileName ? sf : undefined),
+    getDefaultLibFileName: () => "lib.d.ts",
+    writeFile: () => undefined,
+    getCurrentDirectory: () => "/",
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+    fileExists: (name) => name === sf.fileName,
+    readFile: () => undefined,
+  };
+  const checker = ts.createProgram({ rootNames: [sf.fileName], options: { noLib: true, noResolve: true, types: [], target: ts.ScriptTarget.Latest, jsx: ts.JsxEmit.Preserve }, host }).getTypeChecker();
+  const symbolOf = (id: ts.Identifier) => (ts.isShorthandPropertyAssignment(id.parent) ? checker.getShorthandAssignmentValueSymbol(id.parent) : checker.getSymbolAtLocation(id));
+  return {
+    /* A type-only import / interface / type alias is erased: at run time the name is the GLOBAL of that name. */
+    isLocalName: (id) => !!symbolOf(id) && (symbolOf(id)!.declarations ?? []).some((d) => d.getSourceFile() === sf && !isErasedDeclaration(d)),
+    declOf: (id) => (symbolOf(id)?.declarations ?? []).find((d) => d.getSourceFile() === sf && !isErasedDeclaration(d)),
+  };
+}
+
+function unwrapExpr(e: ts.Expression): ts.Expression {
+  let x = e;
+  while (ts.isParenthesizedExpression(x) || ts.isNonNullExpression(x) || ts.isAsExpression(x) || ts.isSatisfiesExpression(x) || ts.isTypeAssertionExpression(x)) x = x.expression;
+  return x;
+}
+const isConstDecl = (d: ts.Declaration): d is ts.VariableDeclaration => ts.isVariableDeclaration(d) && (ts.getCombinedNodeFlags(d) & ts.NodeFlags.Const) !== 0;
+/** `Object.<name>` — the callee of Object.freeze(...), Object.create(...), Object.fromEntries(...). */
+function isObjectMember(callee: ts.Expression, name: string): boolean {
+  const x = unwrapExpr(callee);
+  return ts.isPropertyAccessExpression(x) && ts.isIdentifier(x.expression) && x.expression.text === "Object" && x.name.text === name;
+}
+const isStringList = (e: ts.Expression): boolean => {
+  const x = unwrapExpr(e);
+  return ts.isArrayLiteralExpression(x) && x.elements.every((el) => ts.isStringLiteralLike(el) && !FORBIDDEN_MEMBERS.has(el.text) && !REFLECT_MEMBERS.has(el.text));
+};
+
+/** A fixed list of string literals: written in place, or a local const `Object.freeze([...])`. */
+function closedList(sy: Syms, e: ts.Expression): boolean {
+  const x = unwrapExpr(e);
+  if (isStringList(x)) return true;
+  if (!ts.isIdentifier(x)) return false;
+  const d = sy.declOf(x);
+  if (!d || !isConstDecl(d) || !d.initializer) return false;
+  const init = unwrapExpr(d.initializer);
+  return ts.isCallExpression(init) && isObjectMember(init.expression, "freeze") && init.arguments.length === 1 && isStringList(init.arguments[0]);
+}
+
+/** B — a `const` for-of variable over a closed list of names. */
+function isClosedLoopVar(sy: Syms, id: ts.Identifier): boolean {
+  const d = sy.declOf(id);
+  if (!d || !isConstDecl(d) || !ts.isVariableDeclarationList(d.parent)) return false;
+  const loop = d.parent.parent;
+  return ts.isForOfStatement(loop) && loop.initializer === d.parent && !loop.awaitModifier && closedList(sy, loop.expression);
+}
+
+/** Is `e` an array we can trust to be an array: a literal, a fixed list, or built from an imported function (never a local object with its own `map`)? */
+function trustedArray(sy: Syms, e: ts.Expression, depth = 0): boolean {
+  if (depth > 6) return false;
+  const x = unwrapExpr(e);
+  if (ts.isArrayLiteralExpression(x)) return true;
+  if (ts.isAwaitExpression(x)) return trustedArray(sy, x.expression, depth + 1);
+  if (ts.isCallExpression(x)) {
+    const callee = unwrapExpr(x.expression);
+    return trustedArray(sy, ts.isPropertyAccessExpression(callee) ? callee.expression : callee, depth + 1);
+  }
+  if (ts.isPropertyAccessExpression(x)) return trustedArray(sy, x.expression, depth + 1);
+  if (!ts.isIdentifier(x)) return false;
+  const d = sy.declOf(x);
+  if (!d) return false;
+  if (ts.isImportSpecifier(d) || ts.isImportClause(d) || ts.isNamespaceImport(d)) return true;
+  if (isConstDecl(d) && d.initializer) return closedList(sy, x) || trustedArray(sy, d.initializer, depth + 1);
+  return false;
+}
+
+/** C — the index parameter of an array callback (a number the engine passes). */
+function isEngineIndex(sy: Syms, id: ts.Identifier): boolean {
+  const d = sy.declOf(id);
+  if (!d || !ts.isParameter(d)) return false;
+  const fn = d.parent;
+  if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || fn.parameters.indexOf(d) !== 1) return false;
+  const call = fn.parent;
+  if (!ts.isCallExpression(call) || call.arguments[0] !== fn || !ts.isPropertyAccessExpression(call.expression) || !ITERATION_METHODS.has(call.expression.name.text)) return false;
+  return trustedArray(sy, call.expression.expression);
+}
+
+/** D — a plain data map (see computedReadProblem). */
+function dataMap(sy: Syms, e: ts.Expression, depth = 0): boolean {
+  if (depth > 5) return false;
+  const x = unwrapExpr(e);
+  if (ts.isConditionalExpression(x)) return dataMap(sy, x.whenTrue, depth + 1) && dataMap(sy, x.whenFalse, depth + 1);
+  if (ts.isObjectLiteralExpression(x) || ts.isArrayLiteralExpression(x) || ts.isStringLiteralLike(x) || ts.isTemplateExpression(x)) return true;
+  if (ts.isCallExpression(x)) {
+    if (isObjectMember(x.expression, "create")) return x.arguments.length === 1 && x.arguments[0].kind === ts.SyntaxKind.NullKeyword;
+    if (isObjectMember(x.expression, "fromEntries")) return true;
+    if (isObjectMember(x.expression, "freeze")) return x.arguments.length >= 1 && dataMap(sy, x.arguments[0], depth + 1);
+    const callee = unwrapExpr(x.expression);
+    const d = ts.isIdentifier(callee) ? sy.declOf(callee) : undefined;
+    if (!d || !ts.isFunctionDeclaration(d) || !d.body) return false;
+    // a local function whose every `return` hands back a data map (its own nested functions do not count)
+    const rets: ts.ReturnStatement[] = [];
+    const collect = (n: ts.Node): void => {
+      if (ts.isReturnStatement(n)) rets.push(n);
+      if (ts.isFunctionLike(n) && n !== d) return;
+      ts.forEachChild(n, collect);
+    };
+    collect(d.body);
+    return rets.length > 0 && rets.every((r) => !!r.expression && dataMap(sy, r.expression, depth + 1));
+  }
+  if (ts.isIdentifier(x)) {
+    const d = sy.declOf(x);
+    return !!d && isConstDecl(d) && !!d.initializer && dataMap(sy, d.initializer, depth + 1);
+  }
+  return false;
+}
+
+/** The function a node sits in, by name ("<module>" at the top). */
+function enclosingFn(n: ts.Node): string {
+  for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+    if (ts.isFunctionDeclaration(p) && p.name) return p.name.text;
+    if ((ts.isArrowFunction(p) || ts.isFunctionExpression(p)) && ts.isVariableDeclaration(p.parent) && ts.isIdentifier(p.parent.name)) return p.parent.name.text;
+    if (ts.isMethodDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+  }
+  return "<module>";
+}
+/** What an object expression is declared as, in the words FOLLOWED_COMPUTED_SITES uses. */
+function describeObject(sy: Syms, sf: ts.SourceFile, e: ts.Expression): string {
+  const x = unwrapExpr(e);
+  if (ts.isElementAccessExpression(x)) return `element of ${unwrapExpr(x.expression).getText(sf)}`;
+  const d = ts.isIdentifier(x) ? sy.declOf(x) : undefined;
+  if (d && ts.isParameter(d)) return `param ${d.type ? d.type.getText(sf) : "-"}`;
+  if (d && isConstDecl(d)) return "const";
+  return ts.SyntaxKind[x.kind];
+}
+
+/**
+ * Why `obj[expr]` is not allowed, or null when it is (rules B-E above). `used` collects the
+ * FOLLOWED_COMPUTED_SITES entries that matched, so an entry nobody uses is reported.
+ */
+function computedReadProblem(f: string, sf: ts.SourceFile, n: ts.ElementAccessExpression, sy: Syms, help: boolean, used?: Set<string>): string | null {
+  const key = unwrapExpr(n.argumentExpression);
+  if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) return null; // a literal name: judged by the member rules
+  if (ts.isIdentifier(key) && (isClosedLoopVar(sy, key) || isEngineIndex(sy, key))) return null;
+  if (dataMap(sy, n.expression)) return null;
+  if (!help) {
+    const obj = unwrapExpr(n.expression).getText(sf);
+    const decl = describeObject(sy, sf, n.expression);
+    const fn = enclosingFn(n);
+    const site = FOLLOWED_COMPUTED_SITES.find((s) => s.file === f && s.fn === fn && s.object === obj && s.decl === decl);
+    if (site) { used?.add(`${site.file}|${site.fn}|${site.object}`); return null; }
+  }
+  return `${n.getText(sf).slice(0, 60)} — a computed member read the guard cannot tie to a declaration (a loop variable over a fixed list of names, an array callback's index, a plain data map${help ? "" : ", or an entry on FOLLOWED_COMPUTED_SITES"})`;
+}
 
 /**
  * Restricted exports of help-tools modules, checked by MODULE (finding 3): who may import each
@@ -182,6 +385,9 @@ const RESTRICTED: Record<string, readonly string[]> = {
 const OUTSIDE_ALLOWED: Record<string, readonly string[]> = {
   [`${HELP_DIR}/session.ts`]: ["openHelpSession"],
   [`${HELP_DIR}/registry.ts`]: ["helpAiV2Enabled"],
+  /* R-2882: app-help.ts wraps WORKSPACE FACTS / trail / findings / outline with the same cleaner and
+     markers as tool results — pure text functions, no data access. */
+  [`${HELP_DIR}/untrusted.ts`]: ["wrapUntrusted", "newUntrustedId", "HELP_UNTRUSTED_RULE"],
 };
 /** Names that may only ever be CALLED where they are imported — never stored, passed on or re-exported. */
 const CALL_ONLY = new Set(["scopedReader", "sessionClient", "assertNotServiceRole", "takeHelpCalls", "openHelpSession", "runOneTool", "runHelpTools", "buildRegistry", "defineHelpTool", "helpToolRateOk", "resetHelpToolRate"]);
@@ -241,12 +447,13 @@ function memberName(n: ts.Node): string | null {
 interface FileScan { imports: Imp[]; problems: string[] }
 
 /** Parse one file and check it; `src` is the file's text. */
-function scanFile(f: string, src: string): FileScan {
+function scanFile(f: string, src: string, used?: Set<string>): FileScan {
   const sf = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, /\.[cm]?jsx?$/.test(f) ? ts.ScriptKind.JS : f.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const help = isHelpFile(f);
   const imports: Imp[] = [];
   const problems: string[] = [];
   const at = (n: ts.Node) => `${f}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`;
+  let sy: Syms | undefined;
 
   const visit = (node: ts.Node): void => {
     // Imports and re-exports.
@@ -281,6 +488,15 @@ function scanFile(f: string, src: string): FileScan {
       const fm = memberName(node);
       if (fm && FORBIDDEN_MEMBERS.has(fm) && fm !== "prototype") problems.push(`${at(node)}: .${fm} (reaches Function / the prototype chain)`);
       if (ts.isMetaProperty(node)) problems.push(`${at(node)}: import.meta`);
+      /* R-2882 (finding 2): no reflection on the prototype chain, no string that names a way to Function,
+         and a computed member read only where its declaration says what the key can be. */
+      if (fm && REFLECT_MEMBERS.has(fm)) problems.push(`${at(node)}: .${fm} (reads or rewrites the prototype chain / property descriptors)`);
+      if (ts.isStringLiteralLike(node) && FOLLOWED_FORBIDDEN_STRINGS.has(node.text)) problems.push(`${at(node)}: the string "${node.text}" (a name that reaches Function / the prototype chain)`);
+      if (ts.isElementAccessExpression(node)) {
+        sy ??= symbolsFor(sf);
+        const why = computedReadProblem(f, sf, node, sy, false, used);
+        if (why) problems.push(`${at(node)}: ${why}`);
+      }
     }
 
     if (help) {
@@ -365,23 +581,8 @@ function thisIsClassMember(n: ts.Node): boolean {
 function helpFileProblems(f: string, sf: ts.SourceFile): string[] {
   const problems: string[] = [];
   const at = (n: ts.Node) => `${f}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`;
-  const host: ts.CompilerHost = {
-    getSourceFile: (name) => (name === sf.fileName ? sf : undefined),
-    getDefaultLibFileName: () => "lib.d.ts",
-    writeFile: () => undefined,
-    getCurrentDirectory: () => "/",
-    getCanonicalFileName: (name) => name,
-    useCaseSensitiveFileNames: () => true,
-    getNewLine: () => "\n",
-    fileExists: (name) => name === sf.fileName,
-    readFile: () => undefined,
-  };
-  const checker = ts.createProgram({ rootNames: [sf.fileName], options: { noLib: true, noResolve: true, types: [], target: ts.ScriptTarget.Latest, jsx: ts.JsxEmit.Preserve }, host }).getTypeChecker();
-  const isLocalName = (id: ts.Identifier): boolean => {
-    const s = ts.isShorthandPropertyAssignment(id.parent) ? checker.getShorthandAssignmentValueSymbol(id.parent) : checker.getSymbolAtLocation(id);
-    /* A type-only import / interface / type alias is erased: at run time the name is the GLOBAL of that name. */
-    return !!s && (s.declarations ?? []).some((d) => d.getSourceFile() === sf && !isErasedDeclaration(d));
-  };
+  const sy = symbolsFor(sf);
+  const isLocalName = (id: ts.Identifier): boolean => sy.isLocalName(id);
 
   const globalUse = (id: ts.Identifier): void => {
     if (isAllowedEnvRead(f, id)) return;
@@ -413,12 +614,11 @@ function helpFileProblems(f: string, sf: ts.SourceFile): string[] {
     if (n.kind === ts.SyntaxKind.ThisKeyword && !thisIsClassMember(n)) problems.push(`${at(n)}: \`this\` outside a class member (it can be the global object)`);
     if (ts.isParameter(n) && ts.isIdentifier(n.name) && n.name.text === "this") problems.push(`${at(n)}: a \`this\` parameter`);
     if (ts.isStringLiteralLike(n) && FORBIDDEN_MEMBERS.has(n.text)) problems.push(`${at(n)}: the string "${n.text}" (a member that reaches Function / the prototype chain)`);
+    if (ts.isStringLiteralLike(n) && (REFLECT_MEMBERS.has(n.text) || (SCHEMA_INTERNALS.has(n.text) && f !== TYPES_FILE))) problems.push(`${at(n)}: the string "${n.text}" (reflection / zod internals)`);
     if (ts.isComputedPropertyName(n) && (ts.isBindingElement(n.parent) || !(ts.isStringLiteralLike(n.expression) || ts.isNumericLiteral(n.expression)))) problems.push(`${at(n)}: a computed property name`);
     if (ts.isElementAccessExpression(n)) {
-      const a = n.argumentExpression;
-      if (!(ts.isStringLiteralLike(a) || ts.isNumericLiteral(a)) && !COMPUTED_ACCESS_ALLOWED.has(`${f}|${n.expression.getText(sf)}[${a.getText(sf)}]`)) {
-        problems.push(`${at(n)}: ${n.getText(sf).slice(0, 60)} — a computed member read (only reviewed sites: COMPUTED_ACCESS_ALLOWED)`);
-      }
+      const why = computedReadProblem(f, sf, n, sy, true);
+      if (why) problems.push(`${at(n)}: ${why}`);
     }
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "setTimeout" && !isLocalName(n.expression)) {
       const fn = n.arguments[0];
@@ -426,6 +626,7 @@ function helpFileProblems(f: string, sf: ts.SourceFile): string[] {
     }
     if (ts.isIdentifier(n)) {
       if (FORBIDDEN_MEMBERS.has(n.text)) problems.push(`${at(n)}: .${n.text} (reaches Function / the prototype chain)`);
+      else if (REFLECT_MEMBERS.has(n.text) || (SCHEMA_INTERNALS.has(n.text) && f !== TYPES_FILE)) problems.push(`${at(n)}: ${n.text} (reflection / zod internals — only types.ts may read a schema's _def)`);
       else if (!isNameOnly(n) && !isLocalName(n)) globalUse(n);
     }
     ts.forEachChild(n, walk);
@@ -572,12 +773,13 @@ function graphListProblems(reached: readonly string[]): string[] {
 function scanGraph(): { problems: string[]; reached: string[] } {
   const problems: string[] = [];
   const seen = new Set<string>();
+  const used = new Set<string>();
   const queue = [...helpFiles(), LEGACY];
   while (queue.length) {
     const f = queue.shift()!;
     if (seen.has(f)) continue;
     seen.add(f);
-    const { imports, problems: p } = scanFile(f, readSource(f));
+    const { imports, problems: p } = scanFile(f, readSource(f), used);
     problems.push(...p);
     for (const imp of imports) {
       if (imp.typeOnly || !isLocal(imp.spec)) continue;
@@ -587,6 +789,9 @@ function scanGraph(): { problems: string[]; reached: string[] } {
     }
   }
   problems.push(...graphListProblems([...seen]));
+  for (const site of FOLLOWED_COMPUTED_SITES) {
+    if (!used.has(`${site.file}|${site.fn}|${site.object}`)) problems.push(`FOLLOWED_COMPUTED_SITES: ${site.file} ${site.fn} ${site.object} matches no computed read any more — remove the entry`);
+  }
   return { problems, reached: [...seen] };
 }
 
@@ -771,7 +976,9 @@ describe("R-2879 guard holes closed before H-02", () => {
     expect(scanFile(NH, 'import cp from "child_process"; export const a = cp;').problems).not.toEqual([]);
     expect(scanFile(NH, 'export const w = () => new WebSocket("wss://x");').problems).not.toEqual([]);
     expect(scanFile(NH, "export const g = () => ({}).constructor;").problems).not.toEqual([]);
-    expect(scanFile(NH, "export const pick = (o: Record<string, number>, k: string, i: number) => o[k] + [1, 2][i];").problems).toEqual([]);
+    // R-2882: a computed read is judged by what the object is DECLARED as — a plain data map is fine, a parameter is not.
+    expect(scanFile(NH, "const M: Record<string, number> = { a: 1 }; export const pick = (k: string, i: number) => M[k] + [1, 2][i];").problems).toEqual([]);
+    expect(scanFile(NH, "export const pick = (o: Record<string, number>, k: string, i: number) => o[k] + [1, 2][i];").problems).not.toEqual([]);
     expect(scanFile(NH, 'import { clsx } from "clsx"; import { twMerge } from "tailwind-merge"; export const cn = (a: string) => twMerge(clsx(a));').problems).toEqual([]);
     // The whole graph is a named list: a new file reached from a help tool fails until it is added with review.
     expect(graphListProblems([...HELP_GRAPH_ALLOWED, `${HELP_DIR}/reader.ts`, LEGACY])).toEqual([]);
@@ -832,5 +1039,87 @@ describe("R-2879 guard holes closed before H-02", () => {
     const loop2 = 'import { openHelpSession } from "@/lib/ai/help-tools/session"; export async function a() { let n = 0; while (n++ < 8) await Promise.resolve(openHelpSession()); }';
     const noUser = 'import { openHelpSession } from "@/lib/ai/help-tools/session"; declare const run: any, runHelpDataTools: any, supabase: any; export const a = () => [run(openHelpSession(), { tenantId: "t" }), runHelpDataTools(supabase, { tenantId: "t" })];';
     for (const src of [two, loop, loop2, noUser]) expect(sessionOpenProblems(ROUTE, src)).not.toEqual([]);
+  });
+});
+
+/**
+ * R-2882 / H-01c (17 Nov 2026) — what the independent review of R-2879 left in this guard, closed
+ * BEFORE H-02 lets the model pass arguments. The plants in the first test came back [] from the
+ * R-2879 scanner (they are the checker's own, chk2879): it matched the reviewed computed reads by
+ * file + source text, so any `builder[m]` in reader.ts passed whatever `builder` and `m` were.
+ */
+describe("R-2882 guard: computed reads by declaration, followed files, zod internals", () => {
+  const READER = `${HELP_DIR}/reader.ts`;
+
+  it("finding 1: a computed read is matched by what its key / object are DECLARED as — the old text-matched sites no longer pass (self-test)", () => {
+    const plants: [string, string, string][] = [
+      ["reader builder[m] -> Function", READER, 'const m = ["con", "structor"].join(""); const builder: any = () => 0; export const g = builder[m]("return glob" + "alThis")();'],
+      ["reader builder?.[m]", READER, 'const m = ["con", "structor"].join(""); const builder: any = () => 0; export const g = builder?.[m]("return 1")();'],
+      ["reader q[m] on a function", READER, 'const m = ["con", "structor"].join(""); const q: any = () => 0; export const g = q[m]("return 1")();'],
+      ["session h[k]", SESSION, 'const k = String(99) + "onstructor"; const h: any = () => 0; export const g = h[k]("return 1")();'],
+      ["legacy list[i]", LEGACY, 'const i = "con" + "structor"; const list: any = async () => 0; export const g = list[i]("return pro" + "cess")();'],
+      ["legacy TOOLS[tool] on a function", LEGACY, 'const TOOLS: any = () => 0; export const f = (tool: string) => TOOLS[tool]("x");'],
+      ["legacy TOOLS[n] n a plain const", LEGACY, 'const TOOLS: any = () => 0; export const f = () => { const n = ["con", "structor"].join(""); return TOOLS[n]("x"); };'],
+      ["loop var is let", PLANTED, 'const L = Object.freeze(["eq"] as const); export function f(b: any) { for (let m of L) b[m](); }'],
+      ["loop over a parameter", PLANTED, "export function f(b: any, names: string[]) { for (const m of names) b[m](); }"],
+      ["named list not frozen", PLANTED, 'const L = ["eq"] as const; export function f(b: any) { for (const m of L) b[m](); }'],
+      ["list holds a computed word", PLANTED, 'const w = ["con", "structor"].join(""); const L = Object.freeze(["eq", w] as const); export function f(b: any) { for (const m of L) b[m](); }'],
+      ["index of a map on a local object with its own map()", PLANTED, 'const o = { map(cb: any) { cb(0, ["con", "structor"].join("")); } }; export const f = (c: any) => o.map((_r: unknown, i: any) => c[i]);'],
+      ["index of a map on a parameter", PLANTED, "export const f = (c: any, xs: { map: any }) => xs.map((_r: unknown, i: any) => c[i]);"],
+      ["second read after a data map", PLANTED, "const o: any = {}; export const f = (m: string, n: string) => o[m][n];"],
+      ["data map held in a let", PLANTED, "let o: any = {}; export const f = (m: string) => o[m];"],
+      ["data map is a parameter", PLANTED, "export const f = (o: Record<string, unknown>, m: string) => o[m];"],
+    ];
+    for (const [name, file, src] of plants) expect(scanFile(file, src).problems, name).not.toEqual([]);
+    // the same text with a different declaration does pass — proving it is the declaration that decides
+    expect(scanFile(READER, 'const L = Object.freeze(["eq", "lt"] as const); export function f(builder: Record<string, (c: unknown) => unknown>) { const q: Record<string, unknown> = Object.create(null); for (const m of L) { q[m] = (c: unknown) => builder[m](c); } return Object.freeze(q); }').problems).toEqual([]);
+    expect(scanFile(SESSION, 'export function bearers(c: { headers?: Record<string, unknown> } | null): unknown[] { const out: unknown[] = []; for (const h of [c?.headers]) { if (!h) continue; for (const k of ["Authorization", "authorization"]) { const v = h[k]; if (typeof v === "string") out.push(v); } } return out; }').problems).toEqual([]);
+    expect(scanFile(LEGACY, [
+      'import { runHelpTools } from "@/lib/ai/help-tools/runner";',
+      'const TOOLS = Object.fromEntries([["a", 1]]) as Record<string, number>;',
+      "export async function f(list: string[], tool: string, session: never, ctx: never) {",
+      "  const res = await runHelpTools(session, ctx, list.map((name) => ({ name })));",
+      "  return res.map((r, i) => ({ tool: list[i], n: TOOLS[tool], r }));",
+      "}",
+    ].join("\n")).problems).toEqual([]);
+  });
+
+  it("finding 2: files the help tools reach may not reflect on the prototype chain, name a way to Function, or read a computed key off a parameter (self-test)", () => {
+    const NAV = "src/lib/nav.ts";
+    const plants: Record<string, string> = {
+      descriptor: 'export const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => 0), "constructor");',
+      descriptors: "export const F = Object.getOwnPropertyDescriptors(Object.getPrototypeOf(async () => 0));",
+      protoOfComputedMember: 'export const g = Object["getPrototypeOf"](() => 0);',
+      setProto: "export const s = Object.setPrototypeOf({}, null);",
+      define: 'export const s = Object.defineProperty({}, "a", { value: 1 });',
+      ctorString: 'export const x = ["constructor"].map((s) => s);',
+      protoString: 'export const x = ["__proto__"].map((s) => s);',
+      prototypeString: 'export const x = ["prototype"].map((s) => s);',
+      computedOnParam: 'export const C = (f: any) => f["con" + "structor"];',
+      computedOnFunction: 'const f: any = () => 0; const k = ["con", "structor"].join(""); export const C = f[k];',
+      reflect: 'export const g = Reflect.get(() => 1, "x");',
+    };
+    for (const [k, src] of Object.entries(plants)) expect(scanFile(NAV, src).problems, k).not.toEqual([]);
+    // what these files really do stays clean: plain data maps, builder functions that return one, fixed-list loops
+    expect(scanFile(NAV, 'const M: Record<string, string[]> = {}; function build(): Record<string, string[]> { const out: Record<string, string[]> = {}; out["/a"] = ["A"]; return out; } const T = build(); export const t = (p: string) => T[p] ?? M[p]; export const u = Object.keys(T).map((s) => s.toUpperCase());').problems).toEqual([]);
+    // a reviewed per-site entry matches by file + function + object + declaration — none of them alone is enough
+    const SUMMARY = "src/lib/company/summary.ts";
+    const want = "Readonly<Record<string, number>> | null | undefined";
+    expect(scanFile(SUMMARY, `export function openTicketCount(counts: ${want}, s: string) { return counts?.[s]; }`).problems).toEqual([]);
+    expect(scanFile(SUMMARY, "export function openTicketCount(counts: any, s: string) { return counts?.[s]; }").problems).not.toEqual([]); // declared differently
+    expect(scanFile(SUMMARY, `export function otherName(counts: ${want}, s: string) { return counts?.[s]; }`).problems).not.toEqual([]); // another function
+    expect(scanFile("src/lib/zz-summary.ts", `export function openTicketCount(counts: ${want}, s: string) { return counts?.[s]; }`).problems).not.toEqual([]); // another file
+  });
+
+  it("finding 4: a help file other than types.ts may not touch a zod schema's internals, or reflect on a prototype (self-test)", () => {
+    const swap = 'export function f(t: { input: { _def: { unknownKeys: string } } }) { t.input._def.unknownKeys = "passthrough"; }';
+    expect(plantedProblems(swap)).not.toEqual([]);
+    expect(plantedProblems('export function f(t: any) { t.input["_def"] = {}; }')).not.toEqual([]);
+    expect(plantedProblems("export function f(t: any) { return t.input._cached; }")).not.toEqual([]);
+    expect(plantedProblems("export function f(o: any) { return o.getPrototypeOf(o); }")).not.toEqual([]);
+    expect(scanFile(TYPES_FILE, "export const f = (s: { _def: { unknownKeys: string } }) => s._def.unknownKeys;").problems).toEqual([]);
+    // and the real types.ts is the only help file that holds them
+    const holders = helpFiles().filter((f) => /\b(_def|_cached|unknownKeys)\b/.test(readSource(f)) && f !== TYPES_FILE);
+    expect(holders).toEqual([]);
   });
 });

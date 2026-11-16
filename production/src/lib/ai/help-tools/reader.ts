@@ -80,7 +80,7 @@ export interface HelpDb {
 }
 
 /** Filter methods passed through as (column, ...values) — the column is checked first. */
-const SCALAR_FILTERS = ["eq", "neq", "lt", "lte", "gt", "gte"] as const;
+const SCALAR_FILTERS = Object.freeze(["eq", "neq", "lt", "lte", "gt", "gte"] as const);
 
 /** Most rows one limit() / range() may ask for (one fetchAllRows page). */
 export const HELP_READ_PAGE_MAX = 1000;

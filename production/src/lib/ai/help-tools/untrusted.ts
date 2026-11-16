@@ -74,20 +74,21 @@ function neutraliseMarkers(text: string): string {
   let cur = text;
   for (let pass = 0; pass < MARKER_PASSES; pass++) {
     const { folded, owners, points } = foldWithOwners(cur);
-    const spans: { from: number; to: number; repl: string }[] = [];
+    const spans: { lo: number; hi: number; repl: string }[] = [];
     for (const m of folded.matchAll(MARKER_LIKE)) {
       const start = m.index ?? 0;
-      const from = owners[start];
-      const to = owners[start + m[0].length - 1] + 1;
-      if (spans.length && from < spans[spans.length - 1].to) continue;
-      spans.push({ from, to, repl: m[0][0] === "<" ? "‹" : m[0][0] === ">" ? "›" : "" });
+      const lo = owners.at(start) ?? 0;
+      const hi = (owners.at(start + m[0].length - 1) ?? lo) + 1;
+      const last = spans.at(-1);
+      if (last && lo < last.hi) continue;
+      spans.push({ lo, hi, repl: m[0].startsWith("<") ? "‹" : m[0].startsWith(">") ? "›" : "" });
     }
     if (!spans.length) return cur;
     let next = "";
     let at = 0;
     for (const sp of spans) {
-      next += points.slice(at, sp.from).join("") + sp.repl;
-      at = sp.to;
+      next += points.slice(at, sp.lo).join("") + sp.repl;
+      at = sp.hi;
     }
     cur = next + points.slice(at).join("");
   }
