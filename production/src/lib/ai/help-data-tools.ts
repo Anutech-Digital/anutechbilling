@@ -69,12 +69,22 @@ export interface HelpToolResult {
  * the page) and its text, unchanged. The name list above is FROZEN to the R-421 six (test): a new
  * tool goes only on the registry path, so its `roles` always apply.
  */
-/* R-2882: a map with NO prototype — `TOOLS[tool]` with any string reads only a real tool (an `Object.fromEntries` map also answers "constructor" and "__proto__"). */
-const TOOLS: Record<HelpDataToolName, (typeof DATA_TOOLS)[number]> = Object.create(null);
+/* R-2882 round 3: a Map, not an object read by a computed key — `get` answers only a real tool name. */
+const TOOLS = new Map<HelpDataToolName, (typeof DATA_TOOLS)[number]>();
 for (const n of HELP_DATA_TOOL_NAMES) {
   const def = DATA_TOOLS.find((t) => t.name === n);
   if (!def) throw new Error(`help-data-tools: ${n} is not in lib/ai/help-tools/data-tools.ts`);
-  TOOLS[n] = def;
+  TOOLS.set(n, def);
+}
+function toolDef(tool: HelpDataToolName): (typeof DATA_TOOLS)[number] {
+  const def = TOOLS.get(tool);
+  if (!def) throw new Error(`help-data-tools: unknown tool ${String(tool)}`);
+  return def;
+}
+/** The tool name a result carries, taken from OUR list (never cast from text). */
+function toolNameOf(name: string): HelpDataToolName {
+  for (const n of HELP_DATA_TOOL_NAMES) if (n === name) return n;
+  throw new Error(`help-data-tools: unknown tool ${name}`);
 }
 
 /**
@@ -83,7 +93,7 @@ for (const n of HELP_DATA_TOOL_NAMES) {
  */
 export function helpToolAllowed(role: string | null | undefined, tool: HelpDataToolName): boolean {
   if (!isUserRole(role)) return false;
-  return canOpenRoute(role, TOOLS[tool].page);
+  return canOpenRoute(role, toolDef(tool).page);
 }
 
 /** The model's tool request: known names only, no repeats, at most HELP_TOOLS_MAX. */
@@ -115,7 +125,7 @@ export async function runHelpDataTools(
 ): Promise<HelpToolResult[]> {
   const now = ctx.now ?? new Date();
   return Promise.all(names.slice(0, HELP_TOOLS_MAX).map(async (tool): Promise<HelpToolResult> => {
-    const def = TOOLS[tool];
+    const def = toolDef(tool);
     if (!helpToolRateOk(ctx.userId)) return { tool, ok: false, text: `${tool}: ${HELP_RATE_LIMITED}.`, href: null, label: null };
     if (!helpToolAllowed(ctx.role, tool)) return { tool, ok: false, text: `${tool}: ${NOT_ALLOWED}.`, href: null, label: null };
     if (!isUserRole(ctx.role)) return { tool, ok: false, text: `${tool}: ${NOT_ALLOWED}.`, href: null, label: null };
@@ -140,8 +150,8 @@ export async function runHelpDataToolsV2(
 ): Promise<HelpToolResult[]> {
   const list = names.slice(0, HELP_TOOLS_MAX);
   const res = await runHelpTools(session, { ...ctx, onCall }, list.map((name) => ({ name, input: {} })));
-  return res.map((r, i) => ({
-    tool: list[i],
+  return res.map((r) => ({
+    tool: toolNameOf(r.name),
     ok: r.ok,
     text: r.text,
     href: r.href,
@@ -154,7 +164,7 @@ export async function runHelpDataToolsV2(
 export function helpDataToolsPrompt(): string {
   return [
     "DATA TOOLS (R-421): you cannot see this company's live numbers unless you ask. When the person asks HOW MANY / HOW MUCH / WHICH about their own business data (e.g. 'kitne subscription chal rahe hai', 'kitna paisa overdue hai', 'aaj kiske follow-up hai', 'kitne quote khule hai'), do NOT tell them to go to a page and do NOT guess a number. Answer ONLY {\"tools\": [\"<name>\", ...]} (instead of the reply JSON below) with 1-3 names from this list; the app reads the numbers with their own login and asks you again with the results:",
-    ...HELP_DATA_TOOL_NAMES.map((n) => `- ${n}: ${TOOLS[n].describe}`),
+    ...HELP_DATA_TOOL_NAMES.map((n) => `- ${n}: ${toolDef(n).describe}`),
     "For how-to questions (where to click, what a field means) answer normally as described above and leave tools out.",
   ].join("\n");
 }

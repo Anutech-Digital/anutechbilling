@@ -79,8 +79,8 @@ export interface HelpDb {
   read<Row = Record<string, unknown>>(table: HelpReadTable, columns: string, options?: { count?: "exact"; head?: boolean }): HelpQuery<Row>;
 }
 
-/** Filter methods passed through as (column, ...values) — the column is checked first. */
-const SCALAR_FILTERS = Object.freeze(["eq", "neq", "lt", "lte", "gt", "gte"] as const);
+/** Filter methods passed through as (column, value) — the column is checked first. */
+type ScalarOp = "eq" | "neq" | "lt" | "lte" | "gt" | "gte";
 
 /** Most rows one limit() / range() may ask for (one fetchAllRows page). */
 export const HELP_READ_PAGE_MAX = 1000;
@@ -232,6 +232,18 @@ function notInList(table: string, value: unknown): string | null {
 /** The postgrest builder calls the closures make — never handed to a tool. */
 type Builder = Record<string, (...a: unknown[]) => Builder> & PromiseLike<unknown>;
 
+/** The builder call of one scalar filter — a switch, so the method name is never computed (R-2882 round 3). */
+function scalarCall(op: ScalarOp, b: Builder, column: unknown, value: Scalar): Builder {
+  switch (op) {
+    case "eq": return b.eq(column, value);
+    case "neq": return b.neq(column, value);
+    case "lt": return b.lt(column, value);
+    case "lte": return b.lte(column, value);
+    case "gt": return b.gt(column, value);
+    case "gte": return b.gte(column, value);
+  }
+}
+
 /**
  * Wrap the real builder in a plain, frozen, prototype-less object of arrow functions. The builder
  * lives only in this closure: no Proxy, so no descriptor / ownKeys / prototype trick can reach its
@@ -243,13 +255,18 @@ function restrict<Row>(table: string, builder: Builder, nothing = false): HelpQu
      call, but answers with an empty result and sends no request. */
   const next = (b: Builder, none = nothing) => restrict<Row>(table, b, none);
   const q: Record<string, unknown> = Object.create(null);
-  /* R-2879: values are checked as well as columns — only plain scalars reach the builder. */
-  for (const m of SCALAR_FILTERS) {
-    q[m] = (column: unknown, value: unknown) => {
-      assertReadableColumn(table, column);
-      return next(builder[m](column, filterScalar(table, m, value)));
-    };
-  }
+  /* R-2879: values are checked as well as columns — only plain scalars reach the builder. R-2882 round 3: one
+     named property per filter and a switch for the builder call — no computed method name anywhere. */
+  const scalar = (op: ScalarOp) => (column: unknown, value: unknown) => {
+    assertReadableColumn(table, column);
+    return next(scalarCall(op, builder, column, filterScalar(table, op, value)));
+  };
+  q.eq = scalar("eq");
+  q.neq = scalar("neq");
+  q.lt = scalar("lt");
+  q.lte = scalar("lte");
+  q.gt = scalar("gt");
+  q.gte = scalar("gte");
   q.in = (column: unknown, values: unknown) => {
     assertReadableColumn(table, column);
     const list = filterList(table, values);

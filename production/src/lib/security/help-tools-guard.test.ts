@@ -60,10 +60,11 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { readSource } from "@/lib/testing/source-cache";
-import { FORBIDDEN_MEMBERS, REFLECT_MEMBERS, FOLLOWED_FORBIDDEN_STRINGS, SCHEMA_INTERNALS, FOLLOWED_COMPUTED_SITES, symbolsFor, computedReadProblem, shadowedGlobalProblems, type Syms } from "@/lib/testing/help-guard-computed";
+import { FORBIDDEN_MEMBERS, REFLECT_MEMBERS, FOLLOWED_FORBIDDEN_STRINGS, SCHEMA_INTERNALS, COMPUTED_READ_ALLOWED, symbolsFor, computedReadProblem, shadowedGlobalProblems, importedWriteProblems, type Syms } from "@/lib/testing/help-guard-computed";
 import { listSourceFiles } from "@/lib/testing/walk-source";
 import { SECRET_COLUMNS } from "./secret-columns";
 import { HELP_READ_TABLES, HELP_NEVER_TABLES } from "@/lib/ai/help-tools/reader";
+import { hasSessionOnlyKey } from "@/lib/ai/help-tools/types";
 
 const ROOT = path.resolve(__dirname, "../../..");
 const SRC = path.join(ROOT, "src");
@@ -285,11 +286,12 @@ function scanFile(f: string, src: string, used?: Set<string>): FileScan {
       /* R-2882 (finding 2): no reflection on the prototype chain, no string that names a way to Function,
          and a computed member read only where its declaration says what the key can be. */
       if (fm && REFLECT_MEMBERS.has(fm)) problems.push(`${at(node)}: .${fm} (reads or rewrites the prototype chain / property descriptors)`);
+      if (ts.isComputedPropertyName(node) && !(ts.isStringLiteralLike(node.expression) || ts.isNumericLiteral(node.expression))) problems.push(`${at(node)}: a computed property name (it can be __proto__)`);
       if (ts.isIdentifier(node) && node.text === "__proto__") problems.push(`${at(node)}: __proto__ (sets a prototype — a key in an object literal, a member, a name)`);
       if (ts.isStringLiteralLike(node) && FOLLOWED_FORBIDDEN_STRINGS.has(node.text)) problems.push(`${at(node)}: the string "${node.text}" (a name that reaches Function / the prototype chain)`);
       if (ts.isElementAccessExpression(node)) {
         sy ??= symbolsFor(sf);
-        const why = computedReadProblem(f, sf, node, sy, false, used);
+        const why = computedReadProblem(f, sf, node, sy, used);
         if (why) problems.push(`${at(node)}: ${why}`);
       }
     }
@@ -313,6 +315,8 @@ function scanFile(f: string, src: string, used?: Set<string>): FileScan {
   };
   visit(sf);
   problems.push(...shadowedGlobalProblems(sf, at)); // R-2882: no file declares its own Object / Reflect / JSON / Function …
+  sy ??= symbolsFor(sf);
+  problems.push(...importedWriteProblems(sf, sy, at)); // R-2882 round 3: no write to a member of an imported binding
   if (help) problems.push(...helpFileProblems(f, sf));
 
   for (const imp of imports) {
@@ -403,7 +407,7 @@ function helpFileProblems(f: string, sf: ts.SourceFile): string[] {
     if (ts.isStringLiteralLike(n) && (REFLECT_MEMBERS.has(n.text) || (SCHEMA_INTERNALS.has(n.text) && f !== TYPES_FILE))) problems.push(`${at(n)}: the string "${n.text}" (reflection / zod internals)`);
     if (ts.isComputedPropertyName(n) && (ts.isBindingElement(n.parent) || !(ts.isStringLiteralLike(n.expression) || ts.isNumericLiteral(n.expression)))) problems.push(`${at(n)}: a computed property name`);
     if (ts.isElementAccessExpression(n)) {
-      const why = computedReadProblem(f, sf, n, sy, true);
+      const why = computedReadProblem(f, sf, n, sy);
       if (why) problems.push(`${at(n)}: ${why}`);
     }
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "setTimeout" && !isLocalName(n.expression)) {
@@ -575,8 +579,8 @@ function scanGraph(): { problems: string[]; reached: string[] } {
     }
   }
   problems.push(...graphListProblems([...seen]));
-  for (const site of FOLLOWED_COMPUTED_SITES) {
-    if (!used.has(`${site.file}|${site.fn}|${site.object}`)) problems.push(`FOLLOWED_COMPUTED_SITES: ${site.file} ${site.fn} ${site.object} matches no computed read any more — remove the entry`);
+  for (const site of COMPUTED_READ_ALLOWED) {
+    if (!used.has(`${site.file}|${site.fn}|${site.object}|${site.key}`)) problems.push(`COMPUTED_READ_ALLOWED: ${site.file} ${site.fn} ${site.object} matches no computed read any more — remove the entry`);
   }
   return { problems, reached: [...seen] };
 }
@@ -763,7 +767,7 @@ describe("R-2879 guard holes closed before H-02", () => {
     expect(scanFile(NH, 'export const w = () => new WebSocket("wss://x");').problems).not.toEqual([]);
     expect(scanFile(NH, "export const g = () => ({}).constructor;").problems).not.toEqual([]);
     // R-2882: a computed read is judged by what the object is DECLARED as — a plain data map is fine, a parameter is not.
-    expect(scanFile(NH, "const M: Record<string, number> = { a: 1 }; export const pick = (k: string, i: number) => M[k] + [1, 2][i];").problems).toEqual([]);
+    expect(scanFile(NH, "const M: Record<string, number> = { a: 1 }; export const pick = () => M.a + [1, 2][0];").problems).toEqual([]);
     expect(scanFile(NH, "export const pick = (o: Record<string, number>, k: string, i: number) => o[k] + [1, 2][i];").problems).not.toEqual([]);
     expect(scanFile(NH, 'import { clsx } from "clsx"; import { twMerge } from "tailwind-merge"; export const cn = (a: string) => twMerge(clsx(a));').problems).toEqual([]);
     // The whole graph is a named list: a new file reached from a help tool fails until it is added with review.
@@ -837,40 +841,6 @@ describe("R-2879 guard holes closed before H-02", () => {
 describe("R-2882 guard: computed reads by declaration, followed files, zod internals", () => {
   const READER = `${HELP_DIR}/reader.ts`;
 
-  it("finding 1: a computed read is matched by what its key / object are DECLARED as — the old text-matched sites no longer pass (self-test)", () => {
-    const plants: [string, string, string][] = [
-      ["reader builder[m] -> Function", READER, 'const m = ["con", "structor"].join(""); const builder: any = () => 0; export const g = builder[m]("return glob" + "alThis")();'],
-      ["reader builder?.[m]", READER, 'const m = ["con", "structor"].join(""); const builder: any = () => 0; export const g = builder?.[m]("return 1")();'],
-      ["reader q[m] on a function", READER, 'const m = ["con", "structor"].join(""); const q: any = () => 0; export const g = q[m]("return 1")();'],
-      ["session h[k]", SESSION, 'const k = String(99) + "onstructor"; const h: any = () => 0; export const g = h[k]("return 1")();'],
-      ["legacy list[i]", LEGACY, 'const i = "con" + "structor"; const list: any = async () => 0; export const g = list[i]("return pro" + "cess")();'],
-      ["legacy TOOLS[tool] on a function", LEGACY, 'const TOOLS: any = () => 0; export const f = (tool: string) => TOOLS[tool]("x");'],
-      ["legacy TOOLS[n] n a plain const", LEGACY, 'const TOOLS: any = () => 0; export const f = () => { const n = ["con", "structor"].join(""); return TOOLS[n]("x"); };'],
-      ["loop var is let", PLANTED, 'const L = Object.freeze(["eq"] as const); export function f(b: any) { for (let m of L) b[m](); }'],
-      ["loop over a parameter", PLANTED, "export function f(b: any, names: string[]) { for (const m of names) b[m](); }"],
-      ["named list not frozen", PLANTED, 'const L = ["eq"] as const; export function f(b: any) { for (const m of L) b[m](); }'],
-      ["list holds a computed word", PLANTED, 'const w = ["con", "structor"].join(""); const L = Object.freeze(["eq", w] as const); export function f(b: any) { for (const m of L) b[m](); }'],
-      ["index of a map on a local object with its own map()", PLANTED, 'const o = { map(cb: any) { cb(0, ["con", "structor"].join("")); } }; export const f = (c: any) => o.map((_r: unknown, i: any) => c[i]);'],
-      ["index of a map on a parameter", PLANTED, "export const f = (c: any, xs: { map: any }) => xs.map((_r: unknown, i: any) => c[i]);"],
-      ["second read after a data map", PLANTED, "const o: any = {}; export const f = (m: string, n: string) => o[m][n];"],
-      ["data map held in a let", PLANTED, "let o: any = {}; export const f = (m: string) => o[m];"],
-      ["data map made with a prototype that is not null", PLANTED, "const o: any = Object.create(() => 0); export const f = (m: string) => o[m];"],
-      ["data map is a parameter", PLANTED, "export const f = (o: Record<string, unknown>, m: string) => o[m];"],
-    ];
-    for (const [name, file, src] of plants) expect(scanFile(file, src).problems, name).not.toEqual([]);
-    // the same text with a different declaration does pass — proving it is the declaration that decides
-    expect(scanFile(READER, 'const L = Object.freeze(["eq", "lt"] as const); export function f(builder: Record<string, (c: unknown) => unknown>) { const q: Record<string, unknown> = Object.create(null); for (const m of L) { q[m] = (c: unknown) => builder[m](c); } return Object.freeze(q); }').problems).toEqual([]);
-    expect(scanFile(SESSION, 'export function bearers(c: { headers?: Record<string, unknown> } | null): unknown[] { const out: unknown[] = []; for (const h of [c?.headers]) { if (!h) continue; for (const k of ["Authorization", "authorization"]) { const v = h[k]; if (typeof v === "string") out.push(v); } } return out; }').problems).toEqual([]);
-    expect(scanFile(LEGACY, [
-      'import { runHelpTools } from "@/lib/ai/help-tools/runner";',
-      'const TOOLS: Record<string, number> = Object.create(null);',
-      "export async function f(list: string[], tool: string, session: never, ctx: never) {",
-      "  const res = await runHelpTools(session, ctx, list.map((name) => ({ name })));",
-      "  return res.map((r, i) => ({ tool: list[i], n: TOOLS[tool], r }));",
-      "}",
-    ].join("\n")).problems).toEqual([]);
-  });
-
   it("finding 2: files the help tools reach may not reflect on the prototype chain, name a way to Function, or read a computed key off a parameter (self-test)", () => {
     const NAV = "src/lib/nav.ts";
     const plants: Record<string, string> = {
@@ -888,7 +858,7 @@ describe("R-2882 guard: computed reads by declaration, followed files, zod inter
     };
     for (const [k, src] of Object.entries(plants)) expect(scanFile(NAV, src).problems, k).not.toEqual([]);
     // what these files really do stays clean: plain data maps, builder functions that return one, fixed-list loops
-    expect(scanFile(NAV, 'const M: Record<string, string[]> = {}; function build(): Record<string, string[]> { const out: Record<string, string[]> = {}; out["/a"] = ["A"]; return out; } const T = build(); export const t = (p: string) => T[p] ?? M[p]; export const u = Object.keys(T).map((s) => s.toUpperCase());').problems).toEqual([]);
+    expect(scanFile(NAV, 'const M: Record<string, string[]> = {}; M["/a"] = ["A"]; export const t = M["/a"]; export const u = Object.keys(M).map((s) => s.toUpperCase());').problems).toEqual([]);
     // a reviewed per-site entry matches by file + function + object + declaration — none of them alone is enough
     const SUMMARY = "src/lib/company/summary.ts";
     const want = "Readonly<Record<string, number>> | null | undefined";
@@ -939,44 +909,6 @@ describe("R-2882 round 2 guard: shadowed globals, rewritten local names, prototy
       expect(scanFile(FOLLOWED, src).problems, `followed: ${name}`).not.toEqual([]);
     }
     // the real global is fine, and so is a type that merely has the name
-    expect(scanFile(PLANTED, "interface Object { x: 1 } export const o = Object.create(null) as Record<string, number>; export const g = (k: string) => o[k];").problems).toEqual([]);
-  });
-
-  it("BLOCK 2: a local array / function the guard trusts must only be READ — a replaced map, a reassigned name, a mutated list is refused (self-test)", () => {
-    const plants: [string, string, string][] = [
-      ["array map replaced", PLANTED, `const arr: any = []; arr.map = (cb: any) => cb(0, ${MKCTOR}); export const f = (c: any) => arr.map((_r: unknown, i: any) => c[i]("return 1")());`],
-      ["array map replaced (followed)", FOLLOWED, `const arr: any = []; arr.map = (cb: any) => cb(0, ${MKCTOR}); export const f = (c: any) => arr.map((_r: unknown, i: any) => c[i]("return 1")());`],
-      ["result of an imported call, map replaced", PLANTED, `import { runHelpTools } from "@/lib/ai/help-tools/runner"; export async function f(c: any, s: never, x: never) { const res: any = await runHelpTools(s, x, []); res.map = (cb: any) => cb(0, ${MKCTOR}); return res.map((_r: unknown, i: any) => c[i]("return 1")()); }`],
-      ["array handed to a function that rewrites it", PLANTED, `const arr: string[] = ["a"]; function evil(a: any) { a.map = (cb: any) => cb(0, ${MKCTOR}); } evil(arr); export const f = (c: any) => arr.map((_r, i: any) => c[i]());`],
-      ["array mutated by a method", PLANTED, `const arr: string[] = []; arr.push(${MKCTOR}); export const f = (c: any) => arr.map((_r, i: any) => c[i]());`],
-      ["map held in a let and reassigned (help)", PLANTED, "let o: any = Object.create(null); export function setup() { o = () => 0; } export const g = (k: string) => o[k];"],
-      ["map held in a let and reassigned (followed)", FOLLOWED, "let o: any = {}; export function setup() { o = () => 0; } export const g = (k: string) => o[k];"],
-      ["array element deleted", PLANTED, 'const arr: string[] = ["a"]; delete arr[0]; export const f = (c: any) => arr.map((_r, i: any) => c[i]());'],
-      ["array member deleted", PLANTED, 'const arr: string[] = ["a"]; delete (arr as any).map; export const f = (c: any) => arr.map((_r, i: any) => c[i]());'],
-      ["function name reassigned", PLANTED, "function mk(): any { return {}; } export function setup() { (mk as any) = () => () => 0; } export const g = (k: string) => mk()[k];"],
-      ["function name reassigned (followed)", FOLLOWED, "function mk(): any { return {}; } export function setup() { (mk as any) = () => () => 0; } export const g = (k: string) => mk()[k];"],
-      ["function handed on", FOLLOWED, "function mk(): any { return {}; } export const keep = mk; export const g = (k: string) => mk()[k];"],
-      ["__proto__ in an object literal (followed)", FOLLOWED, "const o: any = { __proto__: () => 0 }; export const g = (k: string) => o[k];"],
-      ["__proto__ string key (followed)", FOLLOWED, 'const o: any = { "__proto__": () => 0 }; export const g = (k: string) => o[k];'],
-    ];
-    for (const [name, file, src] of plants) expect(scanFile(file, src).problems, name).not.toEqual([]);
-    // read-only local arrays and builders still pass
-    expect(scanFile(PLANTED, 'const arr = ["a", "b"]; export const f = (c: any) => arr.map((_r, i) => c[i]);').problems).toEqual([]);
-    expect(scanFile(FOLLOWED, "function mk(): Record<string, number> { const out: Record<string, number> = {}; out.a = 1; return out; } export const g = (k: string) => mk()[k];").problems).toEqual([]);
-  });
-
-  it("review item 6: in a help file a computed read of a map needs a map with no prototype — `{}`, a literal or fromEntries read by any key is refused (self-test)", () => {
-    const plants: [string, string][] = [
-      ["empty object", "const M: Record<string, unknown> = {}; export const g = (k: string) => M[k];"],
-      ["object with a function value", "const o: any = { a: () => 0 }; export const g = (k: string) => o[k];"],
-      ["fromEntries of a function", 'export const g = (k: string, fn: any) => Object.fromEntries([["a", fn]])[k];'],
-      ["fromEntries in a const", 'const T = Object.fromEntries([["a", 1]]); export const g = (k: string) => T[k];'],
-      ["Object.create of something else", "const o: any = Object.create(() => 0); export const g = (k: string) => o[k];"],
-    ];
-    for (const [name, src] of plants) expect(scanFile(PLANTED, src).problems, name).not.toEqual([]);
-    expect(scanFile(PLANTED, "const T: Record<string, number> = Object.create(null); T.a = 1; export const g = (k: string) => T[k];").problems).toEqual([]);
-    // outside help-tools the app's own literal maps keep working (their keys are the app's)
-    expect(scanFile(FOLLOWED, "const M: Record<string, number> = { a: 1 }; export const g = (k: string) => M[k];").problems).toEqual([]);
   });
 
   it("review item 7: a per-site entry pins the KEY's declaration too — another key on the same object is refused (self-test)", () => {
@@ -1002,25 +934,95 @@ describe("R-2882 round 2 guard: shadowed globals, rewritten local names, prototy
   });
 });
 
-describe("R-2882 round 2 guard: the computed-read rule on its own (not only through the shadow report)", () => {
-  /** computedReadProblem for every `x[k]` in `src`, the way the scanner calls it. */
-  const readProblems = (src: string, help: boolean) => {
-    const file = help ? `${HELP_DIR}/x.ts` : "src/lib/other.ts";
-    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    const sy = symbolsFor(sf);
-    const out: string[] = [];
-    const walk = (n: ts.Node): void => {
-      if (ts.isElementAccessExpression(n)) { const why = computedReadProblem(file, sf, n, sy, help); if (why) out.push(why); }
-      ts.forEachChild(n, walk);
+/**
+ * R-2882 round 3 — the second independent check BLOCKed 7b6b17128: every round found one more hole
+ * in "is this object trustworthy" reasoning (an array literal read with any key reaches
+ * Array.prototype; a name another file can rewrite). So there is no reasoning left: in every file
+ * the help tools reach, `x[k]` is allowed only with a literal key (never constructor / __proto__ /
+ * prototype) or at a site on COMPUTED_READ_ALLOWED, pinned by file + function + object declaration
+ * + key declaration. Plants below are the checker's (chk2882) and the earlier rounds'.
+ */
+describe("R-2882 round 3 guard: a computed member read is a literal key or an allow-list entry — nothing is inferred", () => {
+  const FOLLOWED = "src/lib/zz-planted.ts";
+  const MKCTOR = '["con", "structor"].join("")';
+  const READER = `${HELP_DIR}/reader.ts`;
+
+  it("the checker's round-2 bypasses, `arr.length = 0`, and the plants of rounds 1 and 2 are all refused — in help and followed files", () => {
+    const plants: Record<string, string> = {
+      protoPollute: `const A: any = [1]; const P: any = A["__pro" + "to__"]; P.map = (cb: any) => cb(0, ${MKCTOR}); export const f = (c: any) => [1].map((_r: unknown, i: any) => c[i]("return 1")());`,
+      protoPolluteString: 'const P: any = ""["__pro" + "to__"]; P.trim = 1;',
+      arrayLiteralAnyKey: "const A: any = [1]; export const g = (k: string) => A[k];",
+      stringLiteralAnyKey: 'export const g = (k: string) => "abc"[k];',
+      nullProtoWrite: "const T: any = Object.create(null); export const s = (k: string, v: unknown) => { T[k] = v; };",
+      nullProtoRead: "const T: any = Object.create(null); export const g = (k: string) => T[k];",
+      objectLiteralAnyKey: "const M: any = { a: 1 }; export const g = (k: string) => M[k];",
+      computedObjectKey: 'const o: any = { ["__pro" + "to__"]: () => 0 }; export const g = (k: string) => o[k];',
+      exportedArray: 'export const arr: any = [1]; export const f = (c: any) => arr.map((_r: unknown, i: any) => c[i]);',
+      importedArray: 'import { arr } from "@/lib/utils"; export const f = (c: any) => arr.map((_r: unknown, i: any) => c[i]("return 1")());',
+      importedCallResult: 'import { make } from "@/lib/utils"; export const f = (c: any) => make().map((_r: unknown, i: any) => c[i]("return 1")());',
+      mutateImportedMember: `import { arr } from "@/lib/utils"; (arr as any).map = (cb: any) => cb(0, ${MKCTOR});`,
+      mutateImportedLiteral: 'import { arr } from "@/lib/utils"; (arr as any).x = 1;',
+      deleteImportedMember: 'import { arr } from "@/lib/utils"; delete (arr as any).map;',
+      assignImportedTarget: 'import { arr } from "@/lib/utils"; Object.assign(arr, { map: 1 });',
+      arrayLengthZero: 'const arr: string[] = ["a"]; arr.length = 0; export const f = (c: any) => arr.map((_r, i: any) => c[i]());',
+      spreadThenMutate: 'const a: any = []; const b: any = [...a]; b.map = 1; export const f = (c: any) => a.map((_r: unknown, i: any) => c[i]);',
+      closedListLoop: 'const L = Object.freeze(["eq"] as const); export function f(b: any) { for (const m of L) b[m]("x"); }',
+      inlineListLoop: 'export function f(b: any) { for (const m of ["eq", "lt"]) b[m]("x"); }',
+      callbackIndex: "export const f = (c: any, xs: string[]) => xs.map((_r, i) => c[i]);",
+      readerShape: `const m = ${MKCTOR}; const builder: any = () => 0; export const g = builder[m]("return glob" + "alThis")();`,
+      optionalChain: `const m = ${MKCTOR}; const builder: any = () => 0; export const g = builder?.[m]("return 1")();`,
+      shadowedObject: "const Object = { create: (_: null): any => () => 0 }; const o = Object.create(null); export const g = (k: string) => o[k];",
+      reassignedBuilder: "function mk(): any { return {}; } export function setup() { (mk as any) = () => () => 0; } export const g = (k: string) => mk()[k];",
+      protoLiteral: "const o: any = { __proto__: () => 0 }; export const g = (k: string) => o[k];",
+      protoLiteralNoRead: "const o: any = { __proto__: () => 0 }; export const x = o.a;",
+      computedObjectKeyNoRead: 'const o: any = { ["__pro" + "to__"]: () => 0 }; export const x = o.a;',
     };
-    walk(sf);
-    return out;
-  };
-  it("a local `Object` never makes Object.create(null) / Object.freeze count (the checker's two probes)", () => {
-    for (const help of [true, false]) {
-      expect(readProblems("const Object = { create: (_: null): any => () => 0 }; const o = Object.create(null); export const g = (k: string) => o[k];", help), `create help=${help}`).not.toEqual([]);
-      expect(readProblems('const w = ["con", "structor"].join(""); const Object = { freeze: (_: unknown): any => [w] }; const L = Object.freeze(["eq"]); export function f(b: any) { for (const m of L) b[m]("return 1")(); }', help), `freeze help=${help}`).not.toEqual([]);
+    for (const [name, src] of Object.entries(plants)) {
+      expect(scanFile(PLANTED, src).problems, `help: ${name}`).not.toEqual([]);
+      expect(scanFile(FOLLOWED, src).problems, `followed: ${name}`).not.toEqual([]);
     }
-    expect(readProblems("const o: any = Object.create(null); export const g = (k: string) => o[k];", true)).toEqual([]);
+    // the same text in the very files the old guard named by text
+    for (const file of [READER, SESSION, LEGACY, "src/lib/nav.ts"]) {
+      expect(scanFile(file, plants.readerShape).problems, file).not.toEqual([]);
+      expect(scanFile(file, plants.arrayLiteralAnyKey).problems, file).not.toEqual([]);
+    }
+  });
+
+  it("what is allowed: literal keys, switch, Map, .at() — and a read at a pinned site", () => {
+    const ok = [
+      'const o: Record<string, number> = { a: 1 }; export const x = o["a"] + [1, 2][0] + "abc"[1];',
+      'export function pick(b: Record<string, () => number>, op: "eq" | "lt") { switch (op) { case "eq": return b.eq(); case "lt": return b.lt(); } }',
+      "const M = new Map<string, number>(); M.set(\"a\", 1); export const g = (k: string) => M.get(k) ?? 0;",
+      "export const last = (xs: number[]) => xs.at(-1) ?? 0;",
+    ];
+    for (const src of ok) {
+      expect(scanFile(PLANTED, src).problems, `help: ${src.slice(0, 40)}`).toEqual([]);
+      expect(scanFile(FOLLOWED, src).problems, `followed: ${src.slice(0, 40)}`).toEqual([]);
+    }
+    // a literal key may not name a way to Function
+    for (const key of ["constructor", "__proto__", "prototype"]) expect(scanFile(PLANTED, `export const f = (o: any) => o["${key}"];`).problems, key).not.toEqual([]);
+    // the allow list is small and every entry carries a reason
+    expect(COMPUTED_READ_ALLOWED.length).toBeLessThan(60);
+    for (const e of COMPUTED_READ_ALLOWED) expect(e.why.length, `${e.file} ${e.fn} ${e.object}`).toBeGreaterThan(20);
+    // no entry lives in a help-tools file: those are rewritten, never allow-listed
+    expect(COMPUTED_READ_ALLOWED.filter((e) => e.file.startsWith(HELP_DIR) || e.file === LEGACY)).toEqual([]);
+  });
+
+  it("a pinned site is pinned: the object's module-private const, and the same function name in another file or with another key is refused", () => {
+    const e = COMPUTED_READ_ALLOWED.find((x) => x.file === "src/lib/phone.ts")!;
+    expect(e, "phone.ts entry").toBeTruthy();
+    const body = (decl: string, exp: string, key: string) => `${exp}const ${e.object}: Record<string, string> = { AF: "93" }; export function ${e.fn}(iso: string, other: string) { ${decl} return ${e.object}[${key}]; }`;
+    // the genuine shape would be refused only by what differs — an exported object is never pinned
+    expect(scanFile(e.file, body("", "export ", "iso")).problems, "exported object").not.toEqual([]);
+    expect(scanFile(e.file, body("", "", "other")).problems, "other key").not.toEqual([]);
+    expect(scanFile("src/lib/zz-phone.ts", body("", "", "iso")).problems, "other file").not.toEqual([]);
+  });
+
+  it("principal_amount is not a session key; principal and principal_id are", () => {
+    expect(hasSessionOnlyKey({ principal_amount: 1 })).toBe(false);
+    expect(hasSessionOnlyKey({ principalAmount: 1 })).toBe(false);
+    expect(hasSessionOnlyKey({ principal: "x" })).toBe(true);
+    expect(hasSessionOnlyKey({ principal_id: "x" })).toBe(true);
+    expect(hasSessionOnlyKey({ principalId: "x" })).toBe(true);
   });
 });

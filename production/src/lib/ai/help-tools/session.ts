@@ -64,8 +64,8 @@ function fixedBearers(client: unknown): unknown[] {
   const out: unknown[] = [];
   for (const h of [c?.headers, c?.rest?.headers]) {
     if (!h || typeof h !== "object") continue;
-    for (const k of ["Authorization", "authorization"]) {
-      const v = h[k];
+    /* R-2882 round 3: the two spellings by name — no computed key. */
+    for (const v of [h.Authorization, h.authorization]) {
       if (typeof v === "string") out.push(v.replace(/^Bearer\s+/i, ""));
     }
   }

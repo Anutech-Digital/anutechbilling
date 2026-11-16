@@ -18,7 +18,7 @@
 import { z } from "zod";
 import { USER_ROLES, type UserRole } from "@/lib/auth/roles";
 import type { HelpDb } from "./reader";
-import { foldKey } from "./fold";
+import { foldKey, foldForMatch } from "./fold";
 
 export const HELP_TOOL_TIERS = ["read", "safe", "confirm", "never"] as const;
 export type HelpToolTier = (typeof HELP_TOOL_TIERS)[number];
@@ -105,10 +105,15 @@ export function isStrictObject(s: z.ZodTypeAny): boolean {
  * on_behalf…. A wide net on purpose — a key it catches by mistake is renamed, a key it misses lets
  * the model pick whose data it reads.
  */
+/** `principal`, `principal_id`, `principalId` — the whole word only, so `principal_amount` (a loan figure) is an ordinary key. */
+function isPrincipalKey(key: string): boolean {
+  const words = foldForMatch(key.replace(/([a-z0-9])([A-Z])/g, "$1_$2")).split(/[^a-z0-9]+/).filter(Boolean);
+  return words[0] === "principal" && (words.length === 1 || (words.length === 2 && (words[1] === "id" || words[1] === "uid")));
+}
 function isSessionOnlyKey(key: string): boolean {
   const k = foldKey(key);
   return k.includes("tenant") || k.includes("role") || k.includes("impersonat") || k.includes("onbehalf")
-    || k.includes("actingas") || k.includes("runas") || k.includes("principal") || k.includes("behalfof") || k.startsWith("sudo") || k.endsWith("sudo")
+    || k.includes("actingas") || k.includes("runas") || isPrincipalKey(key) || k.includes("behalfof") || k.startsWith("sudo") || k.endsWith("sudo")
     || /^(for|as|by|auth|session|current|acting|login|my)?(user|users|userid|uid|actor|actorid)$/.test(k)
     || /^(company|org|organisation|organization|workspace)id$/.test(k);
 }
