@@ -12,33 +12,48 @@
  * re-serialises them after React touches them ("a: b").
  */
 
-/* ── Top utility bar (UtilityBar — the div right before <header>) ───────────────────────────── */
-.anutech-site[data-site-theme="warm"] > div:has(+ header) {
+/* ── Top utility bar (UtilityBar — the div right before <header>) ─────────────────────────────
+   In the (marketing) layout the warm light/dark boot <script> sits between the bar and <header>,
+   so "div:has(+ header)" alone matched nothing there and none of these rules applied (the bar
+   kept the classic 1180px/48px box while the header row grew to 1320px). Both orders: */
+.anutech-site[data-site-theme="warm"] > div:has(+ header),
+.anutech-site[data-site-theme="warm"] > div:has(+ script + header) {
   background: var(--w-forest) !important;
   color: var(--w-on-forest) !important;
   font-size: 13px !important;
   padding: 8px 0 !important;
   line-height: 1.5;
 }
-.anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap {
-  max-width: 1320px;
-  padding-left: clamp(16px, 2.5vw, 32px);
-  padding-right: clamp(16px, 2.5vw, 32px);
-  align-items: center;
+/* The bar's content box = the header row's at every width (site.css .hdr-row + the 1400px rule
+   below), so its text lines up with the logo and its links end where the header ends.
+   Under 980px both are the plain .wrap (20px) already. */
+.anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
+.anutech-site[data-site-theme="warm"] > div:has(+ script + header) > .wrap { align-items: center; }
+@media (min-width: 980px) and (max-width: 1199px) {
+  .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
+  .anutech-site[data-site-theme="warm"] > div:has(+ script + header) > .wrap { padding-left: 16px; padding-right: 16px; }
+}
+@media (min-width: 1200px) and (max-width: 1399px) {
+  .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
+  .anutech-site[data-site-theme="warm"] > div:has(+ script + header) > .wrap { padding-left: 24px; padding-right: 24px; }
 }
 /* /domains offer line: the design's marigold highlight instead of the classic peach. */
-.anutech-site[data-site-theme="warm"] > div:has(+ header) span[style*="FFC9A8"] {
+.anutech-site[data-site-theme="warm"] > div:has(+ header) span[style*="FFC9A8"],
+.anutech-site[data-site-theme="warm"] > div:has(+ script + header) span[style*="FFC9A8"] {
   color: var(--w-marigold) !important;
   font-weight: 600;
 }
-.anutech-site[data-site-theme="warm"] > div:has(+ header) .hide-mobile { gap: 20px !important; }
-.anutech-site[data-site-theme="warm"] > div:has(+ header) a {
+.anutech-site[data-site-theme="warm"] > div:has(+ header) .hide-mobile,
+.anutech-site[data-site-theme="warm"] > div:has(+ script + header) .hide-mobile { gap: 20px !important; }
+.anutech-site[data-site-theme="warm"] > div:has(+ header) a,
+.anutech-site[data-site-theme="warm"] > div:has(+ script + header) a {
   color: var(--w-on-forest);
   text-decoration: none;
   text-underline-offset: 3px;
   transition: color .15s ease;
 }
-.anutech-site[data-site-theme="warm"] > div:has(+ header) a:hover {
+.anutech-site[data-site-theme="warm"] > div:has(+ header) a:hover,
+.anutech-site[data-site-theme="warm"] > div:has(+ script + header) a:hover {
   color: #FFFFFF;
   text-decoration: underline;
 }
@@ -54,6 +69,7 @@
 }
 @media (min-width: 1400px) {
   .anutech-site[data-site-theme="warm"] > div:has(+ header) > .wrap,
+  .anutech-site[data-site-theme="warm"] > div:has(+ script + header) > .wrap,
   .anutech-site[data-site-theme="warm"] > header .hdr-row {
     max-width: 1320px;
     padding-left: 32px;
