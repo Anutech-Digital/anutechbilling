@@ -37,6 +37,7 @@ import { renewalPeriodLabel } from "@/lib/quotes/renewal-period-label";
 import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { UPI_SETTINGS_HREF } from "@/lib/pdf/quote-template";
+import { upiBlockWords } from "@/lib/billing/proforma";
 import { billOfSupplyCustomerLine, billOfSupplyPlaceLabel, type BillOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
 /** R-1694: the scan-to-pay QR the customer's PDF carries (api/quotes/[id]/pay-qr → quotePayQr). */
@@ -103,6 +104,8 @@ interface Props {
   /** R-1532: the business issues a Bill of Supply and the quote carries no GST → one
    *  "No GST — Bill of Supply" line instead of CGST/SGST/IGST rows. */
   billOfSupply?: BillOfSupplyStatus | null;
+  /** R-2869: isPartRequest(quote) — the UPI block says "Scan to pay" (a payment for its period, not an advance). */
+  partRequest?:  boolean;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
   currency?:     string | null;
   exchangeRate?: number | null;
@@ -153,6 +156,7 @@ export function QuotePreviewDialog({
   placeOfSupply,
   isExport = false,
   billOfSupply = null,
+  partRequest = false,
   currency,
   exchangeRate,
   billingCycle,
@@ -238,6 +242,7 @@ export function QuotePreviewDialog({
   /* R-1694: the PDF's scan-to-pay QR. `upiVpa === undefined` means the caller did not wire it. */
   const qrWired      = upiVpa !== undefined;
   const hasUpi       = !!upiVpa?.trim();
+  const upiWords     = upiBlockWords({ partRequest, billOfSupply: !!billOfSupply });
   const payQr        = usePreviewPayQr(open && qrWired && hasUpi, payQrQuoteId);
   const upiHint      = qrWired && !hasUpi && !isForeign;
   const unsavedHint  = qrWired && hasUpi && !isForeign && !payQrQuoteId;
@@ -597,13 +602,10 @@ export function QuotePreviewDialog({
                   data-testid="preview-upi-qr"
                 />
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold text-ink-2">Scan to pay this advance</p>
+                  <p className="text-xs font-semibold text-ink-2">{upiWords.title}</p>
                   <p>Any UPI app — GPay, PhonePe, Paytm, BHIM.</p>
                   <p className="font-mono text-xs font-semibold text-ink-2 break-all">{payQr.vpa}</p>
-                  <p>
-                    Amount and quote number are pre-filled. You&apos;ll receive a receipt
-                    voucher, and {billOfSupply ? "a Bill of Supply" : "a GST tax invoice"} when the order is provisioned.
-                  </p>
+                  <p>{upiWords.note}</p>
                 </div>
               </div>
             )}

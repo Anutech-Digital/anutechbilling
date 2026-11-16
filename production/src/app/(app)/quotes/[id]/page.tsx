@@ -1154,6 +1154,7 @@ export default function QuoteDetailPage() {
   const downloadQuotePdfFile = async (): Promise<void> => {
     const { downloadQuotePDF } = await import("@/lib/pdf");
     await downloadQuotePDF({
+      partRequest,
       tenantName:    me?.tenantName    ?? "Workspace",
       tenantGstin:   me?.tenantGstin,
       tenantEmail:   me?.tenantEmail,
@@ -2441,6 +2442,7 @@ export default function QuoteDetailPage() {
 
       {/* Customer-facing quote preview */}
       <QuotePreviewDialog
+        partRequest={partRequest}
         open={previewOpen}
         onOpenChange={setPreviewOpen}
         tenantName={me?.tenantName    ?? "Workspace"}
@@ -2567,6 +2569,7 @@ export default function QuoteDetailPage() {
           onPreviewAttachment={async () => {
             const { previewQuotePDF } = await import("@/lib/pdf");
             await previewQuotePDF({
+              partRequest,
               tenantName:    me?.tenantName    ?? "Workspace",
               tenantGstin:   me?.tenantGstin,
               tenantEmail:   me?.tenantEmail,

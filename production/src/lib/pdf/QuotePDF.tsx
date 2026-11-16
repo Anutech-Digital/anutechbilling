@@ -47,7 +47,7 @@ import { firstLineCommitment } from "@/lib/billing/instalments";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
 import { PROFORMA_NOTICE, PROFORMA_TITLE, type QuoteTemplate, type ProformaBank } from "./quote-template";
-import { partLineUnitLabel } from "@/lib/billing/proforma";
+import { partLineUnitLabel, upiBlockWords } from "@/lib/billing/proforma";
 import { includedSupportLine, type IncludedSupportLine } from "./quote-support-line";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
@@ -182,6 +182,9 @@ export interface QuotePDFProps {
   bank?:         ProformaBank | null;
   /** R-1523. The customer's online review/accept/pay page — printed as a link while money is due. */
   payLinkUrl?:   string | null;
+  /** R-2869. isPartRequest(quote) — a part payment request is a payment for its period, not an advance,
+   *  so the UPI block says "Scan to pay" (upiBlockWords). Omitted = an ordinary quote. */
+  partRequest?:  boolean;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
@@ -474,8 +477,9 @@ export function QuotePDF(props: QuotePDFProps) {
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
     interState, placeOfSupply, isExport = false, billOfSupply = null, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal, isUpgrade = false,
     isPaid = false, paymentTermsDays = null, oneTime = false, extensionTitle = null, periodContext = null,
-    upiQrDataUrl, upiVpa, template = "quotation", bank = null, payLinkUrl = null,
+    upiQrDataUrl, upiVpa, template = "quotation", bank = null, payLinkUrl = null, partRequest = false,
   } = props;
+  const upiWords = upiBlockWords({ partRequest, billOfSupply: !!billOfSupply });
   /* R-1523: a paid quote stays a "Paid order" — a Proforma asks for money that is already in. */
   const proforma = template === "proforma" && !isPaid;
   const docLabel = proforma ? PROFORMA_TITLE : quoteDocumentLabel({ paid: isPaid, isRenewal, isUpgrade });
@@ -938,7 +942,7 @@ export function QuotePDF(props: QuotePDFProps) {
 
           {/* Scan-to-pay. Drawn only when the caller supplied a QR — which it
               does only for an INR quote that is still awaiting payment. The
-              wording says ADVANCE deliberately: money paid against a quote
+              wording says ADVANCE deliberately (R-2869: except on a part payment request, which is a payment for its period): money paid against a quote
               arrives before the tax invoice exists, so it is an advance and the
               seller answers it with a Receipt Voucher under CGST §31(3)(d).
               Calling it a payment here would set up the wrong expectation about
@@ -965,15 +969,12 @@ export function QuotePDF(props: QuotePDFProps) {
             <View style={s.upiRow}>
               <Image src={upiQrDataUrl} style={s.upiQr} />
               <View style={s.upiText}>
-                <Text style={s.upiTitle}>Scan to pay this advance</Text>
+                <Text style={s.upiTitle}>{upiWords.title}</Text>
                 <Text style={s.upiSub}>
                   Any UPI app — GPay, PhonePe, Paytm, BHIM.
                 </Text>
                 {upiVpa ? <Text style={s.upiVpa}>{upiVpa}</Text> : null}
-                <Text style={s.upiSub}>
-                  Amount and quote number are pre-filled. You&apos;ll receive a receipt
-                  voucher, and {billOfSupply ? "a Bill of Supply" : "a GST tax invoice"} when the order is provisioned.
-                </Text>
+                <Text style={s.upiSub}>{upiWords.note}</Text>
               </View>
             </View>
           ) : null}
