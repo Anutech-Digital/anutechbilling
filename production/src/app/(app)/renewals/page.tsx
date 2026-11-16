@@ -517,7 +517,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
           <thead>
             <tr className="border-b border-hairline bg-muted/30">
               {QUEUE_TABLE_COLS.map((c) => c.key === "select" ? (
-                <th key={c.key} className="px-1.5 py-2">
+                <th key={c.key} className="px-1.5 py-1.5">
                   <input
                     type="checkbox"
                     aria-label="Select all renewals on screen"
@@ -528,7 +528,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   />
                 </th>
               ) : (
-                <th key={c.key} className={cn("px-1.5 py-2 text-xs font-medium text-ink-3", c.align === "right" ? "text-right" : "text-left")}>{c.label}</th>
+                <th key={c.key} className={cn("px-1.5 py-1.5 text-xs font-medium text-ink-3", c.align === "right" ? "text-right" : "text-left")}>{c.label}</th>
               ))}
             </tr>
           </thead>
@@ -1040,11 +1040,30 @@ export default function RenewalsPage() {
   return (
     <div className="mx-auto max-w-[1800px] px-4 2xl:px-8 pb-20 pt-4">
       {/* ── Page header ── */}
-      <div className="mb-3 flex items-start justify-between gap-4">
-        <div>
-          {/* R-2821: no "Revenue" eyebrow — the breadcrumb above already says Billing › Renewals (20px back for the rows) */}
-          <h1 className="font-serif text-2xl text-ink">Renewals</h1>
-          <p className="mt-1 text-sm text-ink-3">
+      {/* R-2878: the buttons float right of the title and the count / dues line runs on from the title (beside the buttons the line used to
+          start on its own row under the title and wrap to two lines) — the second line only starts under the buttons, full width: the
+          header is 52px, not 76 (24px of the three-rows-above-the-fold promise) */}
+      <div className="mb-2 flow-root">
+        {/* Header actions. R-2753: no floating email button on a phone (it was the biggest control
+            over the Forecast) — the one Remind button stays here, small, on every size; Export is
+            desktop only. */}
+        <div className="float-right ml-4 flex items-center gap-2">
+          <Button
+            variant="default"
+            size="sm"
+            className="hidden md:inline-flex"
+            onClick={handleExport}
+          >
+            <Icon name="download" size={14} />
+            Export
+          </Button>
+          {/* R-2753: the ONE reminder button — the ticked rows, else the open tab's rows (label says which).
+              R-2820: it counts only the rows it can send; at 0 greyed with the reason. Waits for the contacts. */}
+          <RenewalRemindButton scope={scope} plan={remindPlan} busy={bulkSending} loading={contactsLoading} onClick={openReminder} />
+        </div>
+        {/* R-2821: no "Revenue" eyebrow — the breadcrumb above already says Billing › Renewals (20px back for the rows) */}
+        <h1 className="inline font-serif text-2xl text-ink">Renewals</h1>
+        <p className="ml-3 inline text-sm text-ink-3">
             {queueCount} subscription{queueCount !== 1 ? "s" : ""} in the queue
             {shownCount !== queueCount && <> · {shownCount} match the search / filters</>}
             {duesLine && (
@@ -1072,26 +1091,7 @@ export default function RenewalsPage() {
             )}
             {/* R-2266: the at-risk ARR figure lived here AND in the strip — it is only on the
                 strip line now, and the At risk chip below filters the list. */}
-          </p>
-        </div>
-
-        {/* Header actions. R-2753: no floating email button on a phone (it was the biggest control
-            over the Forecast) — the one Remind button stays here, small, on every size; Export is
-            desktop only. */}
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="default"
-            size="sm"
-            className="hidden md:inline-flex"
-            onClick={handleExport}
-          >
-            <Icon name="download" size={14} />
-            Export
-          </Button>
-          {/* R-2753: the ONE reminder button — the ticked rows, else the open tab's rows (label says which).
-              R-2820: it counts only the rows it can send; at 0 greyed with the reason. Waits for the contacts. */}
-          <RenewalRemindButton scope={scope} plan={remindPlan} busy={bulkSending} loading={contactsLoading} onClick={openReminder} />
-        </div>
+        </p>
       </div>
 
       {/* R-2405: the tiles — count + renewal ₹ in the table's own money; a press lists those rows. */}
@@ -1105,7 +1105,7 @@ export default function RenewalsPage() {
         stripId="renewals"
         userId={me?.userId}
         title="Forecast"
-        className="mb-4"
+        className="mb-3"
         summary={<StripFact label="Next 6 months" value={tilesLoading ? "…" : rupee(forecast.totalAmount, { compact: true })} />}
         extras={topRisk ? (
           <StripLink
@@ -1139,7 +1139,7 @@ export default function RenewalsPage() {
 
       {/* ── The renewal queue — tabs by time window (R-2403) ── */}
       <Card flush>
-        <div className="px-3 pt-3 sm:px-4">
+        <div className="px-3 pt-2 sm:px-4">
           {tile ? (
             <TileViewBar
               tile={tile}
@@ -1160,7 +1160,7 @@ export default function RenewalsPage() {
               })) satisfies TabBarItem[]}
             />
           )}
-          <div className="mt-2 mb-2 flex flex-wrap items-center gap-2">
+          <div className="mt-1.5 mb-1.5 flex flex-wrap items-center gap-2">
             <Input
               type="search"
               value={search}

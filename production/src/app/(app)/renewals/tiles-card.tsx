@@ -27,7 +27,7 @@ const TONE: Record<TileKey, string> = {
  * range the label may be cut with "…" — the tile's tooltip carries the full label — the number and caption never are.
  */
 export const TILE_GRID = "grid grid-cols-2 gap-2 md:grid-cols-3 [@media(min-width:1100px)]:grid-cols-6 [@media(min-width:1100px)]:gap-1.5 [@media(min-width:1440px)]:gap-2";
-const TILE_BOX = "min-w-0 rounded-lg border bg-paper px-2.5 py-2 text-left";
+const TILE_BOX = "min-w-0 rounded-lg border bg-paper px-2.5 py-1.5 text-left";
 const TILE_LABEL_CLS = "truncate text-3xs font-semibold uppercase tracking-wider text-ink-3";
 
 type Windows = Partial<Record<WindowKey, WindowReconcile>>;
