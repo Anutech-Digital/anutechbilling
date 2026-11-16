@@ -64,6 +64,12 @@ export interface TileRow {
   statusKey: RowStatusKey;
   /** The row's renewal amount in whole rupees (queue.ts renewalAmount().value). */
   amount: number;
+  /**
+   * R-2862: what falls due on the row's Due date, ₹ before GST (due-anchor.ts rowDue().amount) — a part-billed row
+   * with one part unpaid owes that PART, not the term. The Overdue / Due tiles add this; absent = `amount`.
+   * Won't renew and Renewed this month stay on the term amount (the renewal's value leaving / dated in the month).
+   */
+  dueAmount?: number;
   renewalDate: string | null;
 }
 
@@ -232,7 +238,9 @@ export function renewalTiles(rows: readonly TileRow[], quotes: readonly RenewalQ
   const paidSubs = new Set(paid.map((q) => q.renewal_subscription_id).filter((x): x is string => !!x));
   const sum = (key: TileKey): TileFigure => {
     let count = 0, amount = 0;
-    for (const r of rows) if (tileMatches(key, r, month, paidSubs)) { count += 1; amount += Math.round(r.amount); }
+    /* R-2862: the window tiles add what is due on the Due date (a late part = that part only) */
+    const of = (r: TileRow) => (key in TILE_WINDOW_TABS ? r.dueAmount ?? r.amount : r.amount);
+    for (const r of rows) if (tileMatches(key, r, month, paidSubs)) { count += 1; amount += Math.round(of(r)); }
     return { count, amount };
   };
   /* a row already Renewed (paid, its date not moved yet) with no paid quote loaded counts as renewed too */
@@ -322,7 +330,7 @@ export function tileText(key: TileKey, t: RenewalTiles, month: MonthRange, windo
     value: rupee(f.amount, { compact: true }),
     sub,
     caption,
-    title: `${TILE_LABEL[key]}: ${rupee(f.amount)} — ${sub}. ${caption}, before GST (each renewal's next-term bill; not unpaid bills). Press to list them.`,
+    title: `${TILE_LABEL[key]}: ${rupee(f.amount)} — ${sub}. ${caption}, before GST (each renewal's next-term bill; not unpaid bills).${key in TILE_WINDOW_TABS ? " A renewal billed in parts with one part unpaid adds that part only." : ""} Press to list them.`,
   };
 }
 

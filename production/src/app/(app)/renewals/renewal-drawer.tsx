@@ -39,7 +39,7 @@ import { useRenewalDrawerCatalog } from "./drawer-cost-data";
 import { useRenewalDrawerSeatCuts } from "./drawer-seat-cut-data";
 import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, drawerSeatPlan, mayShowRenewalCost, renewalCostForSub, type DrawerMoney } from "./drawer-money";
 import {
-  currentTermWords, drawerSubFromSearch, drawerViewFromSearch, withDrawerSub, drawerFlagRows, type DrawerView, drawerFollowupRows, remindersWords, termLengthWords,
+  currentTermWords, drawerSubFromSearch, drawerViewFromSearch, withDrawerSub, drawerFlagRows, type DrawerView, drawerFollowupRows, remindersWords, termLengthWords, unpaidPartWords,
 } from "./drawer";
 import { historyTabs, historyTimeline } from "./drawer-history";
 import { DrawerHistory, FollowupLine, ReminderLine } from "./drawer-history-section";
@@ -48,7 +48,7 @@ import { REMINDER_LOG_MAX, drawerReminderRows, reminderLogCapped, reminderLogWor
 import { currentTermStart } from "@/lib/billing/subscription-schedule";
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { nextTermWords, subscriptionDomain } from "./row-cells";
-import { dueCellFacts } from "./due-anchor";
+import { dueCellFacts, type RowDue } from "./due-anchor";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
 import type { RowContact } from "./queue-data";
@@ -147,6 +147,8 @@ export interface DrawerItem {
   payHref: string | null;
   /** The row's own documents (already read) — the flags' wording uses the same facts as the row's chip. */
   docs: LastDocs | undefined;
+  /** R-2862: the row's one due date + amount (due-anchor.ts rowDue) — its unpaid part is named under Terms. */
+  due?: Pick<RowDue, "unpaidPart"> | null;
   /** R-2818: what the previous term still owes (the row's own figure, lib/renewals/owed.ts); null = none / not read. */
   prior?: SubscriptionOwed | null;
   /** R-2824: the customer's main contact (undefined while the page still reads the contacts). */
@@ -299,6 +301,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
   );
   const money = item ? drawerMoney(item.amount, cost, sub?.term_months, seatPlan ?? undefined) : ({ kind: "loading" } as const);
   const booksLine = item ? booksRupeeLine(item.amount, sub?.term_months) : null;
+  const unpaidPart = item ? unpaidPartWords(item.due, item.amount.gst) : null;
   const fu = item?.followup;
   const owner = fu?.ownerId ? nameOf(fu.ownerId) ?? "a colleague" : "Nobody yet";
 
@@ -351,6 +354,8 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
               <Section title="Terms" testId="renewal-drawer-terms">
                 <dl>
                   <Fact label="This term">{currentTermWords(sub) ?? "—"}</Fact>
+                  {/* R-2862: the part the Due date is about — before "Next term", which is the term after it. */}
+                  {unpaidPart && <Fact label="Unpaid part"><span className="tabular-nums" data-testid="renewal-drawer-unpaid-part">{unpaidPart}</span></Fact>}
                   <Fact label="Next term">{nextTermWords(sub) ?? "—"}</Fact>
                   {/* R-2823: the vendor's own renewal date, only when known and not the same as ours. */}
                   {vendorWords && <Fact label="At the vendor"><span className="tabular-nums" data-testid="renewal-drawer-vendor-term">{vendorWords}</span></Fact>}
