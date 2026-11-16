@@ -949,6 +949,9 @@ describe("R-2882 round 2 guard: shadowed globals, rewritten local names, prototy
       ["result of an imported call, map replaced", PLANTED, `import { runHelpTools } from "@/lib/ai/help-tools/runner"; export async function f(c: any, s: never, x: never) { const res: any = await runHelpTools(s, x, []); res.map = (cb: any) => cb(0, ${MKCTOR}); return res.map((_r: unknown, i: any) => c[i]("return 1")()); }`],
       ["array handed to a function that rewrites it", PLANTED, `const arr: string[] = ["a"]; function evil(a: any) { a.map = (cb: any) => cb(0, ${MKCTOR}); } evil(arr); export const f = (c: any) => arr.map((_r, i: any) => c[i]());`],
       ["array mutated by a method", PLANTED, `const arr: string[] = []; arr.push(${MKCTOR}); export const f = (c: any) => arr.map((_r, i: any) => c[i]());`],
+      ["map held in a let and reassigned (help)", PLANTED, "let o: any = Object.create(null); export function setup() { o = () => 0; } export const g = (k: string) => o[k];"],
+      ["map held in a let and reassigned (followed)", FOLLOWED, "let o: any = {}; export function setup() { o = () => 0; } export const g = (k: string) => o[k];"],
+      ["array element deleted", PLANTED, 'const arr: string[] = ["a"]; delete arr[0]; export const f = (c: any) => arr.map((_r, i: any) => c[i]());'],
       ["array member deleted", PLANTED, 'const arr: string[] = ["a"]; delete (arr as any).map; export const f = (c: any) => arr.map((_r, i: any) => c[i]());'],
       ["function name reassigned", PLANTED, "function mk(): any { return {}; } export function setup() { (mk as any) = () => () => 0; } export const g = (k: string) => mk()[k];"],
       ["function name reassigned (followed)", FOLLOWED, "function mk(): any { return {}; } export function setup() { (mk as any) = () => () => 0; } export const g = (k: string) => mk()[k];"],
@@ -985,10 +988,39 @@ describe("R-2882 round 2 guard: shadowed globals, rewritten local names, prototy
     expect(scanFile(SUMMARY, `const OPEN_TICKET_STATUSES = ["a", "b"] as const; export function openTicketCount(counts: ${want}): number { return OPEN_TICKET_STATUSES.reduce((n, s) => n + (counts?.[s] ?? 0), 0); }`).problems).toEqual([]);
     expect(scanFile(ROLES, "const PERMISSIONS: Record<string, Record<string, boolean>> = { owner: { a: true } }; export function can(role: string, permission: string): boolean { return PERMISSIONS[role][permission]; }").problems).toEqual([]);
     expect(scanFile(UTILS, "export function gstinChecksum(first14: string): string { let sum = 0; for (let i = first14.length - 1; i >= 0; i--) { sum += first14[i].length; } return String(sum); }").problems).toEqual([]);
+    // only ONE thing differs from the real shape — each one alone is refused
+    const real = (fn: string, decl: string) => `export function ${fn}(counts: ${decl}): number { return OPEN_TICKET_STATUSES.reduce((n, s) => n + (counts?.[s] ?? 0), 0); }`;
+    expect(scanFile(SUMMARY, real("openTicketCount", want)).problems).toEqual([]);
+    expect(scanFile(SUMMARY, real("openTicketCount", "any")).problems, "declaration").not.toEqual([]);
+    expect(scanFile(SUMMARY, real("otherName", want)).problems, "function").not.toEqual([]);
+    expect(scanFile("src/lib/zz-summary.ts", real("openTicketCount", want)).problems, "file").not.toEqual([]);
     // the same object, a different key
     expect(scanFile(SUMMARY, `export function openTicketCount(counts: ${want}, s: string): number { return counts?.[s] ?? 0; }`).problems).not.toEqual([]);
     expect(scanFile(SUMMARY, `export function openTicketCount(counts: ${want}, k: string): number { return ["a"].reduce((n, s) => n + (counts?.[k] ?? 0), 0); }`).problems).not.toEqual([]);
     expect(scanFile(ROLES, "const PERMISSIONS: Record<string, Record<string, boolean>> = { owner: { a: true } }; export function can(role: string, permission: string, other: string): boolean { return PERMISSIONS[role][other]; }").problems).not.toEqual([]);
     expect(scanFile(UTILS, `export function gstinChecksum(first14: string): string { const k = ${MKCTOR}; return String(first14[k]); }`).problems).not.toEqual([]);
+  });
+});
+
+describe("R-2882 round 2 guard: the computed-read rule on its own (not only through the shadow report)", () => {
+  /** computedReadProblem for every `x[k]` in `src`, the way the scanner calls it. */
+  const readProblems = (src: string, help: boolean) => {
+    const file = help ? `${HELP_DIR}/x.ts` : "src/lib/other.ts";
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const sy = symbolsFor(sf);
+    const out: string[] = [];
+    const walk = (n: ts.Node): void => {
+      if (ts.isElementAccessExpression(n)) { const why = computedReadProblem(file, sf, n, sy, help); if (why) out.push(why); }
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    return out;
+  };
+  it("a local `Object` never makes Object.create(null) / Object.freeze count (the checker's two probes)", () => {
+    for (const help of [true, false]) {
+      expect(readProblems("const Object = { create: (_: null): any => () => 0 }; const o = Object.create(null); export const g = (k: string) => o[k];", help), `create help=${help}`).not.toEqual([]);
+      expect(readProblems('const w = ["con", "structor"].join(""); const Object = { freeze: (_: unknown): any => [w] }; const L = Object.freeze(["eq"]); export function f(b: any) { for (const m of L) b[m]("return 1")(); }', help), `freeze help=${help}`).not.toEqual([]);
+    }
+    expect(readProblems("const o: any = Object.create(null); export const g = (k: string) => o[k];", true)).toEqual([]);
   });
 });
