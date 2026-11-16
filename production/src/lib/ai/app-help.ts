@@ -16,7 +16,7 @@
  */
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
-import { wrapUntrusted, newUntrustedId, HELP_UNTRUSTED_RULE } from "@/lib/ai/help-tools/untrusted";
+import { wrapUntrusted, newUntrustedId, cleanHelpText, HELP_UNTRUSTED_RULE } from "@/lib/ai/help-tools/untrusted";
 
 export interface HelpMessage { role: "user" | "assistant"; text: string }
 
@@ -89,7 +89,8 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
   return [
     "You are AI Help inside ResellerOS. The person is testing the app and may be confused or may have found a bug.",
     ...APP_FACTS,
-    `They are on the page: ${ctx.pagePath || "unknown"}. Their role: ${ctx.role || "unknown"}. Name: ${ctx.userName || "unknown"}.`,
+    /* R-2882: the page path and the person's name are stored / typed text — one short clean line each, so a name cannot open a marker line or add a line of its own. */
+    `They are on the page: ${cleanHelpText(ctx.pagePath, 120, { brackets: true }) || "unknown"}. Their role: ${ctx.role || "unknown"}. Name: ${cleanHelpText(ctx.userName, 60) || "unknown"}.`,
     ctx.pagePurpose
       ? `WHAT THIS PAGE IS FOR (trust this over guessing from the URL or the buttons): ${ctx.pagePurpose}`
       : "This page's purpose is not described — infer it from the outline, and say so if unsure.",
@@ -113,7 +114,7 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
     /* R-352: the page's last browser test run, so "Check this page" does not hand back tests
        that already passed. Absent when there is no run (or the table is not set up yet). */
     ...(ctx.testHistory
-      ? [`PREVIOUS TESTS on this page (already run in a browser; the checklist must build on these, not repeat them):\n${ctx.testHistory}`]
+      ? [`PREVIOUS TESTS on this page (already run in a browser; the checklist must build on these, not repeat them):\n${wrapUntrusted(ctx.testHistory, { max: 6000 })}`]
       : []),
     /* R-2882: WORKSPACE FACTS, the trail, findings and outline are company records too — the model is
        told once that what sits between the UNTRUSTED DATA markers is data (the tool-results rule

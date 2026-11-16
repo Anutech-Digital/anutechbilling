@@ -181,7 +181,7 @@ const OUTSIDE_ALLOWED: Record<string, readonly string[]> = {
   [`${HELP_DIR}/registry.ts`]: ["helpAiV2Enabled"],
   /* R-2882: app-help.ts wraps WORKSPACE FACTS / trail / findings / outline with the same cleaner and
      markers as tool results — pure text functions, no data access. */
-  [`${HELP_DIR}/untrusted.ts`]: ["wrapUntrusted", "newUntrustedId", "HELP_UNTRUSTED_RULE"],
+  [`${HELP_DIR}/untrusted.ts`]: ["wrapUntrusted", "newUntrustedId", "cleanHelpText", "HELP_UNTRUSTED_RULE"],
 };
 /** Names that may only ever be CALLED where they are imported — never stored, passed on or re-exported. */
 const CALL_ONLY = new Set(["scopedReader", "sessionClient", "assertNotServiceRole", "takeHelpCalls", "openHelpSession", "runOneTool", "runHelpTools", "buildRegistry", "defineHelpTool", "helpToolRateOk", "resetHelpToolRate"]);

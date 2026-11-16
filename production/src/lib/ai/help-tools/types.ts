@@ -108,6 +108,7 @@ export function isStrictObject(s: z.ZodTypeAny): boolean {
 function isSessionOnlyKey(key: string): boolean {
   const k = foldKey(key);
   return k.includes("tenant") || k.includes("role") || k.includes("impersonat") || k.includes("onbehalf")
+    || k.includes("actingas") || k.includes("runas") || k.includes("principal") || k.includes("behalfof") || k.startsWith("sudo") || k.endsWith("sudo")
     || /^(for|as|by|auth|session|current|acting|login|my)?(user|users|userid|uid|actor|actorid)$/.test(k)
     || /^(company|org|organisation|organization|workspace)id$/.test(k);
 }
@@ -146,6 +147,9 @@ function describeInput(s: z.ZodTypeAny, keys: string[], depth = 0): string {
   if (depth > 10) throw new Error("input schema is nested too deep to check");
   if (s instanceof z.ZodObject) {
     if (!isStrictObject(s)) throw new Error("every object in input must be strict, at any depth — no passthrough, strip or catchall (z.object({...}).strict())");
+    /* zod keeps a cached key list that a parse trusts over the shape: drop it, so the parse that follows
+       rebuilds it from the very shape this walk is about to sign (a swapped `_cached` cannot add a key). */
+    try { (s as unknown as { _cached: unknown })._cached = null; } catch { /* frozen: it cannot be swapped either */ }
     const shape = s.shape as Record<string, z.ZodTypeAny>;
     const parts = Object.entries(shape).map(([k, v]) => {
       if (!INPUT_KEY.test(k)) throw new Error(`input key '${k}' must be plain ASCII letters, digits and _`);
@@ -158,13 +162,16 @@ function describeInput(s: z.ZodTypeAny, keys: string[], depth = 0): string {
   if (s instanceof z.ZodDefault) return `default(${describeInput(s.removeDefault() as z.ZodTypeAny, keys, depth + 1)})`;
   if (s instanceof z.ZodArray) return `array(${describeInput(s.element as z.ZodTypeAny, keys, depth + 1)})`;
   if (s instanceof z.ZodEffects) {
-    if ((s._def as { effect?: { type?: string } }).effect?.type !== "refinement") throw new Error("input may not use transform / preprocess (an effect that can change the keys) — only refine");
-    return `refine(${describeInput(s.innerType() as z.ZodTypeAny, keys, depth + 1)})`;
+    const effect = (s._def as { effect?: { type?: string; refinement?: unknown } }).effect;
+    if (effect?.type !== "refinement") throw new Error("input may not use transform / preprocess (an effect that can change the keys) — only refine");
+    return `refine[${String(effect.refinement)}](${describeInput(s.innerType() as z.ZodTypeAny, keys, depth + 1)})`;
   }
   if (s instanceof z.ZodUnion) return `union(${(s.options as z.ZodTypeAny[]).map((o) => describeInput(o, keys, depth + 1)).join("|")})`;
   if (INPUT_LEAVES.some((leaf) => s instanceof leaf)) {
     const d = s._def as { typeName?: string; checks?: unknown; values?: unknown; value?: unknown };
-    return `${String(d.typeName)}${JSON.stringify([d.checks ?? null, d.values ?? null, d.value ?? null])}`;
+    /* A RegExp has no enumerable fields (JSON would write {}): sign its source and flags, so one changed in place (`.compile`) shows. */
+    const plain = (_key: string, v: unknown): unknown => (typeof v === "object" && v !== null && typeof (v as { source?: unknown }).source === "string" ? `re:${(v as { source: string }).source}/${String((v as { flags?: unknown }).flags)}` : v);
+    return `${String(d.typeName)}${JSON.stringify([d.checks ?? null, d.values ?? null, d.value ?? null], plain)}`;
   }
   /* Fail closed: a type whose keys this walk cannot list (record, map, any, unknown, intersection,
      discriminated union, lazy, tuple, pipeline …) may not be a tool input until it is added here. */
