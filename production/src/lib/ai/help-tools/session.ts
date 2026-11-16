@@ -13,6 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
+import { HELP_QUESTION_CALLS_MAX } from "./limits";
 
 type Client = SupabaseClient<Database>;
 
@@ -20,6 +21,22 @@ type Client = SupabaseClient<Database>;
 export interface HelpSession { readonly __helpSession: unique symbol }
 
 const SESSIONS = new WeakMap<object, Client>();
+/** Tool calls already taken by each session (R-2879): one session = one question. */
+const CALLS = new WeakMap<object, number>();
+
+/**
+ * Count one tool call against this question's allowance. false = the question has used its
+ * HELP_QUESTION_CALLS_MAX calls (or this is not a session from openHelpSession) — the call must
+ * not run. The count lives here, on the session the route opens once per question, so a model
+ * loop cannot reset it by sending another batch. Only runner.ts may call it (guard test).
+ */
+export function takeHelpCalls(session: HelpSession): boolean {
+  if (typeof session !== "object" || session === null || !SESSIONS.has(session)) return false;
+  const used = CALLS.get(session) ?? 0;
+  if (used >= HELP_QUESTION_CALLS_MAX) return false;
+  CALLS.set(session, used + 1);
+  return true;
+}
 
 /** The role claim of a Supabase JWT key, or "secret" for the new sb_secret_ keys. */
 export function keyRole(key: unknown): string | null {

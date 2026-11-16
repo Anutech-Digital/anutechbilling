@@ -14,6 +14,7 @@ import { invoiceIsOverdue } from "@/lib/invoices/overdue";
 import { invoiceBalance } from "@/lib/invoices/kpis";
 import { rupee, num, formatDate } from "@/lib/utils";
 import { defineHelpTool, type HelpSourceRef } from "./types";
+import { cleanHelpText } from "./untrusted";
 
 /**
  * Who may run these through the registry. The legacy R-421 path keeps its own rule (any role
@@ -79,7 +80,8 @@ export const renewalsDue = defineHelpTool({
     for (const r of top) {
       const d = daysToRenewal(r.renewal_date, today) ?? 0;
       const when = d < 0 ? `${-d} days late` : d === 0 ? "today" : `in ${d} days`;
-      lines.push(`- ${r.customer_name || "Unnamed customer"} — ${r.plan || "plan not set"} — ${formatDate(r.renewal_date)} (${when})`);
+      /* R-2879: names are typed by people — one clean, capped line each (untrusted.ts). */
+      lines.push(`- ${cleanHelpText(r.customer_name) || "Unnamed customer"} — ${cleanHelpText(r.plan) || "plan not set"} — ${formatDate(r.renewal_date)} (${when})`);
     }
     return { text: lines.join("\n"), sources: [src("subscriptions", P_RENEW, idsOf(top))] };
   },
@@ -125,7 +127,7 @@ export const todaysFollowups = defineHelpTool({
     for (const r of [due, late, top]) if (r.error) throw r.error;
     const lines = [`Follow-ups due today: ${num(due.count ?? 0)}. Already overdue (earlier dates): ${num(late.count ?? 0)}.`];
     const leads = top.data ?? [];
-    for (const l of leads) lines.push(`- ${l.company || "Unnamed lead"}`);
+    for (const l of leads) lines.push(`- ${cleanHelpText(l.company) || "Unnamed lead"}`);
     return { text: lines.join("\n"), sources: [src("leads", P_TODAY, idsOf(leads))] };
   },
 });
