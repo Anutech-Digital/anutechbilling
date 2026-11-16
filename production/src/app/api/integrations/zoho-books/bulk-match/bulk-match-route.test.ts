@@ -34,6 +34,8 @@ const st = vi.hoisted(() => ({
   /* R-2661: the one-reader lease calls (zoho_reader_take / _release) and who holds it (null = free). */
   readerRpcs: [] as Array<[string, Record<string, unknown>]>,
   readerHolder: null as string | null,
+  tokenError: false,
+  failFacts: false,
   gstFiled: [] as string[],
   gstFiledError: false,
 }));
@@ -41,6 +43,7 @@ const st = vi.hoisted(() => ({
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      if (st.failFacts) throw new Error("db down");
       st.rpcs.push([fn, args]);
       return { data: fn === "bank_credit_open_items" ? (st.tables["open_items"] ?? []) : null, error: null };
     },
@@ -79,7 +82,7 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
     },
   }),
   readConnection: async () => st.conn,
-  zohoAccessToken: async () => "access",
+  zohoAccessToken: async () => { if (st.tokenError) throw new Error("token endpoint busy"); return "access"; },
   dropZohoAccessToken: async () => {},
 }));
 
@@ -226,6 +229,30 @@ describe("R-2661 bulk-match route — one Zoho reader at a time", () => {
     const busy = await POST(req({ accountId: ACCOUNT, txnIds: [L1] }));
     expect((await busy.json()).stopped).toMatchObject({ code: "busy" });
     expect(readerCalls()).toEqual(["zoho_reader_take"]);
+  });
+});
+
+describe("R-2661 checker fix — the lease is let go when the page fails before / after the Zoho reads", () => {
+  const readerCalls = () => st.readerRpcs.map(([fn]) => fn);
+
+  it("the app's own records cannot be read for the answer (500): the lease is released", async () => {
+    st.failFacts = true;
+    st.customers = [{ id: "11111111-1111-4111-8111-111111111111", name: "RANZ INTERNATIONAL LLC", gstin: null }];
+    try {
+      const res = await POST(req({ accountId: ACCOUNT, txnIds: [L1] }));
+      expect(res.status).toBe(500);
+      expect((await res.json()).code).toBe("read_failed");
+      expect(readerCalls()).toEqual(["zoho_reader_take", "zoho_reader_release"]);
+    } finally { st.failFacts = false; }
+  });
+
+  it("the Zoho token cannot be had: the request fails and the lease is released first", async () => {
+    st.tokenError = true;
+    try {
+      await expect(POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).rejects.toThrow("token endpoint busy");
+      expect(readerCalls()).toEqual(["zoho_reader_take", "zoho_reader_release"]);
+      expect(zohoCalls).toEqual([]);
+    } finally { st.tokenError = false; }
   });
 });
 

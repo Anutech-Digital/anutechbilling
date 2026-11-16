@@ -127,3 +127,30 @@ describe("R-2661 one reader at a time — the words", () => {
     expect(m).toContain("frees itself in a few minutes");
   });
 });
+
+describe("R-2661 checker fixes — words", () => {
+  it("Zoho ITSELF refused for the day while our count is low: says Zoho refused, never 'the day's budget is used … before Zoho refuses'", async () => {
+    const { zohoDayLimitMessage, zohoLimitHit, zohoLimitText } = await import("./zoho-limit");
+    const now = Date.parse("2026-11-13T10:00:00Z");
+    const refused = zohoDayLimitMessage({ calls: 300, budget: 900, retryAt: Date.parse("2026-11-13T18:30:00Z"), limitHitAt: "2026-11-13T04:24:00Z" }, now);
+    expect(refused).toContain("Zoho calls today: 300 of 900 — Zoho itself refused more reads for today (its own daily limit)");
+    expect(refused).toContain("carries on after 12:00 am IST on 14 Nov 2026");
+    expect(refused).not.toContain("budget is used");
+    expect(refused).not.toContain("before Zoho refuses");
+    /* Our own budget used (also when Zoho refused at the very end): the budget words stay. */
+    const used = zohoDayLimitMessage({ calls: 900, budget: 900, retryAt: Date.parse("2026-11-13T18:30:00Z"), limitHitAt: null }, now);
+    expect(used).toContain("Zoho calls today: 900 of 900 — the day's budget is used");
+    expect(zohoLimitText(zohoLimitHit(now, { calls: 900, budget: 900, retryAt: 0, limitHitAt: "2026-11-13T04:24:00Z" })).body).toContain("the day's budget is used");
+    expect(zohoLimitHit(now, { calls: 300, budget: 900, retryAt: 0, limitHitAt: "2026-11-13T04:24:00Z" })).toMatchObject({ reason: "budget", zohoRefused: true });
+  });
+
+  it("isZohoWaitMessage: the day-limit lines (budget and Zoho's refusal) and the other-reader line are 'waiting'; anything else is not", async () => {
+    const { isZohoWaitMessage, zohoDayLimitMessage, zohoReaderBusyMessage } = await import("./zoho-limit");
+    expect(isZohoWaitMessage(zohoDayLimitMessage({ calls: 900, budget: 900, retryAt: 1 }))).toBe(true);
+    expect(isZohoWaitMessage(zohoDayLimitMessage({ calls: 12, budget: 900, retryAt: 1, limitHitAt: "2026-11-13T04:24:00Z" }))).toBe(true);
+    expect(isZohoWaitMessage(zohoReaderBusyMessage("Reconcile from Zoho"))).toBe(true);
+    expect(isZohoWaitMessage("Zoho Books did not answer. The server tries again in a minute.")).toBe(false);
+    expect(isZohoWaitMessage(null)).toBe(false);
+    expect(isZohoWaitMessage("")).toBe(false);
+  });
+});

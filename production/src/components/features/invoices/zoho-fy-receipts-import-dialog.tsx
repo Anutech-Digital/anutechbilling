@@ -31,6 +31,7 @@ import { formatForeign, isForeignCurrency } from "@/lib/currency";
 import { LEAVE_OUT, skipReasonKey, type ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
 import { ZohoDayCallsLine } from "@/components/features/integrations/zoho-day-calls-line";
+import { isZohoWaitMessage } from "@/lib/integrations/zoho-books/zoho-limit";
 
 const API = "/api/integrations/zoho-books/receipts-import";
 const FY = "2025-26";
@@ -231,6 +232,10 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
       for (;;) {
         last = await call<ReadState>({ action: "step" });
         setRead(last);
+        /* R-2661: the read is WAITING (the day's Zoho budget is used, or another Zoho read is running):
+           say so at once and stop asking — the server carries on by itself (cron); Read from Zoho here
+           follows it again. Without this the window showed "Read N of M — on the server…" for hours. */
+        if (isZohoWaitMessage(last.error)) { setError(last.error ?? null); break; }
         if (last.complete || !last.running || stop.current) break;
         await sleep(STEP_GAP_MS);
       }
@@ -367,7 +372,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
 
           {partError && <p role="alert" data-testid="fy-receipts-part-error" className="text-xs text-rose-ink">{partError}</p>}
           {error && <p role="alert" className="text-xs text-rose-ink">{error}</p>}
-          <ZohoDayCallsLine refreshKey={read?.running ? `${read.listed ?? 0}/${read.detailed ?? 0}` : "idle"} />
+          <ZohoDayCallsLine refreshKey={read?.running ? `${read.listed ?? 0}/${read.detailed ?? 0}/${read.error ?? ""}` : "idle"} />
 
           {preview && (
             <>

@@ -13,7 +13,7 @@
  * Nothing is saved.
  */
 import { expect, test, type Page } from "@playwright/test";
-import { nextIstMidnight, zohoReaderBusyMessage } from "../../src/lib/integrations/zoho-books/zoho-limit";
+import { nextIstMidnight, zohoDayLimitMessage, zohoReaderBusyMessage } from "../../src/lib/integrations/zoho-books/zoho-limit";
 import { onlyInCardTests, openAppPage, pageAs } from "./card-steps";
 
 const DAY_LIMIT = { ok: true, listed: 600, detailed: 0, listDone: false, complete: false, busy: true, calls: 0 };
@@ -95,5 +95,27 @@ test.describe("R-2661 — Zoho calls today + stop before Zoho's daily limit", ()
     await expect(alert).toContainText("Wait until it finishes");
     await page.waitForTimeout(1_500);
     expect(reads).toBe(1);
+  });
+
+  test("Step 5: Invoices → FY 2025-26 receipts from Zoho while its server read waits on the day budget → the budget line with the IST time shows at once and the window stops asking", async ({ browser, baseURL }) => {
+    const page = await pageAs(browser, baseURL, "owner");
+    let steps = 0;
+    const msg = zohoDayLimitMessage({ calls: 900, budget: 900, retryAt: nextIstMidnight(Date.now()) });
+    await page.route("**/api/integrations/zoho-books/receipts-import", async (r) => {
+      const body = JSON.parse(r.request().postData() ?? "{}") as { action?: string };
+      if (body.action === "status") return r.fulfill({ json: { ok: true, listed: 2576, detailed: 87, complete: false, running: true, error: null } });
+      if (body.action === "step") { steps++; return r.fulfill({ json: { ok: true, listed: 2576, detailed: 87, complete: false, running: true, error: msg } }); }
+      return r.fulfill({ status: 500, json: { ok: false, error: "Nothing read from Zoho yet." } });
+    });
+    await openAppPage(page, "/invoices");
+    await page.getByRole("button", { name: "FY 2025-26 receipts from Zoho" }).click();
+    const dlg = page.getByRole("dialog");
+    const alert = dlg.getByRole("alert").filter({ hasText: "Zoho calls today" });
+    await expect(alert).toBeVisible({ timeout: 30_000 });
+    await expect(alert).toContainText("Zoho calls today: 900 of 900");
+    await expect(alert).toContainText(/carries on after 12:00 am IST on \d+ \w{3} \d{4}/);
+    /* Stopped asking: the 5-second poll would have sent a second step by now. */
+    await page.waitForTimeout(7_000);
+    expect(steps).toBe(1);
   });
 });
