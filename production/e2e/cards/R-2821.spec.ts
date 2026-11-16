@@ -11,7 +11,7 @@
  *     at least 40 px above the fold) — with the Bill-together box / forecast closed, as a user first lands.
  *     MEASURED 16 Nov (1280x720, E2E owner, fca164465): first row top 489, rows 83 px tall → row bottoms 572, 655,
  *     738 (1276 and 1260 the same). The 3rd row ends 18 px BELOW the fold. The old promise was three whole rows
- *     (the base before R-2861 ended them at 786-804); the six tiles in one row won ~50 px, not enough for the third;
+ *     (the base before R-2861 ended them at 786-804); the six tiles in one row won ~50 px, not enough for the third (R-2878);
  *   · document.scrollWidth <= innerWidth, the table is not wider than its box, no cell spills.
  * Run: `node scripts/ops/card-tests.mjs R-2821` (set R2821_OUT=<file> to write the measured numbers).
  *

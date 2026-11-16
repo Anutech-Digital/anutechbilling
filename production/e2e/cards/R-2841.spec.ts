@@ -93,7 +93,7 @@ test.describe("R-2841 card test", () => {
     await expect(cell.getByTestId("renewal-row-last-paid")).toHaveText(/^Paid/, { timeout: 60_000 });
     /* R-2854 (one fact once): the table's Last bill never names a quote, and the Product column's quote line is THIS
        renewal's quote — this subscription has none ("No renewal quote yet"), so the add-seats quote is not on the row.
-       That is a change from R-2841's table promise: see the R-2841 regression step below (card R-2870's follow-up). */
+       That is a change from R-2841's table promise: see the R-2841 regression step below (filed as R-2877). */
     await expect(cell.getByTestId("renewal-row-quote-note")).toHaveCount(0);
     await expect(r.getByTestId("renewal-row-quote")).toHaveAttribute("data-quote", "none");
     /* fits 1280: the table needs no side scroll */
@@ -104,7 +104,7 @@ test.describe("R-2841 card test", () => {
   /* R-2841's table promise — an accepted add-seats quote not invoiced yet shows "Quote Q-… · Accepted" on the row — is
      GONE from the table since R-2854 (the row shows only THIS renewal's quote). It still holds in the card layout below
      the table's width (the next step). The table half is a REGRESSION against R-2841: it stays here, unchanged in
-     meaning, as test.fixme until the card filed for it (REGRESSION_CARD) puts a rule back or the owner drops it. */
+     meaning, as test.fixme until the card filed for it (R-2877) puts a rule back or the owner drops it. */
   test.fixme("Step 1b (REGRESSION vs R-2841, table): an accepted add-seats quote not invoiced shows 'Quote Q-CT2841-S · Accepted' on the 1280 table row", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1280, height: 900 });
