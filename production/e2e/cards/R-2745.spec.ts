@@ -70,7 +70,7 @@ select '${CUSTOMER_ID}', t.id, '${CUSTOMER}', '07AAHCF2745K1Z5', 'Saket', 'New D
   from public.tenants t where t.id = ${E2E_TENANT_SQL};
 insert into public.quotes (id, tenant_id, customer_id, customer_name, plan, seats, amount, subtotal, tax_rate, discount_pct, status,
                            payment_status, created_date, billing_cycle, currency, line_items, is_one_off, notes)
-select '${QUOTE}', t.id, '${CUSTOMER_ID}', '${CUSTOMER}', 'SCN Workspace setup', 1, 1180, 1000, 18, 0, 'accepted', 'paid',
+select '${QUOTE}', t.id, '${CUSTOMER_ID}', '${CUSTOMER}', 'SCN Workspace setup', 1, 1180, 1000, 18, 0, 'accepted', 'received',
        '2025-10-10', 'yearly', 'INR',
        '[{"id": "line-1", "qty": 1, "cost": 0, "name": "SCN Workspace setup (one time)", "rate": 1000, "one_time": true}]'::jsonb,
        true, 'R-2745 card test'
@@ -122,7 +122,9 @@ test.describe.serial("R-2745 — Razorpay settlement fee on the first open day",
     await openAppPage(page, `/accounting/banking/${account()}?from=2025-10-01&to=2025-10-31&q=CT2745`);
     const row = await onlyOne(page.locator("main").getByRole("row").filter({ hasText: "CT2745" }), "the settlement bank line");
     await expect(row).toContainText("20 Oct 2025");
-    await expect(row).toContainText(/Reconciled|Matched/i);
+    /* a reconciled line shows its match type ("Payment") and an Un-reconcile button (an open line shows Match instead) */
+    await expect(row.getByRole("button", { name: "Un-reconcile" })).toBeVisible();
+    await expect(row).toContainText("Payment");
     expect(localDb(CARD).one(`select matched_to_type || '|' || txn_date::text from public.bank_transactions where id = '${TXN}';`)).toBe("payment|2025-10-20");
   });
 

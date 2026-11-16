@@ -114,8 +114,12 @@ test.describe("R-2661 — Zoho calls today + stop before Zoho's daily limit", ()
     await expect(alert).toBeVisible({ timeout: 30_000 });
     await expect(alert).toContainText("Zoho calls today: 900 of 900");
     await expect(alert).toContainText(/carries on after 12:00 am IST on \d+ \w{3} \d{4}/);
-    /* Stopped asking: the 5-second poll would have sent a second step by now. */
+    /* Stopped asking: count the steps once the line shows, then wait longer than the 5-second poll gap — no further step may come.
+       (Not "exactly 1": `next dev` runs the open-effect twice (React StrictMode), so two followers each send their own first step.) */
+    await page.waitForTimeout(1_000);
+    const seen = steps;
+    expect(seen).toBeGreaterThanOrEqual(1);
     await page.waitForTimeout(7_000);
-    expect(steps).toBe(1);
+    expect(steps, "no step after the waiting answer").toBe(seen);
   });
 });

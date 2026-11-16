@@ -94,7 +94,9 @@ function MoneyRow({ label, value, strong = false, testId }: { label: string; val
  * undefined = not read yet; `linesFailed`: that read failed (said in words — never a skeleton for ever).
  * `todayIst`: the page's today (the status word's "Expired").
  */
-export function QuotePeekDialog({ quoteId, onClose, lines, linesFailed = false, todayIst }: {
+export function QuotePeekDialog({ quoteId, onClose, lines, linesFailed = false, todayIst, returnFocusTo }: {
+  /** The element that opened the pop-up (the row's quote number). Radix returns focus only to a DialogTrigger - this dialog has none, so Esc / close left focus on body. */
+  returnFocusTo?: () => HTMLElement | null;
   quoteId: string | null;
   onClose: () => void;
   lines: readonly PeekLine[] | undefined;
@@ -229,7 +231,7 @@ export function QuotePeekDialog({ quoteId, onClose, lines, linesFailed = false, 
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-        <DialogContent className="md:!max-w-[640px]" data-testid="quote-peek-dialog">
+        <DialogContent className="md:!max-w-[640px]" data-testid="quote-peek-dialog" onCloseAutoFocus={(e) => { const el = returnFocusTo?.(); if (el?.isConnected) { e.preventDefault(); el.focus(); } }}>
           <DialogHeader>
             <DialogTitle className="font-mono">Quote {quoteId}</DialogTitle>
             <DialogDescription>{quote?.customer_name ?? "Renewal quote"}</DialogDescription>
@@ -284,6 +286,9 @@ export function useRowQuotePeek(
   }) : [];
   const { data, isPlaceholderData, isError } = useRowQuoteLines(refs);
   const [openId, setOpenId] = React.useState<string | null>(null);
+  /* the number that was focused when the pop-up opened - focus goes back to it on close (a keyboard user keeps their place) */
+  const opener = React.useRef<HTMLElement | null>(null);
+  const openFor = React.useCallback((id: string) => { opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setOpenId(id); }, []);
   /* read done, quote not in the answer (not readable) → no lines, never "Loading…" for ever. While the rows changed
      ("Show 50 more", a filter) and the last answer is still on screen, a quote it does not hold is NOT read yet —
      never a false "No product lines". */
@@ -293,7 +298,7 @@ export function useRowQuotePeek(
     linesOf,
     /** the lines read failed — the hover and the pop-up say so instead of loading for ever */
     failed,
-    open: enabled ? setOpenId : undefined,
-    dialog: enabled ? <QuotePeekDialog quoteId={openId} onClose={() => setOpenId(null)} lines={openId ? linesOf(openId) : undefined} linesFailed={failed} todayIst={istToday()} /> : null,
+    open: enabled ? openFor : undefined,
+    dialog: enabled ? <QuotePeekDialog returnFocusTo={() => opener.current} quoteId={openId} onClose={() => setOpenId(null)} lines={openId ? linesOf(openId) : undefined} linesFailed={failed} todayIst={istToday()} /> : null,
   };
 }

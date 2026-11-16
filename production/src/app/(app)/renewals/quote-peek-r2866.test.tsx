@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import * as React from "react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, cleanup, screen, fireEvent, within } from "@testing-library/react";
+import { render, cleanup, screen, fireEvent, within, waitFor } from "@testing-library/react";
 
 const st = vi.hoisted(() => ({
   quote: undefined as Record<string, unknown> | null | undefined,
@@ -400,6 +400,18 @@ describe("R-2866 — the list's wiring: ONE lines read for the rows on screen (u
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByText("open"));
     expect(screen.getByRole("dialog", { name: `Quote ${QID}` })).toBeTruthy();
+  });
+
+  it("R-2874: closing the pop-up (Esc) puts focus back on the number that opened it — a keyboard user keeps their place (Radix returns focus only to a DialogTrigger)", async () => {
+    st.quote = fullQuote(); st.payments = [];
+    render(<Probe enabled />);
+    const opener = screen.getByText("open");
+    opener.focus();
+    fireEvent.click(opener);
+    expect(screen.getByRole("dialog", { name: `Quote ${QID}` })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 
   it("read done but the quote is not in the answer → no lines (never 'Loading…' for ever); a role without quotes reads nothing", () => {

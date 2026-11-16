@@ -73,7 +73,8 @@ let shared: Page | null = null;
 async function open(browser: Browser, baseURL: string | undefined, query: string): Promise<Page> {
   if (!shared) shared = await pageAs(browser, baseURL, "owner");
   await shared.setViewportSize({ width: 1280, height: 900 });
-  await openAppPage(shared, `/renewals?${query}`, /Renewals/);
+  /* with the drawer open (sub=) the page behind it is inert / aria-hidden, so the role query cannot see its heading — wait for the drawer instead (the steps do) */
+  await openAppPage(shared, `/renewals?${query}`, /(^|&)sub=/.test(query) ? undefined : /Renewals/);
   return shared;
 }
 

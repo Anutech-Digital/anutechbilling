@@ -109,7 +109,9 @@ test.describe("R-2866 card test", () => {
     const box = await page.getByTestId("renewal-row-quote-hover").first().boundingBox();
     expect(box && box.x >= 0 && box.x + box.width <= 1280, "hover box inside the window").toBe(true);
     /* keyboard: move away, then focus the number */
-    await page.mouse.move(5, 5);
+    /* leave like a real mouse (several small moves to empty page space): the hover box closes on the pointer move after
+       it leaves the number — one jump to a corner can leave it open (a test-driver artifact; the sidebar sits at 5,5) */
+    await page.mouse.move(700, 250, { steps: 12 });
     await expect(tip).toHaveCount(0, { timeout: 15_000 });
     await link.focus();
     await expect(page.getByRole("tooltip")).toContainText(`${PLAN} · 473 seats`, { timeout: 30_000 });
