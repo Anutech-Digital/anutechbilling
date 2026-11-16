@@ -281,15 +281,29 @@
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(3) > div:last-child > div > div > p { margin-top: 10px !important; font-size: 16px !important; color: var(--w-muted) !important; }
 
-/* ── 4 · The honest counter-argument: marigold card on the same white band ──────────────── */
+/* ── 4 · The honest counter-argument: a card over the hosting photo ──────────────────────────
+   Owner, 16 Nov 2026: "Add a background image into this section" — public/domains-hosting-bg.webp
+   (servers under a cloud, laptop, shield; the left half is open sky). The photo fills the card,
+   a light wash over its left side keeps the heading and text on a calm ground, and the four answer
+   cards on the right are frosted white so the servers show around them. */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) { position: relative; isolation: isolate; padding-top: 0 !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div {
-  position: relative; isolation: isolate; overflow: hidden; background: var(--w-marigold-soft) !important; color: var(--w-ink) !important;
-  border-radius: 28px !important; padding: clamp(20px, 3.2vw, 38px) !important; gap: 23px 35px !important;
+  position: relative; isolation: isolate; overflow: hidden; color: var(--w-ink) !important;
+  background:
+    linear-gradient(90deg, rgba(244, 249, 255, 0.95) 0%, rgba(244, 249, 255, 0.85) 32%, rgba(244, 249, 255, 0.2) 56%, rgba(244, 249, 255, 0) 100%),
+    #DCEBFA url(/domains-hosting-bg.webp) right center / cover no-repeat !important;
+  border: 1px solid #D3E3F4; border-radius: 28px !important; padding: clamp(20px, 3.2vw, 38px) !important; gap: 23px 35px !important;
+  box-shadow: 0 30px 60px -36px rgba(20, 70, 140, 0.35);
 }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div::before {
-  content: ""; position: absolute; z-index: -1; width: 360px; height: 360px; border-radius: 50%; border: 48px solid #F8E6BD;
-  left: -170px; bottom: -190px; box-sizing: border-box;
+/* the gold ring belonged to the plain marigold card */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div::before { content: none; }
+/* One column (phones/tablets): the cards sit under the text, so the wash covers the whole card. */
+@media (max-width: 900px) {
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div {
+    background:
+      linear-gradient(180deg, rgba(244, 249, 255, 0.94) 0%, rgba(244, 249, 255, 0.82) 100%),
+      #DCEBFA url(/domains-hosting-bg.webp) 70% center / cover no-repeat !important;
+  }
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:first-child { display: flex; flex-direction: column; gap: 16px; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:first-child > * { margin: 0 !important; }
@@ -300,8 +314,9 @@
   display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px; align-content: start;
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child > div {
-  background: var(--w-surface); border: 1px solid #F1DFB3 !important; border-radius: 20px; padding: 22px !important;
-  box-shadow: 0 8px 24px rgba(122,75,0,0.07); font-size: 15px !important; line-height: 1.6 !important; color: var(--w-muted) !important;
+  background: rgba(255, 255, 255, 0.78); -webkit-backdrop-filter: blur(5px) saturate(1.15); backdrop-filter: blur(5px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.85) !important; border-radius: 20px; padding: 22px !important;
+  box-shadow: 0 14px 34px -16px rgba(20, 70, 140, 0.28); font-size: 15px !important; line-height: 1.6 !important; color: var(--w-muted) !important;
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:nth-of-type(4) > div > div:last-child > div > strong {
   display: block; margin-bottom: 8px; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif;
