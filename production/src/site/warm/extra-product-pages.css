@@ -301,10 +301,15 @@
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(6) > div:last-child {
   max-width: 1240px; text-align: left; border-radius: 32px; overflow: hidden;
   padding: clamp(32px, 4.4vw, 60px) clamp(22px, 4vw, 56px);
-  padding-right: max(clamp(22px, 4vw, 56px), calc(100% - 640px));
   background: linear-gradient(100deg, rgba(18,49,42,0.94) 0%, rgba(18,49,42,0.82) 45%, rgba(18,49,42,0.45) 100%),
     url(/site/warm/1ecfdc38218b688cf12509eac50a21db.jpg) 70% center / cover no-repeat, #12312A;
   box-shadow: 0 24px 60px rgba(18,49,42,0.2);
+}
+/* The text keeps to the design's 640px column on the left of the photo (640px less the band's
+   56px side padding). It used padding-right: calc(100% - 640px) — but a % padding is measured on
+   the SECTION (the full screen), so on a wide screen it left one word per line. */
+.w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(6) > div:last-child > * {
+  max-width: 584px;
 }
 .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(6) h2 {
   font-size: clamp(2rem, 3.6vw, 2.6rem); line-height: 1.1; color: #FFFFFF;
@@ -316,7 +321,6 @@
 }
 @media (max-width: 900px) {
   .w-scope[data-site-theme="warm"].w-scope-product > .min-h-screen.bg-paper > main:not([class]) > section:nth-child(6) > div:last-child {
-    padding-right: clamp(22px, 4vw, 56px);
     background: linear-gradient(rgba(18,49,42,0.88), rgba(18,49,42,0.88)), url(/site/warm/1ecfdc38218b688cf12509eac50a21db.jpg) 70% center / cover no-repeat, #12312A;
   }
 }
