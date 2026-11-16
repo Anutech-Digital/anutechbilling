@@ -99,7 +99,7 @@ async function rowsShort(page: Page): Promise<void> {
   for (const plan of [LONG_PLAN, "CT R2759 Quarterly Plan", "CT R2759 Sent Plan"]) {
     const r = await page.locator("tr", { hasText: plan }).filter({ visible: true }).evaluate((tr) => ({
       h: tr.getBoundingClientRect().height,
-      cells: [...tr.querySelectorAll("td")].map((td) => Math.round(([...td.children] as HTMLElement[]).reduce((m, c) => Math.max(m, c.getBoundingClientRect().height), 0)) + ":" + (td as HTMLElement).innerText.replace(/s+/g, " ").slice(0, 30)),
+      cells: [...tr.querySelectorAll("td")].map((td) => Math.round(([...td.children] as HTMLElement[]).reduce((m, c) => Math.max(m, c.getBoundingClientRect().height), 0)) + ":" + (td as HTMLElement).innerText.replace(/\s+/g, " ").slice(0, 40)),
     }));
     expect(r.h, `${plan} row height — cells ${r.cells.join(" | ")}`).toBeLessThanOrEqual(76);
   }

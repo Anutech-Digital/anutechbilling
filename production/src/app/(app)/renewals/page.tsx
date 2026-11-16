@@ -538,7 +538,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
               const paid = lastPaid.data?.get(sub.id);
               return (
                 <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
-                  <td className="px-1.5 py-1.5">
+                  <td className="px-1.5 py-1">
                     <input
                       type="checkbox"
                       aria-label={`Select ${sub.customer_name} — ${sub.plan}`}
@@ -547,24 +547,24 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                       onChange={(e) => onSelect([sub.id], e.target.checked)}
                     />
                   </td>
-                  <td className="min-w-0 px-1.5 py-1.5 leading-[1.125rem]"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
-                  <td className="min-w-0 px-1.5 py-1.5 leading-[1.125rem]">
+                  <td className="min-w-0 px-1.5 py-1 leading-[1.125rem]"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
+                  <td className="min-w-0 px-1.5 py-1 leading-[1.125rem]">
                     <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} period={item.period} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null}
                       quoteLine={<RenewalQuoteLine docs={item.docs} stage={stage} loading={docsState.loading || (!stage && !docsState.failed)} failed={docsState.failed} canQuotes={canQuotes} todayIst={todayIst} lines={quotePeek.linesOf} onPeek={quotePeek.open} linesFailed={quotePeek.failed} />} />
                   </td>
-                  <td className="px-1.5 py-1.5"><DueCell date={dueOf(item).date} days={dueOf(item).days} title={dueOf(item).title} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
-                  <td className="px-1.5 py-1.5 text-right">
+                  <td className="px-1.5 py-1"><DueCell date={dueOf(item).date} days={dueOf(item).days} title={dueOf(item).title} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
+                  <td className="px-1.5 py-1 text-right">
                     <AmountTableCell text={amount.text} gst={amount.gst} title={amount.quoteNote ? `${amount.gst} · ${amount.quoteNote}` : undefined} />
                   </td>
-                  <td className="min-w-0 px-1.5 py-1.5"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
-                  <td className="min-w-0 px-1.5 py-1.5">
+                  <td className="min-w-0 px-1.5 py-1"><StageChip stage={stage} size="sm" compact canQuotes={canQuotes} /></td>
+                  <td className="min-w-0 px-1.5 py-1">
                     {/* R-2840 / R-2854: Last bill = the invoice → the last payment (same Last paid read as the cards); the quote is Product's quote line */}
                     <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} todayIst={todayIst} prior={item.prior}
                       paid={{ paid, loading: lastPaid.loading || docsState.loading, failed: lastPaid.failed || (!paid && docsState.failed) }}
                       /* R-2839: History (replaced "+N earlier") — the row drawer on its History section */
                       historyButton={<HistoryButton onOpen={() => onOpen(sub.id, "history")} name={`${sub.customer_name} · ${sub.plan}`} />} />
                   </td>
-                  <td className="min-w-0 px-1.5 py-1.5">
+                  <td className="min-w-0 px-1.5 py-1">
                     <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} viewer={viewer} together={togetherButtonOf?.(sub.id) ?? null} />
                   </td>
                 </tr>

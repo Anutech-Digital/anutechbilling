@@ -191,10 +191,10 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
       <p className="text-ink" title={line1}>
         {onOpen ? (
           <button type="button" onClick={onOpen} data-testid="renewal-open-drawer" aria-label={`${line1} — open details`}
-            className="line-clamp-2 w-full min-w-0 break-words rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            className="block w-full min-w-0 truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
             {line1}
           </button>
-        ) : <span className="line-clamp-2 break-words">{line1}</span>}
+        ) : <span className="block truncate">{line1}</span>}
       </p>
       {together ? (
         /* R-2808: billed together last cycle — "Bills with <other plan>" takes the period's place (the period

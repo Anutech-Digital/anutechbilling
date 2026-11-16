@@ -56,9 +56,10 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
   });
 
   it("two lines per cell: names / ids / periods truncate with a tooltip; money and status never truncate", () => {
-    /* R-2821: the customer name and the product line wrap to two lines (the full text stays the tooltip) */
+    /* R-2821: the customer name wraps to two lines; R-2880: the product line is ONE line (truncate) so a row is at most 3 text lines — R-2759 / R-2854 (the full text stays the tooltip) */
     expect(cells).toMatch(/className="line-clamp-2 break-words font-semibold text-ink hover:underline" title=\{nameTitle\}/);
-    expect(cells).toContain('<span className="line-clamp-2 break-words">{line1}</span>');
+    expect(cells).toContain('<span className="block truncate">{line1}</span>');
+    expect(cells).toMatch(/className="block w-full min-w-0 truncate rounded-sm text-left underline-offset-2/);
     /* the invoice state (money + status) wraps, never cut */
     expect(cells).toMatch(/className=\{cn\("min-w-0 break-words tabular-nums", TONE\[state\.tone\]\)\} data-testid="renewal-last-invoice-status"/);
     /* the stage chip may wrap in the table (Badge is whitespace-nowrap by default); its period is in
