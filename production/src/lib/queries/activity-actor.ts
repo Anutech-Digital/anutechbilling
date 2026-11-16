@@ -8,6 +8,8 @@
  */
 export type ActivityActorFields = {
   actor_label?: string | null;
+  /** R-2778: 'ai' when the Help AI made the change for this person (their own login). */
+  via?: string | null;
   actor: { full_name: string | null; initials: string | null; color: string | null } | null;
 };
 
@@ -20,4 +22,11 @@ export function activityActorInitials(r: ActivityActorFields): string {
   if (r.actor) return "?";
   const label = r.actor_label?.trim();
   return label ? label[0].toUpperCase() : "?";
+}
+
+/** R-2778: the AI-on-behalf-of line for a row the Help AI changed for a person, else null. */
+export function activityViaLabel(r: ActivityActorFields): string | null {
+  if (r.via !== "ai") return null;
+  const name = r.actor?.full_name || r.actor_label;
+  return name ? `AI on behalf of ${name}` : "AI on behalf of a team member";
 }

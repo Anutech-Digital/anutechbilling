@@ -64,7 +64,11 @@ export interface HelpToolCallResult {
 }
 
 /** `userId`, `tenantId` and `role` are the signed-in person's — from the session, never from the model. */
-export interface HelpRunCtx { userId: unknown; tenantId: string; role: unknown; now?: Date }
+export interface HelpRunCtx {
+  userId: unknown; tenantId: string; role: unknown; now?: Date;
+  /** R-2778: hears every call (refusals too) — the assistant log. A throw in it is ignored. */
+  onCall?: (info: HelpCallInfo) => void;
+}
 
 export const refusedResult = (name: string, refusal: HelpCallRefusal, text: string): HelpToolCallResult =>
   ({ name, ok: false, refusal, text: `${name}: ${text}.`, sources: [], href: null, label: null });
@@ -210,7 +214,7 @@ export async function runHelpTools(
   const now = ctx.now ?? new Date();
   const timeoutMs = opts.timeoutMs ?? HELP_TOOL_TIMEOUT_MS;
 
-  return Promise.all(calls.map(async (call, i): Promise<HelpToolCallResult> => {
+  const runCall = async (call: HelpToolCall, i: number): Promise<HelpToolCallResult> => {
     const name = typeof call?.name === "string" ? cleanHelpText(call.name, 64) || "unknown" : "unknown";
     /* R-2879: EVERY call counts for the person (also ones refused below), then the batch cap,
        then the question's total over all batches. */
@@ -221,5 +225,15 @@ export async function runHelpTools(
     if (!tool) return refusedResult(name, "unknown_tool", "no such tool");
     if (!helpToolAllowedFor(role, tool)) return refusedResult(name, "not_allowed", HELP_NOT_ALLOWED);
     return runOneTool(tool, call.input, { client, tenantId: ctx.tenantId, role, now, timeoutMs });
+  };
+  /* R-2778: ctx.onCall (the assistant log) hears EVERY call — refusals and rate-limit refusals too — with its time. */
+  return Promise.all(calls.map(async (call, i) => {
+    const t0 = Date.now();
+    const result = await runCall(call, i);
+    try { ctx.onCall?.({ name: result.name, tier: registry.get(typeof call?.name === "string" ? call.name : "")?.tier ?? null, result, ms: Date.now() - t0 }); } catch { /* the audit note must not fail an answer */ }
+    return result;
   }));
 }
+
+/** R-2778: what opts.onCall is told about one call. Names, tier, outcome, time — never the rows. */
+export interface HelpCallInfo { name: string; tier: HelpToolDef["tier"] | null; result: HelpToolCallResult; ms: number }

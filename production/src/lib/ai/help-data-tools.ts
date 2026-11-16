@@ -24,7 +24,7 @@ import type { HelpAction, HelpAnswer } from "@/lib/ai/app-help";
 import { isUserRole } from "@/lib/auth/roles";
 import { canOpenRoute } from "@/lib/nav";
 import { DATA_TOOLS } from "@/lib/ai/help-tools/data-tools";
-import { runHelpTools, runOneTool, HELP_NOT_ALLOWED, HELP_RATE_LIMITED } from "@/lib/ai/help-tools/runner";
+import { runHelpTools, runOneTool, HELP_NOT_ALLOWED, HELP_RATE_LIMITED, type HelpCallInfo } from "@/lib/ai/help-tools/runner";
 import type { HelpSession } from "@/lib/ai/help-tools/session";
 import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
 import { helpToolRateOk } from "@/lib/ai/help-tools/limits";
@@ -133,9 +133,11 @@ export async function runHelpDataToolsV2(
   session: HelpSession,
   ctx: { userId: string; tenantId: string; role: string | null | undefined; now?: Date },
   names: readonly HelpDataToolName[],
+  /** R-2778: hears every call (name, tier, outcome, ms) — the assistant log. */
+  onCall?: (info: HelpCallInfo) => void,
 ): Promise<HelpToolResult[]> {
   const list = names.slice(0, HELP_TOOLS_MAX);
-  const res = await runHelpTools(session, ctx, list.map((name) => ({ name, input: {} })));
+  const res = await runHelpTools(session, { ...ctx, onCall }, list.map((name) => ({ name, input: {} })));
   return res.map((r, i) => ({
     tool: list[i],
     ok: r.ok,

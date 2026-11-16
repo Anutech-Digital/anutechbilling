@@ -44,6 +44,8 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "ad_accounts.token_expires_at": "an expiry time, not the token",
   "ai_usage_monthly.input_tokens": "R-1877 AI usage counter — integer count of model input tokens, no secret",
   "ai_usage_monthly.output_tokens": "R-1877 AI usage counter — integer count of model output tokens, no secret",
+  "ai_assistant_log.tokens_in": "R-2778 Help AI log — integer count of model input tokens for one answer, no secret",
+  "ai_assistant_log.tokens_out": "R-2778 Help AI log — integer count of model output tokens for one answer, no secret",
   "user_google_tokens.token_expiry": "an expiry time, not the token",
   "api_keys.key_hash": "SHA-256 of a random API key; owner-only by RLS; a hash cannot be used as the key",
   "membership_invites.token_hash": "R-2517 SHA-256 of a single-use 256-bit invite-link token (the token is never stored); only the inviting company's owners can read it (RLS); a hash cannot be used as the link",

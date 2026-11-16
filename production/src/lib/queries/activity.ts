@@ -20,6 +20,8 @@ export type ActivityRow = {
   user_id: string | null;
   /** 'Customer <name>' when a portal customer (not in `users`) made the change — R-016. */
   actor_label: string | null;
+  /** 'ai' when the Help AI made the change for user_id (R-2778); null = the person did it. */
+  via: string | null;
   /** update → { column: { old, new } } · delete → { old: row } (migration 20260927150000). */
   changes: Record<string, unknown> | null;
   actor: { full_name: string | null; initials: string | null; color: string | null } | null;
@@ -33,7 +35,7 @@ export function useActivityLog(opts?: { userId?: string; limit?: number }) {
       const supabase = createClient();
       let q = supabase
         .from("activity_log")
-        .select("id, action, entity, entity_id, label, created_at, user_id, actor_label, changes, actor:users!activity_log_user_id_fkey(full_name, initials, color)")
+        .select("id, action, entity, entity_id, label, created_at, user_id, actor_label, via, changes, actor:users!activity_log_user_id_fkey(full_name, initials, color)")
         .order("created_at", { ascending: false })
         .limit(limit);
       if (opts?.userId) q = q.eq("user_id", opts.userId);

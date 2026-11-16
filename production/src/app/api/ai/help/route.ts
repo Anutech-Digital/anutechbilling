@@ -39,6 +39,7 @@ import { HELP_MAX_IMAGES } from "@/lib/ai/help-images";
 import { helpDataToolsPrompt, HELP_TOOL_RESULTS_RULE, parseToolRequest, runHelpDataTools, runHelpDataToolsV2, toolResultsForPrompt, toolFallbackAnswer, withToolLinks, type HelpToolResult } from "@/lib/ai/help-data-tools";
 import { helpAiV2Enabled } from "@/lib/ai/help-tools/registry";
 import { openHelpSession } from "@/lib/ai/help-tools/session";
+import { createHelpLog, type HelpLog } from "@/lib/ai/help-log";
 import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
 
@@ -78,7 +79,19 @@ const NO_KEY = "No AI (Gemini) key is set for this company, so AI Help cannot an
 /** What the person "said" when they pressed a button instead of typing. */
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;
 
+/* R-2778: what the assistant log needs at the end of ANY exit (early return or a throw). */
+interface HelpTrace { log: HelpLog | null; ok: boolean; model: string | null; askedAt: number }
+
 export async function POST(request: NextRequest) {
+  const trace: HelpTrace = { log: null, ok: false, model: null, askedAt: Date.now() };
+  try {
+    return await handlePost(request, trace);
+  } finally {
+    await trace.log?.finish({ ok: trace.ok, ms: Date.now() - trace.askedAt, model: trace.model });
+  }
+}
+
+async function handlePost(request: NextRequest, trace: HelpTrace) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
@@ -115,7 +128,12 @@ ${what}` };
   /* R-1470: AI Help is for every team role (the Help page's roles, partner agent included) — a
      login without a known role (no users row, stale value) gets no model call on our key. */
   if (!mayOpenPage(me?.role, ["/help"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
+  /* R-2778: every question and tool run is noted in ai_assistant_log (owner/manager can read it). */
+  const helpLog = createHelpLog(() => supabase);
+  trace.log = helpLog;
+  await helpLog.question(messages[messages.length - 1].text);
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
+  trace.model = gemini.model ?? null;
   if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], followUps: [], ai: false, reason: "no_key" });
 
   /* R-189: the company's own setup, read with the person's login (RLS) — not for error
@@ -164,12 +182,13 @@ ${what}` };
        refs). Flag off or any other role → the R-421 path exactly as before. */
     const v2 = helpAiV2Enabled(me?.role);
     const results: HelpToolResult[] = v2
-      ? await Promise.resolve().then(() => runHelpDataToolsV2(openHelpSession(), { userId: user.id, tenantId, role: me?.role ?? null }, wanted)).catch((err: unknown) => {
+      ? await Promise.resolve().then(() => runHelpDataToolsV2(openHelpSession(), { userId: user.id, tenantId, role: me?.role ?? null }, wanted, helpLog.tool)).catch((err: unknown) => {
           /* A refused session / tenant reads nothing: say "could not be read" per tool, never a 500. */
           console.error("[ai/help] v2 tools refused:", (err as Error)?.message);
           return wanted.map((tool): HelpToolResult => ({ tool, ok: false, text: `${tool}: could not be read just now — try again in a minute.`, href: null, label: null }));
         })
       : await runHelpDataTools(supabase, { userId: user.id, tenantId, role: me?.role ?? null }, wanted);
+    if (!v2) helpLog.legacy(results, Date.now() - trace.askedAt);
     if (v2) sources = results.flatMap((r) => r.sources ?? []);
     const second = await ask(HELP_TOOL_RESULTS_RULE, toolResultsForPrompt(results));
     /* A second call that fails still answers with the numbers — they were read already. */
@@ -198,5 +217,6 @@ ${what}` };
       .slice(0, 3)
       .map((r) => ({ id: r.id, title: r.title }));
   }
+  trace.ok = true;
   return NextResponse.json({ ...answer, similar, ai: true, ...(sources ? { sources } : {}) });
 }
