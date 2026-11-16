@@ -20,7 +20,7 @@ import { fullyCredited, invoicePaymentState } from "@/lib/invoices/payment-state
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import type { StageDoc, StageFlagInput, StageInput, StageInvoice, StageSub } from "@/lib/renewals/stage";
-import type { LastDocs, LastInvoice } from "./last-docs";
+import { partPeriodWords, type LastDocs, type LastInvoice } from "./last-docs";
 
 export interface StageRowSub extends StageSub {
   id: string;
@@ -105,7 +105,8 @@ export function renewalDoc(f: Pick<StageRowFacts, "sub" | "docs" | "linkedStatus
     const q = f.docs?.quote && f.docs.quote.id === sent.quoteId ? f.docs.quote : null;
     return {
       kind: sent.kind, quoteId: sent.quoteId, status: sent.status, paymentStatus: q?.payment_status ?? null,
-      dueDate: sent.dueDate ?? null, period: q?.period ?? null,
+      /* R-2862: the part proforma's own period, also when a newer quote is the row's newest one sent */
+      dueDate: sent.dueDate ?? null, period: q?.period ?? (sent.part ? partPeriodWords(sent.part.start, sent.part.endExclusive) : null),
     };
   }
   const id = f.sub.renewal_quote_id;

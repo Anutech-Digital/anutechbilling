@@ -39,7 +39,7 @@ import { useRenewalDrawerCatalog } from "./drawer-cost-data";
 import { useRenewalDrawerSeatCuts } from "./drawer-seat-cut-data";
 import { CATALOGUE_HREF, booksRupeeLine, drawerMoney, drawerSeatPlan, mayShowRenewalCost, renewalCostForSub, type DrawerMoney } from "./drawer-money";
 import {
-  currentTermWords, drawerSubFromSearch, drawerViewFromSearch, withDrawerSub, drawerFlagRows, type DrawerView, drawerFollowupRows, remindersWords, termLengthWords,
+  currentTermWords, drawerSubFromSearch, drawerViewFromSearch, withDrawerSub, drawerFlagRows, type DrawerView, drawerFollowupRows, remindersWords, termLengthWords, unpaidPartWords,
 } from "./drawer";
 import { historyTabs, historyTimeline } from "./drawer-history";
 import { DrawerHistory, FollowupLine, ReminderLine } from "./drawer-history-section";
@@ -299,6 +299,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
   );
   const money = item ? drawerMoney(item.amount, cost, sub?.term_months, seatPlan ?? undefined) : ({ kind: "loading" } as const);
   const booksLine = item ? booksRupeeLine(item.amount, sub?.term_months) : null;
+  const unpaidPart = item ? unpaidPartWords(item.due, item.amount.gst) : null;
   const fu = item?.followup;
   const owner = fu?.ownerId ? nameOf(fu.ownerId) ?? "a colleague" : "Nobody yet";
 
@@ -351,6 +352,8 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
               <Section title="Terms" testId="renewal-drawer-terms">
                 <dl>
                   <Fact label="This term">{currentTermWords(sub) ?? "—"}</Fact>
+                  {/* R-2862: the part the Due date is about — before "Next term", which is the term after it. */}
+                  {unpaidPart && <Fact label="Unpaid part"><span className="tabular-nums" data-testid="renewal-drawer-unpaid-part">{unpaidPart}</span></Fact>}
                   <Fact label="Next term">{nextTermWords(sub) ?? "—"}</Fact>
                   {/* R-2823: the vendor's own renewal date, only when known and not the same as ours. */}
                   {vendorWords && <Fact label="At the vendor"><span className="tabular-nums" data-testid="renewal-drawer-vendor-term">{vendorWords}</span></Fact>}

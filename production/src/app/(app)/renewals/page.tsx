@@ -806,7 +806,7 @@ export default function RenewalsPage() {
   /* R-2405: the tiles add up the rows' own renewal amounts; a pressed tile lists those rows.
      R-2586: the tiles stay on the 90-day window (TILE_TABS) — Later is a look-ahead list. */
   const tileRowOf = new Map<string, TileRow>(TILE_TABS.flatMap((t) => items[t].map((i) => [i.sub.id, {
-    id: i.sub.id, tab: t, statusKey: i.status.key, amount: i.amount.value, renewalDate: i.sub.renewal_date,
+    id: i.sub.id, tab: t, statusKey: i.status.key, amount: i.amount.value, dueAmount: i.due.amount /* R-2862 */, renewalDate: i.sub.renewal_date,
   }] as const)));
   const tileFigures = renewalTiles([...tileRowOf.values()], monthQuotes ?? [], month);
   /* R-2751: this month's Forecast bar = the Renewed tile's "of ₹X due in <month>" (paid + still due, before GST). */

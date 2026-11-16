@@ -74,6 +74,8 @@ export interface DuePeriod {
   running: string | null;
   /** The Product line's tooltip: "Renews for Nov 2026" / "Billed part Oct 2026" / "Oct unpaid · Nov running (billed part Oct 2026)". */
   title: string;
+  /** R-2862: source "part" — that part's own value, ₹ before GST (subscription_billings.taxable_amount); null = not read / the term. */
+  amount: number | null;
 }
 
 type PeriodSub = { renewal_date: string | null; term_months?: number | null; start_date?: string | null };
@@ -127,23 +129,70 @@ export function duePeriodFacts(
     }
     const words = periodWords(start, end);
     const title = running ? `${running} (billed part ${words})` : `Billed part ${words}`;
-    return { start, end, words, short: `${shortDate(start)} – ${shortDate(end)}`, source: "part", running, title };
+    const amount = part?.taxable != null && Number.isFinite(part.taxable) && part.taxable >= 0 ? part.taxable : null;
+    return { start, end, words, short: `${shortDate(start)} – ${shortDate(end)}`, source: "part", running, title, amount };
   }
   const termStart = renewalTermStart(sub);
   if (!termStart) return null;
   const months = sub.term_months && sub.term_months > 0 ? sub.term_months : 12;
   const termEnd = termEndInclusive(termStart, months);
   const termWords = periodWords(termStart, termEnd, months);
-  return { start: termStart, end: termEnd, words: termWords, short: `${shortDate(termStart)} – ${shortDate(termEnd)}`, source: "term", running: null, title: `Renews for ${termWords}` };
+  return { start: termStart, end: termEnd, words: termWords, short: `${shortDate(termStart)} – ${shortDate(termEnd)}`, source: "term", running: null, title: `Renews for ${termWords}`, amount: null };
 }
 
 /** The billed part of the document the stage is about: its part proforma (quoteId), else its part invoice. */
 function stagePart(stage: Pick<RenewalStage, "quoteId" | "invoiceId">, docs: LastDocs): DocPart | null {
   if (stage.quoteId) {
+    /* R-2862: the open part proforma carries its own part (last-docs.ts `sent.part`) — found even when a newer quote
+       (add seats) is the row's newest quote sent; before, such a row fell back to the next term */
+    if (docs.sent?.quoteId === stage.quoteId && docs.sent.part) return docs.sent.part;
     const q = docs.quote?.id === stage.quoteId ? docs.quote : docs.allQuotes?.find((x) => x.id === stage.quoteId);
     return q?.part ?? null;
   }
   if (!stage.invoiceId) return null;
   const all = [...docs.invoices, ...(docs.invoice ? [docs.invoice] : []), ...(docs.allInvoices ?? [])];
   return all.find((i) => i.id === stage.invoiceId)?.part ?? null;
+}
+
+/**
+ * R-2862 (leftovers of R-2858) — ONE "what is due, when, how much" per row, from the same source the Due
+ * column reads (the stage's anchor + the part the stage is about). Tabs (dueDays), the tiles (`amount`), the
+ * sidebar badge (lib/renewals/buckets.ts inRenewalsBadge takes `days`) and the drawer's "Unpaid part" line
+ * all read it, so they cannot disagree:
+ *   source "part"  the row is about ONE billed part (its proforma / invoice): `amount` = that part's value;
+ *   source "term"  the whole next term: `amount` = the row's renewal amount (queue.ts renewalAmount().value).
+ * Both before GST, whole rupees — the tiles' basis. `unpaidPart` only while that part's document is with the
+ * customer unpaid (sent / invoiced, or an ended row still owed it) — never for a draft.
+ */
+export interface RowDue {
+  /** The Due column's date (YYYY-MM-DD); null = no date. */
+  date: string | null;
+  /** The Due column's IST day count — the row's tab is windowTab(days). */
+  days: number;
+  source: "part" | "term";
+  /** ₹ before GST that falls due on `date`. */
+  amount: number;
+  /** The unpaid part the row is about: its period in the paper's words ("Oct 2026") and its value before GST (null = not read). */
+  unpaidPart: { period: string; amount: number | null } | null;
+}
+
+const OWED_ON_ENDED = new Set<RenewalStage["key"]>(["stopped", "ending"]);
+
+export function rowDue(
+  stage: Pick<RenewalStage, "key" | "quoteId" | "invoiceId" | "anchorDate" | "anchorKind" | "days" | "partDueDate"> | null,
+  period: DuePeriod | null,
+  sub: { renewal_date: string | null },
+  daysUntil: number,
+  termAmount: number,
+): RowDue {
+  const date = dueCellFacts(stage, sub, daysUntil).date;
+  const days = dueDaysOf(stage, daysUntil);
+  if (!stage || period?.source !== "part") return { date, days, source: "term", amount: Math.round(termAmount), unpaidPart: null };
+  const unpaid = UNPAID_STAGE.has(stage.key) || (OWED_ON_ENDED.has(stage.key) && !!stage.quoteId);
+  return {
+    date, days, source: "part",
+    /* the part's value not read → the term amount, as before (never ₹0 for a row that owes money) */
+    amount: Math.round(period.amount ?? termAmount),
+    unpaidPart: unpaid ? { period: period.words, amount: period.amount == null ? null : Math.round(period.amount) } : null,
+  };
 }
