@@ -258,6 +258,25 @@ export const FLAG_EXPLAIN: Record<FlagKey, { title: string; explain: string }> =
 
 export interface DrawerFlagRow { key: FlagKey | "nonRenewing" | "renewedAnyway"; title: string; reason: string; explain: string }
 
+/**
+ * R-2857: the drawer prints "<title> — <reason>", and the chip's tooltip reason starts with the same
+ * words ("At risk" / "At risk: Renewal 11d overdue") — so it read "At risk — At risk". The reason here
+ * is only what the title does not already say; "" = nothing more (the drawer then prints the title alone).
+ */
+export function flagReasonAfterTitle(title: string, reason: string | null | undefined): string {
+  const r = (reason ?? "").trim();
+  const t = title.trim().toLowerCase();
+  if (!r || r.toLowerCase() === t) return "";
+  if (r.toLowerCase().startsWith(t)) {
+    const rest = r.slice(t.length);
+    const sep = /^\s*[:\u2014\u2013-]\s*/;
+    /* also "Follow-up due 12 Nov 2026" and "Renewal held. The renewal date was kept…" — whole words only ("At risky terms" stays) */
+    const word = /^(?:\.\s*|\s+)/;
+    if (sep.test(rest) || word.test(rest)) return rest.replace(sep, "").replace(word, "").trim();
+  }
+  return r;
+}
+
 /** Each flag with its own reason (the chip's tooltip) and the plain line; plus Won't renew / Renewed anyway. */
 export function drawerFlagRows(
   flags: readonly StageFlag[],
@@ -266,7 +285,7 @@ export function drawerFlagRows(
   const out: DrawerFlagRow[] = flags.map((f) => ({
     key: f.key,
     title: FLAG_EXPLAIN[f.key].title,
-    reason: f.key === "priorTermUnpaid" && extra.priorDueGap ? `${f.reason} · ${extra.priorDueGap}` : f.reason,
+    reason: flagReasonAfterTitle(FLAG_EXPLAIN[f.key].title, f.key === "priorTermUnpaid" && extra.priorDueGap ? `${f.reason} · ${extra.priorDueGap}` : f.reason),
     explain: FLAG_EXPLAIN[f.key].explain,
   }));
   if (extra.renewedAnyway) {

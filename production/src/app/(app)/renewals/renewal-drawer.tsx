@@ -51,6 +51,7 @@ import { dueCellFacts } from "./due-anchor";
 import type { RenewalAmount } from "./queue";
 import type { RenewalFollowup, RenewalFollowupRow } from "./followup";
 import type { RowContact } from "./queue-data";
+import { planSeatsWords } from "./plan-seats";
 
 /** R-2762: reminders shown before "Show all N". */
 const REMINDERS_PAGE = 5;
@@ -316,7 +317,7 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
                   : sub.customer_name}
               </SheetTitle>
               <SheetDescription>
-                {[sub.plan, sub.seats != null ? `${sub.seats} seats` : null, sub.vendor ? sub.vendor[0].toUpperCase() + sub.vendor.slice(1) : null, subscriptionDomain(sub)].filter(Boolean).join(" · ")}
+                {[planSeatsWords(sub.plan, sub.seats) || null, sub.vendor ? sub.vendor[0].toUpperCase() + sub.vendor.slice(1) : null, subscriptionDomain(sub)].filter(Boolean).join(" · ")}
               </SheetDescription>
               <RenewalContact contact={item.contact} customerId={sub.customer_id} loading={!item.contact} />
               <div className="mt-2 flex flex-wrap items-start justify-between gap-3" data-testid="renewal-drawer-head">
@@ -404,7 +405,8 @@ export function RenewalDrawer({ item, open, view = null, onClose, names, followu
                   <ul className="space-y-2">
                     {flags.map((f) => (
                       <li key={f.key} className="text-sm" data-testid="renewal-drawer-flag" data-flag={f.key}>
-                        <p className="font-medium text-ink">{f.title} <span className="font-normal text-ink-2">— {f.reason}</span></p>
+                        {/* R-2857: the reason only when it adds to the title (was "At risk — At risk") */}
+                        <p className="font-medium text-ink">{f.title}{f.reason ? <> <span className="font-normal text-ink-2">— {f.reason}</span></> : null}</p>
                         <p className="text-xs text-ink-3">{f.explain}</p>
                       </li>
                     ))}

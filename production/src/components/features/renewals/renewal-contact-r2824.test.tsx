@@ -40,7 +40,7 @@ describe("renewalContactView — the number follows the customer's country", () 
     const v = renewalContactView({ name: null, phone: "07911123456", email: null, country: "United Kingdom" })!;
     expect(v.telHref).toBe("tel:+447911123456");
     expect(v.whatsappHref).toBe("https://wa.me/447911123456");
-    expect(v.phoneText).toBe("+447911123456");
+    expect(v.phoneText).toBe("+44 7911123456"); /* R-2857: the one display form */
   });
   it("a number saved with its own code keeps it", () => {
     const v = renewalContactView({ name: null, phone: "+1 555 123 4567", email: null, country: "India" })!;
@@ -62,7 +62,7 @@ describe("RenewalContact", () => {
     render(<RenewalContact customerId={CUST} contact={{ name: "Asha Rao", phone: "9876500002", email: "asha@x.in", country: "India" }} />);
     const box = screen.getByTestId("renewal-contact");
     expect(within(box).getByText("Asha Rao")).toBeTruthy();
-    expect(within(box).getByText("+919876500002").closest("a")?.getAttribute("href")).toBe("tel:+919876500002");
+    expect(within(box).getByText("+91 98765 00002").closest("a")?.getAttribute("href")).toBe("tel:+919876500002");
     expect(within(box).getByText("WhatsApp").closest("a")?.getAttribute("href")).toBe("https://wa.me/919876500002");
     expect(within(box).getByText("asha@x.in").closest("a")?.getAttribute("href")).toBe("mailto:asha@x.in");
   });
@@ -98,7 +98,7 @@ describe("the drawer header", () => {
   it("shows the contact", () => {
     render(<QueryClientProvider client={new QueryClient()}><RenewalDrawer item={item({ name: "Asha", phone: "9876500002", email: null, country: "India" })} open onClose={() => {}} names={undefined} followupRows={[]} strong={false} /></QueryClientProvider>);
     const head = screen.getByTestId("renewal-drawer");
-    expect(within(head).getByText("+919876500002")).toBeTruthy();
+    expect(within(head).getByText("+91 98765 00002")).toBeTruthy();
   });
   it("shows 'Add contact' when the customer has none", () => {
     render(<QueryClientProvider client={new QueryClient()}><RenewalDrawer item={item({ name: null, phone: null, email: null })} open onClose={() => {}} names={undefined} followupRows={[]} strong={false} /></QueryClientProvider>);

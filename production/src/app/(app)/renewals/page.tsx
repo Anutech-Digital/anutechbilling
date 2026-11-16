@@ -78,6 +78,7 @@ import {
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RenewalAmount,
 } from "./queue";
 import { buildQueueItems, firstRows, QUEUE_PAGE_ROWS, type QueueItem } from "./queue-items";
+import { planSeatsWords } from "./plan-seats";
 import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
 import { monthOf, renewalTiles, tileMatches, renewedRowMatches, reconcileWindows, paidRenewalsInMonth, forecastWithThisMonth, TILE_LABEL, type TileKey, type TileRow } from "./tiles";
 import { RenewalReminderDialog, RenewalRemindButton, type ReminderDialogState } from "./reminder-dialog";
@@ -443,7 +444,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   <button type="button" onClick={() => onOpen(sub.id)} data-testid="renewal-open-drawer"
                     className="mt-0.5 block max-w-full truncate rounded-sm text-left text-2xs text-ink-3 underline-offset-2 hover:text-ink hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
                     aria-label={`Open details — ${sub.customer_name} · ${sub.plan}`}>
-                    {sub.plan} · {sub.seats} seats
+                    {planSeatsWords(sub.plan, sub.seats)}
                   </button>
                   {/* R-2755: the subscription's domain (nothing when it has none) */}
                   {subscriptionDomain(sub) && (

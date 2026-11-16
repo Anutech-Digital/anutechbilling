@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { primaryContactsFor } from "@/lib/contacts/primary";
+import { displayPhone } from "@/components/features/renewals/renewal-contact-rules";
 import type { RenewalQuoteInfo } from "./queue";
 import type { RenewalFollowupRow } from "./followup";
 import type { RenewalQuotePayment } from "./tiles";
@@ -32,16 +33,22 @@ function chunks<T>(xs: readonly T[], n: number): T[][] {
   return out;
 }
 
-/** Primary contact wins; the legacy customers.contact_* columns fill what it leaves empty. */
+/**
+ * Primary contact wins; the legacy customers.contact_* columns fill what it leaves empty.
+ * R-2857: the phone is in the ONE display form ("+91 98765 98765", displayPhone) — the row, the card,
+ * the drawer and the follow-up dialog all print this value, so they can never differ; its tel: /
+ * WhatsApp links read the same digits back (lib/phone). Display only: nothing is written.
+ */
 export function mergeContact(
   primary: { name: string | null; email: string | null; phone: string | null } | undefined,
   legacy: { contact_email: string | null; contact_phone: string | null; country?: string | null } | undefined,
 ): RowContact {
+  const country = legacy?.country?.trim() || null;
   return {
     name: primary?.name ?? null,
     email: primary?.email?.trim() || legacy?.contact_email?.trim() || null,
-    phone: primary?.phone?.trim() || legacy?.contact_phone?.trim() || null,
-    country: legacy?.country?.trim() || null,
+    phone: displayPhone(primary?.phone?.trim() || legacy?.contact_phone?.trim() || null, country),
+    country,
   };
 }
 
