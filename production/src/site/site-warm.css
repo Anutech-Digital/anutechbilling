@@ -682,6 +682,9 @@
   cursor: pointer; box-shadow: 0 12px 28px rgba(18, 49, 42, 0.28);
   transition: opacity .3s ease, transform .35s cubic-bezier(.2,.8,.2,1), visibility .3s, background-color .2s ease;
 }
+/* "Talk to us" sits bottom-left (chrome.css), so the button takes the corner itself — except while the
+   cookie banner holds bottom-left and the launcher stays bottom-right: then it sits above it, as before. */
+.anutech-site[data-site-theme="warm"]:not(:has(.consent-banner)) .w-to-top { bottom: 22px; }
 .anutech-site[data-site-theme="warm"] .w-to-top[data-shown="false"] { opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(16px) scale(0.9); }
 .anutech-site[data-site-theme="warm"] .w-to-top:hover { background: var(--w-teal-dark); transform: translateY(-3px); }
 .anutech-site[data-site-theme="warm"] .w-to-top:focus-visible { outline: 3px solid var(--w-marigold); outline-offset: 3px; }
