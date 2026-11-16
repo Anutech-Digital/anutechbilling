@@ -18,10 +18,14 @@
  * refresh the rows.
  * R-2740: readRenewalDocs is the same read as a plain function — the row drawer runs it for ONE
  * subscription with { all: true } (every quote + invoice) inside its own single query.
+ * R-2876: on the page all three rounds are answered from ONE read (row-facts-data.ts — the function
+ * renewal_row_facts); the reads below then run unchanged against that answer (opts.client). They are still the
+ * real reads when the function is missing or cannot answer in full, and for the drawer.
  */
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readTogetherLinks } from "./together-links-data";
+import { withRowFacts, type FactsClient } from "./row-facts-data";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { noteTotalsByInvoice, type NoteAmountRow } from "@/lib/invoices/note-totals";
@@ -57,7 +61,11 @@ export function useRenewalLastDocs(subs: readonly SubRef[]) {
     enabled: rows.length > 0,
     staleTime: 60_000,
     /* R-2765: rounds 1–2 come from the ONE shared read (Last paid uses the same rows) */
-    queryFn: async () => docsFromRows(rows, await fetchRenewalDocRows(qc, rows), { concurrency: RENEWALS_READ_CONCURRENCY }),   // R-2855: round 3 side by side too
+    queryFn: () => withRowFacts(rows,
+      /* R-2876: one read — the same readers, answered from memory */
+      async (client) => docsFromRows(rows, await readRenewalDocRows(rows, { client }), { client }),
+      /* the old way: R-2765 shared rounds 1–2, R-2855 round 3 side by side */
+      async () => docsFromRows(rows, await fetchRenewalDocRows(qc, rows), { concurrency: RENEWALS_READ_CONCURRENCY })),
   });
 }
 
@@ -122,9 +130,9 @@ export async function readRenewalDocs(
 /** R-2765: rounds 1–2 (see the header). `concurrency`: id chunks in flight per read (the page: 4). */
 export async function readRenewalDocRows(
   rows: readonly DocRowRef[],
-  opts: { moreQuotes?: (found: readonly DocQuote[], cols: string) => Promise<DocQuote[]>; concurrency?: number } = {},
+  opts: { moreQuotes?: (found: readonly DocQuote[], cols: string) => Promise<DocQuote[]>; concurrency?: number; /** R-2876: answer the reads from the one-read answer */ client?: FactsClient } = {},
 ): Promise<RenewalDocRows> {
-  const supabase = createClient();
+  const supabase = (opts.client ?? createClient()) as ReturnType<typeof createClient>;
   const c = { concurrency: opts.concurrency };
   /* quotes.subscription_billing_id / subscription_billings.due_on (R-2044) are not in the generated types yet — the same untyped read as next-part-request.ts. */
   const loose = supabase as unknown as SupabaseClient;
@@ -196,8 +204,8 @@ export async function readRenewalDocRows(
 }
 
 /** R-2765: the rows' documents from rounds 1–2, then round 3 (only for what the rows show). */
-export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, opts: { all?: boolean; concurrency?: number } = {}): Promise<Map<string, LastDocs>> {
-  const supabase = createClient();
+export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, opts: { all?: boolean; concurrency?: number; client?: FactsClient } = {}): Promise<Map<string, LastDocs>> {
+  const supabase = (opts.client ?? createClient()) as ReturnType<typeof createClient>;
   /* R-2855: round 3 read its id chunks one after another (R-2765 only did rounds 1–2) — on staging's 786
      subscriptions that was 16 requests in a row for the quote lines alone, and the Status chip waits for them.
      With `concurrency` (the page: 4) each of the three reads goes 4 chunks at a time; the quote lines are read
