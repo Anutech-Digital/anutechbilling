@@ -10,9 +10,10 @@ import { HELP_INJECTION_CASES } from "@/lib/ai/help-loop-injection-fixture";
 const TENANT = "aaaaaaaa-0000-4000-8000-000000000001";
 const KNOWN_CUSTOMER = "cccccccc-0000-4000-8000-0000000000c1";
 
-const db = vi.hoisted(() => ({ role: "owner" as string, rpc: [] as { fn: string; args: Record<string, unknown> }[], uid: "u-1" }));
+const db = vi.hoisted(() => ({ key: "x.eyJyb2xlIjoiYW5vbiJ9.y", role: "owner" as string, rpc: [] as { fn: string; args: Record<string, unknown> }[], uid: "u-1" }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({
+    supabaseKey: db.key,
     auth: { getUser: async () => ({ data: { user: { id: db.uid } } }) },
     rpc: async (fn: string, args: Record<string, unknown>) => { db.rpc.push({ fn, args }); return { data: null, error: null }; },
     from: (table: string) => {
@@ -71,7 +72,7 @@ const final = (o: Record<string, unknown>) => msg("end_turn", [{ type: "text", t
 const REPLY = { reply: "2 subscription chal rahe hain, 1 agle 30 din mein renew.", actions: [], checklist: [], followUps: [] };
 
 beforeEach(() => {
-  db.role = "owner"; db.rpc = []; db.uid = `u-${Math.random()}`;
+  db.key = "x.eyJyb2xlIjoiYW5vbiJ9.y"; db.role = "owner"; db.rpc = []; db.uid = `u-${Math.random()}`;
   gem.calls = 0; gem.answers = [];
   api.bodies = []; api.opts = []; api.script = []; api.throwNext = null;
   process.env.HELP_AI_V2 = "on";
@@ -177,6 +178,15 @@ describe("HELP_AI_V2 on, owner: the native tool-use loop", () => {
     expect(text).not.toContain("sk-ant");
     expect(text).not.toContain("10.1.1.1");
     expect(text).not.toContain("529");
+  });
+
+  it("a refused session (service-role key on the client) is a plain answer, status 200 — never a 500, no AI call", async () => {
+    db.key = `x.${Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url")}.y`;
+    const res = await ask("kitne subscription");
+    expect(res.status).toBe(200);
+    expect((await res.json()).reply).toMatch(/cannot answer right now/i);
+    expect(api.bodies).toHaveLength(0);
+    expect(db.rpc.at(-1)?.args.p_kind).toBe("answer"); // the log still closes
   });
 
   it("plain text instead of JSON from the model is shown as a plain reply — no actions", async () => {

@@ -187,7 +187,7 @@ ${what}` };
     const model = anthropicModel();
     trace.model = model;
     const loop = await answerWithTools({
-      session: sessionOnce(), userId: user.id, tenantId, role: me?.role ?? null, apiKey: claudeKey, model,
+      openSession: sessionOnce, userId: user.id, tenantId, role: me?.role ?? null, apiKey: claudeKey, model,
       system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath), testHistory, dataTools: HELP_LOOP_TOOLS_PROMPT }),
       user: helpUserTurn(messages, { trail: trail.length ? trailForPrompt(trail) : null, facts: facts?.text ?? null }),
       customerIds: facts?.customerIds, onCall: helpLog.tool,
