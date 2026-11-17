@@ -345,7 +345,7 @@
    outlined Google button; a teal "Sign in"; teal links. Same words, same order.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) {
-  position: relative; isolation: isolate; overflow: hidden; background: var(--w-bg);
+  position: relative; isolation: isolate; overflow: clip; background: var(--w-bg);
 }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page])::before,
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page])::after {
@@ -496,3 +496,18 @@
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form > p.text-2xs { font-size: 12.5px; line-height: 1.6; color: var(--w-muted-2); }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form > p.text-2xs a { color: var(--w-ink-2); }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form > p.text-2xs a:hover { color: var(--w-teal); }
+/* /signup forms: wider, fields in two columns (owner, 17 Nov 2026: "form design is too narrow").
+   Business form 720px — company name beside GSTIN, your name beside work email, the password, the
+   button and the Terms line across; the personal form 600px, its name beside its email. One
+   column again under 640px. */
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="signup"] #companyName) > main > .max-w-md { max-width: 720px; }
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="signup"] #p-fullName) > main > .max-w-md { max-width: 600px; }
+@media (min-width: 640px) {
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form.space-y-4:has(#companyName, #p-fullName) {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 20px; align-items: start;
+  }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form.space-y-4:has(#companyName, #p-fullName) > * { margin: 0 !important; grid-column: 1 / -1; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form.space-y-4:has(#companyName, #p-fullName) > :is(:has(#companyName), :has(#gstin), :has(#fullName), :has(#email), :has(#p-fullName), :has(#p-email)) { grid-column: auto; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form.space-y-4:has(#companyName, #p-fullName) > .h-px { margin-block: 2px !important; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form.space-y-4:has(#companyName, #p-fullName) > button[type="submit"] { margin-top: 6px !important; }
+}
