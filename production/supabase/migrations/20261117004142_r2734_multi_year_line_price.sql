@@ -209,7 +209,7 @@ begin
            and ((coalesce(v_line->>'bulk', '') = 'true'
                  and v_bulk_i is not null)   -- this row is that bulk line's own (see the pick above)
                 or (coalesce(v_line->>'bulk', '') <> 'true'   -- R-2734
-                    and coalesce(v_line->>'qty', '') ~ '^d+(.0+)?$'
+                    and coalesce(v_line->>'qty', '') ~ '^\d+(\.0+)?$'
                     and (v_line->>'qty')::numeric = new.seats)) then
           begin
             v_rate := case

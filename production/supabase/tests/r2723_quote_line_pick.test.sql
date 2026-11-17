@@ -161,7 +161,7 @@ begin
 
   perform public.record_payment('TESTQ-R2723-C', 4248, 'upi', 'r2723_c_ref');
   perform pg_temp.r2723_want('c 1-year line', 'TESTQ-R2723-C', 'cust2723.com', '2027-09-01|12|75|null');
-  perform pg_temp.r2723_want('c 3-year line of the same plan', 'TESTQ-R2723-C', null, '2029-09-01|12|75|null');
+  perform pg_temp.r2723_want('c 3-year line of the same plan', 'TESTQ-R2723-C', null, '2029-09-01|12|75|900.00');  -- R-2734: a normal multi-year line is priced from the line (term_amount = the year, mrr unchanged)
   raise notice 'PASS c: two normal lines of one plan — 1 year and 3 years';
 
   perform public.record_payment('TESTQ-R2723-F', 2832, 'upi', 'r2723_f_ref');
