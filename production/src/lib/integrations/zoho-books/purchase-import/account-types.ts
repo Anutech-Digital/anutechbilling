@@ -4,7 +4,8 @@
  * Excel's 727 no-vendor Zoho expenses hold ~Rs 1.25 Cr on such accounts: fixed deposit, Output GST,
  * GST Return, loans, advances.
  *
- * The types come from Zoho's chart of accounts (fy-fetch.ts readChartOfAccounts), stored per company in
+ * The types come from Zoho's chart of accounts (fy-fetch.ts readChartOfAccounts — every page, inactive too; R-2915:
+ * an account a scanned line uses that the lists missed is read by its id, missingAccountIds below), stored per company in
  * zoho_account_types by the server when it reads from Zoho (route.ts). The SQL import
  * (import_zoho_fy_purchases, migration 20261117125913) is the last word; the preview (plan.ts) says the
  * same sentences in the same order:
@@ -199,4 +200,26 @@ export function accountTypeRows(accounts: readonly ZohoAccount[]) {
     out.push({ zoho_account_id: id, zoho_account_name: a.name.trim().slice(0, 200), account_type: type });
   }
   return out;
+}
+
+/** R-2915: at most this many accounts are read from Zoho by their id in one chart-of-accounts read. */
+export const MISSING_ACCOUNTS_PER_READ = 40;
+
+/**
+ * R-2915: the Zoho account ids the scanned documents' lines use that have NO stored type — each once,
+ * sorted (the same order on every read). The chart-of-accounts lists should bring every account; one
+ * they missed is read from Zoho by its id (fy-fetch readChartAccount). Ids that cannot be stored
+ * (empty, over 40 characters) are left out — such a line stays refused.
+ */
+export function missingAccountIds(
+  docs: ReadonlyArray<{ lines?: ReadonlyArray<{ accountId?: string | null }> | null }>, types: Readonly<Record<string, string>>,
+): string[] {
+  const out = new Set<string>();
+  for (const d of docs) {
+    for (const l of Array.isArray(d?.lines) ? d.lines : []) {
+      const id = typeof l?.accountId === "string" ? l.accountId.trim() : "";
+      if (id && id.length <= 40 && types[id] === undefined) out.add(id);
+    }
+  }
+  return [...out].sort();
 }

@@ -34,14 +34,29 @@ const st = vi.hoisted(() => ({
   coaReads: 0,
   coaError: null as Error | null,
   typesSaved: [] as Array<Array<{ id: string; type: string }>>,
+  /* R-2915: Zoho calls one chart read makes, the by-id account reads asked for, what Zoho answers (absent = no such account) or throws. */
+  coaCalls: 1,
+  oneReads: [] as string[],
+  one: {} as Record<string, string>,
+  oneError: {} as Record<string, Error>,
+  /* how long one by-id read takes on the test's clock (Date.now is moved on by it) */
+  oneTakesMs: 0,
+  skewMs: 0,
 }));
 
 vi.mock("@/lib/integrations/zoho-books/fy-fetch", async (orig) => ({
   ...(await orig<typeof import("@/lib/integrations/zoho-books/fy-fetch")>()),
-  readChartOfAccounts: async () => {
+  readChartOfAccounts: async (_o: string, _t: string, _f?: unknown, onCall?: () => void) => {
     st.coaReads += 1;
+    for (let i = 0; i < st.coaCalls; i++) onCall?.();
     if (st.coaError) throw st.coaError;
     return [{ id: "A1", name: "Software", code: "", type: "expense", active: true }, { id: "A-FD", name: "Fixed Deposit", code: "", type: "other_current_asset", active: true }];
+  },
+  readChartAccount: async (_o: string, _t: string, id: string) => {
+    st.oneReads.push(id);
+    st.skewMs += st.oneTakesMs;
+    if (st.oneError[id]) throw st.oneError[id];
+    return st.one[id] ? { id, name: `Zoho ${id}`, code: "", type: st.one[id], active: false } : null;
   },
 }));
 
@@ -131,6 +146,7 @@ beforeEach(() => {
   st.readerRpcs = []; st.readerHolder = null; st.scanSteps = 0;
   st.scanResult = { listed: 3, detailed: 3, listDone: true, complete: true, busy: false, calls: 2 };
   st.types = { A1: "expense" }; st.typesAt = new Date().toISOString(); st.coaReads = 0; st.coaError = null; st.typesSaved = [];
+  st.coaCalls = 1; st.oneReads = []; st.one = {}; st.oneError = {}; st.oneTakesMs = 0; st.skewMs = 0;
 });
 
 describe("R-2502 purchase-import route", () => {
@@ -363,6 +379,134 @@ describe("R-2681 purchase-import route — Zoho's own account type", () => {
       st.runs.expenses = { nextPage: 1, listDone: false, listStartedAt: new Date().toISOString() } as never;
       await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
       expect(st.coaReads).toBe(1);
+    } finally { vi.unstubAllEnvs(); }
+  });
+});
+
+/**
+ * R-2915 — staging (Excel, 17 Nov): after two "Read from Zoho again" ~170 documents still said
+ * `account type … is not read yet`. An account a scanned line uses that the chart lists did not bring
+ * is read from Zoho by its id; one Zoho does not know stays out (fail closed); every call is counted.
+ */
+describe("R-2915 purchase-import route — an account the chart lists missed is read by its id", () => {
+  const env = () => { vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "id"); vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "secret"); };
+  const line = (accountId: string, accountName: string) => ({ accountId, accountName, description: "", hsn: "", qty: 1, taxable: 1000, tax: 0, itcEligible: true });
+  const again = () => {
+    st.typesAt = new Date(Date.now() - 3600_000).toISOString();
+    st.runs.expenses = { nextPage: 1, listDone: false, listStartedAt: new Date().toISOString() } as never;
+    st.facts.bills = [bill(), bill({ zohoId: "B3", lines: [line("OLD-PANTRY", "Pantry"), line("A1", "Software")] })];
+    st.facts.expenses = [bill({ kind: "expenses", zohoId: "E1", lines: [line("OLD-LOAN", "HDFC Enfield Bike Loan")] }), bill({ kind: "expenses", zohoId: "E2", lines: [line("GONE", "Deleted in Zoho")] })];
+  };
+
+  it("missing account is read by id and stored with Zoho's own type — after the chart, each id once", async () => {
+    env();
+    try {
+      again();
+      st.one = { "OLD-PANTRY": "expense", "OLD-LOAN": "long_term_liability" };
+      const res = await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(res.status).toBe(200);
+      expect(st.oneReads).toEqual(["GONE", "OLD-LOAN", "OLD-PANTRY"]);
+      expect(st.typesSaved).toEqual([
+        [{ id: "A1", type: "expense" }, { id: "A-FD", type: "other_current_asset" }],
+        [{ id: "OLD-LOAN", type: "long_term_liability" }, { id: "OLD-PANTRY", type: "expense" }],
+      ]);
+      expect(st.scanSteps).toBe(1);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("unknown account stays refused: Zoho knows none of them → nothing stored for them, the preview still says 'not read yet'", async () => {
+    env();
+    try {
+      again();
+      const res = await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(res.status).toBe(200);
+      expect(st.oneReads).toEqual(["GONE", "OLD-LOAN", "OLD-PANTRY"]);
+      expect(st.typesSaved).toHaveLength(1);
+      st.runs.expenses = done; st.counts.expenses = { listed: 2, detailed: 2 };
+      const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+      expect(body.purchases.skipped).toContainEqual(expect.objectContaining({
+        reason: `Zoho's account type for "Deleted in Zoho" is not read yet — press Read from Zoho again, then preview again.` }));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("calls are counted: every chart page and every by-id read is in the request's Zoho calls", async () => {
+    env();
+    try {
+      again();
+      st.coaCalls = 4;
+      st.one = { "OLD-PANTRY": "expense" };
+      const body = await (await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }))).json();
+      expect(body.calls).toBe(4 + 3);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("at most 40 accounts are read by id in one read — the rest wait for the next Read from Zoho again", async () => {
+    env();
+    try {
+      again();
+      st.facts.expenses = Array.from({ length: 55 }, (_, i) => bill({ kind: "expenses", zohoId: `E${i}`, lines: [line(`M${String(i).padStart(2, "0")}`, `Missing ${i}`)] }));
+      st.facts.bills = [];
+      await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(st.oneReads).toHaveLength(40);
+      expect(st.oneReads[0]).toBe("M00");
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("day limit during by-id reads: what was found is saved, the chart stays saved, the dialog gets the day-limit notice", async () => {
+    env();
+    try {
+      const { ZohoDayLimitError } = await import("@/lib/integrations/zoho-books/api");
+      again();
+      st.one = { GONE: "expense" };
+      st.oneError = { "OLD-LOAN": new ZohoDayLimitError({ calls: 900, budget: 900, retryAt: "2026-11-18T18:30:00.000Z", day: "2026-11-18", limitHitAt: null } as never) };
+      const res = await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.dayLimit).toBeTruthy();
+      expect(st.oneReads).toEqual(["GONE", "OLD-LOAN"]);
+      expect(st.typesSaved).toEqual([[{ id: "A1", type: "expense" }, { id: "A-FD", type: "other_current_asset" }], [{ id: "GONE", type: "expense" }]]);
+      expect(st.scanSteps).toBe(0);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("a Zoho failure on a by-id read (server error) only stops those reads — the list read goes on", async () => {
+    env();
+    try {
+      const { ZohoApiError } = await import("@/lib/integrations/zoho-books/api");
+      again();
+      st.oneError = { GONE: new ZohoApiError("Zoho Books returned an error.", "books_500", 500) };
+      const res = await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(res.status).toBe(200);
+      expect(st.oneReads).toEqual(["GONE"]);
+      expect(st.scanSteps).toBe(1);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("a slow Zoho: the by-id reads stop after 20 s and what was found is saved (the request never runs out first)", async () => {
+    env();
+    const realNow = Date.now.bind(Date);
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + st.skewMs);
+    try {
+      again();
+      st.one = { GONE: "expense", "OLD-LOAN": "long_term_liability", "OLD-PANTRY": "expense" };
+      st.oneTakesMs = 11_000;
+      const res = await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(res.status).toBe(200);
+      expect(st.oneReads).toEqual(["GONE", "OLD-LOAN"]);
+      expect(st.typesSaved[1]).toEqual([{ id: "GONE", type: "expense" }, { id: "OLD-LOAN", type: "long_term_liability" }]);
+      expect(st.scanSteps).toBe(1);
+    } finally { spy.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
+  it("types still fresh for this read → no chart read and no by-id read (no Zoho call on every request)", async () => {
+    env();
+    try {
+      again();
+      st.typesAt = new Date().toISOString();
+      st.runs.expenses = { nextPage: 1, listDone: false, listStartedAt: new Date(Date.now() - 60_000).toISOString() } as never;
+      await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(st.coaReads).toBe(0);
+      expect(st.oneReads).toEqual([]);
     } finally { vi.unstubAllEnvs(); }
   });
 });
