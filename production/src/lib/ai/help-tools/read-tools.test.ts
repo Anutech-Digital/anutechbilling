@@ -142,6 +142,7 @@ const invoices: Row[] = [
   inv("INV-006", { invoice_date: "2026-07-01", due_date: "2026-07-31", amount: 4000, net_payable: 4000, written_off_at: "2026-09-01T00:00:00Z" }), // written off: owes nothing
   inv("INV-007", { customer_id: C2, customer_name: "Sharma & Sons 100%", invoice_date: "2026-06-01", due_date: "2026-06-30", amount: 30000, net_payable: 30000, paid_amount: 0 }), // overdue 140+ days
   inv("INV/2026/008", { customer_id: C2, customer_name: "Sharma & Sons 100%", invoice_date: "2026-11-12", due_date: "2026-11-20", amount: 1000, net_payable: 1000, paid_amount: 0 }),
+  inv("INV-009", { customer_id: C3, customer_name: "Rao_Sons", invoice_date: "2026-10-20", due_date: "2026-11-01", amount: 6000, net_payable: 6000, paid_amount: 6000 }), // status still pending but fully received: balance 0 — not "unpaid"
   inv("INV-B01", { tenant_id: B, customer_id: CB, customer_name: "Sharma Other Company", invoice_date: "2026-10-01", due_date: "2026-10-02", amount: 99999, net_payable: 99999, paid_amount: 0 }),
 ];
 
@@ -340,7 +341,7 @@ describe("list_invoices", () => {
 
   it("date range: invoice date from / to, inclusive", async () => {
     const r = await call("list_invoices", { status: "all", from: "2026-10-01", to: "2026-11-05", limit: 20 });
-    expect(r.rows?.map((x) => x.invoice).sort()).toEqual(["INV-001", "INV-002"]);
+    expect(r.rows?.map((x) => x.invoice).sort()).toEqual(["INV-001", "INV-002", "INV-009"]);
     expect(r.text).toContain("with invoice date from 2026-10-01 to 2026-11-05");
     const flipped = await call("list_invoices", { from: "2026-11-05", to: "2026-10-01" });
     expect(flipped.ok).toBe(true);
