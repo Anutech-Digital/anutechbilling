@@ -31,6 +31,7 @@ import {
 import { daysElapsedInPeriod, prorateSalary } from "@/lib/payroll/proration";
 import { exitPayDays, onPayrollFor, employmentStatus } from "@/lib/payroll/exit";
 import { StartExitDialog } from "@/components/features/payroll/start-exit-dialog";
+import { BulkPayDialog } from "@/components/features/payroll/bulk-pay-dialog";
 import { SalaryRowActions } from "@/components/features/payroll/salary-row-actions";
 import { salaryEditPrefill, arrearsWhileEditing, loanOutstandingWhileEditing, rebookSalary, revisedSinceBookedInfo } from "@/lib/payroll/salary-edit";
 import { MergeEmployeeDialog } from "@/components/features/payroll/merge-employee-dialog";
@@ -52,6 +53,7 @@ import { downloadPayslipPDF } from "@/lib/pdf";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { toastError } from "@/lib/errors/toast-error";
 import { periodLabel } from "@/lib/payroll/period-label";
+import { lopSuggestionForMonth } from "@/lib/payroll/salary-draft";
 import { salaryInForce, revisionMonth, revisionsByEmployee, arrearsPayableIn } from "@/lib/payroll/salary-revision";
 import { employeeBasicFill, employeeBasicToSave, employeeSaveBlockedReason, type BasicRuleInput } from "@/lib/payroll/basic-rule";
 import { SalaryStatusCell } from "./salary-status-cell";
@@ -80,7 +82,7 @@ import { useFirmPartners } from "@/lib/queries/partners";
 import { showsPartnersRegister } from "@/lib/accounting/partners";
 import { employeeOwnerCaution } from "@/lib/accounting/owner-salary-guard";
 import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
-import { leaveDaysInMonth, presentByDate, presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
+import { presentSummary } from "@/lib/attendance/lop";
 import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { Switch } from "@/components/ui/switch";
@@ -1439,6 +1441,10 @@ export function PayrollTab() {
   const [editFor, setEditFor] = React.useState<Employee | null>(null);
   const [calendarFor, setCalendarFor] = React.useState<Employee | null>(null);
   const [attendanceEmp, setAttendanceEmp] = React.useState<Employee | null>(null);
+  /* R-2892: tick employees → "Pay selected" (one confirm, then one booking each). */
+  const [picked, setPicked] = React.useState<ReadonlySet<string>>(new Set());
+  /* The people ticked when the dialog opened — fixed, so the result list stays whole while the screen re-reads. */
+  const [bulkEmps, setBulkEmps] = React.useState<readonly Employee[] | null>(null);
   /* Click a Net → how it was reached (salary, LOP, incentive, deductions, paid so far). */
   const [breakdownFor, setBreakdownFor] = React.useState<{ name: string; p: SalaryPayment } | null>(null);
 
@@ -1488,6 +1494,14 @@ export function PayrollTab() {
   // Summary: full monthly cost (all active gross) vs what's actually been run.
   const estimatedMonthly = employees.reduce((s, e) => s + monthGross(e), 0);
   const runCount = employees.filter((e) => paidByEmp.has(e.id)).length;
+  /* R-2892: only people with no salary row this month can be ticked (those with one are run already). */
+  const unpaidEmps = employees.filter((e) => !paidByEmp.has(e.id));
+  const pickedEmps = unpaidEmps.filter((e) => picked.has(e.id));
+  const allPicked = unpaidEmps.length > 0 && pickedEmps.length === unpaidEmps.length;
+  const togglePick = (id: string) => setPicked((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleAll = () => setPicked(allPicked ? new Set() : new Set(unpaidEmps.map((e) => e.id)));
+  React.useEffect(() => { setPicked(new Set()); }, [period]);
+  const runIds = React.useMemo(() => new Set((payQ.data ?? []).map((p) => p.employee_id)), [payQ.data]);
 
   // Attendance this month: days present vs working days so far (Sundays + company
   // holidays excluded; from the join date if mid-month). A half-day (under the office's
@@ -1548,6 +1562,18 @@ export function PayrollTab() {
           <label htmlFor="payroll-month" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">Month</label>
           <input id="payroll-month" type="month" value={period} onChange={(e) => setPeriod(e.target.value)}
             className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper" />
+          {canWrite && unpaidEmps.length > 0 && (
+            <div className="flex items-center gap-3 sm:ml-4">
+              <label className="flex items-center gap-2 text-sm text-ink-2 cursor-pointer">
+                <input type="checkbox" checked={allPicked} onChange={toggleAll} className="h-4 w-4 accent-amber" />
+                Select all
+              </label>
+              <Button variant="primary" size="sm" disabled={pickedEmps.length === 0} onClick={() => setBulkEmps(pickedEmps)}
+                title="Book the ticked employees' salaries one after another — you see every net first">
+                Pay selected{pickedEmps.length > 0 ? ` (${pickedEmps.length})` : ""}
+              </Button>
+            </div>
+          )}
           {canWrite && (
             <Button
               variant="outline" size="sm" icon="rupee" className="ml-auto"
@@ -1571,6 +1597,7 @@ export function PayrollTab() {
             <table className="w-full text-sm">
               <thead className="bg-paper-2/50 text-3xs uppercase tracking-wider text-ink-3 font-semibold">
                 <tr>
+                  {canWrite && <th className="w-8 pl-4 py-3"><span className="sr-only">Select</span></th>}
                   <th className="text-left px-4 py-3">Employee</th>
                   <th className="text-right px-4 py-3">Monthly salary</th>
                   <th className="text-right px-4 py-3">Net</th>
@@ -1583,6 +1610,11 @@ export function PayrollTab() {
                   const p = paidByEmp.get(e.id);
                   return (
                     <tr key={e.id} className="hover:bg-paper-2/40">
+                      {canWrite && (
+                        <td className="w-8 pl-4 py-3">
+                          {!p && <input type="checkbox" className="h-4 w-4 accent-amber" aria-label={`Select ${toTitleCase(e.name)}`} checked={picked.has(e.id)} onChange={() => togglePick(e.id)} />}
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <div className="font-medium text-ink">{toTitleCase(e.name)}</div>
                         {employeeSubline(e) && <div className="text-xs text-ink-3 mt-0.5">{employeeSubline(e)}</div>}
@@ -1682,10 +1714,13 @@ export function PayrollTab() {
                 <li key={e.id}>
                   <Card className="p-4">
                     <div className="flex items-start justify-between gap-2 mb-1">
+                      {canWrite && !p && (
+                        <input type="checkbox" className="h-4 w-4 mt-1 accent-amber shrink-0" aria-label={`Select ${toTitleCase(e.name)}`} checked={picked.has(e.id)} onChange={() => togglePick(e.id)} />
+                      )}
                       <button
                         type="button"
                         onClick={() => setCalendarFor(e)}
-                        className="min-w-0 text-left"
+                        className="min-w-0 text-left flex-1"
                         title={`See ${e.name}'s full-year payroll`}
                       >
                         <div className="font-medium text-ink leading-tight hover:text-amber-ink">{toTitleCase(e.name)}</div>
@@ -1745,6 +1780,12 @@ export function PayrollTab() {
         <PaySalaryDialog
           employee={payFor} period={period} onClose={() => setPayFor(null)}
           revisions={revsByEmp.get(payFor.id) ?? []}
+        />
+      )}
+      {bulkEmps && canWrite && revQ.isSuccess && (
+        <BulkPayDialog
+          employees={bulkEmps} period={period} revisions={revQ.data ?? []} runIds={runIds}
+          onClose={() => { setBulkEmps(null); setPicked(new Set()); }}
         />
       )}
       <SalaryBreakdownDialog name={breakdownFor?.name ?? ""} record={breakdownFor?.p ?? null} onClose={() => setBreakdownFor(null)} />
@@ -2108,42 +2149,12 @@ export function PaySalaryDialog({ employee, period, onClose, revisions, editing 
   // Suggested LOP from attendance + unpaid leave. Non-working days (Sunday
   // weekly-off AND company holidays) are excluded from "expected", so an absence
   // on a holiday is never docked as loss-of-pay.
-  const lopSuggestion = React.useMemo(() => {
-    const [yy, mm] = period.split("-").map(Number);
-    const monthStart = new Date(Date.UTC(yy, mm - 1, 1));
-    const monthEnd = new Date(Date.UTC(yy, mm, 0));
-    const todayUTC = new Date(todayISO() + "T00:00:00Z");
-    /* R-1896: days after the last working day are not absences. */
-    const exitDay = exitPayDays(employee, period)?.lastDay;
-    const lastDayUTC = exitDay ? new Date(exitDay + "T00:00:00Z") : monthEnd;
-    const capEnd = lastDayUTC < monthEnd ? lastDayUTC : monthEnd;
-    const rangeEnd = todayUTC < capEnd ? todayUTC : capEnd;
-    const rangeStart = employee.joining_date && employee.joining_date > `${period}-01`
-      ? new Date(employee.joining_date + "T00:00:00Z") : monthStart;
-    // Company holidays + auto national gazetted holidays (26 Jan / 15 Aug / 2 Oct).
-    const holidaySet = new Set((holQ.data ?? []).map((h) => h.holiday_date));
-    nationalHolidaysForYear(yy).forEach((d) => holidaySet.add(d));
-    let expected = 0, sundays = 0, holidays = 0;
-    const countedDates = new Set<string>();
-    for (const d = new Date(rangeStart); d <= rangeEnd; d.setUTCDate(d.getUTCDate() + 1)) {
-      const iso = utcDateISO(d);
-      if (d.getUTCDay() === 0) sundays++;            // weekly off — paid, never LOP
-      else if (holidaySet.has(iso)) holidays++;      // Sunday/holiday clash counts once as Sunday
-      else { expected++; countedDates.add(iso); }     // working day
-    }
-    // R-604: a half-day (Pardeep: "half day par salary kaatni hai") counts 0.5 present.
-    const rules = shiftQ.data ?? DEFAULT_SHIFT;
-    const { present, halfDays } = presentSummary(attQ.data ?? [], employee.id, rules);
-    // R-780: only the leave's working days inside this month, never on a present day, never twice.
-    const isWorkingDate = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay() !== 0
-      && !holidaySet.has(iso) && !nationalHolidaysForYear(Number(iso.slice(0, 4))).includes(iso);
-    const { paidLeave, unpaidLeave } = leaveDaysInMonth({
-      leaves: leaveQ.data ?? [], employeeId: employee.id, countedDates, isWorkingDate,
-      presentByDate: presentByDate(attQ.data ?? [], employee.id, rules),
-    });
-    const { absent, lopDays } = suggestedLopDays({ expected, present, paidLeave, unpaidLeave });
-    return { present, halfDays, absent, unpaidLeave, lopDays, workingDays: expected, sundays, holidays };
-  }, [period, employee, attQ.data, leaveQ.data, holQ.data, shiftQ.data]);
+  /* R-2892: the rule lives in lib/payroll/salary-draft.ts — "Pay selected" reads the same one. */
+  const lopSuggestion = React.useMemo(() => lopSuggestionForMonth({
+    period, employee, todayIso: todayISO(),
+    companyHolidays: (holQ.data ?? []).map((h) => h.holiday_date),
+    attendance: attQ.data ?? [], leaves: leaveQ.data ?? [], rules: shiftQ.data ?? DEFAULT_SHIFT,
+  }), [period, employee, attQ.data, leaveQ.data, holQ.data, shiftQ.data]);
 
   function applyLopSuggestion() {
     onLopDays(String(lopSuggestion.lopDays));

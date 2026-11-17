@@ -581,20 +581,29 @@ export function usePayslipsSince(fromPeriod: string, enabled = true) {
 
 /** Every salary payment for ONE employee, oldest→newest. Feeds the per-employee
  *  full-year payroll calendar (click an employee's name on the payroll page). */
+export async function fetchEmployeeSalaryHistory(employeeId: string): Promise<SalaryPayment[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("salary_payments").select("*")
+    .eq("employee_id", employeeId)
+    .order("period", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as SalaryPayment[];
+}
 export function useEmployeeSalaryHistory(employeeId: string | null) {
   return useQuery({
     queryKey: ["salary-payments", "employee", employeeId ?? "none"],
     enabled: Boolean(employeeId),
-    queryFn: async (): Promise<SalaryPayment[]> => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("salary_payments").select("*")
-        .eq("employee_id", employeeId!)
-        .order("period", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as SalaryPayment[];
-    },
+    queryFn: () => fetchEmployeeSalaryHistory(employeeId!),
   });
+}
+
+/** R-2892: a fresh read (never the cache) of who already has a salary row for `period` — "Pay selected" asks it before each booking. */
+export async function fetchRunEmployeeIds(period: string): Promise<Set<string>> {
+  const supabase = createClient();
+  const rows = await fetchAllRows((from, to) => supabase.from("salary_payments").select("id, employee_id")
+    .eq("period", period).order("id", { ascending: true }).range(from, to));
+  return new Set(rows.map((r) => r.employee_id as string));
 }
 
 // ── R-2699: salary revisions (increment with an effective-from month) ───────────────
@@ -616,21 +625,22 @@ export function useSalaryRevisions(enabled = true) {
 }
 
 /** Arrears per booked month (employee_salary_arrears) less what was already paid. */
+export async function fetchSalaryArrears(employeeId: string): Promise<ArrearsSummary> {
+  const supabase = createClient();
+  const [{ data: months, error }, paidRows] = await Promise.all([
+    supabase.rpc("employee_salary_arrears", { p_employee_id: employeeId }),
+    fetchAllRows((from, to) => supabase.from("salary_payments").select("id, arrears")
+      .eq("employee_id", employeeId).gt("arrears", 0).order("id", { ascending: true }).range(from, to)),
+  ]);
+  if (error) throw error;
+  const paid = paidRows.reduce((s, r) => s + (r.arrears ?? 0), 0);
+  return arrearsSummary((months ?? []).map((m) => ({ period: m.period, arrears: m.arrears })), paid);
+}
 export function useSalaryArrears(employeeId: string | null) {
   return useQuery({
     queryKey: ["salary-payments", "arrears", employeeId ?? "none"],
     enabled: Boolean(employeeId),
-    queryFn: async (): Promise<ArrearsSummary> => {
-      const supabase = createClient();
-      const [{ data: months, error }, paidRows] = await Promise.all([
-        supabase.rpc("employee_salary_arrears", { p_employee_id: employeeId! }),
-        fetchAllRows((from, to) => supabase.from("salary_payments").select("id, arrears")
-          .eq("employee_id", employeeId!).gt("arrears", 0).order("id", { ascending: true }).range(from, to)),
-      ]);
-      if (error) throw error;
-      const paid = paidRows.reduce((s, r) => s + (r.arrears ?? 0), 0);
-      return arrearsSummary((months ?? []).map((m) => ({ period: m.period, arrears: m.arrears })), paid);
-    },
+    queryFn: () => fetchSalaryArrears(employeeId!),
   });
 }
 
