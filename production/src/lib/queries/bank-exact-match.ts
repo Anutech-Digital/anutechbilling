@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import {
   EXACT_BOOK_CHUNK, EXACT_LINE_CAP, EXACT_PAGE, EXACT_UNDO_PAGE, mergeBookResults, sortExactRows,
   type BookExactResult, type ExactRow, type ExactScope, type ExactToBook, type UndoExactResult,
@@ -93,7 +94,7 @@ function refresh(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["bank_transactions"] });
   qc.invalidateQueries({ queryKey: ["bank_accounts"] });
   qc.invalidateQueries({ queryKey: ["expenses"] });
-  qc.invalidateQueries({ queryKey: ["payments"] });
+  invalidateReceivables(qc);   // R-1634: payments + every balance screen (/collections too)
 }
 
 export function useBookExactMatches(accountId: string, scope: ExactScope) {
