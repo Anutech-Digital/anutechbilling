@@ -41,7 +41,7 @@ function isRealDate(v: string): boolean {
   const y = Number(v.slice(0, 4));
   const m = Number(v.slice(5, 7));
   const d = Number(v.slice(8, 10));
-  if (m < 1 || m > 12 || d < 1) return false;
+  if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1) return false; // years 1900-2100 only (Postgres refuses year 0)
   return d <= daysInMonth(y, m);
 }
 
@@ -146,7 +146,14 @@ export const listInvoices = defineHelpTool({
 
     const head = `${num(matched.length)} ${describeChoice(choice)} invoice${matched.length === 1 ? "" : "s"} ${scope}${dates}.`;
     const lines = [head];
-    if (matched.length) lines.push(`Still owed on ${choice === "all" ? "them" : "these"} (Invoices page balance): ${rupee(owed)}.`);
+    if (customer_id) {
+      /* R-2776 (checker BLOCK): in one customer's scope this is the OPEN-INVOICE balance only. The Customer page's
+         Outstanding is the statement closing (R-2183) — it also takes off credit notes and unused advances — and is
+         NOT computed here (R-2884). Say so, and link the page where the real figure is. */
+      if (matched.length) lines.push(`Open-invoice balance on ${choice === "all" ? "them" : "these"} (open invoices only): ${rupee(owed)}.`);
+      lines.push("This counts open invoices only. The Customer page's Outstanding also subtracts credit notes and unused advances, so open the customer's page for the real figure.");
+    } else if (matched.length) lines.push(`Still owed on ${choice === "all" ? "them" : "these"} (Invoices page balance): ${rupee(owed)}.`);
+    if (choice === "paid") lines.push("Paid here includes invoices closed by a credit note (the Invoices page shows those as Credited).");
 
     const sources: HelpSourceRef[] = [];
     const out = shown.map((r) => {
@@ -165,10 +172,11 @@ export const listInvoices = defineHelpTool({
         amount: r.amount, owed: balance, status: bucket,
       };
     });
-    if (!sources.length && customer_id && UUID.test(customer_id)) {
-      sources.push({ table: "invoices", ids: [], href: `/customers/${customer_id}`, label: "Open this customer" });
-    }
-    return { text: lines.join("\n"), rows: out, total: matched.length, sources };
+    /* The customer's own page comes first (the real Outstanding); the schema allows 20 sources, so at most 19 invoices follow. */
+    const cited: HelpSourceRef[] = customer_id && UUID.test(customer_id)
+      ? [{ table: "customers", ids: [customer_id], href: `/customers/${customer_id}`, label: "Open this customer (its Outstanding)" }, ...sources.slice(0, 19)]
+      : sources;
+    return { text: lines.join("\n"), rows: out, total: matched.length, sources: cited };
   },
 });
 

@@ -437,7 +437,8 @@ describe("list_invoices", () => {
     const hrefs = r.sources.map((s) => s.href);
     expect(hrefs).toContain("/invoices/INV-007");
     expect(hrefs.some((h) => h.includes("2026/008"))).toBe(false);
-    expect(hrefs.every((h) => h.startsWith("/invoices/"))).toBe(true);
+    expect(hrefs[0]).toBe(`/customers/${C2}`); // the customer's own page first (R-2776 round 2)
+    expect(hrefs.slice(1).every((h) => h.startsWith("/invoices/"))).toBe(true);
     expect(r.text).toContain("INV/2026/008");
   });
 
@@ -496,7 +497,7 @@ describe("end to end", () => {
           return askTools({ id: "t2", name: "list_invoices", input: { customer_id: id, status: "unpaid" } });
         }
         const text = ask.steps[1].results[0].text;
-        const owed = /Invoices page balance\): (₹[\d,]+)/.exec(text)?.[1];
+        const owed = /\((?:open invoices only|Invoices page balance)\): (₹[\d,]+)/.exec(text)?.[1];
         return end(JSON.stringify({ reply: `Sharma Traders owes ${owed}.` }));
       },
       runTools: (calls) => runHelpTools(session, { userId: U, tenantId: A, role: "owner", now: NOW }, calls),
@@ -511,5 +512,83 @@ describe("end to end", () => {
     const sources = run.results.flatMap((r) => r.sources.map((s) => s.href));
     expect(sources).toEqual(expect.arrayContaining([`/customers/${C1}`, "/invoices/INV-001", "/invoices/INV-002"]));
     expect(run.results.map((r) => r.href)).toEqual(["/customers", "/invoices"]);
+  });
+});
+
+/* ───────────── R-2776 round 2 (independent checker BLOCK on b1a08e18a) ───────────── */
+describe("customer scope says open invoices only (the Customer page Outstanding is the statement closing)", () => {
+  it("customer_id: label + the sentence + the customer page link first; the number is still the open-invoice sum", async () => {
+    const r = await call("list_invoices", { customer_id: C1 });
+    expect(r.ok).toBe(true);
+    expect(r.text).toContain("(open invoices only): ₹25,500.");
+    expect(r.text).toContain("This counts open invoices only. The Customer page's Outstanding also subtracts credit notes and unused advances");
+    expect(r.text).not.toContain("Invoices page balance");
+    expect(r.sources[0]).toMatchObject({ table: "customers", href: `/customers/${C1}` });
+    expect(r.sources.some((s) => s.href === "/invoices/INV-001")).toBe(true);
+  });
+  it("it is there even when the customer has no open invoice, and with 20 invoices the 21 citations are cut to 20", async () => {
+    const none = await call("list_invoices", { customer_id: C3 }); // C3's only invoice is fully received
+    expect(none.text).toContain("This counts open invoices only.");
+    expect(none.sources[0].href).toBe(`/customers/${C3}`);
+    const many: Row[] = Array.from({ length: 30 }, (_, i) => inv(`INV-N${String(i).padStart(3, "0")}`, { due_date: "2026-12-31", amount: 100, net_payable: 100 }));
+    const r = await call("list_invoices", { customer_id: C1, limit: 20 }, "owner", { invoices: many });
+    expect(r.ok).toBe(true);
+    expect(r.sources).toHaveLength(20);
+    expect(r.sources[0].href).toBe(`/customers/${C1}`);
+  });
+  it("company scope is unchanged: the page's wording, no customer sentence", async () => {
+    const r = await call("list_invoices", {});
+    expect(r.text).toContain("Still owed on these (Invoices page balance):");
+    expect(r.text).not.toContain("open invoices only");
+    expect(r.text).not.toContain("Customer page");
+    expect(r.sources.every((s) => s.table === "invoices")).toBe(true);
+  });
+  it("status paid says it includes invoices closed by a credit note", async () => {
+    const r = await call("list_invoices", { status: "paid" });
+    expect(r.text).toContain("includes invoices closed by a credit note (the Invoices page shows those as Credited)");
+    expect((await call("list_invoices", {})).text).not.toContain("Credited");
+  });
+});
+
+describe("dates are bounded to years 1900-2100", () => {
+  it("0000-01-01, 1899-12-31, 2101-01-01 are refused; the edges are accepted", async () => {
+    for (const bad of ["0000-01-01", "1899-12-31", "2101-01-01", "9999-12-31"]) {
+      expect((await call("list_invoices", { from: bad })).refusal, bad).toBe("bad_input");
+      expect((await call("list_invoices", { to: bad })).refusal, bad).toBe("bad_input");
+    }
+    expect((await call("list_invoices", { from: "1900-01-01", to: "2100-12-31" })).ok).toBe(true);
+  });
+});
+
+describe("the per-turn call check and the runner's batch cap cannot drift apart", () => {
+  it("HELP_CALLS_MAX (batch) equals HELP_QUESTION_CALLS_MAX (question) — the loop checks both", async () => {
+    const { HELP_CALLS_MAX } = await import("./runner");
+    const { HELP_QUESTION_CALLS_MAX } = await import("./limits");
+    expect(HELP_CALLS_MAX).toBe(HELP_QUESTION_CALLS_MAX);
+  });
+});
+
+describe("customers has a per-table COLUMN allowlist in the reader", () => {
+  const reader = async () => {
+    const { scopedReader, helpAllowedColumns } = await import("./reader");
+    setup();
+    return { db: scopedReader(current as never, A), helpAllowedColumns };
+  };
+  const PERSONAL = ["pan", "gstin", "tan", "contact_mobile", "contact_phone", "contact_email", "contact_name", "contact_first_name", "contact_last_name", "address", "shipping_address", "city", "pin_code", "notes", "contact_persons", "gstin_verification", "domain", "credit_limit", "tds_default_section", "linked_tenant_id", "account_manager_id"];
+  it("no personal column can be selected, filtered on or ordered by", async () => {
+    const { db } = await reader();
+    for (const c of PERSONAL) {
+      expect(() => db.read("customers", `id, ${c}`), `select ${c}`).toThrow(/column allowlist/);
+      expect(() => db.read("customers", "id").eq(c, "x"), `eq ${c}`).toThrow(/column allowlist/);
+      expect(() => db.read("customers", "id").order(c), `order ${c}`).toThrow(/column allowlist/);
+    }
+  });
+  it("the seven columns find_customer reads are allowed; other tables keep the old rule", async () => {
+    const { db, helpAllowedColumns } = await reader();
+    const { containsPattern } = await import("./reader");
+    expect(() => db.read("customers", "id, name, customer_number, customer_type, state, is_active, since").ilike("name", containsPattern("a"))).not.toThrow();
+    expect(helpAllowedColumns("customers")).toEqual(["id", "name", "customer_number", "customer_type", "state", "is_active", "since"]);
+    expect(helpAllowedColumns("invoices")).toBeNull();
+    expect(() => db.read("invoices", "id, customer_gstin")).not.toThrow(); // not on a column allowlist yet (its tools pick their columns in code)
   });
 });
