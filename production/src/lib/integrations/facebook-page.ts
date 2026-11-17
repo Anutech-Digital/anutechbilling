@@ -12,10 +12,28 @@ export function facebookPageRedirectUri(origin: string): string {
   return `${origin}/api/integrations/facebook-page/callback`;
 }
 
+/**
+ * R-2706: reach and Instagram saves need read_insights + instagram_manage_insights. Meta refuses
+ * the WHOLE login ("Invalid Scopes") when the Meta app has not added them to its use cases, so they
+ * are asked only when META_INSIGHTS_SCOPES=1 (set it after adding both in the Meta app dashboard).
+ * R-2689: comments need pages_read_user_content + pages_manage_engagement + instagram_manage_comments
+ * — asked only when META_COMMENT_SCOPES=1, for the same reason.
+ */
+export function facebookPageScopes(env: Record<string, string | undefined> = process.env): string {
+  const base = "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,leads_retrieval,pages_manage_ads,pages_manage_metadata";
+  const on = (k: string) => env[k]?.trim() === "1";
+  return [
+    base,
+    on("META_INSIGHTS_SCOPES") ? "read_insights,instagram_manage_insights" : "",
+    /* R-2689: reading and answering comments (and Facebook post reactions/comments counts). */
+    on("META_COMMENT_SCOPES") ? "pages_read_user_content,pages_manage_engagement,instagram_manage_comments" : "",
+  ].filter(Boolean).join(",");
+}
+
 export function facebookPageAuthUrl(appId: string, origin: string, state: string): string {
   const params = new URLSearchParams({
     client_id: appId, redirect_uri: facebookPageRedirectUri(origin), state,
-    scope: "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,leads_retrieval,pages_manage_ads,pages_manage_metadata", response_type: "code",
+    scope: facebookPageScopes(), response_type: "code",
   });
   return `https://www.facebook.com/${VERSION}/dialog/oauth?${params}`;
 }
@@ -28,7 +46,7 @@ export async function facebookPageCaller() {
   if (!data?.tenant_id) return null;
   return {
     userId: user.id, tenantId: data.tenant_id,
-    canManage: mayDo(data.role, "integration.company"),
+    canManage: mayDo(data.role, "integration.marketing"),
     admin: createAdminClientFor(user.id),
   };
 }
@@ -88,6 +106,10 @@ export async function selectFacebookPage(admin: Admin, tenantId: string, userId:
   });
   const { error } = await admin.from("tenant_secrets").upsert(row, { onConflict: "tenant_id" });
   if (error) throw error;
+  /* R-2689: a new connection may carry the permissions that were missing — drop the old "permission
+     missing" note and let the next run check comments straight away. */
+  const untyped = admin as unknown as { from: (t: string) => { update: (v: Record<string, unknown>) => { eq: (k: string, v: string) => PromiseLike<unknown> } } };
+  await Promise.resolve(untyped.from("social_content_settings").update({ comments_problem: null, comments_checked_at: null }).eq("tenant_id", tenantId)).catch(() => undefined);
 }
 
 export async function disconnectFacebookPage(admin: Admin, tenantId: string): Promise<void> {

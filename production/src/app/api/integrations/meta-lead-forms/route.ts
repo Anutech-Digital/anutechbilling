@@ -31,7 +31,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   const caller = await facebookPageCaller();
   if (!caller) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!caller.canManage) return NextResponse.json({ error: "Only an owner or manager can choose lead forms." }, { status: 403 });
+  if (!caller.canManage) return NextResponse.json({ error: "Only the owner, a manager or marketing can choose lead forms." }, { status: 403 });
   const body = await request.json().catch(() => null) as { formIds?: unknown } | null;
   const ids = Array.isArray(body?.formIds) ? [...new Set(body.formIds.filter((x): x is string => typeof x === "string" && /^\d{1,30}$/.test(x)))] : null;
   if (!ids || ids.length > 50) return NextResponse.json({ error: "Choose up to 50 lead forms." }, { status: 400 });

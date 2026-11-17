@@ -1,0 +1,149 @@
+/**
+ * R-2672 (G-SOCIAL): the AI plans a week of Facebook / Instagram posts for one company.
+ * Used by the Monday cron (social-drafts) and by "Plan this week now" on Social content.
+ *
+ * - autopilot ON  → each post is saved approved with its time; the social-publish cron posts it.
+ * - autopilot OFF → each post waits in "Waiting for approval" with its time; a person approves.
+ * Instagram needs a picture: the owner's picture links are used first; without them the AI makes
+ * one per post (R-2697). A post with no picture skips Instagram and the result says so.
+ */
+import "server-only";
+import { withTenant, type TenantSession } from "@/server/db";
+import { istToday, utcDateISO } from "@/lib/dates/ist";
+import { geminiJson, resolveGeminiConfig } from "@/lib/ai/gemini";
+import { readFacebookPage } from "@/lib/integrations/facebook-page";
+import { createSocial, instagramForPage } from "@/lib/marketing/social-content";
+import { planSlots, planStatus, pictureFor } from "@/lib/marketing/social-autopilot";
+import type { createAdminClient } from "@/lib/supabase/server";
+import { logPersonActivity } from "@/lib/marketing/social-activity";
+import { makePostPicture } from "@/lib/marketing/social-picture.server";
+import { refreshPostStats } from "@/lib/marketing/social-stats.server";
+import { ensureStrategies, learnStrategies, planFor, readStrategies } from "@/lib/marketing/social-strategy.server";
+import { DEFAULT_PLANS, atIstHour, describePlan, pickTypes } from "@/lib/marketing/social-strategy";
+import { notifyPeople } from "@/lib/notifications/notify.server";
+import { makeWeeklyReport } from "@/lib/marketing/social-report.server";
+import { pageConnection } from "@/lib/marketing/social-pages.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+type Admin = ReturnType<typeof createAdminClient>;
+
+export interface AutopilotSettings {
+  auto_drafts: boolean; brief: string; last_generated_on: Date | string | null;
+  autopilot: boolean; posts_per_week: number; picture_urls: string[]; ai_paused: boolean;
+  /** R-2729: the Page these settings belong to (null when the company has no Page yet). */
+  page_id: string | null; page_name: string; comment_mode: "off" | "ask" | "auto";
+}
+
+/**
+ * R-2729: one Page's AI settings (its brief, mode, posts a week, pictures) — the main Page when no
+ * Page is asked — plus the company's "Stop all AI" switch.
+ */
+export async function readAutopilotSettings(session: TenantSession, pageId?: string | null): Promise<AutopilotSettings> {
+  const [pages, paused] = await Promise.all([
+    withTenant(session, (tx) => tx.$queryRaw<(Omit<AutopilotSettings, "ai_paused" | "page_name"> & { name: string })[]>`
+      select page_id, name, auto_drafts, brief, last_generated_on, autopilot, posts_per_week, picture_urls, comment_mode
+      from public.social_pages where tenant_id = ${session.tenantId}::uuid and active
+        and (page_id = ${pageId ?? ""} or (${pageId ?? null}::text is null and is_main))
+      order by is_main desc limit 1`),
+    withTenant(session, (tx) => tx.$queryRaw<{ ai_paused: boolean }[]>`
+      select ai_paused from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`),
+  ]);
+  const p = pages[0];
+  const ai_paused = Boolean(paused[0]?.ai_paused);
+  if (!p) return { page_id: null, page_name: "", auto_drafts: false, brief: "", last_generated_on: null, autopilot: false, posts_per_week: 3, picture_urls: [], ai_paused, comment_mode: "ask" };
+  return { ...p, page_name: p.name, ai_paused };
+}
+
+export type PlanResult =
+  | { ok: true; created: number; autopilot: boolean; instagramSkipped: boolean; firstAt: Date | null; aiPictures: number; pictureProblem: string | null;
+      resultsRead: number; needsReconnect: boolean; learned: Awaited<ReturnType<typeof learnStrategies>> }
+  | { ok: false; reason: string; status: number };
+
+export async function planWeek(admin: Admin, session: TenantSession, opts: { force?: boolean; now?: Date; pageId?: string | null } = {}): Promise<PlanResult> {
+  const now = opts.now ?? new Date();
+  const s = await readAutopilotSettings(session, opts.pageId);
+  if (!s.page_id) return { ok: false, reason: "Connect your Facebook Page first (Marketing Hub → Facebook Page).", status: 409 };
+  const pageId = s.page_id;
+  const today = istToday(now);
+  /* a Postgres date comes back as UTC midnight of that day */
+  const last = s.last_generated_on ? (typeof s.last_generated_on === "string" ? s.last_generated_on.slice(0, 10) : utcDateISO(s.last_generated_on)) : null;
+  if (!opts.force && (!s.auto_drafts || last === today)) return { ok: false, reason: "Weekly AI posts are off, or this week is already planned.", status: 409 };
+  if (s.ai_paused) return { ok: false, reason: "The AI is stopped (Stop all AI). Press Resume AI first.", status: 409 };
+  if (!s.brief.trim()) return { ok: false, reason: "Tell the AI what to write about first (the box under AI posts), then save.", status: 400 };
+  /* R-2729: this Page's own token (the main Page's connection for companies set up before many Pages). */
+  let connection: { pageId: string | null; pageToken: string | null } = await pageConnection(admin as unknown as SupabaseClient, session.tenantId, pageId);
+  if (!connection.pageToken) { const main = await readFacebookPage(admin, session.tenantId); if (main.pageId === pageId) connection = main; }
+  if (!connection.pageId || !connection.pageToken) return { ok: false, reason: `${s.page_name || "This Page"} is not connected any more. Reconnect Facebook (Marketing Hub → Facebook Page).`, status: 409 };
+  const ai = await resolveGeminiConfig(admin, session.tenantId);
+  if (!ai.apiKey) return { ok: false, reason: "Add an AI key first: Settings → Integrations → Gemini.", status: 409 };
+  const instagram = await instagramForPage(connection.pageId, connection.pageToken).catch(() => null);
+
+  /* R-2706: read the results of last weeks' posts first; R-2705/R-2707: start each platform's
+     strategy if it has none, then let the AI keep what worked and change what did not. */
+  const results = await refreshPostStats(session, connection.pageToken, now, pageId).catch(() => ({ read: 0, noPermission: false }));
+  let strategies = await ensureStrategies(session, pageId, ai, s.brief).catch(() => null);
+  const learned = strategies ? await learnStrategies(session, ai, { autopilot: s.autopilot, now, pageId }).catch(() => []) : [];
+  if (learned.some((l) => l.outcome === "changed")) strategies = await readStrategies(session, pageId).catch(() => strategies);
+  const fb = strategies ? planFor(strategies, "facebook") : { plan: DEFAULT_PLANS.facebook, version: null };
+  const ig = strategies ? planFor(strategies, "instagram") : { plan: DEFAULT_PLANS.instagram, version: null };
+
+  const count = Math.max(1, Math.min(7, s.posts_per_week || 3));
+  const types = pickTypes(fb.plan.mix, count);
+  let capMessage: string | null = null;
+  const result = await geminiJson<{ posts?: { topic?: string; type?: string; facebook?: string; instagram?: string }[] }>({
+    apiKey: ai.apiKey, model: ai.model, tenantId: session.tenantId, label: "marketing/social-autopilot", temperature: 0.7,
+    system: "You plan honest, useful B2B social media posts for a cloud services reseller that wants more followers. For each post write one text per platform, each following that platform's strategy (length, tone, hashtags) — the same idea, NOT the same words. Return JSON {\"posts\":[{\"topic\":\"…\",\"type\":\"…\",\"facebook\":\"…\",\"instagram\":\"…\"}]}. No invented results, prices, offers, testimonials or customer names. No engagement bait. No links in Instagram text. Each post has ONE picture: never say swipe, slides or carousel.",
+    user: [
+      `Write ${count} posts. Kind of each post, in order: ${types.join(", ")}.`,
+      describePlan("facebook", fb.plan),
+      instagram ? describePlan("instagram", ig.plan) : "No Instagram this week: leave \"instagram\" empty.",
+      `Business guidance: ${s.brief}`,
+    ].join("\n"),
+    onCapReached: (m) => { capMessage = m; },
+  });
+  if (capMessage) return { ok: false, reason: capMessage, status: 429 };
+  const posts = (result?.posts ?? []).map((p, i) => ({
+    facebook: (p.facebook ?? "").trim().slice(0, 2200), instagram: (p.instagram ?? "").trim().slice(0, 2200),
+    topic: (p.topic ?? s.brief).trim().slice(0, 500), type: types[i] ?? types[0],
+  })).filter((p) => p.facebook).slice(0, count);
+  if (posts.length === 0) return { ok: false, reason: "The AI did not return any posts. Press Plan this week now again.", status: 502 };
+
+  const slots = planSlots(now, posts.length);
+  const status = planStatus(s.autopilot);
+  /* R-2697: no picture links from the owner → the AI makes one picture per post (kept on the Page).
+     A failed picture never stops the plan: that post goes to Facebook without a picture. */
+  const aiPictures = s.picture_urls.length ? [] : await Promise.all(posts.map((p) => makePostPicture(admin, session.tenantId, { topic: p.topic, caption: p.facebook }, connection).catch(() => null)));
+  const pictureProblem = aiPictures.find((r) => r && !r.ok);
+  let created = 0;
+  for (const [i, post] of posts.entries()) {
+    const made = aiPictures[i];
+    const picture = pictureFor(s.picture_urls, i) ?? (made?.ok ? made.mediaUrl : null);
+    /* R-2705: each platform posts at its own best hour on the planned day. */
+    const fbId = await createSocial(session, { platform: "facebook", format: "post", caption: post.facebook, mediaUrl: picture, topic: post.topic, origin: "scheduled",
+      scheduledAt: atIstHour(slots[i], fb.plan.bestHourIst), status, postType: post.type, strategyVersion: fb.version, pageId });
+    created++;
+    await logPersonActivity(session, { pageId, actor: "ai", platform: "facebook", action: s.autopilot ? "Planned a post (autopilot)" : "Wrote a post for approval", detail: `${post.type}: ${post.topic}`, contentId: fbId, result: s.autopilot ? "ok" : "waiting" });
+    if (instagram && picture) {
+      const igId = await createSocial(session, { platform: "instagram", format: "post", caption: post.instagram || post.facebook, mediaUrl: picture, topic: post.topic, origin: "scheduled",
+        scheduledAt: atIstHour(slots[i], ig.plan.bestHourIst), status, postType: post.type, strategyVersion: ig.version, pageId });
+      created++;
+      await logPersonActivity(session, { pageId, actor: "ai", platform: "instagram", action: s.autopilot ? "Planned a post (autopilot)" : "Wrote a post for approval", detail: `${post.type}: ${post.topic}`, contentId: igId, result: s.autopilot ? "ok" : "waiting" });
+    }
+  }
+  /* R-2690: the weekly report is written with the plan (never stops the plan). */
+  await makeWeeklyReport(session, ai, s.brief, now, pageId).catch((e) => console.error("[social-report] weekly failed", e instanceof Error ? e.message : "unknown"));
+  /* R-2709: "Ask me first" — tell the marketing person (the owner when there is none) that posts wait for them. */
+  if (!s.autopilot && created > 0) {
+    const marketing = await withTenant(session, (tx) => tx.$queryRaw<{ n: bigint }[]>`
+      select count(*) as n from public.users where tenant_id = ${session.tenantId}::uuid and role = 'marketing' and is_active`).catch(() => [{ n: BigInt(0) }]);
+    await notifyPeople({ tenantId: session.tenantId, kind: "social.review", title: `${s.page_name ? `${s.page_name}: ` : ""}the AI wrote ${created} post${created === 1 ? "" : "s"} — waiting for your approval`,
+      body: "Open Social growth → Waiting for approval, read them, then Approve or Send back.", href: "/marketing/social-content" },
+      { roles: Number(marketing[0]?.n ?? 0) > 0 ? ["marketing"] : ["owner"] });
+  }
+  await withTenant(session, (tx) => tx.$executeRaw`
+    update public.social_pages set last_generated_on = ${today}::date where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId}`);
+  const pictured = s.picture_urls.length ? posts.length : aiPictures.filter((r) => r?.ok).length;
+  return { ok: true, created, autopilot: s.autopilot, instagramSkipped: Boolean(instagram) && pictured < posts.length, firstAt: slots[0] ?? null,
+    aiPictures: s.picture_urls.length ? 0 : pictured, pictureProblem: pictureProblem && !pictureProblem.ok ? pictureProblem.message : null,
+    resultsRead: results.read, needsReconnect: results.noPermission, learned };
+}

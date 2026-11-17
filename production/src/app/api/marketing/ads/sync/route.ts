@@ -17,7 +17,7 @@ const inputSchema = z.object({ from: z.string().optional(), to: z.string().optio
   .refine(({ accountIds }) => !accountIds || new Set(accountIds).size === accountIds.length, "Choose each account only once.");
 
 export const POST = withRoute(
-  { route: "api/marketing/ads/sync", roles: ["owner", "manager"], input: inputSchema },
+  { route: "api/marketing/ads/sync", roles: ["owner", "manager", "marketing"], input: inputSchema },
   async ({ tenantId, input }) => {
     try {
       let window;

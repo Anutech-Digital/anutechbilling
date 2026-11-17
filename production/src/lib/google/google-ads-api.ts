@@ -7,8 +7,9 @@
  *   9 Sep 2026: the API access level (Test / Explorer / Basic / Standard) now belongs to the
  *   Google Cloud project of the OAuth client, and the header is ignored. Sent only when set,
  *   so older setups keep working; an access-level refusal names the Cloud project.
- *   GOOGLE_ADS_API_VERSION    — optional, e.g. "v21". Google retires a version roughly
- *   every year; when calls start returning 404 with "version", bump this env, not the code.
+ *   GOOGLE_ADS_API_VERSION    — optional, e.g. "v26". Google retires a version roughly
+ *   every year; when calls start returning a 404 page, bump this env, not the code.
+ *   (16 Nov 2026: v21 was retired — Google answered an HTML 404 page; v22–v26 were live.)
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
@@ -25,7 +26,7 @@ export const GOOGLE_ADS_SCOPE_MISSING_MESSAGE =
 export function googleAdsDeveloperToken(): string | null {
   return process.env.GOOGLE_ADS_DEVELOPER_TOKEN?.trim() || null;
 }
-function apiVersion(): string { return process.env.GOOGLE_ADS_API_VERSION?.trim() || "v21"; }
+function apiVersion(): string { return process.env.GOOGLE_ADS_API_VERSION?.trim() || "v26"; }
 const BASE = () => `https://googleads.googleapis.com/${apiVersion()}`;
 
 /** Google's page on API access levels (Cloud project based since 9 Sep 2026). */
@@ -46,7 +47,7 @@ export function explainGoogleAdsError(status: number, body: string): string {
   }
   if (/CUSTOMER_NOT_ENABLED/i.test(body)) return "CUSTOMER_NOT_ENABLED: This Google Ads account is disabled or not yet enabled.";
   if (/DEVELOPER_TOKEN_INVALID/i.test(body)) return "Google rejected the developer token — developer tokens were retired on 9 Sep 2026: remove GOOGLE_ADS_DEVELOPER_TOKEN from env (access now comes from the Google Cloud project).";
-  if (status === 404 && /version/i.test(body)) return `Google Ads API ${apiVersion()} is retired — put the new version in env GOOGLE_ADS_API_VERSION.`;
+  if (status === 404 && (/version/i.test(body) || /<html|Not Found/i.test(body))) return `Google Ads API ${apiVersion()} is retired — put the new version in env GOOGLE_ADS_API_VERSION.`;
   if (/PERMISSION_DENIED|USER_PERMISSION_DENIED/i.test(body)) return "This Google login has no access to this Ads account — connect with the email that opens ads.google.com.";
   if (status === 401) return "Google token expired or was revoked — click Reconnect.";
   return `Google Ads ne ${status} diya: ${body.slice(0, 200)}`;

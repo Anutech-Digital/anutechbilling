@@ -1,8 +1,8 @@
 /**
  * R-2692: approving a post WITH a post time turns the social-publish job on (through
  * ensureSocialJobOn — the database decides owner/manager and never overrides an owner's OFF);
- * approving without a time, or any other action, leaves the switch alone. Marketing still
- * cannot approve through the API.
+ * approving without a time, or any other action, leaves the switch alone. R-2709: marketing
+ * approves too, and a reviewer's own "Schedule post" counts as approved.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,7 +18,7 @@ vi.mock("@/lib/automation/social-jobs.server", () => ({ ensureSocialJobOn: ensur
 vi.mock("@/lib/marketing/social-content", () => ({
   socialRole: async () => state.role,
   canWriteSocial: (r: string | null) => r === "owner" || r === "manager" || r === "marketing",
-  canReviewSocial: (r: string | null) => r === "owner" || r === "manager",
+  canReviewSocial: (r: string | null) => r === "owner" || r === "manager" || r === "marketing", // R-2709
   validMediaUrl: () => true,
   updateSocial: async (_s: unknown, id: string, patch: { status?: string }) => ({ id, status: patch.status ?? state.status, scheduled_at: state.scheduled }),
   claimApproved: async () => null,
@@ -48,10 +48,18 @@ describe("R-2692 social approve turns on scheduled posting", () => {
     expect(ensure).not.toHaveBeenCalled();
   });
 
-  it("submit by marketing → switch untouched; approve by marketing → 403", async () => {
+  it("R-2709: marketing schedules its own post and approves the AI's — both ask for social-publish", async () => {
     state.role = "marketing"; state.status = "draft";
-    expect((await call({ action: "submit" })).status).toBe(200);
+    const sub = await call({ action: "submit" });
+    expect(sub.status).toBe(200);
+    expect(await sub.json()).toMatchObject({ item: { status: "approved" }, autoPostOn: true });
     state.status = "review";
+    expect((await call({ action: "approve" })).status).toBe(200);
+    expect(ensure).toHaveBeenCalledTimes(2);
+  });
+
+  it("a role that cannot write social posts → 403, switch untouched", async () => {
+    state.role = "billing";
     expect((await call({ action: "approve" })).status).toBe(403);
     expect(ensure).not.toHaveBeenCalled();
   });

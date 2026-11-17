@@ -39,7 +39,7 @@ interface SubmitResult { kind: ReminderKind; name: string; ok: boolean; status: 
 
 export const POST = withRoute(
   {
-    route: ROUTE, input: inputSchema, roles: ["owner", "manager"],
+    route: ROUTE, input: inputSchema, roles: ["owner", "manager", "marketing"],
     roleHint: "Only the owner or a manager can submit templates to Meta — ask them.",
   },
   async ({ input, tenantId, user }) => {

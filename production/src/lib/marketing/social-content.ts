@@ -2,6 +2,7 @@ import "server-only";
 import { withTenant, type TenantSession } from "@/server/db";
 import { createClient } from "@/lib/supabase/server";
 import { readFacebookPage } from "@/lib/integrations/facebook-page";
+import { pagePhotoId, pagePhotoRef } from "./social-autopilot";
 
 export type SocialPlatform = "facebook" | "instagram";
 export type SocialFormat = "post" | "story";
@@ -10,6 +11,10 @@ export type SocialItem = {
   id: string; platform: SocialPlatform; format: SocialFormat; caption: string; media_url: string | null;
   topic: string; origin: string; status: SocialStatus; created_by: string | null; reviewed_by: string | null;
   reviewed_at: Date | null; published_at: Date | null; external_id: string | null; error: string | null; created_at: Date;
+  /** R-2705 / R-2706 (only in listSocial). */
+  /** R-2729: the Facebook Page (and its Instagram) this post belongs to. */
+  page_id?: string | null;
+  post_type?: string | null; stats?: { reach: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null } | null;
   scheduled_at: Date | null;
 };
 
@@ -22,27 +27,39 @@ export async function socialRole(session: TenantSession): Promise<string | null>
 export function canWriteSocial(role: string | null): boolean {
   return role === "owner" || role === "manager" || role === "marketing";
 }
+/**
+ * R-2709 (Abhishek, 12 Nov 2026): approving and running social posts is the marketing person's
+ * job — marketing approves the AI's posts; owner and manager may too but need not. Resuming the AI
+ * and its settings stay with the owner (checked where they are used).
+ */
 export function canReviewSocial(role: string | null): boolean {
-  return role === "owner" || role === "manager";
+  return role === "owner" || role === "manager" || role === "marketing";
 }
 
-export async function listSocial(session: TenantSession): Promise<SocialItem[]> {
+/** R-2729: one Page's posts, or every Page's (pageId null). */
+export async function listSocial(session: TenantSession, pageId: string | null = null): Promise<SocialItem[]> {
   return withTenant(session, tx => tx.$queryRaw<SocialItem[]>`
     select id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at, post_type, stats, page_id
     from public.social_content where tenant_id = ${session.tenantId}::uuid
-    order by created_at desc limit 100`);
+      and (${pageId}::text is null or page_id = ${pageId})
+    order by created_at desc limit ${pageId ? 100 : 200}`);
 }
 
 export async function createSocial(session: TenantSession, input: {
   platform: SocialPlatform; format: SocialFormat; caption: string; mediaUrl: string | null; topic: string; origin: "manual" | "ai" | "scheduled";
   scheduledAt?: Date | null;
-  /** R-2513: "Send for approval" saves straight into review. Never approved or published here. */
-  status?: "draft" | "review";
+  /** R-2513: "Send for approval" saves straight into review. R-2672: "approved" only for the AI
+   *  autopilot, which the owner switched on (it then posts at scheduledAt). Never published here. */
+  status?: "draft" | "review" | "approved";
+  /** R-2705: the kind of post and the strategy version it followed (for the weekly learning). */
+  postType?: string | null; strategyVersion?: number | null;
+  /** R-2729: the Page it goes out on. */
+  pageId: string | null;
 }): Promise<string> {
   const rows = await withTenant(session, tx => tx.$queryRaw<{ id: string }[]>`
-    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at, status)
-    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz, ${input.status ?? "draft"})
+    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at, status, post_type, strategy_version, page_id)
+    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz, ${input.status ?? "draft"}, ${input.postType ?? null}, ${input.strategyVersion ?? null}::int, ${input.pageId})
     returning id`);
   return rows[0].id;
 }
@@ -66,7 +83,7 @@ export async function updateSocial(session: TenantSession, id: string, patch: {
     where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid
       and status = ${expectedStatus}
     returning id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at`);
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at, page_id`);
   return rows[0] ?? null;
 }
 
@@ -75,7 +92,7 @@ export async function claimApproved(session: TenantSession, id: string): Promise
     update public.social_content set status = 'publishing', updated_at = now()
     where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid and status = 'approved'
     returning id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at`);
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at, page_id`);
   return rows[0] ?? null;
 }
 
@@ -106,8 +123,54 @@ export async function instagramForPage(pageId: string, pageToken: string): Promi
   return json.instagram_business_account ?? null;
 }
 
+/** R-2687: today's follower count of the Page and its Instagram account (null when Meta does not say). */
+export async function metaFollowers(pageId: string, pageToken: string, instagramId: string | null): Promise<{ facebook: number | null; instagram: number | null }> {
+  const get = async (id: string, fields: string) => {
+    try {
+      const r = await fetch(`${GRAPH}/${encodeURIComponent(id)}?${new URLSearchParams({ fields, access_token: pageToken })}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+      return r.ok ? await r.json() as { followers_count?: number; fan_count?: number } : null;
+    } catch { return null; }
+  };
+  const [fb, ig] = await Promise.all([get(pageId, "followers_count,fan_count"), instagramId ? get(instagramId, "followers_count") : Promise.resolve(null)]);
+  return { facebook: fb?.followers_count ?? fb?.fan_count ?? null, instagram: ig?.followers_count ?? null };
+}
+
+/**
+ * R-2697: keep a picture as a hidden (unpublished) photo on the Page — it does not show on the
+ * Page, works from localhost, and gives Instagram a public link. Returns pagePhotoRef(<id>).
+ */
+export async function uploadPagePhoto(pageId: string, pageToken: string, bytes: Buffer, mimeType: string): Promise<string> {
+  const form = new FormData();
+  form.set("published", "false");
+  form.set("access_token", pageToken);
+  form.set("source", new Blob([new Uint8Array(bytes)], { type: mimeType }), mimeType === "image/jpeg" ? "picture.jpg" : "picture.png");
+  const response = await fetch(`${GRAPH}/${encodeURIComponent(pageId)}/photos`, { method: "POST", body: form, cache: "no-store", signal: AbortSignal.timeout(60_000) });
+  const json = await response.json().catch(() => ({})) as { id?: string; error?: { message?: string } };
+  if (!response.ok || !json.id) throw new Error(json.error?.message?.slice(0, 300) || `Meta returned ${response.status}.`);
+  return pagePhotoRef(json.id);
+}
+
+/** R-2697: today's public link of each hidden Page photo (Meta's links expire after a few days). */
+export async function pagePhotoLinks(refs: readonly (string | null)[], pageToken: string): Promise<Map<string, string>> {
+  const ids = [...new Set(refs.map(pagePhotoId).filter((id): id is string => Boolean(id)))].slice(0, 40);
+  const links = new Map<string, string>();
+  if (!ids.length) return links;
+  /* One call per photo: Meta refuses the batch "ids" query from v26 on. */
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const response = await fetch(`${GRAPH}/${id}?${new URLSearchParams({ fields: "images", access_token: pageToken })}`, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) return;
+      const json = await response.json() as { images?: { source?: string; width?: number }[] };
+      const best = [...(json.images ?? [])].sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]?.source;
+      if (best) links.set(pagePhotoRef(id), best);
+    } catch { /* the screen shows "no preview"; publishing reads it again */ }
+  }));
+  return links;
+}
+
 export function validMediaUrl(value: string | null): boolean {
   if (!value) return true;
+  if (pagePhotoId(value)) return true;
   try {
     const url = new URL(value);
     return url.protocol === "https:" && !!url.hostname && !/^(localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[|.*\.local$)/i.test(url.hostname);
@@ -119,7 +182,14 @@ export async function publishSocial(session: TenantSession, item: SocialItem): P
   const { data: { user } } = await admin.auth.getUser();
   if (!user || user.id !== session.userId) throw new Error("Sign in again.");
   const { createAdminClientFor } = await import("@/lib/supabase/server");
-  const connection = await readFacebookPage(createAdminClientFor(session.userId), session.tenantId);
+  /* R-2729: post with the token of the Page this post belongs to. */
+  const { pageConnection } = await import("./social-pages.server");
+  const connection = await pageConnection(createAdminClientFor(session.userId) as unknown as import("@supabase/supabase-js").SupabaseClient, session.tenantId, item.page_id ?? null);
+  if (!connection.pageToken) {
+    const main = await readFacebookPage(createAdminClientFor(session.userId), session.tenantId);
+    if (!item.page_id || item.page_id === main.pageId) return publishWithPage(item, main);
+    throw new Error("This Page is no longer connected. Reconnect Facebook (Marketing Hub → Facebook Page).");
+  }
   return publishWithPage(item, connection);
 }
 
@@ -134,6 +204,12 @@ export async function publishWithPage(
 ): Promise<string> {
   if (!connection.pageId || !connection.pageToken) throw new Error("Connect your Facebook Page first.");
   const token = connection.pageToken;
+  /* R-2697: an AI picture kept on the Page — take today's link just before posting. */
+  if (pagePhotoId(item.media_url)) {
+    const link = (await pagePhotoLinks([item.media_url], token)).get(item.media_url!);
+    if (!link) throw new Error("The AI picture is no longer in your Facebook Page's photos. Edit the post and make a new picture.");
+    item = { ...item, media_url: link };
+  }
   if (item.platform === "facebook") {
     if (item.format !== "post") throw new Error("Facebook Stories are not available here yet.");
     if (item.media_url) return (await graphPost(`${connection.pageId}/photos`, { url: item.media_url, caption: item.caption, access_token: token })).id;

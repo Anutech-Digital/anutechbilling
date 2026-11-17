@@ -36,9 +36,10 @@ export function approvedMonthlyBudget(
   return amount > 0 ? amount : null;
 }
 
-/** Who opens the page, and what each may do there. */
-export const BUDGET_ROLES: readonly UserRole[] = ["owner", "marketing", "billing", "accountant"];
-export const canAskBudget = (role: string | null | undefined) => role === "marketing" || role === "owner";
+/** Who opens the page, and what each may do there. R-2868 (16 Nov 2026, Abhishek): a manager runs
+ *  marketing too (the marketing login is a Manager), so a manager sees and asks like marketing. */
+export const BUDGET_ROLES: readonly UserRole[] = ["owner", "marketing", "manager", "billing", "accountant"];
+export const canAskBudget = (role: string | null | undefined) => role === "marketing" || role === "manager" || role === "owner";
 export const canApproveBudget = (role: string | null | undefined) => role === "owner";
 export const canPay = (role: string | null | undefined) => role === "owner" || role === "billing" || role === "accountant";
 

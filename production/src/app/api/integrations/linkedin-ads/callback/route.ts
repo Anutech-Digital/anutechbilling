@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.redirect(`${origin}/login`);
   const { data: me } = await createClient().from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   /* R-2684 review: same gate as connect — the state cookie alone does not prove the caller may connect company accounts. */
-  if (!mayDo(me?.role, "integration.company")) return done("role");
+  if (!mayDo(me?.role, "integration.marketing")) return done("role");
   if (!me?.tenant_id) return done("error");
   const creds = await readLinkedInAdsCredentials(createAdminClient(), me.tenant_id) ?? linkedInCreds();
   if (!creds || refuseConnectWithoutVault("linkedin-ads/callback")) return done("notconfigured");

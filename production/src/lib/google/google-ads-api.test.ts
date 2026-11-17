@@ -68,3 +68,12 @@ describe("Google Ads developer token is optional (sunset 9 Sep 2026)", () => {
     ]);
   });
 });
+
+describe("retired API version (16 Nov 2026: v21 gone, Google answers an HTML 404 page)", () => {
+  it("names the env to change instead of showing the raw HTML", () => {
+    const msg = explainGoogleAdsError(404, "<!DOCTYPE html><html lang=en><title>Error 404 (Not Found)!!1</title>");
+    expect(msg).toMatch(/is retired/);
+    expect(msg).toMatch(/GOOGLE_ADS_API_VERSION/);
+    expect(msg).not.toMatch(/<html/);
+  });
+});

@@ -49,6 +49,7 @@ describe("paymentProblem", () => {
 describe("who may do what (Abhishek, 23 Oct)", () => {
   it("marketing and owner ask; only the owner approves; billing / owner / accountant pay", () => {
     expect(canAskBudget("marketing")).toBe(true);
+    expect(canAskBudget("manager")).toBe(true); // R-2868: the marketing login is a Manager
     expect(canAskBudget("billing")).toBe(false);
     expect(canApproveBudget("owner")).toBe(true);
     expect(canApproveBudget("manager")).toBe(false);

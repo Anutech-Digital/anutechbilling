@@ -2,14 +2,14 @@
 -- writing social_content directly; the owner / manager path still works; the cron (service role)
 -- still publishes; the OWNER approving with a post time / choosing lead forms turns the job on,
 -- never over an owner's own switch; a manager changes no switch.
--- Migration 20261112060206_r2692_social_approval_guard.
+-- Migrations 20261112060206_r2692_social_approval_guard + 20261117060541_r2709_social_marketing_approves.
 -- Self-asserting, ONE transaction, rolled back. Run on a LOCAL DB only:
 --   begin; <migration without begin/commit>; <this file without begin/rollback>; rollback;
 --
 -- Proves:
---   A. Marketing: direct update review → approved, insert as approved, edit / pull back / delete
---      an approved post, mark failed, stamp reviewed_by → all refused with a sentence.
---      Draft → review, and deleting a draft, still work.
+--   A. R-2709 (16 Nov 2026, migration 20261117060541): marketing reviews too — approves a draft and
+--      inserts a scheduled (approved) post, each stamped with its own login (a forged reviewer is
+--      replaced); nobody inserts published / failed; a post sent for review has no stamp.
 --   B. Manager: review → approved works and reviewed_by is stamped with the manager (not a
 --      forged value); Publish now (approved → publishing → published) works.
 --   C. Service role (social-publish cron): approved → publishing → published works.
@@ -53,75 +53,58 @@ insert into public.social_content (id, tenant_id, platform, format, caption, sta
   ('eeeeeeee-0000-0000-0000-000000269203','dddddddd-0000-0000-0000-000000269201','facebook','post','Draft',      'draft',    null, null),
   ('eeeeeeee-0000-0000-0000-000000269205','dddddddd-0000-0000-0000-000000269201','facebook','post','Draft 2',    'draft',    null, null);
 
--- ── A. As the MARKETING login ────────────────────────────────────────────────
+-- ── A. As the MARKETING login (R-2709: marketing reviews too) ────────────────
 select set_config('request.jwt.claims',
   '{"sub":"aaaaaaaa-0000-0000-0000-000000269201","role":"authenticated"}', true);
 set local role authenticated;
 do $$
 declare v_msg text;
 begin
+  -- Marketing approves a draft; a forged reviewer is replaced by the real login.
+  update public.social_content set status = 'approved', scheduled_at = now() + interval '2 hours',
+         reviewed_by = 'aaaaaaaa-0000-0000-0000-000000269202'
+   where id = 'eeeeeeee-0000-0000-0000-000000269203';
+  if (select status from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269203') <> 'approved' then
+    raise exception 'FAIL A1: marketing could not approve (R-2709)';
+  end if;
+  if (select reviewed_by from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269203') is distinct from 'aaaaaaaa-0000-0000-0000-000000269201' then
+    raise exception 'FAIL A2: reviewed_by is not the approving marketing login';
+  end if;
+  -- "Schedule post": a reviewer inserts an approved post, stamped with that login.
+  insert into public.social_content (id, tenant_id, platform, format, caption, status, scheduled_at, reviewed_by)
+  values ('eeeeeeee-0000-0000-0000-000000269206','dddddddd-0000-0000-0000-000000269201','facebook','post','Scheduled','approved', now() + interval '5 minutes','aaaaaaaa-0000-0000-0000-000000269202');
+  if (select reviewed_by from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269206') is distinct from 'aaaaaaaa-0000-0000-0000-000000269201' then
+    raise exception 'FAIL A3: an inserted approved post is not stamped with the login';
+  end if;
+  -- Nobody inserts a published / failed post.
   begin
-    update public.social_content set status = 'approved' where id = 'eeeeeeee-0000-0000-0000-000000269201';
-    raise exception 'FAIL A1: marketing approved a post by writing the table';
+    insert into public.social_content (tenant_id, platform, format, caption, status)
+    values ('dddddddd-0000-0000-0000-000000269201','facebook','post','Sneaky','published');
+    raise exception 'FAIL A4: a published post was inserted directly';
   exception when insufficient_privilege then
     get stacked diagnostics v_msg = message_text;
-    if v_msg not like 'Only an owner or manager can approve%' then raise exception 'FAIL A1b: wrong sentence: %', v_msg; end if;
+    if v_msg not like 'A new post is saved as a draft%' then raise exception 'FAIL A4b: wrong sentence: %', v_msg; end if;
   end;
   begin
-    update public.social_content set status = 'publishing' where id = 'eeeeeeee-0000-0000-0000-000000269201';
-    raise exception 'FAIL A2: marketing moved a post to publishing';
+    insert into public.social_content (tenant_id, platform, format, caption, status)
+    values ('dddddddd-0000-0000-0000-000000269201','facebook','post','Sneaky','failed');
+    raise exception 'FAIL A5: a failed post was inserted directly';
   exception when insufficient_privilege then null;
   end;
-  begin
-    insert into public.social_content (tenant_id, platform, format, caption, status, scheduled_at)
-    values ('dddddddd-0000-0000-0000-000000269201','facebook','post','Sneaky','approved', now() + interval '5 minutes');
-    raise exception 'FAIL A3: marketing inserted an approved post';
-  exception when insufficient_privilege then null;
-  end;
-  begin
-    update public.social_content set caption = 'Swapped after approval' where id = 'eeeeeeee-0000-0000-0000-000000269202';
-    raise exception 'FAIL A4: marketing changed an approved post';
-  exception when insufficient_privilege then null;
-  end;
-  begin
-    update public.social_content set status = 'draft' where id = 'eeeeeeee-0000-0000-0000-000000269202';
-    raise exception 'FAIL A5: marketing pulled an approved post back';
-  exception when insufficient_privilege then null;
-  end;
-  begin
-    update public.social_content set reviewed_by = 'aaaaaaaa-0000-0000-0000-000000269202' where id = 'eeeeeeee-0000-0000-0000-000000269203';
-    raise exception 'FAIL A6: marketing forged reviewed_by';
-  exception when insufficient_privilege then null;
-  end;
-  begin
-    update public.social_content set status = 'failed' where id = 'eeeeeeee-0000-0000-0000-000000269203';
-    raise exception 'FAIL A7: marketing marked a draft failed';
-  exception when insufficient_privilege then null;
-  end;
-  begin
-    delete from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269202';
-    raise exception 'FAIL A11: marketing deleted an approved post';
-  exception when insufficient_privilege then null;
-  end;
-  -- The normal marketing path still works.
-  update public.social_content set caption = 'Draft edited', status = 'review', scheduled_at = now() + interval '2 hours'
-   where id = 'eeeeeeee-0000-0000-0000-000000269203';
-  if (select status from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269203') <> 'review' then
-    raise exception 'FAIL A8: marketing could not send a draft for approval';
-  end if;
+  -- A post sent for review carries no reviewer stamp.
   insert into public.social_content (id, tenant_id, platform, format, caption, status, reviewed_by)
   values ('eeeeeeee-0000-0000-0000-000000269204','dddddddd-0000-0000-0000-000000269201','facebook','post','New one','review','aaaaaaaa-0000-0000-0000-000000269202');
   if (select reviewed_by from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269204') is not null then
     raise exception 'FAIL A9: a new post kept a reviewer stamp';
   end if;
   if (select status from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269201') <> 'review' then
-    raise exception 'FAIL A10: a refused write changed the post';
+    raise exception 'FAIL A10: section A changed the post kept for B';
   end if;
   delete from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269205';
   if exists (select 1 from public.social_content where id = 'eeeeeeee-0000-0000-0000-000000269205') then
     raise exception 'FAIL A12: marketing could not delete its own draft';
   end if;
-  raise notice 'PASS A: marketing cannot approve / schedule / publish / delete approved directly; drafts still work';
+  raise notice 'PASS A: marketing approves and schedules (stamped as reviewer); nobody inserts published / failed; review posts carry no stamp';
 end $$;
 
 -- ── B. As the MANAGER login ──────────────────────────────────────────────────
