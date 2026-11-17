@@ -10,7 +10,8 @@
 --   B. A two-row Zoho document is covered by ONE debit of its TOTAL (after TDS); a debit of one row's
 --      amount books.
 --   C. Not covered → books as before: another account's document, a document paid 8 days away, a USD
---      row, a Salaries row, a non-Zoho paid expense. An UNPAID Zoho bill (expense rows) and an unpaid Zoho
+--      row, a non-Zoho paid expense. R-2913: a Zoho-imported Salaries row IS covered (it used to be
+--      skipped as Payroll's; Payroll's own rows: r2913 test). An UNPAID Zoho bill (expense rows) and an unpaid Zoho
 --      COGS bill (less its Zoho TDS) ARE covered, up to 120 days after the bill date, no vendor typed —
 --      with the BILL sentence (pay it with "Record payment": matching a line does not pay a bill). With
 --      the vendor typed, R-1917's own open-bill sentence still answers first.
@@ -202,7 +203,9 @@ begin
   -- ── C ──
   r := pg_temp.book('cccccccc-0000-0000-0000-000000268006'); if r not like 'ok:%' then raise exception 'C FAIL: another account''s document blocked: %', r; end if;
   r := pg_temp.book('cccccccc-0000-0000-0000-000000268007'); if r not like 'ok:%' then raise exception 'C FAIL: a USD row blocked: %', r; end if;
-  r := pg_temp.book('cccccccc-0000-0000-0000-000000268008'); if r not like 'ok:%' then raise exception 'C FAIL: a Salaries row blocked: %', r; end if;
+  -- R-2913: a salary imported from Zoho covers its debit like any imported expense
+  r := pg_temp.book('cccccccc-0000-0000-0000-000000268008');
+  if r not like 'P0001:This debit looks like a purchase already imported from Zoho (Salaries, paid 14 Oct 2026, ₹2,300)%' then raise exception 'C FAIL: the debit of a Zoho-imported Salaries row was booked again: %', r; end if;
   r := pg_temp.book('cccccccc-0000-0000-0000-000000268009');
   if r not like 'P0001:This debit looks like the payment of a bill already imported from Zoho (R2680 Unpaid Vendor, bill dated 14 Oct 2026, ₹2,400). Pay that bill with "Record payment" on this line instead of booking a new expense, or the cost is counted twice.' then
     raise exception 'C FAIL: the debit of an unpaid Zoho bill was booked, or got the wrong way out: %', r; end if;
