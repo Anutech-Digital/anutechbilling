@@ -39,6 +39,7 @@ import { MrrTrendChart, RetentionVelocityChart } from "@/components/features/acc
    Contraction the waterfall above can only print as "Not tracked". */
 import { RetentionCard } from "@/components/features/subscriptions/retention-card";
 import { useMrrSnapshots } from "@/lib/queries/seat-requests";
+import { LeaveReasonsCard } from "./leave-reasons-card";
 import { downloadCSV } from "@/lib/csv";
 import { printReport, reportFilename } from "@/lib/reports/print";
 import { rupee } from "@/lib/utils";
@@ -337,6 +338,9 @@ export default function SaasMetricsPage() {
           </Card>
 
           <WaterfallCard w={data.waterfall} />
+
+          {/* R-2243: why customers leave — Cancel / Won't renew reasons, counted, right under the churn waterfall. */}
+          <LeaveReasonsCard />
 
           {/* ── Retention, moved here from /subscriptions on 12 Sep 2026 ──────────
               It sits directly under the waterfall because it is the SAME six-part
