@@ -414,35 +414,57 @@
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(9) li { color: var(--w-ink); }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(9) > div > div > div:last-child li { color: var(--w-muted) !important; }
 
-/* ── 10 · Talk to a person (page ground, white cards) ─────────────────────────────────────── */
-/* Owner, 17 Nov 2026: "Add a background image to this section" — public/hosting-support-bg.webp (a
-   support agent with a headset on the right, open sky on the left). The band is taller so she shows
-   above the cards; a light wash over the left keeps the heading readable and fades out to the right;
-   the four channel cards are frosted so the scene shows through. */
+/* ── 10 · Talk to a person: one compact card, the support photo as its own panel ────────────────
+   Owner, 17 Nov 2026: a background image (public/hosting-support-bg.webp — a support agent with a
+   headset), then "still not looks good — background image can be shown better way, overall more
+   compact". The band behind the whole section (washes, fades, the agent under the cards) is gone:
+   the section is one white rounded card on the page ground — the heading and the four channels on
+   the left as small two-by-two tiles (icon beside the title), the photo on the right as a clean panel
+   filling the card's height, nothing laid over it. Phones and tablets: the photo panel on top. */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) {
-  background:
-    linear-gradient(90deg, rgba(244, 249, 255, 0.94) 0%, rgba(244, 249, 255, 0.8) 30%, rgba(244, 249, 255, 0.15) 58%, rgba(244, 249, 255, 0) 100%),
-    #DCEBFA url(/hosting-support-bg.webp) right 42% / cover no-repeat !important;
-  padding-top: clamp(56px, 9vw, 150px) !important; padding-bottom: clamp(40px, 5vw, 72px) !important;
+  background: var(--w-bg) !important; padding-top: clamp(32px, 4vw, 56px) !important; padding-bottom: clamp(32px, 4vw, 56px) !important;
 }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div {
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); grid-template-rows: auto 1fr; column-gap: 0;
+  padding: 0 !important; overflow: hidden; background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 28px;
+  box-shadow: 0 24px 50px -36px rgba(18, 49, 42, 0.35);
+}
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div::after {
+  content: ""; grid-column: 2; grid-row: 1 / -1; min-height: 340px;
+  background: #DCEBFA url(/hosting-support-bg.webp) 68% center / cover no-repeat;
+}
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) h2 {
+  grid-column: 1; margin: 0 !important; padding: clamp(24px, 3vw, 36px) clamp(22px, 3vw, 36px) 18px;
+  font-size: clamp(1.6rem, 2.6vw, 2.1rem) !important; line-height: 1.15 !important;
+}
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div {
+  grid-column: 1; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 12px !important; align-content: start;
+  padding: 0 clamp(22px, 3vw, 36px) clamp(24px, 3vw, 36px); max-width: none !important; margin-top: 0 !important;
+}
+/* each channel: a small tile — icon beside the title, the line and the link under it */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div {
-  background: rgba(255, 255, 255, 0.84) !important; -webkit-backdrop-filter: blur(8px) saturate(1.1); backdrop-filter: blur(8px) saturate(1.1);
-  border-color: rgba(255, 255, 255, 0.9) !important; box-shadow: 0 16px 36px -18px rgba(20, 70, 140, 0.3);
+  display: grid !important; grid-template-columns: 40px minmax(0, 1fr); column-gap: 12px; row-gap: 4px; align-items: center; align-content: start;
+  padding: 14px 16px !important; border-radius: 16px !important; background: var(--w-bg) !important; border: 1px solid var(--w-line) !important;
+  box-shadow: none !important; transition: border-color .2s ease, background-color .2s ease, transform .25s cubic-bezier(.22,.61,.36,1);
 }
-@media (max-width: 760px) {
-  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) {
-    background:
-      linear-gradient(180deg, rgba(244, 249, 255, 0.55) 0%, rgba(244, 249, 255, 0.85) 45%, rgba(244, 249, 255, 0.92) 100%),
-      linear-gradient(180deg, rgba(220, 235, 250, 0) 300px, #DCEBFA 420px),
-      #DCEBFA url(/hosting-support-bg.webp) 68% top / auto 420px no-repeat !important;
-    padding-top: 220px !important;
-  }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div:hover { background: var(--w-surface) !important; border-color: #C8DDD4 !important; transform: translateY(-2px); }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > :first-child { grid-column: 1; grid-row: 1; width: 40px !important; height: 40px !important; margin: 0 !important; }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > div { grid-column: 2; grid-row: 1; font-size: 17px !important; }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > p { grid-column: 1 / -1; margin: 6px 0 0 !important; color: var(--w-muted) !important; font-size: 14px !important; line-height: 1.5 !important; }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > a { grid-column: 1 / -1; margin-top: 4px !important; font-size: 14px !important; font-weight: 700 !important; }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div:hover { transform: none; }
 }
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) h2 { font-size: clamp(1.8rem, 3.2vw, 2.4rem) !important; }
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div { border-radius: 18px !important; padding: 20px !important; }
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > div { font-size: 18px !important; }
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > p { color: var(--w-muted) !important; font-size: 15px !important; }
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > a { font-weight: 600 !important; }
+/* Tablets and phones: the photo panel across the top of the card, the words under it. */
+@media (max-width: 999px) {
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; }
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div::after { grid-column: 1; grid-row: 1; min-height: 0; aspect-ratio: 16 / 8; background-position: 72% 30%; }
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) h2 { grid-row: 2; }
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div { grid-row: 3; }
+}
+@media (max-width: 559px) {
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div { grid-template-columns: minmax(0, 1fr) !important; }
+}
 
 /* ── 11 · FAQ (white, centred heading, each question its own rounded row) ──────────────────── */
 .anutech-site[data-site-theme="warm"] .hlp > section#faq { background: var(--w-surface) !important; }
