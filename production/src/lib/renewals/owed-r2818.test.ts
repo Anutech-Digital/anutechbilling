@@ -246,6 +246,10 @@ describe("R-2818 wiring: every screen reads the one rule", () => {
     expect(page).not.toMatch(/^\s*sub\.outstanding_amount,\s*$/m);
     expect(page).toMatch(/owedById\.get\(sub\.id\)/);
     const profile = read("src/components/features/customers/customer-profile.tsx");
-    expect(profile).toMatch(/uninvoicedSubscriptionDue\(s, invoicedQuoteIds\)/);
+    /* R-2884: the page's dues go through statementUninvoicedDues (lib/customers/statement-core.ts, pure — Help AI's
+       customer_overview reads it too), which calls the ONE uninvoicedSubscriptionDue that owed.ts re-exports. */
+    expect(profile).toMatch(/uninvoicedDues: statementUninvoicedDues\(allSubs, allInvoices\)/);
+    expect(read("src/lib/customers/statement-core.ts")).toMatch(/uninvoicedSubscriptionDue\(s, invoicedQuoteIds\)/);
+    expect(read("src/lib/renewals/owed.ts")).toMatch(/export \{ uninvoicedSubscriptionDue \}/);
   });
 });

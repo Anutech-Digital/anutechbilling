@@ -37,6 +37,7 @@ import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 import { seatsPhrase, manageSeatsHref } from "@/components/features/subscriptions/seat-words";
 import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
 import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
+import { outstandingFromClosing } from "@/lib/customers/statement-core";
 
 // ════════════════════════════════════════════════════════════════════════
 // Pure logic
@@ -114,9 +115,11 @@ export function deriveCustomerInsights(
   const standaloneUnpaid = invoices
     .filter((i) => (i.status === "pending" || i.status === "overdue") && !!i.quote_id && !subQuoteIds.has(i.quote_id))
     .reduce((s, i) => s + Math.max(0, i.net_payable ?? i.amount ?? 0), 0);
-  const closing = statement ? Math.round(statement.closing * 100) / 100 : null;
-  const outstanding = closing !== null ? Math.max(0, closing) : subsOutstanding + projectReceivable + standaloneUnpaid;
-  const credit = closing !== null && closing < 0 ? -closing : 0;
+  /* R-2884: the rounding and the Outstanding / credit split live in lib/customers/statement-core.ts —
+     Help AI's customer_overview calls the same function, so chat and page cannot differ. */
+  const fromStatement = statement ? outstandingFromClosing(statement.closing) : null;
+  const outstanding = fromStatement ? fromStatement.outstanding : subsOutstanding + projectReceivable + standaloneUnpaid;
+  const credit = fromStatement ? fromStatement.credit : 0;
   const outstandingNote = statement?.advanceNotes.length ? statement.advanceNotes.join(" · ") : undefined;
 
   // Actual cash collected = project milestone receipts + received payments

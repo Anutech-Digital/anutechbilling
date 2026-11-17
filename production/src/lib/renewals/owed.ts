@@ -26,7 +26,8 @@
  * summed in paise. Pure — tested in owed-r2818.test.ts.
  */
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
-import { subscriptionReceivable, type SubscriptionDueFields } from "@/lib/payments/receivables";
+import { type SubscriptionDueFields } from "@/lib/payments/receivables";
+import { uninvoicedSubscriptionDue } from "@/lib/customers/statement-core";
 
 /** An invoice linked to the subscription — only what bears on what is still owed. */
 export interface OwedInvoice {
@@ -57,11 +58,10 @@ export function invoiceOwed(inv: OwedInvoice): number {
  * "Instalment due · <quote> (not invoiced yet)" line: only with a quote, and only while that quote
  * has no invoice. A balance with no quote at all is on no document, so it is not owed here
  * (SCN Kochi — the customer page says All clear).
+ * R-2884: the function itself lives in lib/customers/statement-core.ts (pure, shared with Help AI's
+ * customer_overview); this is the same function, re-exported.
  */
-export function uninvoicedSubscriptionDue(sub: SubscriptionDueFields, invoicedQuoteIds: ReadonlySet<string>): number {
-  if (!sub.quote_id) return 0;
-  return subscriptionReceivable(sub, invoicedQuoteIds);
-}
+export { uninvoicedSubscriptionDue };
 
 export interface SubscriptionOwed {
   /** ₹ still owed on this subscription's documents. */
