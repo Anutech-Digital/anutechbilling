@@ -6,7 +6,8 @@
  *
  *   1. Read from Zoho      — bills, expenses, vendor payments (server-side, paced, resumable).
  *   2. Map Zoho accounts   — each Zoho account → an app category, saved for the company;
- *                            an unmapped one comes in as "Unmapped — review".
+ *                            an unmapped one keeps its bill / expense out (R-2681, owner 17 Nov);
+ *                            one Zoho types as not an expense (FD, loan, GST, asset) is never offered a category.
  *   3. Preview             — per month: Zoho vs what will come in vs already in the app (ITC, TDS).
  *   4. Check (dry run)     — the database runs the real import and rolls it back.
  *   5. Import              — bills, then expenses, then payments; each part one batch, removable.
@@ -54,7 +55,8 @@ interface Preview {
     accounts: PaidThroughAccount[];
     skipReasons: { reason: string; count: number }[];
     tdsBySection: { section: string; amount: number; count: number }[];
-    unmapped: { accountId: string; accountName: string; count: number; taxable: number }[];
+    /** R-2681: Zoho's account type (null = not read) and whether it is never an expense. */
+    unmapped: { accountId: string; accountName: string; count: number; taxable: number; type?: string | null; notExpense?: boolean }[];
     skipped: { kind: string; number: string; date: string; vendor: string; amount: number; reason: string | null }[];
   };
   payments: null | {
@@ -148,7 +150,9 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
   }
 
   async function saveMap() {
-    const rows = Object.entries(map).map(([zohoAccountId, category]) => ({
+    /* R-2681: a choice left over for an account Zoho now types as not an expense (its picker is gone) is not sent. */
+    const notExpense = new Set(preview?.purchases.unmapped.filter((u) => u.notExpense).map((u) => u.accountId) ?? []);
+    const rows = Object.entries(map).filter(([id]) => !notExpense.has(id)).map(([zohoAccountId, category]) => ({
       zohoAccountId, category, zohoAccountName: preview?.purchases.unmapped.find((u) => u.accountId === zohoAccountId)?.accountName ?? "",
     }));
     if (!rows.length) return;
@@ -229,11 +233,13 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
 
               {p.unmapped.length > 0 && (
                 <div className="rounded-md border border-amber/50 px-3 py-2">
-                  <p className="text-xs font-semibold text-ink mb-1">Map Zoho accounts to your categories ({p.unmapped.length} not mapped — they come in as &quot;Unmapped — review&quot;)</p>
-                  {/* R-2676: on an expense with no vendor an unmapped account keeps the whole expense out. */}
+                  <p className="text-xs font-semibold text-ink mb-1">Map Zoho accounts to your categories ({p.unmapped.length} not mapped — their bills and expenses stay out)</p>
+                  {/* R-2676 + R-2681 (owner, 17 Nov): an unmapped account keeps the whole document out; Zoho's own
+                      account type keeps a fixed deposit, loan, GST, asset or advance out even when mapped. */}
                   <p className="text-xs text-ink-2 mb-1">
-                    A Zoho expense with <b>no vendor</b> comes in only when its account is mapped here. Map an account only if it
-                    is an expense — leave a fixed deposit, loan, GST, asset or salary account unmapped, so those payments stay out.
+                    A Zoho bill or expense comes in only when every account on it is mapped here. Map an account only if it is an
+                    expense. Salaries stay with Payroll. Accounts Zoho itself lists as a fixed deposit, loan, GST, asset or advance
+                    are never an expense — they need another path.
                   </p>
                   <table className="w-full text-xs">
                     <tbody>
@@ -242,12 +248,21 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
                           <td className="py-1 pr-2 text-ink">{u.accountName || u.accountId}</td>
                           <td className="py-1 pr-2 text-right text-ink-2 tabular-nums whitespace-nowrap">{u.count} · {rupee(u.taxable)}</td>
                           <td className="py-1 w-56">
-                            <label htmlFor={`map-${u.accountId}`} className="sr-only">Category for {u.accountName}</label>
-                            <select id={`map-${u.accountId}`} className={selectCls} value={map[u.accountId] ?? ""}
-                              onChange={(e) => setMap((m) => ({ ...m, [u.accountId]: e.target.value }))}>
-                              <option value="">Unmapped — review</option>
-                              {preview!.categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                            </select>
+                            {u.notExpense ? (
+                              /* R-2681: Zoho's own type says this is not an expense — no category is offered. */
+                              <span className="text-ink-2" title={`Zoho lists this as a ${(u.type ?? "").replace(/_/g, " ")} account`}>
+                                Not an expense — needs another path
+                              </span>
+                            ) : (
+                              <>
+                                <label htmlFor={`map-${u.accountId}`} className="sr-only">Category for {u.accountName}</label>
+                                <select id={`map-${u.accountId}`} className={selectCls} value={map[u.accountId] ?? ""}
+                                  onChange={(e) => setMap((m) => ({ ...m, [u.accountId]: e.target.value }))}>
+                                  <option value="">Not mapped — stays out</option>
+                                  {preview!.categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                              </>
+                            )}
                           </td>
                         </tr>
                       ))}

@@ -20,12 +20,17 @@
  * R-2676: a Zoho EXPENSE with no vendor comes in as a vendor-less expense (noVendorRefusal says when
  * not: an unmapped account — how a fixed deposit, loan, GST, asset or salary stays out — a GST claim,
  * reverse charge or TDS). A Zoho bill with no vendor still stays out.
+ * R-2681: Zoho's OWN account type must be an expense type on every line, even when mapped (fixed
+ * deposit, loan, GST, asset, advance → "Not an expense — needs another path"; types not read → left out),
+ * and (owner, 17 Nov) a line on an unmapped account leaves the document out — "Unmapped — review" is no
+ * longer a landing place (account-types.ts).
  */
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { isGstin, normalizeGstin } from "@/lib/gst/itc";
 import type { PurchaseFacts, VendorPaymentFacts } from "./normalise";
 import { suggestAccount, type AppBankAccount } from "../receipts-import/plan";
 import { depositAccounts } from "@/lib/payments/deposit-accounts";
+import { accountTypeRefusal, isExpenseType, noVendorUnmappedReason, unmappedRefusal } from "./account-types";
 
 export const PURCHASE_IMPORT_ROLES = ["owner", "accountant"] as const;
 export function canImportFyPurchases(role: string | null | undefined): boolean {
@@ -58,6 +63,8 @@ export interface PurchasePlanContext {
   bankAccounts: AppBankAccount[];
   /** Zoho paid-through account name → the app account the owner chose. */
   accountMap: Record<string, string>;
+  /** R-2681: Zoho account id → Zoho's own account type (zoho_account_types); empty = never read (fail closed). */
+  accountTypes: Record<string, string>;
 }
 
 /** One Zoho paid-through account and the app account it maps to (the owner's choice, else a suggestion). */
@@ -172,7 +179,8 @@ export interface PurchasePlan {
   zohoByMonth: MonthTotals[];
   importByMonth: MonthTotals[];
   skipReasons: { reason: string; count: number }[];
-  unmapped: { accountId: string; accountName: string; count: number; taxable: number }[];
+  /** R-2681: `type` = Zoho's account type (null = not read); `notExpense` = never an expense — no category is offered. */
+  unmapped: { accountId: string; accountName: string; count: number; taxable: number; type: string | null; notExpense: boolean }[];
   tdsBySection: { section: string; amount: number; count: number }[];
   /** Zoho expenses' paid-through accounts and the app account each maps to. */
   accounts: PaidThroughAccount[];
@@ -207,8 +215,8 @@ export const NO_VENDOR_REASON = "It has no vendor in Zoho.";
 export function noVendorRefusal(f: Pick<PurchaseFacts, "lines" | "rcm" | "tdsAmount">, legs: readonly Leg[], map: Record<string, string>): string | null {
   const unmapped = f.lines.find((l) => categoryOf(l.accountId, map) === UNMAPPED_CATEGORY);
   if (unmapped) {
-    const name = unmapped.accountName.trim() || unmapped.accountId.trim() || "?";
-    return `Zoho account "${name}" is not mapped to an expense category — map it only if it is an expense. A fixed deposit, loan, GST, asset or salary payment is not an expense and stays out.`;
+    /* R-2681: buildPurchasePlan's unmappedRefusal already leaves these out first (same sentence, one copy). */
+    return noVendorUnmappedReason(unmapped.accountName.trim() || unmapped.accountId.trim() || "?");
   }
   if (f.rcm || legs.some((l) => l.gst !== 0 || l.rcmTax !== 0)) {
     return "It claims input GST (or reverse charge) but has no vendor in Zoho — add the vendor in Zoho, or add it by hand with the supplier.";
@@ -251,7 +259,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
   const zoho = new Map<string, MonthTotals>();
   const imp = new Map<string, MonthTotals>();
   const reasons = new Map<string, number>();
-  const unmapped = new Map<string, { accountId: string; accountName: string; count: number; taxable: number }>();
+  const unmapped = new Map<string, PurchasePlan["unmapped"][number]>();
   const tds = new Map<string, { section: string; amount: number; count: number }>();
   const counts = { scanned: facts.length, import: 0, already: 0, skip: 0, voidOrDraft: 0, newVendors: 0, noVendor: 0 };
   const newVendorKeys = new Set<string>();
@@ -266,7 +274,9 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
       addMonth(zoho, f, legs);
       for (const l of f.lines) {
         if (categoryOf(l.accountId, ctx.categoryMap) !== UNMAPPED_CATEGORY) continue;
-        const u = unmapped.get(l.accountId) ?? { accountId: l.accountId, accountName: l.accountName, count: 0, taxable: 0 };
+        const type = ctx.accountTypes[l.accountId] ?? null;
+        const u = unmapped.get(l.accountId)
+          ?? { accountId: l.accountId, accountName: l.accountName, count: 0, taxable: 0, type, notExpense: type !== null && !isExpenseType(type) };
         u.count += 1; u.taxable += l.taxable;
         unmapped.set(l.accountId, u);
       }
@@ -288,6 +298,14 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
       else if (cogs.length && f.rcm) reason = "A COGS bill under reverse charge — add it by hand.";
       else if (cogs.length && legs.some((l) => l.costGst > 0)) reason = "A COGS bill with ineligible ITC — add it by hand.";
       else target = cogs.length ? "vendor_bill" : "expense";
+    }
+    /* R-2681: Zoho's own account type, then (owner 17 Nov) an unmapped account leaves the document out —
+       the same sentences, in the same order, as import_zoho_fy_purchases. */
+    if (!reason && !already) {
+      const noVendorDoc = f.kind === "expenses" && !f.vendorName.trim() && !f.vendorZohoId.trim();
+      const r = accountTypeRefusal(f.lines, ctx.accountTypes)
+        ?? unmappedRefusal(f.lines, (id) => categoryOf(id, ctx.categoryMap) !== UNMAPPED_CATEGORY, noVendorDoc);
+      if (r) { reason = r; target = null; }
     }
     if (!reason && !already) {
       vendor = matchVendor(f, ctx.vendors);

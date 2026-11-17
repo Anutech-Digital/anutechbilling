@@ -30,6 +30,8 @@ const ctx = (over: Partial<PurchasePlanContext> = {}): PurchasePlanContext => ({
   imported: new Set<string>(),
   bankAccounts: ACCOUNTS,
   accountMap: {},
+  /* R-2681: Zoho types every account here as an expense (the R-2676 rules below are about the MAP). */
+  accountTypes: { "A-COGS": "cost_of_goods_sold", "A-FD": "expense", "A-LOAN": "expense", "A-RENT": "expense", "A-SAL": "expense", "A-WEL": "expense", ZZ: "expense" },
   ...over,
 });
 const one = (f: PurchaseFacts, c = ctx()) => buildPurchasePlan([f], c).rows[0];
@@ -105,12 +107,14 @@ describe("R-2676 a Zoho expense with no vendor", () => {
     expect(noAcct.noVendor).toBe(false);
   });
 
-  it("an expense WITH a vendor is unchanged: matched or created, noVendor false, an unmapped account still 'Unmapped — review'", () => {
-    const r = one(expense({ vendorName: "New Stationers", lines: [line({ accountId: "ZZ", accountName: "Misc" })] }));
+  it("an expense WITH a vendor: matched or created, noVendor false; an unmapped account is left out (R-2681, owner 17 Nov)", () => {
+    const r = one(expense({ vendorName: "New Stationers" }));
     expect(r.verdict).toBe("import");
     expect(r.createVendor).toBe(true);
     expect(r.noVendor).toBe(false);
-    expect(r.legs[0].category).toBe(UNMAPPED_CATEGORY);
+    const u = one(expense({ vendorName: "New Stationers", lines: [line({ accountId: "ZZ", accountName: "Misc" })] }));
+    expect(u).toMatchObject({ verdict: "skip", reason: expect.stringMatching(/^Zoho account "Misc" is not mapped — left out for now/) });
+    expect(u.legs[0].category).toBe(UNMAPPED_CATEGORY);
   });
 
   it("noVendorRefusal order: unmapped account, then GST / reverse charge, then TDS", () => {

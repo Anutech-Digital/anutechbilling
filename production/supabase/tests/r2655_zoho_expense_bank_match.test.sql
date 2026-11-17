@@ -31,6 +31,21 @@
 
 begin;
 
+-- R-2681: the import now needs Zoho's account types (fail closed). Every account this test's Zoho
+-- documents use is an expense / COGS account in Zoho, so each scan row seeds its accounts as 'expense'
+-- (rolled back with the file).
+create function public._r2681_test_seed_types() returns trigger language plpgsql security definer set search_path to 'public' as $f$
+begin
+  if to_regclass('public.zoho_account_types') is null then return new; end if;
+  insert into public.zoho_account_types (tenant_id, zoho_account_id, account_type)
+  select distinct new.tenant_id, l->>'accountId', 'expense'
+    from jsonb_array_elements(case when jsonb_typeof(new.payload->'lines') = 'array' then new.payload->'lines' else '[]'::jsonb end) l
+   where coalesce(l->>'accountId', '') <> ''
+  on conflict do nothing;
+  return new;
+end $f$;
+create trigger r2681_test_seed_types after insert or update on public.zoho_fy_scan for each row execute function public._r2681_test_seed_types();
+
 create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
 begin
   new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
