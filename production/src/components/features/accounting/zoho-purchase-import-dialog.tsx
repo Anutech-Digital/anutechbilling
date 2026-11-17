@@ -47,7 +47,7 @@ const selectCls = "w-full rounded-md border border-hairline bg-paper px-2 py-1 t
 
 interface Preview {
   purchases: {
-    counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number; /** R-2676 */ noVendor?: number };
+    counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number; /** R-2676 */ noVendor?: number; /** R-2911 */ salaryFromZoho?: number };
     parts: { bills: number; expenses: number };
     zohoByMonth: MonthTotals[]; importByMonth: MonthTotals[]; appByMonth: MonthTotals[];
     /** R-2502c: purchases already in the app NOT from Zoho, per month — an overlap shows before importing. */
@@ -227,6 +227,8 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
                 <b>{n(p.counts.scanned)}</b> Zoho bills + expenses · <b>{n(p.counts.import)}</b> to import
                 {p.counts.newVendors > 0 && <> · {p.counts.newVendors} new vendors from Zoho</>}
                 {(p.counts.noVendor ?? 0) > 0 && <> · {n(p.counts.noVendor ?? 0)} with no vendor in Zoho (come in as expenses with no vendor)</>}
+                {/* R-2911: Zoho salaries in months Payroll has no payslip for come in as Salaries. */}
+                {(p.counts.salaryFromZoho ?? 0) > 0 && <> · {n(p.counts.salaryFromZoho ?? 0)} salary from Zoho — no payslip in Payroll for that month (come in as Salaries)</>}
                 {p.counts.already > 0 && <> · <Badge kind="muted" size="sm">{p.counts.already} already in the app</Badge></>}
                 {p.counts.skip > 0 && <> · <Badge kind="warning" size="sm">{p.counts.skip} left out</Badge></>}
               </p>

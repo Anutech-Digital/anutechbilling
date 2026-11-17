@@ -8,7 +8,8 @@
 --   3. Fail closed: no types read for the company → refused "not read yet" (another company's types do
 --      not count); 3b an account missing from the read types → refused with its name; 3c a rerun of an
 --      imported document stays "already" even with no types.
---   5. An unmapped account → left out ("not mapped — left out for now"); 6 a salary account → "Payroll".
+--   5. An unmapped account → left out ("not mapped — left out for now"); 6 a salary account → Salaries
+--      (R-2911 corrected the 17 Nov "Payroll" refusal: no payslip in this company → it comes in).
 --   7. One expense line + one loan line → the whole document refused (no part imported).
 --   11. Members can read their own company's types only and cannot write them.
 -- Self-asserting; the whole file rolls back. Red without the migration (1: FD imports / table missing).
@@ -126,20 +127,20 @@ begin
   -- 1 + 3b + 5 + 6 + 7 (expenses), real import.
   r := public.import_zoho_fy_purchases('expenses', '2025-26',
     jsonb_build_array(pg_temp.pick('e1'), pg_temp.pick('e2'), pg_temp.pick('e3'), pg_temp.pick('e4'), pg_temp.pick('e5'), pg_temp.pick('e6'), pg_temp.pick('e7')), false);
-  if (r->>'imported')::int <> 1 then raise exception 'FAIL 2: only e1 should import: %', r; end if;
+  if (r->>'imported')::int <> 2 then raise exception 'FAIL 2: only e1 and e6 (salary, R-2911) should import: %', r; end if;
   if not exists (select 1 from public.expenses where zoho_doc_id = 'expenses:e1' and category = 'Office Rent' and amount = 500) then
     raise exception 'FAIL 2: e1 row'; end if;
-  if pg_temp.reason(r, 'e2') is distinct from 'Not an expense — needs another path: Zoho account "Fixed Deposit HDFC" is a other current asset account in Zoho. Fixed deposits, loans, GST, assets and advances are never booked as an expense.' then
+  if pg_temp.reason(r, 'e2') is distinct from 'Not an expense — needs another path: in Zoho, "Fixed Deposit HDFC" is an account of type "other current asset". Fixed deposits, loans, GST, assets and advances are never booked as an expense.' then
     raise exception 'FAIL 1: FD (mapped) must be refused: %', r; end if;
-  if pg_temp.reason(r, 'e3') is distinct from 'Not an expense — needs another path: Zoho account "Loan from director" is a long term liability account in Zoho. Fixed deposits, loans, GST, assets and advances are never booked as an expense.' then
+  if pg_temp.reason(r, 'e3') is distinct from 'Not an expense — needs another path: in Zoho, "Loan from director" is an account of type "long term liability". Fixed deposits, loans, GST, assets and advances are never booked as an expense.' then
     raise exception 'FAIL 7: mixed rent + loan must be refused whole: %', r; end if;
   if exists (select 1 from public.expenses where zoho_doc_id like 'expenses:e3%') then raise exception 'FAIL 7: part of e3 imported'; end if;
   if pg_temp.reason(r, 'e4') is distinct from 'Zoho''s account type for "Made after the read" is not read yet — press Read from Zoho again, then preview again.' then
     raise exception 'FAIL 3b: account missing from the types: %', r; end if;
   if pg_temp.reason(r, 'e5') is distinct from 'Zoho account "Misc charges" is not mapped — left out for now (owner, 17 Nov). Map it only if it is an expense.' then
     raise exception 'FAIL 5: unmapped must be left out: %', r; end if;
-  if pg_temp.reason(r, 'e6') is distinct from 'Zoho account "Salaries and wages" is a salary — Payroll books salaries, so it is not imported from Zoho (owner, 17 Nov).' then
-    raise exception 'FAIL 6: salary must be left out: %', r; end if;
+  if not exists (select 1 from public.expenses where zoho_doc_id = 'expenses:e6' and category = 'Salaries' and amount = 15000) then
+    raise exception 'FAIL 6: a salary with no payslip in Payroll comes in as Salaries (R-2911): %', r; end if;
   if pg_temp.reason(r, 'e7') is distinct from 'A line has no account in Zoho — add it by hand.' then
     raise exception 'FAIL 3d: a line with no account: %', r; end if;
   if exists (select 1 from public.expenses where category = 'Unmapped — review' and tenant_id = 'b2681000-0000-0000-0000-0000000000f0') then
@@ -149,7 +150,7 @@ begin
   r := public.import_zoho_fy_purchases('bills', '2025-26', '[{"zoho_id":"b1","vendor_id":null},{"zoho_id":"b2","vendor_id":null}]', false);
   if (r->>'imported')::int <> 1 or not exists (select 1 from public.vendor_bills where zoho_doc_id = 'bills:b2') then
     raise exception 'FAIL 2: COGS bill b2 should import: %', r; end if;
-  if pg_temp.reason(r, 'b1') is distinct from 'Not an expense — needs another path: Zoho account "Output CGST" is a other current liability account in Zoho. Fixed deposits, loans, GST, assets and advances are never booked as an expense.' then
+  if pg_temp.reason(r, 'b1') is distinct from 'Not an expense — needs another path: in Zoho, "Output CGST" is an account of type "other current liability". Fixed deposits, loans, GST, assets and advances are never booked as an expense.' then
     raise exception 'FAIL 1: Output GST bill must be refused: %', r; end if;
   if exists (select 1 from public.expenses where zoho_doc_id = 'bills:b1') or exists (select 1 from public.vendor_bills where zoho_doc_id = 'bills:b1') then
     raise exception 'FAIL 1: b1 written'; end if;

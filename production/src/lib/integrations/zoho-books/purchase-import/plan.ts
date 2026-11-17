@@ -24,13 +24,20 @@
  * deposit, loan, GST, asset, advance → "Not an expense — needs another path"; types not read → left out),
  * and (owner, 17 Nov) a line on an unmapped account leaves the document out — "Unmapped — review" is no
  * longer a landing place (account-types.ts).
+ * R-2911 (17 Nov, corrects R-2681's salary part): a line on a salary account (by its Zoho name) is
+ * Salaries, not unmapped — it comes in unless Payroll already books that salary for the month
+ * (salaryPayrollRefusal; the preview says "Salary from Zoho — no payslip in Payroll for that month").
  */
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { isGstin, normalizeGstin } from "@/lib/gst/itc";
 import type { PurchaseFacts, VendorPaymentFacts } from "./normalise";
 import { suggestAccount, type AppBankAccount } from "../receipts-import/plan";
 import { depositAccounts } from "@/lib/payments/deposit-accounts";
-import { accountTypeRefusal, isExpenseType, noVendorUnmappedReason, unmappedRefusal } from "./account-types";
+import {
+  NO_PAYROLL, SALARY_BILL_REASON, SALARY_FROM_ZOHO_NOTE, SALARY_TDS_REASON, accountTypeRefusal, isExpenseType, isSalaryAccount,
+  noVendorUnmappedReason, salaryPayeeText, salaryPayrollRefusal, unmappedRefusal, type PayrollFacts,
+} from "./account-types";
+import { SALARIES_CATEGORY } from "@/lib/accounting/director-remuneration";
 
 export const PURCHASE_IMPORT_ROLES = ["owner", "accountant"] as const;
 export function canImportFyPurchases(role: string | null | undefined): boolean {
@@ -65,6 +72,8 @@ export interface PurchasePlanContext {
   accountMap: Record<string, string>;
   /** R-2681: Zoho account id → Zoho's own account type (zoho_account_types); empty = never read (fail closed). */
   accountTypes: Record<string, string>;
+  /** R-2911: this company's employees + payslips (a Zoho salary in a month Payroll books stays out). Missing = none. */
+  payroll?: PayrollFacts;
 }
 
 /** One Zoho paid-through account and the app account it maps to (the owner's choice, else a suggestion). */
@@ -125,11 +134,17 @@ export function categoryOf(accountId: string, map: Record<string, string>): stri
   return c && CATEGORY_CHOICES.includes(c) ? c : UNMAPPED_CATEGORY;
 }
 
+/** R-2911: a line's category — the map's, else Salaries for a salary account (never mappable), else unmapped. As the SQL legs. */
+export function lineCategory(l: { accountId: string; accountName: string }, map: Record<string, string>): string {
+  const c = categoryOf(l.accountId, map);
+  return c === UNMAPPED_CATEGORY && isSalaryAccount(l.accountName) ? SALARIES_CATEGORY : c;
+}
+
 /** One leg per category, in first-seen order. */
 export function legsOf(f: PurchaseFacts, map: Record<string, string>): Leg[] {
   const legs = new Map<string, Leg>();
   for (const l of f.lines) {
-    const c = categoryOf(l.accountId, map);
+    const c = lineCategory(l, map);
     const g = legs.get(c) ?? { category: c, taxable: 0, gst: 0, costGst: 0, rcmTax: 0, heads: null };
     g.taxable += l.taxable;
     if (f.rcm) g.rcmTax += l.tax;
@@ -171,11 +186,13 @@ export interface PurchasePlanRow {
   legs: Leg[];
   /** Zoho expenses: the app account it was paid from (null for a bill — paid later). */
   accountId: string | null;
+  /** R-2911: a salary coming in as Salaries — SALARY_FROM_ZOHO_NOTE; null otherwise. */
+  salaryNote: string | null;
 }
 
 export interface PurchasePlan {
   rows: PurchasePlanRow[];
-  counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number; /** R-2676: imported with no vendor. */ noVendor: number };
+  counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number; /** R-2676: imported with no vendor. */ noVendor: number; /** R-2911: salaries from Zoho coming in (no payslip that month). */ salaryFromZoho: number };
   zohoByMonth: MonthTotals[];
   importByMonth: MonthTotals[];
   skipReasons: { reason: string; count: number }[];
@@ -213,7 +230,7 @@ export const NO_VENDOR_REASON = "It has no vendor in Zoho.";
  *   - no TDS (26Q needs the deductee).
  */
 export function noVendorRefusal(f: Pick<PurchaseFacts, "lines" | "rcm" | "tdsAmount">, legs: readonly Leg[], map: Record<string, string>): string | null {
-  const unmapped = f.lines.find((l) => categoryOf(l.accountId, map) === UNMAPPED_CATEGORY);
+  const unmapped = f.lines.find((l) => lineCategory(l, map) === UNMAPPED_CATEGORY);
   if (unmapped) {
     /* R-2681: buildPurchasePlan's unmappedRefusal already leaves these out first (same sentence, one copy). */
     return noVendorUnmappedReason(unmapped.accountName.trim() || unmapped.accountId.trim() || "?");
@@ -261,7 +278,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
   const reasons = new Map<string, number>();
   const unmapped = new Map<string, PurchasePlan["unmapped"][number]>();
   const tds = new Map<string, { section: string; amount: number; count: number }>();
-  const counts = { scanned: facts.length, import: 0, already: 0, skip: 0, voidOrDraft: 0, newVendors: 0, noVendor: 0 };
+  const counts = { scanned: facts.length, import: 0, already: 0, skip: 0, voidOrDraft: 0, newVendors: 0, noVendor: 0, salaryFromZoho: 0 };
   const newVendorKeys = new Set<string>();
   const accounts = resolveAccounts(
     facts.filter((f) => f.kind === "expenses" && f.status !== "void" && f.status !== "draft").map((f) => ({ name: f.paidThrough, amount: f.total })),
@@ -273,7 +290,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
     if (live) {
       addMonth(zoho, f, legs);
       for (const l of f.lines) {
-        if (categoryOf(l.accountId, ctx.categoryMap) !== UNMAPPED_CATEGORY) continue;
+        if (lineCategory(l, ctx.categoryMap) !== UNMAPPED_CATEGORY) continue;
         const type = ctx.accountTypes[l.accountId] ?? null;
         const u = unmapped.get(l.accountId)
           ?? { accountId: l.accountId, accountName: l.accountName, count: 0, taxable: 0, type, notExpense: type !== null && !isExpenseType(type) };
@@ -285,6 +302,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
     let target: PurchasePlanRow["target"] = null;
     let vendor: ReturnType<typeof matchVendor> = { id: null, create: false, problem: null };
     let noVendor = false;
+    let salaryNote: string | null = null;
     if (f.status === "void") { reason = "Void in Zoho — not a purchase, not in the P&L or ITC."; counts.voidOrDraft++; }
     else if (f.status === "draft") { reason = "Draft in Zoho — never booked there."; counts.voidOrDraft++; }
     else if (f.problems.length) reason = f.problems[0];
@@ -304,8 +322,19 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
     if (!reason && !already) {
       const noVendorDoc = f.kind === "expenses" && !f.vendorName.trim() && !f.vendorZohoId.trim();
       const r = accountTypeRefusal(f.lines, ctx.accountTypes)
-        ?? unmappedRefusal(f.lines, (id) => categoryOf(id, ctx.categoryMap) !== UNMAPPED_CATEGORY, noVendorDoc);
+        ?? unmappedRefusal(f.lines, (l) => lineCategory(l, ctx.categoryMap) !== UNMAPPED_CATEGORY, noVendorDoc);
       if (r) { reason = r; target = null; }
+    }
+    /* R-2911 (the same sentences, in the same order, as the SQL): a Salaries leg (an unmapped salary
+       account) on a Zoho BILL or with TDS stays out; then ANY line on a salary-named account — mapped or
+       not — is checked against Payroll; a Salaries leg that passes comes in with the preview's note. */
+    if (!reason && !already) {
+      const salaries = legs.some((l) => l.category === SALARIES_CATEGORY);
+      let r: string | null = null;
+      if (salaries && f.kind === "bills") r = SALARY_BILL_REASON;
+      else if (salaries && f.tdsAmount !== 0) r = SALARY_TDS_REASON;
+      else if (f.lines.some((l) => isSalaryAccount(l.accountName))) r = salaryPayrollRefusal(salaryPayeeText(f), f.date, ctx.payroll ?? NO_PAYROLL);
+      if (r) { reason = r; target = null; } else if (salaries) salaryNote = SALARY_FROM_ZOHO_NOTE;
     }
     if (!reason && !already) {
       vendor = matchVendor(f, ctx.vendors);
@@ -332,6 +361,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
     else {
       verdict = "import"; counts.import++;
       if (noVendor) counts.noVendor++;
+      if (salaryNote) counts.salaryFromZoho++;
       addMonth(imp, f, legs);
       if (vendor.create) {
         const k = f.vendorZohoId || norm(f.vendorName);
@@ -343,7 +373,8 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
       t.amount += f.tdsAmount; t.count += 1;
       tds.set(f.tdsSection, t);
     }
-    rows.push({ facts: f, verdict, reason, target: verdict === "skip" ? null : target, vendorId: vendor.id, createVendor: vendor.create, noVendor: noVendor && verdict === "import", legs, accountId: verdict === "skip" ? null : accountId });
+    rows.push({ facts: f, verdict, reason, target: verdict === "skip" ? null : target, vendorId: vendor.id, createVendor: vendor.create, noVendor: noVendor && verdict === "import", legs, accountId: verdict === "skip" ? null : accountId,
+      salaryNote: verdict === "import" ? salaryNote : null });
   }
 
   return {

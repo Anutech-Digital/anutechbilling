@@ -61,7 +61,7 @@ describe("R-2676 a Zoho expense with no vendor", () => {
   it("an unmapped account (fixed deposit, loan, GST, asset, salary) → left out, never 'Unmapped — review'", () => {
     const r = one(expense({ taxable: 100000, total: 100000, lines: [line({ accountId: "A-FD", accountName: "Fixed Deposit", taxable: 100000 })] }));
     expect(r.verdict).toBe("skip");
-    expect(r.reason).toBe('Zoho account "Fixed Deposit" is not mapped to an expense category — map it only if it is an expense. A fixed deposit, loan, GST, asset or salary payment is not an expense and stays out.');
+    expect(r.reason).toBe('Zoho account "Fixed Deposit" is not mapped to an expense category — map it only if it is an expense. A fixed deposit, loan, GST or asset payment is not an expense and stays out.');
     expect(r.target).toBeNull();
     expect(r.noVendor).toBe(false);
   });
@@ -73,9 +73,10 @@ describe("R-2676 a Zoho expense with no vendor", () => {
   });
 
   it("a saved map row outside the allowed categories (Salaries) counts as unmapped", () => {
-    const r = one(expense({ lines: [line({ accountId: "A-SAL", accountName: "Salaries and wages" })] }), ctx({ categoryMap: { "A-SAL": "Salaries" } }));
+    /* R-2911: a salary-NAMED account is Salaries by its name (plan-salary-r2911.test.ts) — so this case uses another name. */
+    const r = one(expense({ lines: [line({ accountId: "A-HK", accountName: "Housekeeping" })] }), ctx({ categoryMap: { "A-HK": "Salaries" }, accountTypes: { ...ctx().accountTypes, "A-HK": "expense" } }));
     expect(r.verdict).toBe("skip");
-    expect(r.reason).toContain('Zoho account "Salaries and wages" is not mapped to an expense category');
+    expect(r.reason).toContain('Zoho account "Housekeeping" is not mapped to an expense category');
   });
 
   it("claims input GST → left out (ITC needs the supplier); GST Zoho marked ineligible stays in the cost and comes in", () => {

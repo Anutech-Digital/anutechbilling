@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
       if (category && !CATEGORY_CHOICES.includes(category)) return fail(400, `"${category}" is not a category you can map to.`);
       if (category && types[id] !== undefined && !isExpenseType(types[id])) {
         const name = typeof r.zohoAccountName === "string" && r.zohoAccountName.trim() ? r.zohoAccountName.trim() : id;
-        return fail(400, `"${name}" is a ${typeLabel(types[id])} account in Zoho — not an expense, it cannot get an expense category.`);
+        return fail(400, `In Zoho, "${name}" is an account of type "${typeLabel(types[id])}" — not an expense, it cannot get an expense category.`);
       }
       out.push({ zoho_account_id: id, zoho_account_name: typeof r.zohoAccountName === "string" ? r.zohoAccountName.slice(0, 200) : "", category });
     }

@@ -48,7 +48,7 @@ describe("R-2681 Zoho's own account type", () => {
   it("a MAPPED fixed deposit (no vendor) and a mapped Output GST bill are 'Not an expense — needs another path'", () => {
     const fd = one(doc({ vendorName: "", vendorZohoId: "", lines: [line({ accountId: "A-FD", accountName: "Fixed Deposit HDFC", taxable: 8500000 })] }));
     expect(fd).toMatchObject({ verdict: "skip", target: null,
-      reason: 'Not an expense — needs another path: Zoho account "Fixed Deposit HDFC" is a other current asset account in Zoho. Fixed deposits, loans, GST, assets and advances are never booked as an expense.' });
+      reason: 'Not an expense — needs another path: in Zoho, "Fixed Deposit HDFC" is an account of type "other current asset". Fixed deposits, loans, GST, assets and advances are never booked as an expense.' });
     const gst = one(doc({ kind: "bills", zohoId: "B1", number: "B-1", status: "open", lines: [line({ accountId: "A-OGST", accountName: "Output CGST" })] }));
     expect(gst).toMatchObject({ verdict: "skip", reason: notAnExpenseReason("Output CGST", "other_current_liability") });
   });
@@ -102,10 +102,16 @@ describe("R-2681 owner decision 17 Nov — unmapped accounts stay out", () => {
     expect(b.verdict).toBe("skip");
   });
 
-  it("Prashant's salary (Payroll books it): a salary account says so and stays out", () => {
-    const r = one(doc({ vendorName: "Prashant", vendorZohoId: "VZ-P", kind: "bills", zohoId: "B4", number: "SAL-1", status: "open",
+  it("R-2911 corrects the 17 Nov salary decision: a salary account is Salaries, not unmapped — it comes in when Payroll has no payslip", () => {
+    /* Was: "is a salary — Payroll books salaries" (refused). Excel's Payroll starts Jun 2026, so FY 2025-26 salaries
+       come only from Zoho; plan-salary-r2911.test.ts has the Payroll cases. */
+    const r = one(doc({ vendorName: "Prashant", vendorZohoId: "VZ-P", zohoId: "E-SAL",
       lines: [line({ accountId: "A-SAL", accountName: "Salaries and wages", taxable: 15000 })] }));
-    expect(r).toMatchObject({ verdict: "skip", reason: 'Zoho account "Salaries and wages" is a salary — Payroll books salaries, so it is not imported from Zoho (owner, 17 Nov).' });
+    expect(r).toMatchObject({ verdict: "import", target: "expense" });
+    expect(r.legs.map((l) => l.category)).toEqual(["Salaries"]);
+    /* A Zoho salary BILL would land unpaid with no pay path — it stays out (R-2911). */
+    expect(one(doc({ vendorName: "Prashant", vendorZohoId: "VZ-P", kind: "bills", zohoId: "B4", number: "SAL-1", status: "open",
+      lines: [line({ accountId: "A-SAL", accountName: "Salaries and wages", taxable: 15000 })] })).reason).toMatch(/^A Zoho salary bill stays out/);
   });
 
   it("a Zoho expense with no vendor keeps R-2676's sentence", () => {

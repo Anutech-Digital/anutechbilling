@@ -300,7 +300,7 @@ describe("R-2681 purchase-import route — Zoho's own account type", () => {
     let body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
     expect(body.purchases.counts.import).toBe(0);
     expect(body.purchases.skipped).toContainEqual(expect.objectContaining({ number: "VB-1",
-      reason: 'Not an expense — needs another path: Zoho account "Software" is a other current asset account in Zoho. Fixed deposits, loans, GST, assets and advances are never booked as an expense.' }));
+      reason: 'Not an expense — needs another path: in Zoho, "Software" is an account of type "other current asset". Fixed deposits, loans, GST, assets and advances are never booked as an expense.' }));
     st.types = {};
     body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
     expect(body.purchases.skipped).toContainEqual(expect.objectContaining({ number: "VB-1", reason: expect.stringMatching(/^Zoho account types are not read yet/) }));
@@ -315,7 +315,7 @@ describe("R-2681 purchase-import route — Zoho's own account type", () => {
     st.types = { A1: "expense", "A-FD": "other_current_asset" };
     const res = await POST(req({ action: "saveMap", fy: "2025-26", rows: [{ zohoAccountId: "A-FD", zohoAccountName: "Fixed Deposit", category: "Rates & Taxes" }] }));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe('"Fixed Deposit" is a other current asset account in Zoho — not an expense, it cannot get an expense category.');
+    expect((await res.json()).error).toBe('In Zoho, "Fixed Deposit" is an account of type "other current asset" — not an expense, it cannot get an expense category.');
     expect(st.rpc).toEqual([]);
     expect((await POST(req({ action: "saveMap", fy: "2025-26", rows: [{ zohoAccountId: "A-FD", category: "" }] }))).status).toBe(200);
     expect(st.rpc[0].fn).toBe("save_zoho_account_categories");

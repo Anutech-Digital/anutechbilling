@@ -3,7 +3,7 @@
 -- (import_zoho_fy_purchases, migration 20261117124555_r2676_zoho_no_vendor_expenses).
 --   1. A Zoho BILL with no vendor still stays out.
 --   2. A no-vendor expense comes in only when EVERY line's Zoho account is mapped to an expense category:
---      an unmapped account (fixed deposit, loan, GST, asset), a salary account (Salaries can never be mapped), or one unmapped line
+--      an unmapped account (fixed deposit, loan, GST, asset; R-2911: a salary-NAMED account is Salaries, see r2911), or one unmapped line
 --      among mapped ones → left out with the reason (never "Unmapped — review").
 --   3. Claims input GST, reverse charge, TDS, a COGS account → left out with the reason.
 --   4. Already in the books (±₹1, ±3 days): a vendor-less expense NOT from Zoho paid from the same account
@@ -145,7 +145,7 @@ begin
   if (r->>'dry_run')::boolean is not true or (r->>'imported')::int <> 5 or (r->>'no_vendor')::int <> 4 or (r->>'new_vendors')::int <> 1 then
     raise exception 'FAIL 5a: dry run % — %', r - 'done', reasons; end if;
   -- 2. every line must be on a mapped expense account
-  if reasons not like '%n3=Zoho account "A-FD name" is not mapped to an expense category — map it only if it is an expense. A fixed deposit, loan, GST, asset or salary payment is not an expense and stays out.%' then
+  if reasons not like '%n3=Zoho account "A-FD name" is not mapped to an expense category — map it only if it is an expense. A fixed deposit, loan, GST or asset payment is not an expense and stays out.%' then
     raise exception 'FAIL 2a: unmapped %', reasons; end if;
   if reasons not like '%n4=Zoho account "A-SAL name" is not mapped to an expense category%' then raise exception 'FAIL 2b: salary account %', reasons; end if;
   if reasons not like '%n12=Zoho account "A-LOAN name" is not mapped to an expense category%' then raise exception 'FAIL 2c: one unmapped line %', reasons; end if;
