@@ -466,12 +466,12 @@
   .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]):has(> .wrap > .grid-4 > .card-highlight)::before { width: 300px; height: 300px; right: -150px; top: -150px; }
 }
 
-/* /ssl hero as a photo band, like the home page hero (owner, 17 Nov 2026: "use the attached 4 images to
-   the hero section in the background, similar to hero section in homepage"). public/ssl-hero-1…4.webp
-   (browser, shield, certificate and plan cards on a mint ground, open on the left), after a photo
-   slide, cycle behind the heading and the lead, full bleed; a light wash on the left keeps the words calm,
-   and the band runs ~70px behind the top of the price cards so they sit on it. The small picture card
-   and the mint circle it replaced are gone. Reduced motion: the first image only. */
+/* /ssl hero as a photo band, like the home page hero (owner, 17 Nov 2026). One photo —
+   public/ssl-hero-photo.webp, a laptop with floating security icons on a desk — fills a full-bleed band
+   behind the heading and the lead (cover, cropped a little above centre so the shield, certificate and
+   padlock show); a light wash on the left keeps the words calm, and the band runs ~70px behind the top
+   of the price cards so they sit on it. Four rotating illustrations were tried first; the owner kept
+   only this photo ("Remove the other rotating image except the new one"). */
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]):has(> .wrap > .grid-4 > .card-highlight) { padding-top: 0; }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]):has(> .wrap > .grid-4 > .card-highlight)::before { content: none; }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight) > div:first-child {
@@ -483,34 +483,14 @@
   margin: 0 calc(50% - 50vw) -70px; border-radius: 0; box-shadow: none; pointer-events: none;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::after {
-  /* Scaled to the band's height, so each illustration shows whole (cover cut its top off in this short,
-     wide band), and its right edge on the CONTENT's right edge — the navbar's (site-warm.css
-     --w-content) — not the screen's: on a 2000px screen it sat out at the far edge, away from the
-     heading (owner, 17 Nov 2026). The rest is the images' own left-edge mint (#F0F8F3). */
-  /* The FIRST slide (owner, 17 Nov 2026: "add this image to rotating section as 1st") is a photo —
-     public/ssl-hero-photo.webp, a laptop with security icons on a desk, its left a soft blue — so it
-     fills the band (cover, anchored right) rather than sitting on the mint like the illustrations.
-     Five slides, 7s each. Reduced motion: the photo only. */
   z-index: -2; background: #F0F8F3 url(/ssl-hero-photo.webp) no-repeat;
   background-size: cover; background-position: right 28%;
-  animation: ssl-warm-slides 35s infinite;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::before {
   z-index: -1;
   background:
     linear-gradient(90deg, rgba(238, 247, 243, 0.92) 0%, rgba(238, 247, 243, 0.65) 36%, rgba(238, 247, 243, 0) 60%),
     linear-gradient(180deg, rgba(245, 247, 244, 0) 72%, var(--w-bg) 100%);
-}
-@keyframes ssl-warm-slides {
-  0%, 17%   { background-image: url(/ssl-hero-photo.webp); background-size: cover; background-position: right 28%; }
-  20%, 37%  { background-image: url(/ssl-hero-1.webp); background-size: auto 100%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) center; }
-  40%, 57%  { background-image: url(/ssl-hero-2.webp); background-size: auto 100%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) center; }
-  60%, 77%  { background-image: url(/ssl-hero-3.webp); background-size: auto 100%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) center; }
-  80%, 97%  { background-image: url(/ssl-hero-4.webp); background-size: auto 100%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) center; }
-  100%      { background-image: url(/ssl-hero-photo.webp); background-size: cover; background-position: right 28%; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::after { animation: none; }
 }
 @media (max-width: 979px) {
   .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::after,
