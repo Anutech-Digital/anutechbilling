@@ -29,7 +29,12 @@ type Tables = Database["public"]["Tables"];
 export type TenantTable = { [K in keyof Tables]: "tenant_id" extends keyof Tables[K]["Row"] ? K : never }[keyof Tables];
 
 /** Tables help tools may read. Add a table here only with the tool that needs it. */
-export const HELP_READ_TABLES = ["subscriptions", "invoices", "quotes", "leads", "customers"] as const satisfies readonly TenantTable[];
+/* R-2884: + payments, credit_notes, debit_notes, project_sales, project_payments — the rows the Customer page's
+   Outstanding is made of (customer_overview). Every one of them has a column allowlist below. */
+export const HELP_READ_TABLES = [
+  "subscriptions", "invoices", "quotes", "leads", "customers",
+  "payments", "credit_notes", "debit_notes", "project_sales", "project_payments",
+] as const satisfies readonly TenantTable[];
 export type HelpReadTable = (typeof HELP_READ_TABLES)[number];
 
 /** Credential tables: never readable by a help tool, even if someone adds them to the list above. */
@@ -90,10 +95,26 @@ export const HELP_READ_PAGE_MAX = 1000;
  * can be read only through these columns — in a select list, a filter or an order — so no later tool can select
  * customers.pan / gstin / tan / phone / e-mail / address by adding a column to its string. A table not listed
  * keeps the old rule (any plain, non-secret column). Add a column here only with the tool that needs it.
- * (payments: add its entry in the same change as its tool, R-2885.)
+ * R-2884: the tables customer_overview reads have one too — money columns and ids only: never a GSTIN, address,
+ * IRN, bank account, receipt file, UTR / reference / notes, e-mail or phone. (R-2885 adds to payments only with its tool.)
+ * The invoice / subscription / quote entries are the union of what the existing tools select (data-tools.ts,
+ * list_invoices) and what the statement needs.
  */
 const HELP_COLUMN_ALLOWLIST: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["customers", new Set(["id", "name", "customer_number", "customer_type", "state", "is_active", "since"])],
+  ["invoices", new Set([
+    "id", "customer_id", "customer_name", "invoice_date", "due_date", "status", "amount", "net_payable", "paid_amount",
+    "written_off_at", "document_kind", "opening_balance", "quote_id",
+  ])],
+  ["payments", new Set(["id", "customer_id", "quote_id", "invoice_id", "amount", "status", "credit_applied", "received_at", "refunded_at"])],
+  ["credit_notes", new Set(["id", "customer_id", "invoice_id", "credit_date", "amount"])],
+  ["debit_notes", new Set(["id", "customer_id", "invoice_id", "debit_date", "amount"])],
+  ["quotes", new Set(["id", "customer_id", "status", "amount", "invoice_id"])],
+  ["subscriptions", new Set([
+    "id", "customer_id", "customer_name", "plan", "status", "renewal_date", "mrr", "term_months", "quote_id", "outstanding_amount", "written_off_at", "start_date",
+  ])],
+  ["project_sales", new Set(["id", "customer_id"])],
+  ["project_payments", new Set(["id", "project_id", "amount", "received_at", "method"])],
 ]);
 /** The allowed columns of a table with a column allowlist, or null when it has none. */
 export function helpAllowedColumns(table: string): readonly string[] | null {
