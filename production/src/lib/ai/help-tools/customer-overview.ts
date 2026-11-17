@@ -43,7 +43,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PLAIN_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 interface InvoiceRow {
-  id: string; invoice_date: string; due_date: string | null; status: string; amount: number | null; net_payable: number | null;
+  id: string; invoice_date: string; due_date: string | null; status: string; amount: number; net_payable: number | null;
   paid_amount: number | null; written_off_at: string | null; document_kind: string | null; opening_balance: number | null; quote_id: string | null;
 }
 interface PaymentRow {
