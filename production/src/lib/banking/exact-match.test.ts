@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  EXACT_LINE_CAP, bookExactText, exactScope, exactSummary, reviewRows, rowsToBook, scopeText, undoExactText,
+  EXACT_LINE_CAP, bookExactText, exactScope, exactSummary, mergeBookResults, reviewRows, rowsToBook, scopeText, sortExactRows, undoExactText,
   type ExactRow,
 } from "./exact-match";
 
@@ -58,8 +58,26 @@ describe("result words", () => {
       .toEqual({ title: "Nothing was matched", detail: "1 line not matched — Already reconciled (matched meanwhile).", tone: "warning" });
   });
   it("undo", () => {
-    expect(undoExactText({ run_id: "r", undone: 2, left: [] }).title).toBe("2 lines un-reconciled — open again");
-    expect(undoExactText({ run_id: "r", undone: 0, left: [] }).title).toBe("Nothing left to undo");
-    expect(undoExactText({ run_id: "r", undone: 1, left: [{ txn_id: "x", reason: "Changed since the run" }] }).detail).toBe("1 line left as it is — Changed since the run");
+    expect(undoExactText({ run_id: "r", undone: 2, left: [], remaining: 0 }).title).toBe("2 lines un-reconciled — open again");
+    expect(undoExactText({ run_id: "r", undone: 0, left: [], remaining: 0 }).title).toBe("Nothing left to undo");
+    expect(undoExactText({ run_id: "r", undone: 1, left: [{ txn_id: "x", reason: "Changed since the run" }], remaining: 0 }).detail).toBe("1 line left as it is — Changed since the run");
+  });
+});
+
+describe("paging and chunks — one press is one run", () => {
+  it("sorts the id-paged lines by date, then id", () => {
+    const r = sortExactRows([row("b", "none", { txn_date: "2025-04-02" }), row("c", "none", { txn_date: "2025-04-01" }), row("a", "none", { txn_date: "2025-04-02" })]);
+    expect(r.map((x) => x.txn_id)).toEqual(["c", "a", "b"]);
+  });
+  it("adds the chunks' answers up under the first run id", () => {
+    expect(mergeBookResults([
+      { run_id: "R1", booked: 50, skipped: [] },
+      { run_id: "R1", booked: 3, skipped: [{ txn_id: "x", reason: "Already reconciled (matched meanwhile)." }] },
+    ])).toEqual({ run_id: "R1", booked: 53, skipped: [{ txn_id: "x", reason: "Already reconciled (matched meanwhile)." }] });
+  });
+  it("says when a later chunk stopped the press", () => {
+    const t = bookExactText({ run_id: "R1", booked: 50, skipped: [], stoppedEarly: "canceling statement due to statement timeout" });
+    expect(t.tone).toBe("warning");
+    expect(t.detail).toContain("Stopped before the end");
   });
 });

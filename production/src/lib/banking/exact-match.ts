@@ -87,16 +87,46 @@ export function rowsToBook(rows: readonly ExactRow[], unticked: ReadonlySet<stri
     .map((r) => ({ txn_id: r.txn_id, match_type: r.kind as ExactKind, match_id: r.match_id as string }));
 }
 
-export interface BookExactResult { run_id: string | null; booked: number; skipped: { txn_id: string; reason: string }[] }
-export interface UndoExactResult { run_id: string; undone: number; left: { txn_id: string; reason: string }[] }
+export interface BookExactResult {
+  run_id: string | null;
+  booked: number;
+  skipped: { txn_id: string; reason: string }[];
+  /** A later chunk failed: the earlier chunks stay matched (and can be undone). */
+  stoppedEarly?: string;
+}
+export interface UndoExactResult { run_id: string; undone: number; left: { txn_id: string; reason: string }[]; remaining: number }
+
+/** Lines per preview call, rows per Match call, lines per Undo call — each call stays well inside
+ *  the signed-in role's statement timeout (the server caps them too: 200 / 100 / 100). */
+export const EXACT_PAGE = 100;
+export const EXACT_BOOK_CHUNK = 50;
+export const EXACT_UNDO_PAGE = 50;
+
+/** The server pages by line id; the sheet shows the lines by date (then id). */
+export function sortExactRows(rows: ExactRow[]): ExactRow[] {
+  return [...rows].sort((a, b) => (a.txn_date === b.txn_date ? (a.txn_id < b.txn_id ? -1 : 1) : a.txn_date < b.txn_date ? -1 : 1));
+}
+
+/** One press = one run, sent in chunks: add the chunks' answers up. */
+export function mergeBookResults(parts: readonly BookExactResult[]): BookExactResult {
+  return {
+    run_id: parts.find((p) => p.run_id)?.run_id ?? null,
+    booked: parts.reduce((n, p) => n + p.booked, 0),
+    skipped: parts.flatMap((p) => p.skipped),
+  };
+}
 
 type ResultText = { title: string; detail: string | null; tone: "success" | "warning" };
 
 export function bookExactText(r: BookExactResult): ResultText {
   const skipped = r.skipped.length;
-  const detail = skipped ? `${plural(skipped, "line")} not matched — ${r.skipped[0].reason}` : null;
+  const parts = [
+    skipped ? `${plural(skipped, "line")} not matched — ${r.skipped[0].reason}` : null,
+    r.stoppedEarly ? `Stopped before the end (${r.stoppedEarly}) — open the list again for the rest.` : null,
+  ].filter(Boolean);
+  const detail = parts.length ? parts.join(" ") : null;
   if (r.booked === 0) return { title: "Nothing was matched", detail, tone: "warning" };
-  return { title: `${plural(r.booked, "line")} matched to the records already in the books`, detail, tone: skipped ? "warning" : "success" };
+  return { title: `${plural(r.booked, "line")} matched to the records already in the books`, detail, tone: skipped || r.stoppedEarly ? "warning" : "success" };
 }
 
 export function undoExactText(r: UndoExactResult): ResultText {

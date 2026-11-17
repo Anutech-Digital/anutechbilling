@@ -51,7 +51,8 @@ insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type, 
 insert into public.customers (id, tenant_id, name, state_code, country) values
   ('cccccccc-0000-0000-0000-000000267701','dddddddd-0000-0000-0000-000000267701','R2677 Infra Traders','07','India');
 insert into public.vendors (id, tenant_id, name, upi_id) values
-  ('eeeeeeee-0000-0000-0000-000000267701','dddddddd-0000-0000-0000-000000267701','R2677 Broadband','r2677broadband@hdfcbank');
+  ('eeeeeeee-0000-0000-0000-000000267701','dddddddd-0000-0000-0000-000000267701','R2677 Broadband','r2677broadband@hdfcbank'),
+  ('eeeeeeee-0000-0000-0000-000000267702','dddddddd-0000-0000-0000-000000267701','R2677 Office Mart','r2677office@okaxis');
 
 -- A = HDFC 4523 (…701), B = ICICI (…702), X = other company (…703)
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, reference, debit, credit, source) values
@@ -81,7 +82,11 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   -- 13 November (outside the October filter) receipt, exact
   ('11111111-0000-0000-0000-000000267713','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-11-03','NEFT CR-R2677 INFRA TRADERS 4',null,0,8800,'csv_upload'),
   -- 14 other company, same amount as 01
-  ('11111111-0000-0000-0000-000000267714','dddddddd-0000-0000-0000-000000267702','bbbbbbbb-0000-0000-0000-000000267703','2026-10-10','NEFT CR-X',null,0,5000,'csv_upload');
+  ('11111111-0000-0000-0000-000000267714','dddddddd-0000-0000-0000-000000267702','bbbbbbbb-0000-0000-0000-000000267703','2026-10-10','NEFT CR-X',null,0,5000,'csv_upload'),
+  -- 15 an expense paid in CASH on the same day, same amount → drawer (never banked by the run)
+  ('11111111-0000-0000-0000-000000267715','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-21','POS SOME STORE',null,2500,0,'csv_upload'),
+  -- 16 Mark-paid expense of the vendor named on the line, SAME day → booked the R-1911 way (recorded_payment)
+  ('11111111-0000-0000-0000-000000267716','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-22','UPI-OFFICEMART-r2677office@okaxis-STATIONERY',null,777,0,'csv_upload');
 
 insert into public.quotes (id, tenant_id, lead_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
 select 'Q-R2677-' || k, 'dddddddd-0000-0000-0000-000000267701', null, 'cccccccc-0000-0000-0000-000000267701'::uuid, 'R2677 Infra Traders',
@@ -103,7 +108,9 @@ insert into public.expenses (id, tenant_id, category, vendor_name, vendor_id, ex
   -- Mark paid on the Expenses page on 10 Oct; billed 25 Sep (outside the suggester's 7 days)
   ('EXP-R2677-07','dddddddd-0000-0000-0000-000000267701','Internet','R2677 Broadband','eeeeeeee-0000-0000-0000-000000267701','2026-09-25',6358,0,'none','DLINV/2677',true,'2026-10-10','bank',0,null),
   ('EXP-R2677-10','dddddddd-0000-0000-0000-000000267701','Office Expenses','Some Supplier',null,'2026-10-15',4100,0,'none',null,false,null,null,0,null),
-  ('EXP-R2677-11','dddddddd-0000-0000-0000-000000267701','Professional Services','Consultant',null,'2026-10-16',9000,0,'none',null,true,'2026-10-16','bank',900,'194J');
+  ('EXP-R2677-11','dddddddd-0000-0000-0000-000000267701','Professional Services','Consultant',null,'2026-10-16',9000,0,'none',null,true,'2026-10-16','bank',900,'194J'),
+  ('EXP-R2677-15','dddddddd-0000-0000-0000-000000267701','Office Expenses','Some Store',null,'2026-10-21',2500,0,'none',null,true,'2026-10-21','cash',0,null),
+  ('EXP-R2677-16','dddddddd-0000-0000-0000-000000267701','Office Expenses','R2677 Office Mart','eeeeeeee-0000-0000-0000-000000267702','2026-10-22',777,0,'none','OM-16',true,'2026-10-22','bank',0,null);
 
 update public.tenants set books_locked_until = '2026-03-10' where id = 'dddddddd-0000-0000-0000-000000267701';
 
@@ -121,7 +128,7 @@ begin
     into v_got
     from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267701', '2026-10-01', '2026-10-31', 'all');
   v_want := '01|exact|payment 02|ambiguous|payment 03|exact|expense 04|ambiguous|expense 07|exact|recorded_payment'
-         || ' 08|exact|payment 09|exact|payment 10|drawer|expense 11|drawer|expense 12|none|-';
+         || ' 08|exact|payment 09|exact|payment 10|drawer|expense 11|drawer|expense 12|none|- 15|drawer|expense 16|exact|recorded_payment';
   if v_got is distinct from v_want then
     raise exception 'FAIL A: preview — got: % — want: %', v_got, v_want;
   end if;
@@ -143,6 +150,19 @@ begin
   select status into v_got from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267702', null, null, 'all')
    where txn_id = '11111111-0000-0000-0000-000000267705';
   if v_got is distinct from 'likely' then raise exception 'FAIL C: second line is %', v_got; end if;
+  -- paging: pages of 3 (keyset on the line id) give exactly the same lines as one page
+  declare v_after uuid := null; v_page integer; v_all integer := 0; v_last uuid;
+  begin
+    loop
+      select count(*), max(txn_id::text)::uuid into v_page, v_last
+        from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267701', null, null, 'all', v_after, 3);
+      v_all := v_all + v_page;
+      exit when v_page < 3;
+      v_after := v_last;
+    end loop;
+    select count(*) into v_n from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267701', null, null, 'all', null, 200);
+    if v_all <> v_n or v_n < 10 then raise exception 'FAIL A: paged % lines, one page %', v_all, v_n; end if;
+  end;
   raise notice 'A-E PASS: exact / ambiguous (2 records, 2 lines) / locked / drawer / likely / none, filters';
 end $$;
 
@@ -178,8 +198,8 @@ begin
 
   v_res := public.book_bank_exact_matches('bbbbbbbb-0000-0000-0000-000000267701', v_rows);
   v_run := (v_res->>'run_id')::uuid;
-  if (v_res->>'booked')::int <> 4 or v_run is null then
-    raise exception 'FAIL F: booked % (want 4: 01 03 07 09) — %', v_res->>'booked', v_res;
+  if (v_res->>'booked')::int <> 5 or v_run is null then
+    raise exception 'FAIL F: booked % (want 5: 01 03 07 09 16) — %', v_res->>'booked', v_res;
   end if;
   select string_agg(right(s->>'txn_id', 2), ' ' order by right(s->>'txn_id', 2)) into v_skip
     from jsonb_array_elements(v_res->'skipped') s;
@@ -198,6 +218,13 @@ begin
     raise exception 'FAIL F: expense 03 not banked on line 03'; end if;
   if (select matched_to_type from public.bank_transactions where id = '11111111-0000-0000-0000-000000267707') is null then
     raise exception 'FAIL F: line 07 (recorded payment) not matched'; end if;
+  -- 16: the same-day Mark-paid expense went the R-1911 way (the line took the Mark-paid's place)
+  if (select matched_to_type from public.bank_transactions where id = '11111111-0000-0000-0000-000000267716') is null
+     or not exists (select 1 from public.bank_vendor_payment_lines l where l.expense_id = 'EXP-R2677-16' and l.kind = 'recorded_payment') then
+    raise exception 'FAIL F: line 16 not booked as the recorded payment'; end if;
+  -- 15: the cash expense was never banked
+  if (select reconciled_txn_id from public.expenses where id = 'EXP-R2677-15') is not null then
+    raise exception 'FAIL F: cash expense 15 was banked'; end if;
   if exists (select 1 from public.bank_transactions where id in ('11111111-0000-0000-0000-000000267702','11111111-0000-0000-0000-000000267704',
                '11111111-0000-0000-0000-000000267705','11111111-0000-0000-0000-000000267706','11111111-0000-0000-0000-000000267708',
                '11111111-0000-0000-0000-000000267710','11111111-0000-0000-0000-000000267711','11111111-0000-0000-0000-000000267714')
@@ -215,8 +242,8 @@ begin
   select count(*) into v_n from public.bank_transactions where tenant_id = 'dddddddd-0000-0000-0000-000000267701';
   if v_n <> v_lines0 then raise exception 'FAIL F: bank lines % → %', v_lines0, v_n; end if;
   select count(*) into v_n from public.bank_exact_match_run_lines where run_id = v_run and undone_at is null;
-  if v_n <> 4 then raise exception 'FAIL F: run lines %', v_n; end if;
-  if (select booked from public.bank_exact_match_runs where id = v_run) <> 4 then raise exception 'FAIL F: run count'; end if;
+  if v_n <> 5 then raise exception 'FAIL F: run lines %', v_n; end if;
+  if (select booked from public.bank_exact_match_runs where id = v_run) <> 5 then raise exception 'FAIL F: run count'; end if;
   raise notice 'F PASS: server re-check — tampered / other account / other company / locked / ambiguous / twice skipped; nothing new in the books';
 
   -- G. again → nothing, no run
@@ -231,11 +258,11 @@ begin
   perform public.unreconcile_bank_receipt('11111111-0000-0000-0000-000000267709', false);
   perform public.reconcile_bank_txn('11111111-0000-0000-0000-000000267709', 'manual', null, 'manual');
   v_res := public.undo_bank_exact_match_run(v_run);
-  if (v_res->>'undone')::int <> 3 or jsonb_array_length(v_res->'left') <> 1
+  if (v_res->>'undone')::int <> 4 or (v_res->>'remaining')::int <> 0 or jsonb_array_length(v_res->'left') <> 1
      or (v_res->'left'->0->>'txn_id') <> '11111111-0000-0000-0000-000000267709' then
     raise exception 'FAIL H: undo — %', v_res; end if;
   if exists (select 1 from public.bank_transactions where id in ('11111111-0000-0000-0000-000000267701','11111111-0000-0000-0000-000000267703',
-               '11111111-0000-0000-0000-000000267707') and matched_to_type is not null) then
+               '11111111-0000-0000-0000-000000267707','11111111-0000-0000-0000-000000267716') and matched_to_type is not null) then
     raise exception 'FAIL H: a run line is still reconciled'; end if;
   if (select matched_to_type from public.bank_transactions where id = '11111111-0000-0000-0000-000000267709') is distinct from 'manual' then
     raise exception 'FAIL H: the hand-matched line 09 was undone'; end if;
@@ -247,6 +274,8 @@ begin
   if (select status from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267701', '2026-10-10', '2026-10-10', 'out')
        where txn_id = '11111111-0000-0000-0000-000000267707') is distinct from 'exact' then
     raise exception 'FAIL H: line 07 not offered again after Undo'; end if;
+  if (select paid::text || ':' || coalesce(reconciled_txn_id::text, '-') from public.expenses where id = 'EXP-R2677-16') is distinct from 'true:-' then
+    raise exception 'FAIL H: expense 16 not back as Mark-paid'; end if;
   if (select undone_at from public.bank_exact_match_runs where id = v_run) is null then
     raise exception 'FAIL H: run not marked undone'; end if;
   v_res := public.undo_bank_exact_match_run(v_run);
@@ -254,12 +283,32 @@ begin
   raise notice 'H PASS: undo — exactly the run''s matches back, the hand-changed line left, undo twice = 0';
 end $$;
 
--- The November line 13 (outside the filter the browser showed) was never sent, so never in the run.
+-- K. One press in chunks = one run (the second chunk passes the run id), the scope is kept on the run,
+--    an undone run takes no more chunks, and Undo in pages of 1 ends with remaining 0.
 do $$
+declare v_res jsonb; v_run uuid; ok boolean := false;
 begin
-  if exists (select 1 from public.bank_exact_match_run_lines where bank_txn_id = '11111111-0000-0000-0000-000000267713') then
-    raise exception 'FAIL F: line 13 (outside the filter) was in the run';
-  end if;
+  v_res := public.book_bank_exact_matches('bbbbbbbb-0000-0000-0000-000000267701',
+    jsonb_build_array(jsonb_build_object('txn_id', '11111111-0000-0000-0000-000000267701', 'match_type', 'payment', 'match_id', 'f2677000-0000-4000-8000-000000000001')),
+    null, '{"from":"2026-10-01","to":"2026-11-30","dir":"all"}'::jsonb);
+  v_run := (v_res->>'run_id')::uuid;
+  v_res := public.book_bank_exact_matches('bbbbbbbb-0000-0000-0000-000000267701',
+    jsonb_build_array(jsonb_build_object('txn_id', '11111111-0000-0000-0000-000000267713', 'match_type', 'payment', 'match_id', 'f2677000-0000-4000-8000-000000000013')),
+    v_run, null);
+  if (v_res->>'run_id')::uuid is distinct from v_run or (v_res->>'booked')::int <> 1 then raise exception 'FAIL K: second chunk — %', v_res; end if;
+  if (select booked::text || ':' || (filter->>'from') || ':' || (filter->>'dir') from public.bank_exact_match_runs where id = v_run)
+       is distinct from '2:2026-10-01:all' then raise exception 'FAIL K: run row'; end if;
+  v_res := public.undo_bank_exact_match_run(v_run, 1);
+  if (v_res->>'undone')::int <> 1 or (v_res->>'remaining')::int <> 1 then raise exception 'FAIL K: undo page 1 — %', v_res; end if;
+  if (select undone_at from public.bank_exact_match_runs where id = v_run) is not null then raise exception 'FAIL K: undone too early'; end if;
+  v_res := public.undo_bank_exact_match_run(v_run, 1);
+  if (v_res->>'undone')::int <> 1 or (v_res->>'remaining')::int <> 0 then raise exception 'FAIL K: undo page 2 — %', v_res; end if;
+  if (select undone_at from public.bank_exact_match_runs where id = v_run) is null then raise exception 'FAIL K: run not undone'; end if;
+  begin
+    perform public.book_bank_exact_matches('bbbbbbbb-0000-0000-0000-000000267701', '[]'::jsonb, v_run, null);
+  exception when sqlstate 'P0002' then ok := true; end;
+  if not ok then raise exception 'FAIL K: an undone run took another chunk'; end if;
+  raise notice 'K PASS: chunks = one run, scope kept, undo in pages';
 end $$;
 
 select set_config('request.jwt.claims',

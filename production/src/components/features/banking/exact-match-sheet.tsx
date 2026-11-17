@@ -103,7 +103,9 @@ export function ExactMatchSheet({ accountId, scope, open, onOpenChange }: {
 }) {
   const q = useExactCandidates(accountId, scope, open);
   const lastRun = useLastExactRun(accountId, open);
-  const book = useBookExactMatches(accountId);
+  const book = useBookExactMatches(accountId, scope);
+  /* Undo un-reconciles a whole run — it asks once before it does (R-2677 review). */
+  const [confirmUndo, setConfirmUndo] = React.useState(false);
   const undo = useUndoExactRun();
   const rows = React.useMemo(() => q.data ?? [], [q.data]);
   const sum = exactSummary(rows);
@@ -129,6 +131,7 @@ export function ExactMatchSheet({ accountId, scope, open, onOpenChange }: {
   }
 
   async function onUndo(runId: string) {
+    setConfirmUndo(false);
     try {
       setResult(undoExactText(await undo.mutateAsync(runId)));
     } catch { /* the hook toasts */ }
@@ -157,11 +160,22 @@ export function ExactMatchSheet({ accountId, scope, open, onOpenChange }: {
           {lastRun.data && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-hairline px-4 py-2">
               <p className="text-xs text-ink-2">
-                Last run: {lastRun.data.lines} {lastRun.data.lines === 1 ? "line" : "lines"} matched on {formatDate(lastRun.data.created_at)}
+                {confirmUndo
+                  ? `Un-reconcile the ${lastRun.data.lines} ${lastRun.data.lines === 1 ? "line" : "lines"} this run matched? Lines changed by hand since are left as they are.`
+                  : `Last run: ${lastRun.data.lines} ${lastRun.data.lines === 1 ? "line" : "lines"} matched on ${formatDate(lastRun.data.created_at)}`}
               </p>
-              <Button size="sm" variant="default" icon="refresh" loading={undo.isPending} onClick={() => onUndo(lastRun.data!.id)}>
-                Undo this run
-              </Button>
+              {confirmUndo ? (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="default" onClick={() => setConfirmUndo(false)}>Cancel</Button>
+                  <Button size="sm" variant="primary" icon="refresh" loading={undo.isPending} onClick={() => onUndo(lastRun.data!.id)}>
+                    {`Yes, un-reconcile ${lastRun.data.lines}`}
+                  </Button>
+                </div>
+              ) : (
+                <Button size="sm" variant="default" icon="refresh" disabled={undo.isPending} onClick={() => setConfirmUndo(true)}>
+                  Undo this run
+                </Button>
+              )}
             </div>
           )}
 
@@ -185,7 +199,7 @@ export function ExactMatchSheet({ accountId, scope, open, onOpenChange }: {
                   {sum.likely > 0 ? ` · ${sum.likely} only a close match` : ""}
                   {sum.none > 0 ? ` · ${sum.none} with no record yet` : ""}
                 </p>
-                <Button variant="primary" icon="check" disabled={toBook.length === 0} loading={book.isPending} onClick={onMatch}>
+                <Button variant="primary" icon="check" disabled={toBook.length === 0 || q.isFetching} loading={book.isPending} onClick={onMatch}>
                   {`Match ${toBook.length} ${toBook.length === 1 ? "line" : "lines"}`}
                 </Button>
               </div>

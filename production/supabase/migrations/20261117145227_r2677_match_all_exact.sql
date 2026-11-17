@@ -1,4 +1,4 @@
--- deploy-peek: to_regclass('public.bank_exact_match_run_lines') is not null and to_regprocedure('public.bank_exact_match_candidates(uuid,date,date,text)') is not null and to_regprocedure('public.book_bank_exact_matches(uuid,jsonb)') is not null and to_regprocedure('public.undo_bank_exact_match_run(uuid)') is not null
+-- deploy-peek: to_regclass('public.bank_exact_match_run_lines') is not null and to_regprocedure('public.bank_exact_match_candidates(uuid,date,date,text,uuid,integer)') is not null and to_regprocedure('public.book_bank_exact_matches(uuid,jsonb,uuid,jsonb)') is not null and to_regprocedure('public.undo_bank_exact_match_run(uuid,integer)') is not null
 -- deploy-key: r2677matchallexact
 --
 -- R-2677 (17 Nov 2026, p0 paisa, G-RECON — Pardeep: "sabse pehle yahi kaam complete karna hai"; "jo
@@ -13,15 +13,20 @@
 --     line's matched_to_type / matched_to_id / matched_at right after the match (Undo touches only
 --     that). A line sits in at most one live (not undone) run line (partial unique index). RLS: a
 --     company reads only its own; nobody writes them directly (only the functions below).
---   bank_exact_match_candidates(account, from, to, dir) — read only. Every OPEN line of that account
---     inside the filter (dates inclusive; dir 'in' / 'out' / 'all'), at most 2,000 (oldest first), each
---     with a status and a plain reason:
+--   bank_exact_match_candidates(account, from, to, dir, after, limit) — read only, a PAGE at a time
+--     (≤200 lines a call, keyset on the line id like R-1657's auto-reconcile — each call stays inside the
+--     signed-in role's statement timeout; the sheet reads pages up to 2,000 lines). Every OPEN line of
+--     that account inside the filter (dates inclusive; dir 'in' / 'out' / 'all'), each with a status and
+--     a plain reason:
 --       'exact'     — the app's OWN matcher finds exactly one record and nothing else could be the line:
 --                     (a) suggest_bank_transaction_matches (the drawer's "Suggested matches") gives ONE
---                         'exact' candidate (receipt / project receipt: same amount + same day, or the
---                         line's own UTR; expense: same amount + same day), no other candidate is
---                         'exact' / 'high' or has the same amount; the expense is PAID with no TDS on it;
---                         the receipt is not a customer advance (un-reconciling an advance deletes it);
+--                         'exact' candidate (receipt: same amount + same day, or the line's own UTR;
+--                         expense: same amount + same day), no other candidate is 'exact' / 'high' or has
+--                         the same amount; the receipt is not a customer advance (un-reconciling an advance
+--                         deletes it); the expense is PAID, has no TDS, was paid from a bank (R-1911's
+--                         filters: not cash / payroll / statutory / reimbursement / EMI / advance, no
+--                         prepaid advance, INR, not Salaries) and not from ANOTHER account — a Mark-paid
+--                         expense the vendor matcher also offers is booked the R-1911 way (b);
 --                     (b) or, for money out with no such candidate, bank_debit_vendor_auto_match
 --                         (R-1867 / R-1911) gives ONE row and it is a RECORDED payment (Bills page Pay /
 --                         payment run / Expenses → Mark paid — R-1911 "match, don't add again");
@@ -33,28 +38,34 @@
 --       'locked'    — the line or the record is on / before the books lock (books_locked_until).
 --       'drawer'    — the matcher's answer is not a plain link to an existing record, so it stays a
 --                     one-line job in the drawer: a Payroll salary (Payroll's checks and the F&F prompt
---                     run there), an EMI (books a loan repayment), paying an OPEN bill (a new payment),
---                     an unpaid expense bill, an expense with TDS, a customer advance receipt.
+--                     run there), a project receipt (its Un-reconcile takes the receipt back), an EMI
+--                     (books a loan repayment), paying an OPEN bill (a new payment), an unpaid expense
+--                     bill, an expense with TDS / not paid from a bank / from another account, a customer
+--                     advance receipt.
 --       'likely'    — only a 'high' / 'low' candidate (₹1 apart, a few days off): never booked here.
 --       'none'      — no record in the books for this line.
---   book_bank_exact_matches(account, rows jsonb [{txn_id, match_type, match_id}]) — the browser's list is
---     never trusted: for every row the SERVER locks the line, works the answer out again with the same
---     function, and books ONLY when it is still 'exact' with the SAME record the browser showed (a
---     changed or made-up row is skipped with its reason). Then it locks the record and checks it is
---     still free, and links it through the one existing path (each row in its own savepoint):
---       receipt / project receipt / expense → reconcile_bank_txn(line, type, id, 'exact') — the drawer's
---         "Match" — and the line must end up pointing at exactly that record;
+--   book_bank_exact_matches(account, rows jsonb [{txn_id, match_type, match_id}] ≤100, run, scope) — the
+--     browser sends the ticked rows in chunks; the first chunk makes the run (scope {from, to, dir} kept
+--     on it for the audit trail), later chunks pass that run id, so one press = one run. The browser's
+--     list is never trusted: for every row the SERVER locks the line and the record it names, works the
+--     answer out again with the same function, and books ONLY when it is still 'exact' with the SAME
+--     record the browser showed (a changed or made-up row is skipped with its reason), and the record is
+--     still free (also not in this run already). Then it links it through the one existing path (each
+--     row in its own savepoint):
+--       receipt / expense → reconcile_bank_txn(line, type, id, 'exact') — the drawer's "Match" — and the
+--         line must end up pointing at exactly that record;
 --       recorded payment → reconcile_bank_debit_to_vendor(line, vendor, items [{source:'recorded_payment',
 --         doc_id, amount}]) — the drawer's vendor section; the real line takes the recorded payment's
---         place (R-1911), paid_amount does not move.
+--         place (R-1911), paid_amount does not move; that payment must be gone from the open items.
 --     Never creates an expense, bill, sale, receipt, GST or TDS row (a GST-filed month — money rule G12
 --     — never changes: only existing records are linked). Returns {run_id (null when nothing was
 --     matched), booked, skipped:[{txn_id, reason}]}. Pressing Match twice matches nothing the second time.
---   undo_bank_exact_match_run(run) — every line of the run still matched exactly as the run left it
---     (type, id and matched_at) goes back through unreconcile_bank_receipt(line, false) — the line's own
---     Un-reconcile, which puts a recorded payment's manual line / Mark-paid back (R-1911 trigger). A line
---     changed by hand since is released from the run and listed; a refused one (books lock) stays in the
---     run and is listed. The run is marked undone when no line of it is left. Run again → 0.
+--   undo_bank_exact_match_run(run, limit) — ≤100 lines a call ('remaining' says how many are left). Every
+--     line of the run still matched exactly as the run left it (type, id and matched_at) goes back
+--     through unreconcile_bank_receipt(line, false) — the line's own Un-reconcile, which puts a recorded
+--     payment's manual line / Mark-paid back (R-1911 trigger). A line changed by hand since is released
+--     from the run and listed; a refused one (books lock) stays in the run and is listed. The run is
+--     stamped undone only when no line is left AND at least one was really taken back. Run again → 0.
 --   All four: owner / accountant only (as Find pairs R-2656 and Reconcile from Zoho R-2535), own company.
 -- Functions this file only CALLS (unchanged): suggest_bank_transaction_matches (R-2192),
 -- bank_debit_vendor_auto_match / bank_debit_vendor_open_items (R-1911 / R-2502c), emi_matches_for_bank_txn
@@ -160,6 +171,7 @@ declare
   v_paid_on date;
   v_rival   record;
   v_vname   text;
+  v_use_rp  boolean := false;
 begin
   select * into v_txn from public.bank_transactions t where t.id = p_txn_id;
   if not found then return; end if;
@@ -227,11 +239,16 @@ begin
           'The vendor also has an open bill or a recorded payment of this amount — pick the right one in the line''s drawer.'::text;
         return;
       end if;
+      /* The same expense is a payment recorded on the Expenses page (Mark paid): book it the R-1911
+         way (the line takes the Mark-paid's place: bank, date, method), as when it is found by (b). */
+      v_use_rp := v_vp.source = 'recorded_payment';
     end if;
-    if v_top.match_type not in ('payment', 'project', 'expense') then
+    if v_top.match_type not in ('payment', 'expense') then
       return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
         case when v_top.match_type = 'salary'
              then 'A Payroll salary — match it in the line''s drawer, where Payroll''s checks run.'
+             when v_top.match_type = 'project'
+             then 'A project receipt — match it in the line''s drawer (its Un-reconcile also takes the receipt back).'
              else 'Match this one in the line''s drawer.' end;
       return;
     end if;
@@ -250,6 +267,22 @@ begin
       if coalesce(v_exp.tds_amount, 0) <> 0 then
         return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
           'The expense has TDS on it — check it in the line''s drawer.'::text;
+        return;
+      end if;
+      /* Not paid from a bank (R-1911's own filters for a recorded payment): cash, payroll, statutory,
+         reimbursement, EMI, advance, a prepaid advance, a foreign currency — or paid from ANOTHER account. */
+      if lower(coalesce(v_exp.payment_method, '')) in ('cash', 'payroll', 'statutory', 'reimbursement', 'emi', 'advance', 'employee_advance')
+         or v_exp.prepaid_advance_id is not null
+         or upper(coalesce(v_exp.currency, 'INR')) <> 'INR'
+         or v_exp.category = 'Salaries' then
+        return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
+          format('The expense was not paid from a bank (%s) — check it in the line''s drawer.',
+                 coalesce(nullif(v_exp.payment_method, ''), nullif(v_exp.currency, 'INR'), 'advance / salary'));
+        return;
+      end if;
+      if v_exp.bank_account_id is not null and v_exp.bank_account_id is distinct from v_txn.bank_account_id then
+        return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
+          'The expense is recorded as paid from another account — check it in the line''s drawer.'::text;
         return;
       end if;
     end if;
@@ -273,6 +306,11 @@ begin
       return query select 'ambiguous'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
         format('Another open line (%s, %s) has the same amount and could be this record — match these by hand.',
                to_char(v_rival.txn_date, 'DD Mon YYYY'), coalesce(v_rival.account, 'another account'));
+      return;
+    end if;
+    if v_use_rp then
+      return query select 'exact'::text, 'recorded_payment'::text, v_vp.doc_id, v_vp.vendor_id, v_top.match_label, v_vp.amount, v_top.match_date,
+        'Same amount, same date, the vendor named on the line — the expense already marked paid.'::text;
       return;
     end if;
     return query select 'exact'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
@@ -358,11 +396,16 @@ $function$;
 revoke all on function public._r2677_exact_for_line(uuid) from public, anon, authenticated;
 grant execute on function public._r2677_exact_for_line(uuid) to service_role;
 
+/* The preview, a page at a time (keyset on the line id — R-1657's auto-reconcile paging): each call
+   stays well inside the signed-in role's statement timeout. The browser asks for the next page with
+   the last id it got until a page comes back short. */
 create or replace function public.bank_exact_match_candidates(
   p_account_id uuid,
-  p_from       date default null,
-  p_to         date default null,
-  p_dir        text default 'all'
+  p_from       date    default null,
+  p_to         date    default null,
+  p_dir        text    default 'all',
+  p_after      uuid    default null,
+  p_limit      integer default 100
 ) returns table (txn_id uuid, txn_date date, description text, amount integer, direction text,
                  status text, kind text, match_id text, match_label text, match_amount integer,
                  match_date date, why text)
@@ -373,6 +416,7 @@ as $function$
 declare
   v_tenant uuid := public._r2677_exact_gate();
   v_dir    text := lower(coalesce(p_dir, 'all'));
+  v_limit  integer := least(greatest(coalesce(p_limit, 100), 1), 200);
   v_t      record;
   v_r      record;
 begin
@@ -391,8 +435,9 @@ begin
        and (p_from is null or bt.txn_date >= p_from)
        and (p_to is null or bt.txn_date <= p_to)
        and (v_dir = 'all' or (v_dir = 'in' and coalesce(bt.credit, 0) > 0) or (v_dir = 'out' and coalesce(bt.debit, 0) > 0))
-     order by bt.txn_date, bt.id
-     limit 2000
+       and (p_after is null or bt.id > p_after)
+     order by bt.id
+     limit v_limit
   loop
     select * into v_r from public._r2677_exact_for_line(v_t.id) x limit 1;
     txn_id := v_t.id; txn_date := v_t.txn_date; description := v_t.description;
@@ -405,11 +450,18 @@ begin
   end loop;
 end;
 $function$;
-revoke all on function public.bank_exact_match_candidates(uuid, date, date, text) from public, anon;
-grant execute on function public.bank_exact_match_candidates(uuid, date, date, text) to authenticated, service_role;
+revoke all on function public.bank_exact_match_candidates(uuid, date, date, text, uuid, integer) from public, anon;
+grant execute on function public.bank_exact_match_candidates(uuid, date, date, text, uuid, integer) to authenticated, service_role;
 
-create or replace function public.book_bank_exact_matches(p_account_id uuid, p_rows jsonb)
-returns jsonb
+/* Match, at most 100 rows a call (statement timeout); the browser sends the ticked rows in chunks and
+   passes the run id the first chunk returned, so one press = one run. p_scope = the filter the preview
+   ran on ({from, to, dir}) — kept on the run for the audit trail only, never used to decide. */
+create or replace function public.book_bank_exact_matches(
+  p_account_id uuid,
+  p_rows       jsonb,
+  p_run_id     uuid  default null,
+  p_scope      jsonb default null
+) returns jsonb
 language plpgsql
 security definer
 set search_path to 'public'
@@ -423,23 +475,34 @@ declare
   v_n       integer := 0;
   v_skipped jsonb := '[]'::jsonb;
   v_seen    uuid[] := '{}';
-  v_seen_rec text[] := '{}';
   v_after   public.bank_transactions;
 begin
   if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
     raise exception 'Send the lines to match as a list.' using errcode = '22023';
   end if;
-  if jsonb_array_length(p_rows) > 2000 then
-    raise exception 'Match at most 2,000 lines at a time.' using errcode = '22023';
+  if jsonb_array_length(p_rows) > 100 then
+    raise exception 'Match at most 100 lines a call.' using errcode = '22023';
   end if;
   if not exists (select 1 from public.bank_accounts ba where ba.id = p_account_id and ba.tenant_id = v_tenant) then
     raise exception 'Bank account not found' using errcode = 'no_data_found';
   end if;
 
-  /* The run row first, outside every line's savepoint (a failed line must not take it with it). */
-  insert into public.bank_exact_match_runs (tenant_id, bank_account_id, filter, created_by)
-  values (v_tenant, p_account_id, jsonb_build_object('rows_sent', jsonb_array_length(p_rows)), public.current_user_id())
-  returning id into v_run;
+  if p_run_id is not null then
+    /* A later chunk of the same press: the run must be this company's, this account's, not undone. */
+    select r.id into v_run from public.bank_exact_match_runs r
+     where r.id = p_run_id and r.tenant_id = v_tenant and r.bank_account_id = p_account_id and r.undone_at is null
+     for update;
+    if not found then
+      raise exception 'This match run is not open any more — reload the list.' using errcode = 'no_data_found';
+    end if;
+  else
+    /* The run row first, outside every line's savepoint (a failed line must not take it with it). */
+    insert into public.bank_exact_match_runs (tenant_id, bank_account_id, filter, created_by)
+    values (v_tenant, p_account_id,
+            jsonb_build_object('from', p_scope->>'from', 'to', p_scope->>'to', 'dir', p_scope->>'dir'),
+            public.current_user_id())
+    returning id into v_run;
+  end if;
 
   for v_row in
     select public.bank_match_uuid(e->>'txn_id') as tid, e->>'txn_id' as raw_tid,
@@ -468,6 +531,15 @@ begin
         raise exception 'Already reconciled (matched meanwhile).' using errcode = 'check_violation';
       end if;
 
+      /* Lock the record the browser names BEFORE the answer is worked out, so a line matched to it at
+         the same moment (another tab, a drawer) is either seen below or waits for this one. */
+      if v_row.mtype = 'expense' or v_row.mtype = 'recorded_payment' then
+        perform 1 from public.expenses e where e.id = v_row.mid and e.tenant_id = v_tenant for update;
+      end if;
+      if v_row.mtype = 'recorded_payment' then
+        perform 1 from public.bank_transactions t where t.id = public.bank_match_uuid(v_row.mid) and t.tenant_id = v_tenant for update;
+      end if;
+
       /* The server decides, now: the same answer the preview showed, or nothing. */
       select * into v_r from public._r2677_exact_for_line(v_row.tid) x limit 1;
       if v_r.status is distinct from 'exact' then
@@ -476,41 +548,38 @@ begin
       if v_r.kind is distinct from v_row.mtype or v_r.match_id is distinct from v_row.mid then
         raise exception 'The record for this line is not the one the preview showed — open the list again.' using errcode = 'check_violation';
       end if;
-      if (v_r.kind || ':' || v_r.match_id) = any (v_seen_rec) then
+      if exists (select 1 from public.bank_exact_match_run_lines l
+                  where l.run_id = v_run and l.undone_at is null and l.kind = v_r.kind and l.match_id = v_r.match_id) then
         raise exception 'This record was already matched to another line in this run.' using errcode = 'check_violation';
       end if;
-
-      /* Lock the record and check it is still free (two lines at the same moment wait for each other). */
-      if v_r.kind = 'expense' then
-        perform 1 from public.expenses e where e.id = v_r.match_id and e.tenant_id = v_tenant for update;
-        if exists (select 1 from public.expenses e where e.id = v_r.match_id and e.tenant_id = v_tenant and e.reconciled_txn_id is not null)
-           or exists (select 1 from public.bank_transactions t where t.tenant_id = v_tenant and t.id <> v_row.tid
-                       and t.matched_to_type = 'expense' and t.matched_to_id = v_r.match_id) then
-          raise exception 'The expense was matched to another line meanwhile.' using errcode = 'check_violation';
-        end if;
-      elsif v_r.kind = 'project' then
-        perform 1 from public.project_payments pp where pp.id = public.bank_match_uuid(v_r.match_id) and pp.tenant_id = v_tenant for update;
-        if exists (select 1 from public.project_payments pp where pp.id = public.bank_match_uuid(v_r.match_id) and pp.bank_txn_id is not null) then
-          raise exception 'The project receipt was matched to another line meanwhile.' using errcode = 'check_violation';
-        end if;
+      if v_r.kind = 'expense'
+         and (exists (select 1 from public.expenses e where e.id = v_r.match_id and e.tenant_id = v_tenant and e.reconciled_txn_id is not null)
+              or exists (select 1 from public.bank_transactions t where t.tenant_id = v_tenant and t.id <> v_row.tid
+                          and t.matched_to_type = 'expense' and t.matched_to_id = v_r.match_id)) then
+        raise exception 'The expense was matched to another line meanwhile.' using errcode = 'check_violation';
       end if;
 
-      if v_r.kind in ('payment', 'project', 'expense') then
+      if v_r.kind in ('payment', 'expense') then
         /* receipt: reconcile_bank_txn locks the receipt and refuses one another line already holds (R-2364). */
         perform public.reconcile_bank_txn(v_row.tid, v_r.kind, v_r.match_id, 'exact');
         select * into v_after from public.bank_transactions t where t.id = v_row.tid;
         if v_after.matched_to_type is distinct from v_r.kind or v_after.matched_to_id is distinct from v_r.match_id then
           raise exception 'The line did not end up on that record — not matched.' using errcode = 'check_violation';
         end if;
-      else
+      elsif v_r.kind = 'recorded_payment' then
         perform public.reconcile_bank_debit_to_vendor(
           v_row.tid, v_r.vendor_id, null,
           jsonb_build_array(jsonb_build_object('source', 'recorded_payment', 'doc_id', v_r.match_id, 'amount', v_r.match_amount)),
           null, 0, null, 0, 'Match all exact (R-2677)');
         select * into v_after from public.bank_transactions t where t.id = v_row.tid;
-        if v_after.matched_to_type is null then
-          raise exception 'The line did not end up reconciled — not matched.' using errcode = 'check_violation';
+        /* It must have taken THAT recorded payment's place: reconciled, and the payment no longer open. */
+        if v_after.matched_to_type is null
+           or exists (select 1 from public.bank_debit_vendor_open_items(v_r.vendor_id) o
+                       where o.source = 'recorded_payment' and o.doc_id = v_r.match_id) then
+          raise exception 'The line did not take that recorded payment''s place — not matched.' using errcode = 'check_violation';
         end if;
+      else
+        raise exception 'Match this one in the line''s drawer.' using errcode = 'check_violation';
       end if;
 
       /* The line was open, so a live run line still naming it is stale (un-reconciled by hand after
@@ -525,26 +594,26 @@ begin
         (v_run, v_tenant, v_row.tid, v_r.kind, v_r.match_id, v_r.match_label,
          greatest(coalesce(v_txn.debit, 0), coalesce(v_txn.credit, 0)), v_r.why,
          v_after.matched_to_type, v_after.matched_to_id, v_after.matched_at);
-      v_seen_rec := v_seen_rec || (v_r.kind || ':' || v_r.match_id);
       v_n := v_n + 1;
     exception when others then
       v_skipped := v_skipped || jsonb_build_object('txn_id', v_row.tid, 'reason', sqlerrm);
     end;
   end loop;
 
-  if v_n = 0 then
+  update public.bank_exact_match_runs set booked = booked + v_n where id = v_run;
+  if p_run_id is null and v_n = 0 then
     delete from public.bank_exact_match_runs where id = v_run;
     v_run := null;
-  else
-    update public.bank_exact_match_runs set booked = v_n where id = v_run;
   end if;
   return jsonb_build_object('run_id', v_run, 'booked', v_n, 'skipped', v_skipped);
 end;
 $function$;
-revoke all on function public.book_bank_exact_matches(uuid, jsonb) from public, anon;
-grant execute on function public.book_bank_exact_matches(uuid, jsonb) to authenticated, service_role;
+revoke all on function public.book_bank_exact_matches(uuid, jsonb, uuid, jsonb) from public, anon;
+grant execute on function public.book_bank_exact_matches(uuid, jsonb, uuid, jsonb) to authenticated, service_role;
 
-create or replace function public.undo_bank_exact_match_run(p_run_id uuid)
+/* Undo, at most p_limit lines a call (statement timeout); 'remaining' says how many are still live —
+   the browser calls again until it is 0 or a call changes nothing. */
+create or replace function public.undo_bank_exact_match_run(p_run_id uuid, p_limit integer default 50)
 returns jsonb
 language plpgsql
 security definer
@@ -552,10 +621,12 @@ set search_path to 'public'
 as $function$
 declare
   v_tenant uuid := public._r2677_exact_gate();
+  v_limit  integer := least(greatest(coalesce(p_limit, 50), 1), 100);
   v_run    public.bank_exact_match_runs;
   v_l      record;
   v_n      integer := 0;
   v_left   jsonb := '[]'::jsonb;
+  v_rest   integer;
 begin
   select * into v_run from public.bank_exact_match_runs r where r.id = p_run_id and r.tenant_id = v_tenant for update;
   if not found then
@@ -568,7 +639,9 @@ begin
       from public.bank_exact_match_run_lines l
       join public.bank_transactions t on t.id = l.bank_txn_id and t.tenant_id = v_tenant
      where l.run_id = p_run_id and l.undone_at is null
+       and l.undo_note is distinct from 'Refused'
      order by t.txn_date, l.bank_txn_id
+     limit v_limit
      for update of l, t
   loop
     /* Exactly the run's match: same type, same record and the same matched_at (a hand re-match of
@@ -583,9 +656,11 @@ begin
       continue;
     end if;
     begin
-      /* Never through a path that deletes a receipt: the run never matched an advance receipt. */
-      if v_l.now_type = 'payment' and public.bank_advance_payment(public.bank_match_uuid(v_l.now_id)) then
-        raise exception 'This receipt is a customer advance — un-reconcile it from the line instead.' using errcode = 'check_violation';
+      /* Never through a path that deletes a receipt: the run matched only plain receipts (no advance,
+         no project receipt) — checked again here. */
+      if v_l.now_type = 'project'
+         or (v_l.now_type = 'payment' and public.bank_advance_payment(public.bank_match_uuid(v_l.now_id))) then
+        raise exception 'Un-reconcile this line from the line itself — it would take a receipt back.' using errcode = 'check_violation';
       end if;
       perform public.unreconcile_bank_receipt(v_l.bank_txn_id, false);
       if exists (select 1 from public.bank_transactions t where t.id = v_l.bank_txn_id and t.matched_to_type is not null) then
@@ -594,19 +669,30 @@ begin
       update public.bank_exact_match_run_lines set undone_at = now(), undo_note = 'Undone.' where id = v_l.id;
       v_n := v_n + 1;
     exception when others then
+      /* Stays in the run (e.g. books locked since) — listed, and not tried again by this press. */
+      update public.bank_exact_match_run_lines set undo_note = 'Refused' where id = v_l.id;
       v_left := v_left || jsonb_build_object('txn_id', v_l.bank_txn_id, 'txn_date', v_l.txn_date, 'amount', v_l.amount, 'reason', sqlerrm);
     end;
   end loop;
 
-  if v_run.undone_at is null
-     and not exists (select 1 from public.bank_exact_match_run_lines l where l.run_id = p_run_id and l.undone_at is null) then
-    update public.bank_exact_match_runs set undone_at = now(), undone_by = public.current_user_id() where id = p_run_id;
+  select count(*) into v_rest from public.bank_exact_match_run_lines l
+   where l.run_id = p_run_id and l.undone_at is null and l.undo_note is distinct from 'Refused';
+  /* Every line of it either undone or released → the run is closed. It is stamped "undone" only when
+     at least one line was really taken back (a run whose lines were all changed by hand was not). */
+  if v_rest = 0 then
+    update public.bank_exact_match_run_lines set undo_note = null
+     where run_id = p_run_id and undone_at is null and undo_note = 'Refused';
+    if v_run.undone_at is null
+       and not exists (select 1 from public.bank_exact_match_run_lines l where l.run_id = p_run_id and l.undone_at is null)
+       and exists (select 1 from public.bank_exact_match_run_lines l where l.run_id = p_run_id and l.undo_note = 'Undone.') then
+      update public.bank_exact_match_runs set undone_at = now(), undone_by = public.current_user_id() where id = p_run_id;
+    end if;
   end if;
-  return jsonb_build_object('run_id', p_run_id, 'undone', v_n, 'left', v_left);
+  return jsonb_build_object('run_id', p_run_id, 'undone', v_n, 'left', v_left, 'remaining', v_rest);
 end;
 $function$;
-revoke all on function public.undo_bank_exact_match_run(uuid) from public, anon;
-grant execute on function public.undo_bank_exact_match_run(uuid) to authenticated, service_role;
+revoke all on function public.undo_bank_exact_match_run(uuid, integer) from public, anon;
+grant execute on function public.undo_bank_exact_match_run(uuid, integer) to authenticated, service_role;
 
 comment on table public.bank_exact_match_runs is
   'R-2677: one "Match all exact" run on Banking → an account (filter, who, when, how many matched; undone_at once Undo this run took every line back).';
