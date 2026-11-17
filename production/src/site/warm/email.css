@@ -113,7 +113,7 @@
   }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] {
     display: grid !important; grid-template-columns: minmax(0, 1fr) auto; column-gap: 18px; row-gap: 4px; align-items: center;
-    grid-template-areas: "logo price" "desc perday" "cta cta"; padding: 20px 22px !important; text-align: left;
+    grid-template-areas: "logo logo" "desc price" "desc perday" "cta cta"; padding: 22px 22px 20px !important; text-align: left;
     transition: transform .3s cubic-bezier(.22,.61,.36,1), box-shadow .3s ease, border-color .2s ease;
   }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed]:hover { transform: translateX(-4px); }
@@ -125,9 +125,24 @@
     grid-area: price; justify-self: end; margin-top: 0 !important; white-space: nowrap;
   }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(4) { grid-area: perday; justify-self: end; margin-top: 0 !important; text-align: right; }
-  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(5) { grid-area: desc; min-height: 0 !important; margin-top: 2px !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(5) { grid-area: desc; align-self: start; min-height: 0 !important; margin-top: 12px !important; max-width: 280px; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(3) { margin-top: 10px !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(4) { align-self: start; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(6) { grid-area: cta; margin-top: 8px !important; }
 }
+/* Suite logos (owner, 17 Nov 2026: "logos … can be more prominent and look better"): each sits on a
+   light brand plate — the page ground, 14px corners, a hairline — at a larger size (26px for the
+   Google Workspace wordmark, whose file is only 39px tall, 30px for the others), so the three read
+   as a matched set instead of small marks floating at different sizes. */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) {
+  width: auto !important; min-height: 0 !important; align-self: flex-start; justify-self: start;
+  padding: 10px 16px; border-radius: 14px; background: var(--w-bg); border: 1px solid var(--w-line);
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) img {
+  height: 30px !important; width: auto !important; max-width: none !important;
+}
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) img[src*="google-workspace"] { height: 26px !important; margin-block: 2px; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed]:hover > span:nth-child(2) { border-color: #C8DDD4; }
 /* Under 1200px (owner, 17 Nov 2026: "Content should be centralized for mobile/responsive design"):
    the hero's words are already centred; now the pill is a compact one-line badge (it ran the full
    width, its dot stranded at the left), and each suite card is centred too — logo, price, per-day
@@ -148,6 +163,7 @@
     display: flex !important; flex-direction: column !important; align-items: center !important; text-align: center !important; padding: 26px 20px 20px !important;
   }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span { justify-content: center !important; text-align: center; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) { align-self: center; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(1) {
     position: absolute; top: -13px; left: 50%; transform: translateX(-50%); width: auto !important; min-height: 0 !important; margin: 0 !important; white-space: nowrap;
   }
