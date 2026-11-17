@@ -130,6 +130,8 @@ export interface StatementInput {
    *  its earlier Zoho receipts were never recorded here. */
   invoices: ReadonlyArray<{
     id: string; invoice_date: string; amount: number | null; document_kind?: string | null; opening_balance?: number | null;
+    /** R-2884: the quote it was raised from — a subscription whose quote has an invoice is not "owed, not invoiced yet". */
+    quote_id?: string | null;
     /** R-1632: void / draft → not on the statement. Omitted = issued (older callers). */
     status?: string | null;
     /** R-1632: what invoiceAmountDue reads — the write-off line clears exactly that. */
