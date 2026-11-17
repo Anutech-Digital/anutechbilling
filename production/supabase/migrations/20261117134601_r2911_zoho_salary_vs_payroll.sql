@@ -2,7 +2,7 @@
 -- deploy-key: r2911zohosalaryvspayroll
 -- R-2911 (17 Nov 2026, p0 paisa, G-FY2526) — corrects R-2681's salary part.
 -- R-2681 refused every Zoho salary ("Payroll books salaries") on the owner's assumption that Prashant's
--- salary is in Payroll. A staging check on 17 Nov showed Excel Technologies' Payroll has NO payslip before
+-- salary is in Payroll. A staging check on 17 Nov showed the company's Payroll has NO payslip before
 -- Jun 2026, so for FY 2025-26 Zoho's salary expenses (~Rs 45.6L salary-type, Prashant's 9 rows Rs 1.52L)
 -- are the ONLY salary record — refusing them drops real cost from the FY 2025-26 books. Pardeep, 17 Nov:
 -- "jo logically thik ho wo kro". The rule now:
