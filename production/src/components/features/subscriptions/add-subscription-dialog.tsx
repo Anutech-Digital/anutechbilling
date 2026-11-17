@@ -51,7 +51,7 @@ const VENDOR_LABEL: Record<Item["vendor"], string> = {
   other:     "📦 Other Cloud Vendor",
 };
 import { useQueryClient } from "@tanstack/react-query";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee, formatDate, cn } from "@/lib/utils";
 import { OPENING_SOURCE, OPENING_LABEL } from "@/lib/subscriptions/billed-elsewhere";
 
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
@@ -69,7 +69,8 @@ import { findPlanProduct, type LeadPrefill } from "@/lib/subscriptions/lead-pref
 /* The same countdown the subscriptions list and /payments render, so the hint under
    the field cannot disagree with the chip the operator sees a second later. */
 import { paymentDueState, todayIST } from "@/lib/subscriptions/payment-due";
-import { onboardingQuoteLine } from "./onboarding-line";
+import { onboardingQuoteLine, onboardingRenewal, onboardingYears, yearlyUnitProducts } from "./onboarding-line";
+import { isDomainPlan } from "@/lib/quotes/bulk";
 import { duplicateSubscriptionText, findDuplicateSubscription, type ExistingSub } from "./duplicate-subscription";
 import { findCustomerMatches } from "@/lib/customers/duplicate-match";
 import { DuplicateCustomerHint } from "@/components/features/customers/duplicate-customer-hint";
@@ -258,6 +259,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
   const [renewalDate, setRenewalDate] = React.useState(
     () => addMonthsClamped(todayIST(), 12),        // R-025 — same UTC trap. R-2178: anniversary.
   );
+  /** R-2734: "Register for N years" as picked — applies only to a domain plan on Annual · Yearly. */
+  const [yearsPicked, setYearsPicked] = React.useState(1);
 
   /**
    * Postpaid only: when the operator agreed the balance is due.
@@ -302,7 +305,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
      Loaded from /items. `subscriptionProducts` drops one-time items and converts
      ₹/seat/month to the ₹/seat/year this dialog charges in — once, in one place. */
   const { data: items, isLoading: catalogLoading } = useItems();
-  const products   = React.useMemo(() => subscriptionProducts(items ?? []), [items]);
+  /* R-2734: + a per-year item (domain) at its yearly price, not × 12. */
+  const products   = React.useMemo(() => yearlyUnitProducts(subscriptionProducts(items ?? []), items ?? []), [items]);
   /* Built in one place (catalog-options.ts) because it used to be built in two:
      a fallback for an empty catalogue AND a guard that appended `other`. On an empty
      catalogue both fired and this dropdown showed "Other Cloud Vendor" twice. */
@@ -324,6 +328,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
   const applyProduct = (p: CatalogProduct) => {
     setIsCustomPlan(false);
+    setYearsPicked(1);   // R-2734: a new plan starts at 1 year — never a hidden earlier N
     setItemId(p.id);
     setPlan(p.name);
     setPriceText(String(billingTerms(billingChoice, p).suggestedSellPerSeat)); setPriceHint(null); setPriceProposal(null); priceSwitchMemo.current = null;
@@ -340,6 +345,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
    */
   const changeBillingChoice = (next: BillingChoice) => {
     setBillingChoice(next);
+    setYearsPicked(1);   // R-2734: years only on Annual · Yearly — a switch starts again at 1
     /* The TERM changes with the choice, so the expiry date has to move with it.
        Flex has no commitment — its term is one month, and leaving a year there was
        reported on 9 Sep 2026 as "date still pointing to yearly".
@@ -403,6 +409,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
   const handleVendorChange = (v: Item["vendor"]) => {
     setVendor(v);
+    setYearsPicked(1);   // R-2734
     setIsCustomPlan(false);
     const first = productsForVendor(products, v)[0];
     if (first) applyProduct(first);
@@ -419,6 +426,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     if (val === "CUSTOM_PLAN") {
       setIsCustomPlan(true);
       setItemId(null);      // nothing in the catalog to point at
+      setYearsPicked(1);    // R-2734
       setPlan("");
       return;
     }
@@ -588,11 +596,18 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
      12 when a monthly-billed ANNUAL commitment must store the year so
      quoteInstalments can split it. See billingTerms() for why that is not optional. */
   const terms = billingTerms(billingChoice, selected);
+  /* R-2734: a domain plan (the R-1445 / R-2712 rule) on Annual · Yearly may be registered for N
+     years. The price box stays per YEAR; the quote stores the whole term, billed once; the row
+     renews start + N years. Any other plan or billing choice: 1, exactly as before. */
+  const yearsOffered = isDomainPlan({ vendor, name: plan }) && billingChoice === "annual_yearly";
+  const regYears = onboardingYears(yearsPicked, { domainPlan: yearsOffered, billingChoice });
+  const renewalOn = onboardingRenewal(startDate, regYears, renewalDate);
   /** What ONE invoice charges, ex-GST — one month, or the year. */
   const perPeriodAmount = seats * pricePerSeat;
   /** What the QUOTE stores, ex-GST. Equals perPeriodAmount except for
-   *  annual-billed-monthly, where it is the twelve months the customer committed to. */
-  const storedTaxable = perPeriodAmount * terms.periods;
+   *  annual-billed-monthly, where it is the twelve months the customer committed to,
+   *  and a domain registered for N years (R-2734), where it is the N years. */
+  const storedTaxable = perPeriodAmount * terms.periods * regYears;
   /** Monthly recurring revenue. For a per-month unit that IS the per-period amount —
      dividing it by 12 was the 1 Sep 2026 defect. */
   const mrrAmount = terms.unit === "per_seat_month"
@@ -1049,7 +1064,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           billing_cycle: terms.billingCycle,
           term_months: terms.termMonths,
           start_date: startDate,
-          renewal_date: renewalDate,
+          renewal_date: renewalOn,   // R-2734: start + N years for a multi-year domain
           payment_due_date: null,
           status: "active",
           domain: cleanDomain,
@@ -1059,11 +1074,14 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           external_source: OPENING_SOURCE,
           /* R-2178: billed outside until the LAST covered day (inclusive, billedElsewhere) — the
              renewal date itself starts the next term, which bills here. */
-          billed_externally_until: addDaysISO(renewalDate, -1),
+          billed_externally_until: addDaysISO(renewalOn, -1),
+          /* R-2734: no quote for R-2369 to read the exact yearly price from — say it here, so the
+             renewal after the N years bills ₹800, not mrr 67 × 12 = ₹804. */
+          ...(regYears > 1 ? { term_amount: Math.round(perPeriodAmount * 100) / 100 } : {}),
         });
         if (openErr) throw openErr;
         toast.success(`Opening subscription added for ${cleanCustomerName}`, {
-          description: `${OPENING_LABEL}: no invoice, no payment, nothing due. The renewal on ${formatDate(renewalDate)} bills here.`,
+          description: `${OPENING_LABEL}: no invoice, no payment, nothing due. The renewal on ${formatDate(renewalOn)} bills here.`,
         });
         qc.invalidateQueries({ queryKey: ["subscriptions"] });
         qc.invalidateQueries({ queryKey: ["customers"] });
@@ -1092,7 +1110,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
          carries the Renewal / Expiry date on screen, which the paid path used to replace with
          start + 1 year (trigger subscription_term_follows_line, R-1445 migration). */
       const lineItems: QuoteLineItem[] = [
-        onboardingQuoteLine({ id: `line-${Date.now()}`, plan, seats, pricePerSeat, terms, startDate, renewalDate }),
+        onboardingQuoteLine({ id: `line-${Date.now()}`, itemId, plan, seats, pricePerSeat, terms, years: regYears, startDate, renewalDate }),
       ];
 
       /* `amount`, NOT `total` — `quotes` has no `total` column (it has amount,
@@ -1204,7 +1222,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
         billing_cycle: terms.billingCycle,
         term_months: terms.termMonths,
         start_date: startDate,
-        renewal_date: renewalDate,
+        renewal_date: renewalOn,   // R-2734: start + N years for a multi-year domain
         /* ── A postpaid subscription ALWAYS gets a due date ──────────────────
            Guaranteed by the guard at the top of this handler, not by a fallback. The
            first version defaulted an empty box to start + 30; Abhishek changed it on
@@ -1723,8 +1741,21 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
             </FormField>
           </div>
 
-          {/* Dates */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Dates — R-2734: + "Register for" on a domain plan (Annual · Yearly) */}
+          <div className={cn("grid grid-cols-1 gap-4", yearsOffered ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
+            {yearsOffered && (
+              <FormField label="Register for" htmlFor="regYears">
+                <select id="regYears" value={regYears} onChange={(e) => setYearsPicked(Number(e.target.value))}
+                  className="h-10 w-full rounded-lg border border-hairline bg-paper px-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((y) => <option key={y} value={y}>{y} year{y === 1 ? "" : "s"}</option>)}
+                </select>
+                {regYears > 1 && (
+                  <p className="mt-1 text-2xs leading-snug text-ink-3 tabular-nums" data-testid="reg-years-total">
+                    {rupee(storedTaxable)} for {regYears} years, billed once (ex-GST). Renews yearly after that.
+                  </p>
+                )}
+              </FormField>
+            )}
             <FormField label="Start Date" required htmlFor="startDate">
               <Input
                 id="startDate"
@@ -1735,24 +1766,28 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               />
               <p className="mt-1 text-2xs leading-snug text-ink-3">
                 Back-dating is fine — the renewal date follows to keep the term
-                {" "}{terms.termMonths === 1 ? "one month" : `${terms.termMonths} months`} long.
+                {" "}{regYears > 1 ? `${regYears} years` : terms.termMonths === 1 ? "one month" : `${terms.termMonths} months`} long.
               </p>
             </FormField>
 
             <FormField label="Renews on" required htmlFor="renewalDate">
+              {/* R-2734: N years > 1 → start + N years, locked (a typed date would skip the mrr spread). */}
               <Input
                 id="renewalDate"
                 type="date"
-                value={renewalDate}
+                value={renewalOn}
                 onChange={(e) => setRenewalDate(e.target.value)}
+                disabled={regYears > 1}
                 required
               />
               {/* Says WHICH date this is. On "Monthly — annual commitment" it reads a
                   year out, which looks wrong until you know it marks the end of the
                   commitment and not the next invoice. That confusion was reported. */}
               <p className="mt-1 text-2xs leading-snug text-ink-3">
-                {/^\d{4}-\d{2}-\d{2}$/.test(renewalDate) ? `Term ends ${formatDate(addDaysISO(renewalDate, -1))}. ` : ""}
-                {terms.commitment === "monthly"
+                {/^\d{4}-\d{2}-\d{2}$/.test(renewalOn) ? `Term ends ${formatDate(addDaysISO(renewalOn, -1))}. ` : ""}
+                {regYears > 1
+                  ? `Follows "Register for ${regYears} years". The next yearly invoice is due on this date.`
+                  : terms.commitment === "monthly"
                   ? "Flex renews every month — no commitment to expire."
                   : terms.billingCycle === "monthly"
                     ? "The 12-month commitment renews on this date. Invoices still go out monthly."
@@ -1881,7 +1916,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                   asked for now). They are equal on yearly, and differ 12× on an
                   annual commitment billed monthly. Both are stated. */}
               <span className="text-ink-3">
-                {terms.termMonths === 12 ? "Total Annual Contract Value (ARR):" : "Monthly Contract Value:"}
+                {regYears > 1 ? `Total for ${regYears} years, billed once:` : terms.termMonths === 12 ? "Total Annual Contract Value (ARR):" : "Monthly Contract Value:"}
               </span>
               <div className="font-serif text-lg font-bold text-ink">{rupee(storedTaxable)}</div>
               {/* ARR is the ex-GST revenue figure; the customer is billed the
