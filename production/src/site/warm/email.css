@@ -89,6 +89,48 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] span[style*="tabular-nums"] { font-size: 30px !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(5) { font-size: 15px !important; color: var(--w-ink-2) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:last-child { font-size: 15px !important; color: var(--w-teal) !important; margin-top: 14px !important; }
+/* Owner, 17 Nov 2026: "Hero section design looks weird. Design it better." The hero is
+   two columns from 1200px: the words on the left (pill, heading, the rates line, the annual line, the dots and
+   the "Not sure?" line), the three suites stacked on the right as one pricing panel. Each suite is a
+   row: logo and what it is on the left, the price and the per-day figure on the right, "See
+   editions →" under them; "Most teams pick this" sits on the card's top edge. Same words, same
+   order for Tab (the cards come after the dots, as before). Below 1200px the stacked layout stays. */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > div:first-child {
+  font-family: var(--font-site-body), "Inter", system-ui, sans-serif !important;
+}
+@media (min-width: 1200px) {
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child {
+    display: grid !important; grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr); column-gap: clamp(40px, 4.5vw, 72px);
+    align-items: start; align-content: center; padding-top: clamp(48px, 5vw, 72px) !important; padding-bottom: clamp(48px, 5vw, 72px) !important;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > * { grid-column: 1; justify-self: start; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > h1 { font-size: clamp(2.4rem, 3.6vw, 3.4rem) !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > p:nth-of-type(2) { margin-bottom: 18px !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > p:last-child { margin-top: 26px !important; max-width: 620px; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > div[style*="display:grid"] {
+    grid-column: 2; grid-row: 1 / span 7; align-self: center; justify-self: stretch;
+    grid-template-columns: minmax(0, 1fr) !important; gap: 16px !important; margin: 0 !important;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] {
+    display: grid !important; grid-template-columns: minmax(0, 1fr) auto; column-gap: 18px; row-gap: 4px; align-items: center;
+    grid-template-areas: "logo price" "desc perday" "cta cta"; padding: 20px 22px !important; text-align: left;
+    transition: transform .3s cubic-bezier(.22,.61,.36,1), box-shadow .3s ease, border-color .2s ease;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed]:hover { transform: translateX(-4px); }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(1) {
+    position: absolute; top: -12px; left: 22px; width: auto !important; min-height: 0 !important; margin: 0 !important;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(2) { grid-area: logo; width: auto !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(3) {
+    grid-area: price; justify-self: end; margin-top: 0 !important; white-space: nowrap;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(4) { grid-area: perday; justify-self: end; margin-top: 0 !important; text-align: right; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(5) { grid-area: desc; min-height: 0 !important; margin-top: 2px !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(6) { grid-area: cta; margin-top: 8px !important; }
+}
+@media (min-width: 1200px) and (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed]:hover { transform: none; }
+}
 /* "Not sure?" line on the dark band: links in marigold. */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > p:last-child { font-size: 15px !important; color: #FFFFFF !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > p:last-child :is(a, button) {
