@@ -419,7 +419,7 @@
    this section as background image": public/hosting-talk-banner.webp (2000×400, a pale sky-to-teal
    band, empty on the left, glass support icons — chat, headset, clock, tag — on the right). It fills
    the band, anchored right so the icons stay in view; the heading and the four channels (compact
-   two-by-two tiles, icon beside the title) sit in the open left part. Phones: one column of tiles
+   tiles, icon beside the title) sit in the open part — one row from 1000px. Phones: one column of tiles
    over a lighter wash. Same words. */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) {
   background: #E6F2F5 url(/hosting-talk-banner.webp) right center / cover no-repeat !important;
@@ -448,10 +448,12 @@
 @media (prefers-reduced-motion: reduce) {
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div:hover { transform: none; }
 }
-/* 1000–1699px: the banner's icons take a fixed ~700px on the right, so 2 × 2 tiles would sit on them —
-   the four tiles go in one row under the heading instead (a shorter band: the chat and headset icons
-   beside the heading, the lower ones softly behind the frosted tiles). */
-@media (min-width: 1000px) and (max-width: 1699px) {
+/* From 1000px the four tiles sit in one row under the heading. The banner is 2000×400: a band taller
+   than ~400px (2 × 2 tiles made it ~540px at 2000px) has to enlarge it, which blurred it (owner, 17 Nov
+   2026: "why does bg image looks blurred") — one row keeps the band near 400px, so it shows at or under
+   its own size. The chat and headset icons sit beside the heading, the lower ones softly behind the
+   frosted tiles. */
+@media (min-width: 1000px) {
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; max-width: none !important; }
 }
 /* Narrower screens: the tiles take the full width (the icons sit behind the right-hand tiles). */
