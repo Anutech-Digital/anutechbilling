@@ -10,7 +10,7 @@
  * Pure — tested in frequency-r2422.test.ts.
  */
 import { rupee } from "@/lib/utils";
-import { subscriptionCycle, type CycleSub } from "@/lib/subscriptions/billing-cycle";
+import { subscriptionCycle, CYCLE_LABEL, CYCLE_HINT, type CycleSub } from "@/lib/subscriptions/billing-cycle";
 import { termValue, termValueLabel, storedAnnual } from "@/lib/subscriptions/renewal-display";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import type { BillingCycle } from "@/lib/supabase/database.types";
@@ -53,4 +53,28 @@ export function renewalFrequency(sub: FrequencySub): string | null {
  */
 export function renewalCommitment(sub: FrequencySub): Commitment {
   return subscriptionCycle(sub).kind === "monthly" || (sub.term_months ?? 12) <= 1 ? "monthly" : "annual";
+}
+
+/** R-2887 — the chip on every Renewals row: the commitment in the Subscriptions list's own words. */
+export interface CommitmentChip { text: string; title: string }
+
+const EVERY: Record<string, string> = { monthly: "every month", quarterly: "every quarter", "half-yearly": "every half-year", yearly: "once a year" };
+const billedEvery = (months: number | undefined) => EVERY[months == null ? "yearly" : months <= 1 ? "monthly" : months <= 3 ? "quarterly" : months <= 6 ? "half-yearly" : "yearly"];
+
+/**
+ * R-2887 (Pardeep, 17 Nov: "renewal monthly hai ya yearly ye bhi renewal list me show hona chahiye"). ONE rule:
+ * subscriptionCycle() — the same call the Subscriptions list's badge and renewalCommitment() (the "All commitments"
+ * filter) read — so a row is never "Annual" here and "Monthly" in the filter. The words are the list's (CYCLE_LABEL):
+ * "Annual · paid yearly", "Annual · paid monthly", "3 years · paid yearly", "Flexible (monthly)". A term that cannot be
+ * told ("No term", "Check term") shows NO chip — never a wrong one.
+ */
+export function commitmentChip(sub: FrequencySub): CommitmentChip | null {
+  const cyc = subscriptionCycle(sub);
+  if (cyc.kind === "none") return (sub.term_months ?? 12) <= 1 ? { text: CYCLE_LABEL.monthly, title: CYCLE_HINT.monthly } : null;
+  if (cyc.kind === "check_term" || !cyc.label) return null;
+  if (cyc.kind === "monthly") return { text: cyc.label, title: "Monthly commitment — renews month to month, billed every month" };
+  const billed = billedEvery(cyc.term?.months);
+  return cyc.kind === "three_year"
+    ? { text: cyc.label, title: `3-year commitment, billed ${billed}` }
+    : { text: cyc.label, title: `Annual commitment, billed ${billed}` };
 }

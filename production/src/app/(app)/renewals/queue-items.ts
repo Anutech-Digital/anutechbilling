@@ -26,7 +26,7 @@ import {
 } from "./queue";
 import type { RowContact } from "./queue-data";
 import { renewalFollowup, renewalDecision, type RenewalFollowup, type RenewalDecision, type RenewalFollowupRow } from "./followup";
-import { renewalFrequency, renewalCommitment, type Commitment } from "./frequency";
+import { renewalFrequency, renewalCommitment, commitmentChip, type Commitment, type CommitmentChip } from "./frequency";
 import type { LastDocs } from "./last-docs";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
 
@@ -68,6 +68,8 @@ export interface QueueItem {
   /** R-2422: worked out once per row (frequency.ts) — the amount cell's words and the Commitment filter. */
   frequency: string | null;
   commitment: Commitment;
+  /** R-2887: the row chip ("Annual · paid yearly", "Flexible (monthly)") — same rule as `commitment`; null = term unknown. */
+  commitmentChip: CommitmentChip | null;
   /** R-2728: last quote sent / last invoice / the renewal quote with the customer (last-docs.ts). */
   docs: LastDocs | undefined;
   /** R-2758 (R-2738): the row's ONE stage (chip + button); null while its documents load. */
@@ -190,6 +192,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
       amount: renewalAmount(r.sub, quoteOf(r.sub), r.sub.quote_id ? f.quoteInfo?.get(r.sub.quote_id) : null),   // R-2767: sale quote's currency
       frequency: renewalFrequency(r.sub),
       commitment: renewalCommitment(r.sub),
+      commitmentChip: commitmentChip(r.sub),
       docs,
       contact: r.sub.customer_id ? f.contacts?.get(r.sub.customer_id) : undefined,
       atRisk: atRiskIds.has(r.sub.id),
