@@ -84,6 +84,10 @@ What stays with people (not the queue): Pardeep — owner decisions (price, disc
 
 Measured for the trial (end of week): hours from claim to merge per card, merge conflicts, times someone waited on someone.
 
+### Staging — Abhishek puts his own work there first (Pardeep, 17 Nov 2026, R-2910)
+
+Abhishek (Marketing Hub, Meta / social, ads) may put his own work on `anutech/staging` himself. Every staging train therefore starts with step 0: `staging-train.mjs` (dry run and `--push`) lists commits on `anutech/staging` after the last train merge, and on `anutech/Abhishek`, that `manager-pardeep` does not have, and stops with exit 8 — "Abhishek (ya kisi aur) ne staging par seedha kaam daala hai". Whoever runs the train (any member's Claude) then brings that work into `manager-pardeep` first — card, read-only review of migrations / RLS / grants, merge (a conflict in his code goes to Pardeep, never pick a side), independent check, `worker-lock push`, CI + SQL green, localhost check — and only then trains at the new sha. A migration staging already has is never re-run or edited. Exact steps: `.claude/skills/staging-train/SKILL.md` step 0. The only bypass is `--allow-staging-ahead "<reason>"` (printed and logged), for an emergency.
+
 ### Picking up a stopped card — any member, any machine (25 Oct 2026, R-1898)
 
 Pardeep: "kisi bhi team member ke Claude Code se kisi bhi team member ka ruka kaam aage badhe" — and the other way round. Before this, worktrees, WIP commits, worker locks and the handoff notes lived only on Pardeep's laptop, so a stopped card could only be continued there. The method:

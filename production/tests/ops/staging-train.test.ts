@@ -1,6 +1,9 @@
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync as rmTree } from "node:fs";
+import os from "node:os";
 import { existsSync, readFileSync } from "node:fs";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import {
   parseArgs,
   extractCardIds,
@@ -20,6 +23,9 @@ import {
   pinnedDbStepLines,
   DB_WAIT_COMMAND,
   EXIT_DB_BUSY,
+  EXIT_STAGING_AHEAD,
+  findDirectPushes,
+  stagingAheadLines,
   // @ts-expect-error — plain .mjs ops script, no types
 } from "../../scripts/ops/staging-train.mjs";
 
@@ -34,10 +40,10 @@ const run = (status: string, conclusion: string) => ({ status, conclusion });
 
 describe("staging train — args", () => {
   it("defaults to a dry run", () => {
-    expect(parseArgs([])).toEqual({ dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: false });
+    expect(parseArgs([])).toEqual({ dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: false, allowStagingAhead: null });
   });
   it("takes --db-done and --push", () => {
-    expect(parseArgs(["--push", "--db-done"])).toEqual({ dbDone: true, push: true, help: false, sha: null, dryRun: false, dbWait: false });
+    expect(parseArgs(["--push", "--db-done"])).toEqual({ dbDone: true, push: true, help: false, sha: null, dryRun: false, dbWait: false, allowStagingAhead: null });
   });
   it("rejects anything else (no --force, no branch names)", () => {
     expect(() => parseArgs(["--force"])).toThrow(/--force/);
@@ -255,7 +261,7 @@ describe("R-2106: --sha pins the train, --dry-run never pushes", () => {
    The wait itself is tested in staging-db-window.test.ts; here: the train's flag, printed steps and wiring. */
 describe("staging train — DB step waits for Cloud SQL (R-2719)", () => {
   it("--db-wait is a flag of its own, refused together with a train run", () => {
-    expect(parseArgs(["--db-wait"])).toEqual({ dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: true });
+    expect(parseArgs(["--db-wait"])).toEqual({ dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: true, allowStagingAhead: null });
     for (const extra of [["--push", "--db-done"], ["--dry-run"], ["--sha", "abcdef1"], ["--db-done"]]) {
       expect(() => parseArgs(["--db-wait", ...extra])).toThrow(/--db-wait akela/);
     }
@@ -290,5 +296,97 @@ describe("staging train — DB step waits for Cloud SQL (R-2719)", () => {
     expect(branch).toMatch(/if \(args\.dryRun\)[\s\S]*else[\s\S]*await waitForDbClear\(\)/);
     expect(branch).toMatch(/process\.exit\(dbBusy \? EXIT_DB_BUSY : decision\.exitCode\)/);
     expect(branch.indexOf("waitForDbClear")).toBeLessThan(branch.indexOf("db.join"));
+  });
+});
+
+/* R-2910 (17 Nov 2026, Pardeep): Abhishek puts his own work on staging; a train must stop and say so.
+   Real git repos in a temp folder — refs/remotes/anutech/* stand in for the remote branches. */
+describe("staging train — step 0: direct staging pushes (R-2910)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "r2910-"));
+  afterAll(() => rmTree(dir, { recursive: true, force: true }));
+  const g = (args: string[]) =>
+    execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8" });
+  const commit = (msg: string, file: string, author = "Pardeep") => {
+    execFileSync("git", ["-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", `user.name=${author}`, "commit", "-q", "--allow-empty", "-m", msg], { cwd: dir });
+    void file;
+    return g(["rev-parse", "HEAD"]).trim();
+  };
+  const write = (file: string) => { execFileSync("node", ["-e", `require("fs").mkdirSync(require("path").dirname(${JSON.stringify(file)}),{recursive:true});require("fs").writeFileSync(${JSON.stringify(file)},String(Math.random()))`], { cwd: dir }); g(["add", "-A"]); };
+  const ref = (name: string, sha: string) => g(["update-ref", `refs/remotes/anutech/${name}`, sha]);
+  const git = (a: string[]) => g(a);
+
+  g(["init", "-q", "-b", "main"]);
+  const base = commit("base", "");
+  ref("manager-pardeep", base);
+  ref("staging", base);
+  ref("Abhishek", base);
+  // an OLD direct commit on staging, then a train merge → the baseline
+  g(["checkout", "-q", "-b", "stg", base]);
+  const legacy = commit("legacy R-161 commit only staging has", "");
+  g(["checkout", "-q", "-b", "mp", base]);
+  const m1 = commit("R-1: on manager-pardeep", "");
+  ref("manager-pardeep", m1);
+  g(["checkout", "-q", "stg"]);
+  g(["merge", "-q", "--no-ff", "-m", "Staging train 1: R-1", m1]);
+  const train1 = g(["rev-parse", "HEAD"]).trim();
+  ref("staging", train1);
+  // a later manager-pardeep commit = the pinned sha of the next train
+  g(["checkout", "-q", "mp"]);
+  const m2 = commit("R-2: next", "");
+  ref("manager-pardeep", m2);
+
+  it("is quiet when staging only carries train merges and old history", () => {
+    expect(legacy).not.toBe(m1);
+    expect(findDirectPushes(m2, git)).toEqual([]);
+  });
+
+  it("finds a commit pushed straight to staging after the last train, with its migration", () => {
+    g(["checkout", "-q", "stg"]);
+    write("production/supabase/migrations/20261117000000_abhi.sql");
+    const direct = commit("R-2897: marketing role (Abhishek, direct)", "", "Abhishek");
+    ref("staging", direct);
+    const found = findDirectPushes(m2, git);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ sha: direct, where: "staging", author: "Abhishek", subject: "R-2897: marketing role (Abhishek, direct)" });
+    expect(found[0].migrations).toEqual(["production/supabase/migrations/20261117000000_abhi.sql"]);
+    const text = stagingAheadLines(found).join("\n");
+    expect(text).toContain("Abhishek (ya kisi aur) ne staging par seedha kaam daala hai — pehle use manager-pardeep mein laao");
+    expect(text).toContain("20261117000000_abhi.sql");
+  });
+
+  it("the baseline moves with each train: what a train already merged over is not reported again, a newer push is", () => {
+    g(["merge", "-q", "--no-ff", "-m", "Staging train 2: R-2", m2]);
+    ref("staging", g(["rev-parse", "HEAD"]).trim());
+    expect(findDirectPushes(m2, git)).toEqual([]);
+    write("production/x.txt");
+    const again = commit("R-2898: pushed again after train 2", "", "Abhishek");
+    ref("staging", again);
+    expect(findDirectPushes(m2, git).map((f: { subject: string }) => f.subject)).toEqual(["R-2898: pushed again after train 2"]);
+  });
+
+  it("finds commits only on the Abhishek branch, not those already in manager-pardeep", () => {
+    g(["checkout", "-q", "-b", "abhi", m2]);
+    const a1 = commit("R-2689: Abhishek branch work", "", "Abhishek");
+    ref("Abhishek", a1);
+    const found = findDirectPushes(m2, git);
+    expect(found.map((f: { sha: string; where: string }) => [f.sha, f.where])).toContainEqual([a1, "Abhishek"]);
+    ref("manager-pardeep", a1); // merged into manager-pardeep → handled, no longer reported
+    expect(findDirectPushes(m2, git).map((f: { sha: string }) => f.sha)).not.toContain(a1);
+  });
+
+  it("the override line and exit code are explicit", () => {
+    expect(EXIT_STAGING_AHEAD).toBe(8);
+    const fake = [{ sha: "a".repeat(40), where: "staging", date: "2026-11-17T10:00:00+05:30", author: "Abhishek", subject: "R-1: x", migrations: [] }];
+    const lines = stagingAheadLines(fake, "live outage fix, Pardeep OK").join("\n");
+    expect(lines).toContain("OVERRIDE (--allow-staging-ahead): live outage fix, Pardeep OK");
+    expect(lines).not.toContain("pehle use manager-pardeep mein laao");
+  });
+
+  it("parseArgs: --allow-staging-ahead needs a real reason", () => {
+    expect(parseArgs(["--sha", "abcdef1", "--allow-staging-ahead", "live outage fix"]).allowStagingAhead).toBe("live outage fix");
+    expect(parseArgs(["--allow-staging-ahead=live outage fix"]).allowStagingAhead).toBe("live outage fix");
+    expect(() => parseArgs(["--allow-staging-ahead"])).toThrow(/wajah/);
+    expect(() => parseArgs(["--allow-staging-ahead", "ok"])).toThrow(/wajah/);
+    expect(() => parseArgs(["--allow-staging-ahead", "--push"])).toThrow(/wajah/);
   });
 });
