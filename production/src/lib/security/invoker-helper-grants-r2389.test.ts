@@ -60,6 +60,16 @@ const EXEMPT_CALLERS: Record<string, string> = {
     "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
   r2768_undo:
     "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2768 repair, never run by authenticated (owner / migration login, or inside the definer freeze trigger).",
+  r2895_relabel:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2895 repair, never run by authenticated (owner / migration login only).",
+  r2895_lines_relabel:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2895 repair, never run by authenticated (owner / migration login only).",
+  r2895_plan:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2895 repair, never run by authenticated (owner / migration login only).",
+  r2895_repair:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2895 repair, never run by authenticated (owner / migration login only).",
+  r2895_undo:
+    "MIGRATION_LOGIN_ONLY in invoker-function-grants.test.ts — R-2895 repair, never run by authenticated (owner / migration login only).",
   customer_names_agree:
     "DEFINER_INTERNAL in invoker-function-grants.test.ts — only called inside match_existing_customer (definer).",
   subscription_dues_drift:

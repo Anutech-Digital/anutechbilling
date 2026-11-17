@@ -91,6 +91,16 @@ const MIGRATION_LOGIN_ONLY: Record<string, string> = {
     "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
   r2768_undo:
     "R-2768: owner-approved one-off data repair (migration 20261114043932); run only by the owner / migration login through scripts/ops/r2768-repair.sql, never by the app. authenticated is revoked on purpose (r2768_repair.test.sql GRANTS).",
+  r2895_relabel:
+    "R-2895: owner-delegated one-off data repair (migration 20261117050700); run only by the owner / migration login through scripts/ops/r2895-relabel-repair.sql, never by the app. authenticated is revoked on purpose (r2895_repair_log has no write grant either).",
+  r2895_lines_relabel:
+    "R-2895: owner-delegated one-off data repair (migration 20261117050700); run only by the owner / migration login through scripts/ops/r2895-relabel-repair.sql, never by the app. authenticated is revoked on purpose (r2895_repair_log has no write grant either).",
+  r2895_plan:
+    "R-2895: owner-delegated one-off data repair (migration 20261117050700); run only by the owner / migration login through scripts/ops/r2895-relabel-repair.sql, never by the app. authenticated is revoked on purpose (r2895_repair_log has no write grant either).",
+  r2895_repair:
+    "R-2895: owner-delegated one-off data repair (migration 20261117050700); run only by the owner / migration login through scripts/ops/r2895-relabel-repair.sql, never by the app. authenticated is revoked on purpose (r2895_repair_log has no write grant either).",
+  r2895_undo:
+    "R-2895: owner-delegated one-off data repair (migration 20261117050700); run only by the owner / migration login through scripts/ops/r2895-relabel-repair.sql, never by the app. authenticated is revoked on purpose (r2895_repair_log has no write grant either).",
 };
 
 /** Invoker functions only ever called from inside SECURITY DEFINER code (runs as owner). */

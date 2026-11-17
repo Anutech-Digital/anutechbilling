@@ -554,6 +554,7 @@ MIGS=(
   "r2778aiassis|20261116212155_r2778_ai_assistant_log.sql|resellersos_migration|to_regclass('public.ai_assistant_log') is not null and to_regprocedure('public.audit_ai_via(uuid,uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.log_row_change()') and prosrc like '%a change the Help AI made for this signed-in person%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.log_activity(text,text,text,text)') and prosrc like '%marked ''ai'' when the Help AI did this%')"
   "r2876renewalrowfacts|20261116215511_r2876_renewal_row_facts.sql|resellersos_migration|to_regprocedure('public.renewal_row_facts(uuid[],text[])') is not null"
   "r2734multiyearlineprice|20261117004142_r2734_multi_year_line_price.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.subscription_term_follows_line()') and prosrc like '%R-2734: a NORMAL multi-year line%')"
+  "r2895relabeloldpartproformas|20261117050700_r2895_relabel_old_part_proformas.sql|resellersos_migration|to_regclass('public.r2895_repair_log') is not null and to_regprocedure('public.r2895_repair(boolean,integer,boolean)') is not null and to_regprocedure('public.r2895_undo(uuid)') is not null and to_regprocedure('public.r2895_plan(boolean)') is not null"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER
