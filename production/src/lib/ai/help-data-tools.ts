@@ -29,6 +29,8 @@ import type { HelpSession } from "@/lib/ai/help-tools/session";
 import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
 import { helpToolRateOk } from "@/lib/ai/help-tools/limits";
 import { wrapUntrusted, newUntrustedId, cleanHelpBlock, HELP_UNTRUSTED_RULE } from "@/lib/ai/help-tools/untrusted";
+import { helpToolsFor } from "@/lib/ai/help-tools/registry";
+import { runToolLoop, type LoopAsk, type LoopReply, type LoopRun } from "@/lib/ai/help-tools/loop";
 
 type Client = SupabaseClient<Database>;
 type OpenAction = Extract<HelpAction, { kind: "open" }>;
@@ -227,4 +229,24 @@ export function toolFallbackAnswer(results: readonly HelpToolResult[]): HelpAnsw
     actions: toolActions(results).slice(0, 3),
     followUps: [],
   };
+}
+
+/**
+ * R-2775 / H-02 — HELP_AI_V2 (owner): the model's native tool-use loop. The tools offered are
+ * helpToolsFor(role) — nothing else — and every call the model makes goes through runHelpTools
+ * (the checked runner: name against the registry, strict input, per-question and per-person caps,
+ * the assistant log) on the ONE session the route opened, in every round. The loop itself is
+ * lib/ai/help-tools/loop.ts; `askModel` is the Claude adapter (lib/ai/claude-tools.ts).
+ */
+export async function runHelpToolLoop(
+  session: HelpSession,
+  ctx: { userId: string; tenantId: string; role: string | null | undefined; now?: Date },
+  askModel: (ask: LoopAsk) => Promise<LoopReply>,
+  onCall?: (info: HelpCallInfo) => void,
+): Promise<LoopRun> {
+  return runToolLoop({
+    tools: helpToolsFor(ctx.role),
+    askModel,
+    runTools: (calls) => runHelpTools(session, { ...ctx, onCall }, calls),
+  });
 }

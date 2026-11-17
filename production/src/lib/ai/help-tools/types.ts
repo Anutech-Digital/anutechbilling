@@ -85,8 +85,13 @@ export interface HelpToolDef<I extends z.ZodTypeAny = z.ZodTypeAny> {
   label: string;
   /** Row cap for `rows` (default 50, max 200). */
   maxRows?: number;
+  /** R-2775: the JSON schema of `input` (set by defineHelpTool from the strict zod object) — what the model is offered. */
+  inputSchema?: JsonSchema;
   run: (input: z.infer<I>, ctx: HelpToolCtx) => Promise<HelpToolOutput>;
 }
+
+/** A JSON schema as the model reads it (R-2775). */
+export type JsonSchema = Readonly<Record<string, unknown>>;
 
 /** zod's strict object: unknown keys refused, and no catchall that would take them instead (R-2882). */
 export function isStrictObject(s: z.ZodTypeAny): boolean {
@@ -183,6 +188,54 @@ function describeInput(s: z.ZodTypeAny, keys: string[], depth = 0): string {
   throw new Error("input may use only objects, arrays, unions, optional / nullable / default and plain values (string, number, boolean, enum, literal, date)");
 }
 
+
+/**
+ * R-2775: the JSON schema of a tool's input, for the model's tool list. Built from the SAME zod
+ * object the private parser checks (objects closed with additionalProperties:false, enums as
+ * enums, uuid as format uuid). Length limits are not written into the schema (strict tool use
+ * does not take them) — the parser still refuses them, and the model gets bad_input back. Only
+ * runs on a schema describeInput already accepted.
+ */
+function jsonSchemaOf(s: z.ZodTypeAny, depth = 0): JsonSchema {
+  if (depth > 10) throw new Error("input schema is nested too deep");
+  if (s instanceof z.ZodObject) {
+    const shape = s.shape as Record<string, z.ZodTypeAny>;
+    const entries = Object.entries(shape);
+    return {
+      type: "object",
+      properties: Object.fromEntries(entries.map(([k, v]) => [k, jsonSchemaOf(v, depth + 1)])),
+      required: entries.filter(([, v]) => !(v instanceof z.ZodOptional || v instanceof z.ZodDefault)).map(([k]) => k),
+      additionalProperties: false,
+    };
+  }
+  if (s instanceof z.ZodOptional) return jsonSchemaOf(s.unwrap() as z.ZodTypeAny, depth + 1);
+  if (s instanceof z.ZodDefault) return jsonSchemaOf(s.removeDefault() as z.ZodTypeAny, depth + 1);
+  if (s instanceof z.ZodNullable) return { anyOf: [jsonSchemaOf(s.unwrap() as z.ZodTypeAny, depth + 1), { type: "null" }] };
+  if (s instanceof z.ZodArray) return { type: "array", items: jsonSchemaOf(s.element as z.ZodTypeAny, depth + 1) };
+  if (s instanceof z.ZodEffects) return jsonSchemaOf(s.innerType() as z.ZodTypeAny, depth + 1);
+  if (s instanceof z.ZodUnion) return { anyOf: (s.options as z.ZodTypeAny[]).map((o) => jsonSchemaOf(o, depth + 1)) };
+  if (s instanceof z.ZodEnum) return { type: "string", enum: [...(s.options as readonly string[])] };
+  if (s instanceof z.ZodLiteral) {
+    const v: unknown = s.value;
+    return { type: typeof v === "number" ? "number" : typeof v === "boolean" ? "boolean" : "string", enum: [v] };
+  }
+  if (s instanceof z.ZodString) return s.isUUID ? { type: "string", format: "uuid" } : { type: "string" };
+  if (s instanceof z.ZodNumber) return { type: s.isInt ? "integer" : "number" };
+  if (s instanceof z.ZodBoolean) return { type: "boolean" };
+  if (s instanceof z.ZodDate) return { type: "string", format: "date-time" };
+  if (s instanceof z.ZodNull) return { type: "null" };
+  throw new Error("input schema holds a type with no JSON schema");
+}
+
+/** Freeze a JSON schema at every depth (a tool list the model is offered cannot change under it). */
+function deepFreeze<T>(v: T): T {
+  if (typeof v === "object" && v !== null && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const child of Object.values(v)) deepFreeze(child);
+  }
+  return v;
+}
+
 /** Tools made by defineHelpTool — the only objects the registry and the runner accept (R-2879 finding 3). */
 const DEFINED = new WeakSet<object>();
 export function isHelpToolDef(t: unknown): t is HelpToolDef {
@@ -243,7 +296,13 @@ export function defineHelpTool<I extends z.ZodTypeAny>(def: HelpToolDef<I> | (Om
   if (!/^\/[a-z0-9/_-]*(\?[^#\s]*)?$/i.test(def.page) || !isAppPath(def.page)) throw bad("page must be an app path");
   if (def.maxRows != null && (!Number.isInteger(def.maxRows) || def.maxRows < 1 || def.maxRows > HELP_ROWS_MAX)) throw bad(`maxRows must be 1-${HELP_ROWS_MAX}`);
   const input = privateParser(def.input, signature) as unknown as I;
-  const tool = Object.freeze({ ...def, input, roles: Object.freeze([...def.roles]) }) as HelpToolDef<I>;
+  let inputSchema: JsonSchema;
+  try {
+    inputSchema = deepFreeze(jsonSchemaOf(def.input));
+  } catch (err) {
+    throw bad((err as Error).message);
+  }
+  const tool = Object.freeze({ ...def, input, inputSchema, roles: Object.freeze([...def.roles]) }) as HelpToolDef<I>;
   DEFINED.add(tool);
   return tool;
 }
