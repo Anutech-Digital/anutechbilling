@@ -14,7 +14,8 @@
 --      2 years at ₹1,250 (rate 2,500), 3 equal domains → every row mrr 104, 1,250.00 (the pool
 --      split + a second rounding gave the last domain 105).
 --   C. discount_pct 10 → the net rate; a cart renewal_rate → that rate.
---   D. A bulk line without years → exactly as before: + 1 year, pool-split mrr, no term_amount.
+--   D. A bulk line without years → + 1 year as before; since R-2723 priced from the line like the
+--      multi-year rows (₹800.00 a year, mrr 67 — the pool split gave 66 / 67 and no term_amount).
 --   E. A domain with 0 seats / a rate of 0 → the old rule (mrr ÷ years), no term_amount, no error.
 --   F. Start 29 Feb 2028 + 3 years → 28 Feb 2031.
 --   G. Filed twice (retry / Generate invoice after payment) → still one row per domain, same values.
@@ -182,8 +183,8 @@ select pg_temp.r2712_q('TESTQ-R2712-D', '[{"name":"Domain .in","qty":2,"rate":80
 do $$
 begin
   perform pg_temp.r2712_file('TESTQ-R2712-D');
-  perform pg_temp.r2712_want('D', 'TESTQ-R2712-D', 'd1.in', '2027-09-01|12|66|null');
-  perform pg_temp.r2712_want('D', 'TESTQ-R2712-D', 'd2.in', '2027-09-01|12|67|null');
+  perform pg_temp.r2712_want('D', 'TESTQ-R2712-D', 'd1.in', '2027-09-01|12|67|800.00');   -- R-2723 (was 66 | null)
+  perform pg_temp.r2712_want('D', 'TESTQ-R2712-D', 'd2.in', '2027-09-01|12|67|800.00');   -- R-2723 (was 67 | null)
 end $$;
 
 -- ── E. 0 seats on a domain; a rate of 0 ─────────────────────────────────────────────────────

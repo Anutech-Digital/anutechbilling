@@ -29,5 +29,5 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, plan, seat
    jsonb_build_array(jsonb_build_object('id', 'part-1', 'qty', 1, 'rate', 5100, 'cost', 0, 'one_time', true,
      'name', 'Google Workspace Business Starter · scnbitlabs.in · 17 seats · '
              || to_char(current_date - 25, 'FMDD Mon') || '–' || to_char((current_date - 25 + interval '1 month')::date - 1, 'FMDD Mon YYYY') || ' (part 1 of 1)',
-     'description', 'Advance payment for month 1')),
+     'description', 'Payment for month 1')),
    'SCN scenario renewal-proforma (R-2519): the old one-click request, like Q-A378-27-0947');

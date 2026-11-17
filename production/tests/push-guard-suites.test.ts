@@ -44,7 +44,7 @@ describe("push guard suites (R-385)", () => {
   it("has no duplicates and stays a short list (the push waits for it)", () => {
     expect(new Set(list).size).toBe(list.length);
     expect(list.length).toBeGreaterThan(10);
-    expect(list.length).toBeLessThanOrEqual(89); // R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage); R-2564: +2 tiny source-cache guards (~0.1 s); R-2571: +6 migration/security scans; R-2678: +export-log-scan (turned CI red after skipping push; reads through the source cache)
+    expect(list.length).toBeLessThanOrEqual(90); // R-2774: 89 → 90 (+help-tools-guard, a security guard that must stay in the push list, not CI-only); R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage); R-2564: +2 tiny source-cache guards (~0.1 s); R-2571: +6 migration/security scans; R-2678: +export-log-scan (turned CI red after skipping push; reads through the source cache)
     expect(PUSH_GUARD_BUDGET_MS).toBe(60_000); // R-2443: 90 → 60 s
   });
 

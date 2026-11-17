@@ -62,13 +62,20 @@ export const FLEX_PART_SKIP_REASON = "monthly (flex) — its payment request goe
  *   - a flex subscription counts like any other row (R-2422).
  * nav_badges() runs the same rule in SQL (lib/hooks/nav-badge-parity.test.ts; SQL test
  * supabase/tests/r2431_nav_badges_tabs.test.sql).
+ *
+ * R-2862: the tabs go by the Due column's day count (R-2858 — an unpaid part due before the renewal date counts
+ * from ITS date), so the badge does too: `dueDays` (due-anchor.ts rowDue().days; absent = the renewal date).
+ * A row renewing in 20 days whose part fell due 9 days ago is in Overdue AND in the badge. The paid-renewal
+ * rule stays on the renewal date, as classify.ts does. SQL: the latest *nav_badges*.sql counts the same rows
+ * (an open unpaid part proforma / part invoice due by today + 7); test supabase/tests/r2862_nav_badges_part_due.test.sql.
  */
 export function inRenewalsBadge(
   sub: { status: string; renewal_date: string | null; auto_renew?: boolean | null; renewal_state?: string | null },
   daysUntil: number,
   renewalQuotePaid: boolean,
+  dueDays: number | null = null,
 ): boolean {
-  if (!onRenewalsPage(sub) || daysUntil > RENEWAL_URGENT_DAYS) return false;
+  if (!onRenewalsPage(sub) || Math.min(daysUntil, dueDays ?? daysUntil) > RENEWAL_URGENT_DAYS) return false;
   if (sub.auto_renew === false) return false;
   const stopped = sub.renewal_state === "suspended" || sub.status === "suspended";
   return !(daysUntil < 0 && !stopped && renewalQuotePaid);

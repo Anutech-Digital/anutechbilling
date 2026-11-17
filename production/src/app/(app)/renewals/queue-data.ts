@@ -15,8 +15,11 @@ import { primaryContactsFor } from "@/lib/contacts/primary";
 import { displayPhone } from "@/components/features/renewals/renewal-contact-rules";
 import type { RenewalQuoteInfo } from "./queue";
 import type { RenewalFollowupRow } from "./followup";
-import type { RenewalQuotePayment } from "./tiles";
+import { togetherMemberPayments, type RenewalQuotePayment } from "./tiles";
 import { RENEWALS_READ_CONCURRENCY } from "./last-docs-data";
+import { TOGETHER_LINK_COLS } from "./together-links-data";
+import { liveTogetherLinks, type TogetherLink } from "./last-docs";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface RowContact {
   name: string | null;
@@ -164,7 +167,7 @@ export function useRenewalPaymentsForMonth(month: { start: string; end: string }
     staleTime: 60_000,
     queryFn: async (): Promise<RenewalQuotePayment[]> => {
       const supabase = createClient();
-      return fetchAllRows<RenewalQuotePayment>((from, to) => supabase
+      const own = await fetchAllRows<RenewalQuotePayment>((from, to) => supabase
         .from("quotes")
         /* R-2751: subtotal / discount_pct / tax_rate → the paid renewal's amount before GST (tiles.ts quoteAmountBeforeGst). */
         .select("id, amount, payment_amount, payment_status, status, renewal_subscription_id, renewal_term_date, subtotal, discount_pct, tax_rate")
@@ -173,6 +176,29 @@ export function useRenewalPaymentsForMonth(month: { start: string; end: string }
         .lte("renewal_term_date", month.end)
         .order("id", { ascending: true })
         .range(from, to));
+      /* R-2870: quotes billed together carry no renewal_term_date — each member's term is on its renewal_quote_subscriptions row.
+         One more read (links of this month), then those quotes' paid state; togetherMemberPayments makes one entry per member. */
+      const loose = supabase as unknown as SupabaseClient;
+      try {
+        const links = liveTogetherLinks(await fetchAllRows<TogetherLink>((from, to) => loose
+          .from("renewal_quote_subscriptions")
+          .select(TOGETHER_LINK_COLS)
+          .gte("renewal_term_date", month.start)
+          .lte("renewal_term_date", month.end)
+          .order("id", { ascending: true })
+          .range(from, to)));
+        if (links.length === 0) return own;
+        const quotes = await fetchAllRowsIn<Parameters<typeof togetherMemberPayments>[1][number], string>([...new Set(links.map((l) => l.quote_id))], (run, from, to) => loose
+          .from("quotes")
+          .select("id, amount, payment_amount, payment_status, status, tax_rate")
+          .in("id", run)
+          .order("id", { ascending: true })
+          .range(from, to));
+        return [...own, ...togetherMemberPayments(links, quotes, month)];
+      } catch (e) {
+        console.warn("R-2870: together renewals not read for the month", e);
+        return own;
+      }
     },
   });
 }

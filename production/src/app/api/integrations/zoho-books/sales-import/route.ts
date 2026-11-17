@@ -28,9 +28,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { NOT_CONFIGURED_MESSAGE, FY_CALLS_PER_REQUEST, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
 import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
-import { ZohoApiError } from "@/lib/integrations/zoho-books/api";
+import { isZohoDayLimit, ZohoApiError } from "@/lib/integrations/zoho-books/api";
 import { fyDateRange } from "@/lib/integrations/zoho-books/fy-fetch";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
+import { asZohoReader } from "@/lib/integrations/zoho-books/day-calls-store";
+import { zohoFyReaderName } from "@/lib/integrations/zoho-books/zoho-day-budget";
+import { zohoReaderBusyMessage } from "@/lib/integrations/zoho-books/zoho-limit";
 import { scanStep } from "@/lib/integrations/zoho-books/fy-import/scan";
 import { partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
@@ -92,7 +95,12 @@ export async function POST(req: NextRequest) {
     if (!conn.orgId) return fail(409, "Choose your Zoho Books organization first.");
     const history: PaceEntry[] = [];
     const used = () => history.reduce((s, h) => s + h.calls, 0);
-    try {
+    /* R-2661: one Zoho reader at a time per company — a second read is refused with the running one's
+       name (no Zoho call). The lease stays while this read goes on (renewed by every request; a closed
+       dialog's runs out in a few minutes) and is let go when it is complete, stopped or failed. */
+    const ran = await asZohoReader(caller.admin, caller.tenantId, zohoFyReaderName("sales", fy), async () => {
+      let keep = false;
+      const value = await (async () => { try {
       const seller = await readSellerState(db, caller.tenantId);
       const run = async () => scanStep(store, KIND, (d) => zohoSaleFacts(d, seller), conn.orgId!, await zohoAccessToken(caller, conn.refreshToken!, creds), fy,
         { history, maxCalls: Math.max(1, FY_CALLS_PER_REQUEST - used()) });
@@ -102,14 +110,25 @@ export async function POST(req: NextRequest) {
         await dropZohoAccessToken(caller);
         result = await run();
       }
+      keep = !result.complete;
       return NextResponse.json({ ok: true, fy, ...result, calls: used() });
     } catch (e) {
+      if (isZohoDayLimit(e)) {
+        /* R-2661: no call was made — the dialog shows the budget notice at once; the scan stays as saved. */
+        const c = await store.counts(fy).catch(() => ({ listed: 0, detailed: 0 }));
+        return NextResponse.json({ ok: true, fy, ...c, listDone: false, complete: false, busy: true, calls: used(),
+          dayLimit: { calls: e.day.calls, budget: e.day.budget, retryAt: e.day.retryAt, day: e.day.day, limitHitAt: e.day.limitHitAt } });
+      }
       if (e instanceof ZohoApiError) {
         if (e.status === 401 || e.code === "reconnect") return fail(502, "Zoho Books did not let ResellerOS read — Settings → Integrations → Zoho Books → Reconnect, then Allow.");
         return fail(502, e.message);
       }
       return fail(502, "Could not read from Zoho Books. Try again.");
-    }
+    } })();
+      return { value, keep };
+    });
+    if ("refused" in ran) return fail(409, zohoReaderBusyMessage(ran.refused));
+    return ran.value;
   }
 
   if (action === "preview" || action === "import") {

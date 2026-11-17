@@ -145,7 +145,7 @@ export function parseJsonReply(raw: string): unknown {
 
 const JSON_ONLY = "\n\nReply with only the JSON value asked for above — no other words, no Markdown code fences.";
 
-function errorResult(err: unknown, timeoutMs: number, model: string): { reason: string; switchable: boolean; code: string } {
+export function errorResult(err: unknown, timeoutMs: number, model: string): { reason: string; switchable: boolean; code: string } {
   // Most specific first: APIConnectionTimeoutError extends APIConnectionError extends APIError.
   if (err instanceof APIConnectionTimeoutError) {
     return { reason: `Claude timed out after ${Math.round(timeoutMs / 1000)} seconds. Please try again in a little while.`, switchable: false, code: "timeout" };
@@ -262,4 +262,9 @@ export async function claudeJson<T>(args: {
     console.error(`[${args.label}] Claude call failed — ${r.code}: ${r.reason}`);
     return { ok: false, ...r };
   }
+}
+
+/** R-2775: the shared client for one key (the tool-use loop in claude-tools.ts uses it). */
+export function claudeClient(apiKey: string): Anthropic {
+  return clientFor(apiKey);
 }

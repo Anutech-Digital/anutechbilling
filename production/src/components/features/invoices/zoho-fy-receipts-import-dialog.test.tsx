@@ -290,3 +290,43 @@ describe("R-2653 FY receipts — Read again by deposit account", () => {
     expect(bodies.find((x) => x.action === "restart")!.onlyAccount).toBeNull();
   });
 });
+
+/* R-2661 (checker fix) — while the window follows the server's read, a read that is WAITING (the day's
+   Zoho budget is used, or another Zoho read is running) says so at once and stops polling; before, it
+   showed "Read N of M — on the server…" for hours and the reason only after the loop ended. */
+describe("R-2661 FY receipts dialog — the read is waiting", () => {
+  const follow = (error: string) => {
+    const actions: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: { body?: string }) => {
+      if (!init?.body) return { ok: true, json: async () => ({ ok: true, day: "2026-11-13", calls: 900, budget: 900, limitHitAt: null, spent: true, retryAt: 1 }) } as Response;
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      actions.push(String(b.action));
+      if (b.action === "status") return { ok: true, json: async () => ({ ok: true, listed: 2576, detailed: 87, complete: false, running: true, error: null }) } as Response;
+      if (b.action === "step") return { ok: true, json: async () => ({ ok: true, listed: 2576, detailed: 87, complete: false, running: true, error }) } as Response;
+      return { ok: false, json: async () => ({ ok: false, error: "unexpected" }) } as Response;
+    }));
+    return actions;
+  };
+
+  it("day budget used: the budget line with the IST time shows at once (role alert) and the window stops asking the server", async () => {
+    const { zohoDayLimitMessage } = await import("@/lib/integrations/zoho-books/zoho-limit");
+    const msg = zohoDayLimitMessage({ calls: 900, budget: 900, retryAt: Date.parse("2026-11-13T18:30:00Z") }, Date.parse("2026-11-13T10:00:00Z"));
+    const actions = follow(msg);
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Zoho calls today: 900 of 900 — the day's budget is used");
+    expect(alert.textContent).toContain("carries on after 12:00 am IST on 14 Nov 2026");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(actions).toEqual(["status", "step"]);            /* one pass, then no more polling; no preview of a half-read year */
+  });
+
+  it("another Zoho read is running: its name shows at once and the window stops asking", async () => {
+    const { zohoReaderBusyMessage } = await import("@/lib/integrations/zoho-books/zoho-limit");
+    const actions = follow(zohoReaderBusyMessage("Reconcile from Zoho"));
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Another Zoho read is running for this company: Reconcile from Zoho.");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(actions).toEqual(["status", "step"]);
+  });
+});

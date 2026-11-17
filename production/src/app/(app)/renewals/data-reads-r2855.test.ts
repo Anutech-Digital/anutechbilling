@@ -12,7 +12,10 @@
    of trips is how many times the page waits on the network when the server answers a batch together. It is a
    floor, not a stopwatch: a browser on HTTP/1.1 sends 6 requests at a time to one host, and a busy database
    answers a batch more slowly — the real seconds are measured on staging after the train.
-   Same rows as before in every case (the R-2765 tests still pass unchanged). */
+   Same rows as before in every case (the R-2765 tests still pass unchanged).
+   R-2876 (16 Nov 2026): on the page these reads are now answered from ONE read (renewal_row_facts) — 786 subscriptions =
+   1 trip for Status, Last bill AND Last paid, pinned in row-facts-r2876.test.ts. The numbers below are the FALLBACK's
+   (function missing / not covered) and the drawer's, and must not go up either. */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Row = Record<string, unknown>;

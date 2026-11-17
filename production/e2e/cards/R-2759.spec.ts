@@ -95,14 +95,20 @@ async function fits(page: Page): Promise<void> {
   expect(m.overflowing, "cells spilling into the next column").toEqual([]);
 }
 
+/* R-2880: the limit is 76px (three text lines: R-2759 two, R-2854's quote line the third — "at most 3 text lines, ~76px").
+   Rows were 83px (R-2854, f7e61d717): a long plan name on TWO lines in Product (4-line cell) and the Last bill cell + 6px padding. */
 async function rowsShort(page: Page): Promise<void> {
+  const heights: string[] = [];
   for (const plan of [LONG_PLAN, "CT R2759 Quarterly Plan", "CT R2759 Sent Plan"]) {
     const r = await page.locator("tr", { hasText: plan }).filter({ visible: true }).evaluate((tr) => ({
       h: tr.getBoundingClientRect().height,
-      cells: [...tr.querySelectorAll("td")].map((td) => Math.round(([...td.children] as HTMLElement[]).reduce((m, c) => Math.max(m, c.getBoundingClientRect().height), 0)) + ":" + (td as HTMLElement).innerText.replace(/s+/g, " ").slice(0, 30)),
+      cells: [...tr.querySelectorAll("td")].map((td) => Math.round(([...td.children] as HTMLElement[]).reduce((m, c) => Math.max(m, c.getBoundingClientRect().height), 0)) + ":" + (td as HTMLElement).innerText.replace(/\s+/g, " ").slice(0, 40)),
     }));
+    heights.push(Math.round(r.h) + "px");
     expect(r.h, `${plan} row height — cells ${r.cells.join(" | ")}`).toBeLessThanOrEqual(76);
   }
+  const w = page.viewportSize()?.width;
+  test.info().annotations.push({ type: "measured", description: `row heights at ${w}px (long plan / quarterly / quote sent): ${heights.join(" / ")}` });
 }
 
 test.describe("R-2759 card test", () => {
@@ -123,9 +129,13 @@ test.describe("R-2759 card test", () => {
     await page.context().close();
   });
 
-  test("Step 2: at 1568×900 the same — no horizontal scroll, Action on screen", async ({ browser, baseURL }) => {
+  test("Step 2: at 1568×900 and 1920×1080 the same — no horizontal scroll, Action on screen", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await openAt(page, 1568, 900);
+    await fits(page);
+    await rowsShort(page);
+    /* R-2880: a wide desktop — same promise */
+    await openAt(page, 1920, 1080);
     await fits(page);
     await rowsShort(page);
     await page.context().close();

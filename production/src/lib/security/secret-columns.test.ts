@@ -28,6 +28,8 @@ import { describe, it, expect } from "vitest";
 import { readdirSync } from "node:fs";
 import { readSource } from "@/lib/testing/source-cache"; // R-2564/R-2571: shared, always-fresh read cache
 import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
+// R-2774: the list lives in secret-columns.ts so the Help AI tool layer refuses the same columns.
+import { SECRET_COLUMNS, SECRET_NAME } from "./secret-columns";
 
 const NINE = "supabase/cloudsql/09-grant-what-policies-allow.sql";
 const SQL_TEST = "supabase/tests/secret_columns_hidden.test.sql";
@@ -36,28 +38,14 @@ const SQL_TEST_R1559 = "supabase/tests/r1559_followup_columns_login_grants.test.
 const MIG_DIR = "supabase/migrations";
 const BASELINE = "supabase/baseline.sql";
 
-/** table.column that no browser role (authenticated / anon) may read. Same list as 09. */
-const SECRET_COLUMNS = [
-  "attendance_settings.presence_secret",
-  "attendance_settings.ingest_key",
-  "employees.pin_hash",
-  "ad_accounts.access_token",
-  "user_google_tokens.access_token",
-  "user_google_tokens.refresh_token",
-  "user_google_tokens.sync_token",
-  "email_verifications.token_hash",
-  // R-840: customers' admin-console logins (encrypted). Server-only: the vault routes read and
-  // write them with the admin client after vaultGate() (owner / manager).
-  "vault_passwords.username_ciphertext",
-  "vault_passwords.password_ciphertext",
-  "vault_passwords.notes_ciphertext",
-];
 
 /** Secret-LOOKING columns that are fine for their table's readers — each with the reason. */
 const REVIEWED_NOT_SECRET: Record<string, string> = {
   "ad_accounts.token_expires_at": "an expiry time, not the token",
   "ai_usage_monthly.input_tokens": "R-1877 AI usage counter — integer count of model input tokens, no secret",
   "ai_usage_monthly.output_tokens": "R-1877 AI usage counter — integer count of model output tokens, no secret",
+  "ai_assistant_log.tokens_in": "R-2778 Help AI log — integer count of model input tokens for one answer, no secret",
+  "ai_assistant_log.tokens_out": "R-2778 Help AI log — integer count of model output tokens for one answer, no secret",
   "user_google_tokens.token_expiry": "an expiry time, not the token",
   "api_keys.key_hash": "SHA-256 of a random API key; owner-only by RLS; a hash cannot be used as the key",
   "membership_invites.token_hash": "R-2517 SHA-256 of a single-use 256-bit invite-link token (the token is never stored); only the inviting company's owners can read it (RLS); a hash cannot be used as the link",
@@ -94,7 +82,6 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "tenant_secrets.whatsapp_verify_token": "tenant_secrets is owner-only by RLS; the owner enters these keys",
 };
 
-const SECRET_NAME = /(secret|token|password|passcode|_hash$|api_key|ingest_key|private_key|credential)/i;
 const BROWSER_ROLES = ["authenticated", "anon"];
 
 const read = (p: string) => readSource(p).replace(/\r\n/g, "\n");

@@ -84,6 +84,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/security/direct-login-role-scan.test.ts", // R-2485: no new raw current_user role check
   "src/lib/security/invoker-helper-grants-r2389.test.ts", // R-2389: invoker helpers stay granted to authenticated
   "src/lib/security/secret-columns.test.ts", // R-833: no browser role reads a secret column
+  "src/lib/security/help-tools-guard.test.ts", // R-2774: Help AI tools never reach the service role
   "src/lib/security/contact-logging-scan.test.ts", // R-1610: no unmasked email/phone in a server log
   "src/server/db/migrations-frozen.test.ts", // a new supabase/migrations file must reach the deploy-db scripts
   // ── repo-source scans (readdirSync / glob over src) ──

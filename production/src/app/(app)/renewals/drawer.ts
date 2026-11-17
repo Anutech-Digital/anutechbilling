@@ -189,6 +189,18 @@ export function currentTermWords(sub: TermSub): string | null {
   return periodWords(start, addDaysIso(nextStart, -1), sub.term_months ?? 12);
 }
 
+/**
+ * R-2862: the drawer's "Unpaid part" line, printed above "Next term" — the part the row's Due date and chip are
+ * about (due-anchor.ts rowDue): "Oct 2026 · ₹1,000 + GST". The value is before GST, like the Amount line under
+ * it; a foreign-currency customer's row gets the period alone (the part's value is kept in ₹). null = the row is
+ * about the whole next term.
+ */
+export function unpaidPartWords(due: { unpaidPart: { period: string; amount: number | null } | null } | null | undefined, gst: string): string | null {
+  const p = due?.unpaidPart;
+  if (!p) return null;
+  return p.amount == null || gst !== "+ GST" ? p.period : `${p.period} · ${rupee(p.amount)} ${gst}`;
+}
+
 /** "12 months" / "1 month" / "3 years" — the term length in words. */
 export function termLengthWords(months: number | null | undefined): string {
   const m = months && months > 0 ? months : 12;

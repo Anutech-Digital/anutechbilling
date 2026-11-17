@@ -146,10 +146,10 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
-import { quoteKindFor, quoteSubscriptionId, subscriptionForLine, type QuoteKindQuote } from "@/lib/quotes/quote-kind";
+import { quoteKindFor, quoteSubscriptionId, subscriptionForLine, togetherMembers, type QuoteKindQuote } from "@/lib/quotes/quote-kind";
 import { usePartFacts } from "@/lib/quotes/quote-kind-facts";
 import { withPartCosts } from "@/lib/quotes/part-cost";
-import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
+import { ForSubscriptionLine } from "@/components/features/quotes/for-subscription-line";
 import { QuoteKindStamp } from "@/components/features/quotes/quote-kind-stamp";
 
 // ============================================================
@@ -991,6 +991,7 @@ export default function QuoteDetailPage() {
   );
   const forSub = leadPart?.sub ?? (allSubs ?? []).find((s) => s.id === forSubId) ?? null;
   const forSubText = subscriptionForLine(forSub);
+  const togetherSubs = quote.is_renewal ? togetherMembers(items as Array<{ subscription_id?: unknown }>, allSubs) : [];
   /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
      "₹851/yr" as if it recurred yearly. No per-period suffix on those lines. */
@@ -1154,6 +1155,7 @@ export default function QuoteDetailPage() {
   const downloadQuotePdfFile = async (): Promise<void> => {
     const { downloadQuotePDF } = await import("@/lib/pdf");
     await downloadQuotePDF({
+      partRequest,
       tenantName:    me?.tenantName    ?? "Workspace",
       tenantGstin:   me?.tenantGstin,
       tenantEmail:   me?.tenantEmail,
@@ -1424,14 +1426,8 @@ export default function QuoteDetailPage() {
               )}
             </p>
             {/* R-2423 (2): which subscription this quote is for — opens it. */}
-            {forSub && forSubText && (
-              <p className="text-sm text-ink-3 mt-1" data-testid="quote-for-subscription">
-                For subscription:{" "}
-                <Link href={subscriptionOpenHref(forSub) as never} className="font-medium text-ink hover:text-amber-ink hover:underline">
-                  {forSubText}
-                </Link>
-              </p>
-            )}
+            {/* R-2871: a together renewal quote names every subscription it renews. */}
+            <ForSubscriptionLine single={forSub} singleText={forSubText} members={togetherSubs} />
           </div>
         </div>
 
@@ -2406,8 +2402,8 @@ export default function QuoteDetailPage() {
         }}
         quoteId={quote.id}
         customerName={quote.customer_name}
-        /* R-2846: a part payment request is the ADVANCE for its month / period — the sheet says
-           so (and that the tax invoice is raised on confirm). Part = the header stamp's part. */
+        /* R-2846: a part payment request is the payment for its month / period — the sheet says
+           so (and that the tax invoice is raised on confirm; R-2865: never "advance"). Part = the header stamp's part. */
         partAdvance={partRequest && !quote.invoice_id ? partAdvanceOf({
           lines: items as readonly { name?: string | null; description?: string | null; period_start?: string | null; period_end?: string | null }[],
           partShort: kindStamp?.partShort,
@@ -2441,6 +2437,7 @@ export default function QuoteDetailPage() {
 
       {/* Customer-facing quote preview */}
       <QuotePreviewDialog
+        partRequest={partRequest}
         open={previewOpen}
         onOpenChange={setPreviewOpen}
         tenantName={me?.tenantName    ?? "Workspace"}
@@ -2567,6 +2564,7 @@ export default function QuoteDetailPage() {
           onPreviewAttachment={async () => {
             const { previewQuotePDF } = await import("@/lib/pdf");
             await previewQuotePDF({
+              partRequest,
               tenantName:    me?.tenantName    ?? "Workspace",
               tenantGstin:   me?.tenantGstin,
               tenantEmail:   me?.tenantEmail,

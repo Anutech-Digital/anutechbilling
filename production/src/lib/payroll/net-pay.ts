@@ -184,3 +184,27 @@ export function basicShareText(b: { basicPct: number; overBudget: boolean }): st
 export function basicFromPct(pct: number, gross: number, da: number): number | null {
   return basicAtPct(pct, gross, da);
 }
+
+/**
+ * R-2743 (1): the CTC register's "Net Take Home" total. null until the payslips + revisions are
+ * in — a sum of nets that have not loaded read ₹0 (and exported 0) as if it were real.
+ */
+export function netPayTotal(nets: readonly (MonthNetPay | null)[], ready: boolean): number | null {
+  if (!ready) return null;
+  return nets.reduce((s, n) => s + (n?.net ?? 0), 0);
+}
+
+/**
+ * R-2743 (2): Revise salary's take-home — the NEW structure typed in the dialog, the employee's
+ * PF / ESI switches, for the effective month, through the same monthNetPay the Employees table
+ * and the CTC tab read (it used ctc.ts netTakeHomeMonthly: PT deducted, no TDS). No revisions
+ * are passed: the figure typed IS the salary in force from that month.
+ */
+export function revisedTakeHome(
+  next: SalaryStructure,
+  switches: { pf_applicable: boolean; esi_applicable: boolean; pf_full_wage?: boolean | null },
+  period: string,
+  history: readonly PayslipFacts[],
+): MonthNetPay | null {
+  return monthNetPay({ ...next, pf_applicable: switches.pf_applicable, esi_applicable: switches.esi_applicable, pf_full_wage: switches.pf_full_wage }, [], period, history);
+}

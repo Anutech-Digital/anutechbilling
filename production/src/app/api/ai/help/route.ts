@@ -19,6 +19,10 @@
  * In chat the model may ask for read-only data tools (lib/ai/help-data-tools.ts) — they read
  * with the person's own client (RLS), gated by role — and is asked again with the results;
  * the answer carries a link button to the page each number came from.
+ *
+ * R-2774 (14 Nov 2026): with HELP_AI_V2 on, the owner's tool calls go through the Help AI tool
+ * registry (lib/ai/help-tools) — own session only, never the service role — and the reply also
+ * carries `sources` (table + ids + page). Flag off: unchanged.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -32,7 +36,13 @@ import { helpFacts } from "@/lib/ai/help-facts";
 import { loadLastPageTestRun, testHistoryForPrompt } from "@/lib/ai/page-test-runs";
 import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES, type HelpAnswer } from "@/lib/ai/app-help";
 import { HELP_MAX_IMAGES } from "@/lib/ai/help-images";
-import { helpDataToolsPrompt, HELP_TOOL_RESULTS_RULE, parseToolRequest, runHelpDataTools, toolResultsForPrompt, toolFallbackAnswer, withToolLinks } from "@/lib/ai/help-data-tools";
+import { helpDataToolsPrompt, HELP_TOOL_RESULTS_RULE, parseToolRequest, runHelpDataTools, runHelpDataToolsV2, toolResultsForPrompt, toolFallbackAnswer, withToolLinks, type HelpToolResult } from "@/lib/ai/help-data-tools";
+import { helpAiV2Enabled } from "@/lib/ai/help-tools/registry";
+import { openHelpSession, type HelpSession } from "@/lib/ai/help-tools/session";
+import { answerWithTools, HELP_LOOP_TOOLS_PROMPT } from "@/lib/ai/help-loop";
+import { anthropicEnvKey, anthropicModel } from "@/lib/ai/claude";
+import { createHelpLog, type HelpLog } from "@/lib/ai/help-log";
+import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
 
 const imageSchema = z.object({
@@ -71,7 +81,19 @@ const NO_KEY = "No AI (Gemini) key is set for this company, so AI Help cannot an
 /** What the person "said" when they pressed a button instead of typing. */
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;
 
+/* R-2778: what the assistant log needs at the end of ANY exit (early return or a throw). */
+interface HelpTrace { log: HelpLog | null; ok: boolean; model: string | null; askedAt: number; tokensIn: number | null; tokensOut: number | null }
+
 export async function POST(request: NextRequest) {
+  const trace: HelpTrace = { log: null, ok: false, model: null, askedAt: Date.now(), tokensIn: null, tokensOut: null };
+  try {
+    return await handlePost(request, trace);
+  } finally {
+    await trace.log?.finish({ ok: trace.ok, ms: Date.now() - trace.askedAt, model: trace.model, tokensIn: trace.tokensIn, tokensOut: trace.tokensOut });
+  }
+}
+
+async function handlePost(request: NextRequest, trace: HelpTrace) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
@@ -108,7 +130,12 @@ ${what}` };
   /* R-1470: AI Help is for every team role (the Help page's roles, partner agent included) — a
      login without a known role (no users row, stale value) gets no model call on our key. */
   if (!mayOpenPage(me?.role, ["/help"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
+  /* R-2778: every question and tool run is noted in ai_assistant_log (owner/manager can read it). */
+  const helpLog = createHelpLog(() => supabase);
+  trace.log = helpLog;
+  await helpLog.question(messages[messages.length - 1].text);
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
+  trace.model = gemini.model ?? null;
   if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], followUps: [], ai: false, reason: "no_key" });
 
   /* R-189: the company's own setup, read with the person's login (RLS) — not for error
@@ -148,11 +175,45 @@ ${what}` };
     label: "ai/help",
     onFailure: (r) => { failure = r; },
   });
-  const raw = await ask(offerTools ? helpDataToolsPrompt() : null, null);
-  const wanted = offerTools ? parseToolRequest(raw) : [];
-  let answer: HelpAnswer | null;
-  if (wanted.length && tenantId) {
-    const results = await runHelpDataTools(supabase, { tenantId, role: me?.role ?? null }, wanted);
+  /* R-2775: ONE session per question, opened on first use (the loop and the R-2774 path never both run). */
+  let session: HelpSession | null = null;
+  const sessionOnce = (): HelpSession => (session ??= openHelpSession());
+  let answer: HelpAnswer | null = null;
+  let sources: HelpSourceRef[] | undefined;
+  /* R-2775 / H-02: HELP_AI_V2 + owner + chat + a server Claude key (and no screenshot) → the native tool-use
+     loop (lib/ai/help-loop.ts). Anything else — flag off, another role, no key, scan / error modes — is the path below, unchanged. */
+  const claudeKey = offerTools && tenantId && !images.length && helpAiV2Enabled(me?.role) ? anthropicEnvKey() : null;
+  if (claudeKey && tenantId) {
+    const model = anthropicModel();
+    trace.model = model;
+    const loop = await answerWithTools({
+      openSession: sessionOnce, userId: user.id, tenantId, role: me?.role ?? null, apiKey: claudeKey, model,
+      system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath), testHistory, dataTools: HELP_LOOP_TOOLS_PROMPT }),
+      user: helpUserTurn(messages, { trail: trail.length ? trailForPrompt(trail) : null, facts: facts?.text ?? null }),
+      customerIds: facts?.customerIds, onCall: helpLog.tool,
+    });
+    answer = loop.answer;
+    sources = loop.sources;
+    trace.tokensIn = loop.tokensIn;
+    trace.tokensOut = loop.tokensOut;
+  }
+  const raw = answer ? null : await ask(offerTools ? helpDataToolsPrompt() : null, null);
+  const wanted = !answer && offerTools ? parseToolRequest(raw) : [];
+  if (answer) {
+    /* answered by the loop above */
+  } else if (wanted.length && tenantId) {
+    /* R-2774: HELP_AI_V2 + owner → the registry runner (own session only, typed in/out, source
+       refs). Flag off or any other role → the R-421 path exactly as before. */
+    const v2 = helpAiV2Enabled(me?.role);
+    const results: HelpToolResult[] = v2
+      ? await Promise.resolve().then(() => runHelpDataToolsV2(sessionOnce(), { userId: user.id, tenantId, role: me?.role ?? null }, wanted, helpLog.tool)).catch((err: unknown) => {
+          /* A refused session / tenant reads nothing: say "could not be read" per tool, never a 500. */
+          console.error("[ai/help] v2 tools refused:", (err as Error)?.message);
+          return wanted.map((tool): HelpToolResult => ({ tool, ok: false, text: `${tool}: could not be read just now — try again in a minute.`, href: null, label: null }));
+        })
+      : await runHelpDataTools(supabase, { userId: user.id, tenantId, role: me?.role ?? null }, wanted);
+    if (!v2) helpLog.legacy(results, Date.now() - trace.askedAt);
+    if (v2) sources = results.flatMap((r) => r.sources ?? []);
     const second = await ask(HELP_TOOL_RESULTS_RULE, toolResultsForPrompt(results));
     /* A second call that fails still answers with the numbers — they were read already. */
     answer = withToolLinks(parseHelpAnswer(second, facts?.customerIds) ?? toolFallbackAnswer(results), results);
@@ -180,5 +241,6 @@ ${what}` };
       .slice(0, 3)
       .map((r) => ({ id: r.id, title: r.title }));
   }
-  return NextResponse.json({ ...answer, similar, ai: true });
+  trace.ok = true;
+  return NextResponse.json({ ...answer, similar, ai: true, ...(sources ? { sources } : {}) });
 }

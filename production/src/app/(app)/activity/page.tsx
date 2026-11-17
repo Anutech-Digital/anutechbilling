@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { loadErrorBody } from "@/components/shared/load-error";
 import { cn } from "@/lib/utils";
 import { useActivityLog, type ActivityRow } from "@/lib/queries/activity";
-import { activityActorInitials, activityActorName } from "@/lib/queries/activity-actor";
+import { activityActorInitials, activityActorName, activityViaLabel } from "@/lib/queries/activity-actor";
 
 /* The columns worth reading in a feed line — money and dates. Everything else in
    `changes` is still there for an export; a feed that prints every jsonb key is noise. */
@@ -146,7 +146,8 @@ export default function ActivityLogPage() {
                         {activityActorInitials(r)}
                       </span>
                       <div className="min-w-0 flex-1 text-sm">
-                        <span className="font-medium text-ink">{activityActorName(r)}</span>
+                        {/* R-2778: a change the Help AI made for this person reads "AI on behalf of <name>" */}
+                        <span className="font-medium text-ink" title={activityViaLabel(r) ? "The Help AI made this change for them, with their own login" : undefined}>{activityViaLabel(r) ?? activityActorName(r)}</span>
                         {" "}
                         <span className={cn("font-medium", ACTION_TONE[r.action] ?? "text-ink-2")}>
                           {activityPhrase(r.action, r.entity)}

@@ -55,7 +55,8 @@ async function handle(req: NextRequest) {
     const budgetMs = Math.max(MIN_PASS_MS, Math.floor(left / (mine.length - i)));
     try {
       const res = await companyReadPass(admin, r.tenantId, r.kind, r.fy, { budgetMs, requireRequest: true });
-      if (!res || res.outcome === "locked" || res.outcome === "not-requested") { skipped++; continue; }
+      /* R-2661 "other-reader": another Zoho read of this company is running — no call was made, the request stays. */
+      if (!res || res.outcome === "locked" || res.outcome === "not-requested" || res.outcome === "other-reader") { skipped++; continue; }
       processed++;
       if (res.outcome === "complete") synced++;
       if (res.outcome === "stopped" || res.outcome === "retry") { failed++; errors.push(`${r.tenantId} ${r.kind} ${r.fy}: ${res.error ?? res.outcome}`); }

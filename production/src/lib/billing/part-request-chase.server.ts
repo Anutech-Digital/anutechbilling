@@ -21,7 +21,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { toIstDate } from "@/lib/dates/ist";
 import { cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
-  requestReminderStep, requestReminderText, requestPauseDue, requestPauseReason,
+  requestReminderStep, requestReminderText, requestPauseDue, requestPauseReason, isPartShortLabel,
   type RequestReminderStep,
 } from "./part-requests";
 
@@ -101,8 +101,9 @@ export async function chasePartRequests(
     /* The request's own wording (its first line). R-2423: a one-line request names the product,
        "Workspace · acme.in · 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)"; a group request (R-2092) covers
        several products, so its mail keeps the short label the lines carry as description,
-       "Advance payment for Q2 · 28 Jan–27 Apr 2027" (older requests: that is their name). */
-    const partLabel = requestMailPart(q.line_items) ?? `Advance payment for part ${b.period_index}`;
+       "Payment for Q2 · 28 Jan–27 Apr 2027" (R-2865; requests made before 16 Nov 2026 say "Advance
+       payment for …", and the oldest carry that as their name). */
+    const partLabel = requestMailPart(q.line_items) ?? `Payment for part ${b.period_index}`;
     try {
       const step: RequestReminderStep | "new" | null = !b.request_reminder_step
         ? "new"
@@ -204,12 +205,13 @@ export async function requestSubscriptionIds(
  * R-2423 — the part the request mail names. A one-line request: its line ("Workspace · acme.in ·
  * 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)", or an older "Advance payment for …"). A group
  * request (several products): the short label its lines carry as description since R-2423
- * ("Advance payment for Q2 · …"); an older group's name already is that label. Pure — tested.
+ * ("Payment for Q2 · …"; before R-2865 "Advance payment for Q2 · …" — both are read); an older
+ * group's name already is that label. Pure — tested.
  */
 export function requestMailPart(lines: { name?: string; description?: string }[] | null | undefined): string | null {
   const first = lines?.[0];
   if (!first) return null;
   const desc = first.description?.trim();
-  if ((lines?.length ?? 0) > 1 && desc && desc.startsWith("Advance payment for")) return desc;
+  if ((lines?.length ?? 0) > 1 && desc && isPartShortLabel(desc)) return desc;
   return first.name?.trim() || null;
 }

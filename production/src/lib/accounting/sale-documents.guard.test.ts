@@ -121,6 +121,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   r2848_together_paid: "R-2848: is a together renewal quote's own invoice paid / credited in full — decides renew or move back, not GST or revenue",
   r2848_roll_together: "R-2848: copies the together quote's invoice id onto the renewal move log — not GST or revenue",
   tg_r2848_credit_note: "R-2848: finds the together quote of a credit note's invoice to re-check its renewals — not GST or revenue",
+  renewal_row_facts: "R-2876: the same invoice rows renewals/last-docs-data.ts reads (the invoices linked to the listed subscriptions' quotes / billed parts, by id or quote id) in ONE read, for the Renewals row's Status / Last bill — rows only (read-only, SECURITY INVOKER), no total, GST or revenue",
   // R-1739's own functions
   _opening_invoice_settle: "keeps an opening invoice's paid amount",
   _record_opening_invoice_payment: "payment on an opening invoice",

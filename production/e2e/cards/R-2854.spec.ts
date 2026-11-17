@@ -186,6 +186,11 @@ test.describe("R-2854 card test", () => {
     const link = sent.getByRole("link", { name: Q_REN });
     await expect(link).toBeVisible({ timeout: 90_000 });
     await link.click();
+    /* R-2866: the number opens the quote pop-up over Renewals; its "Open full quote" goes to the quote's page */
+    const peek = page.getByRole("dialog", { name: `Quote ${Q_REN}` });
+    await expect(peek).toBeVisible({ timeout: 60_000 });
+    await expect(page).toHaveURL(/\/renewals/);
+    await peek.getByRole("link", { name: "Open full quote" }).click();
     await expect(page).toHaveURL(new RegExp(`/quotes/${Q_REN}`), { timeout: 240_000 });   // a cold dev server compiles the quote page first
     await page.context().close();
   });

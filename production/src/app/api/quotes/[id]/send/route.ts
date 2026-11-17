@@ -318,6 +318,7 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
   let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
   try {
     const blob = await renderQuotePDF({
+      partRequest: !!part, // R-2869: a part proforma says "Scan to pay", not "advance"
       tenantLogo:    await logoDataUri((tenant as { logo_url?: string | null }).logo_url),
       upiQrDataUrl: upi?.dataUrl ?? null,
       upiVpa:       upi?.vpa ?? null,

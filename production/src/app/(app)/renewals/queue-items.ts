@@ -19,7 +19,7 @@ import { priorTermOwedOf, priorTermOwedText, subscriptionOwedOf } from "./prior-
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { withRenewalQuote } from "./open-renewal-quotes";
 import { classifyRenewals, type RenewalGroups } from "./classify";
-import { dueDaysOf, duePeriodFacts, type DuePeriod } from "./due-anchor";
+import { dueDaysOf, duePeriodFacts, rowDue, type DuePeriod, type RowDue } from "./due-anchor";
 import {
   QUEUE_TABS, queueTabs, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
   type QueueTab, type RowStatus, type RenewalAmount, type RenewalQuoteInfo,
@@ -52,6 +52,11 @@ export interface QueueItem {
    * `period.running` ("Oct unpaid · Nov running"). null = no renewal date.
    */
   period: DuePeriod | null;
+  /**
+   * R-2862: the row's ONE "due date + amount due" (due-anchor.ts rowDue) — `due.days` is `dueDays`; the tiles add
+   * `due.amount` (a late part's own value, not the whole term) and the drawer names `due.unpaidPart`.
+   */
+  due: RowDue;
   status: RowStatus;
   amount: RenewalAmount;
   contact: RowContact | undefined;
@@ -162,7 +167,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
       },
     };
     const stage = input ? renewalStage(input) : null;
-    return {
+    const item: Omit<QueueItem, "due"> = {
       stage,
       dueDays: r.dueDays,
       period: duePeriodFacts(stage, docs, r.sub, todayIst),
@@ -189,6 +194,8 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
       contact: r.sub.customer_id ? f.contacts?.get(r.sub.customer_id) : undefined,
       atRisk: atRiskIds.has(r.sub.id),
     };
+    /* R-2862: the row's one due date + amount due, from the stage, period and amount just built */
+    return { ...item, due: rowDue(stage, item.period, r.sub, r.daysUntil, item.amount.value, docs) };
   };
   const items = {} as Record<QueueTab, QueueItem[]>;
   for (const t of QUEUE_TABS) items[t] = tabs[t].map(toItem);

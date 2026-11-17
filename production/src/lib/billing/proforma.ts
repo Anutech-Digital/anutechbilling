@@ -23,6 +23,27 @@ export function proformaDocumentTitle(q: { isPartRequest: boolean }): string | n
   return q.isPartRequest ? "Proforma Invoice" : null;
 }
 
+/**
+ * R-2869: the words of the scan-to-pay UPI block, ONE place for the PDF and the preview (R-1694).
+ * An ordinary quote keeps its deliberate wording — money paid against it arrives before the tax
+ * invoice exists, so it is an advance answered by a receipt voucher (CGST s.31(3)(d)). A part payment
+ * request (part proforma) is a payment for its period, not an advance: the payment itself raises
+ * the tax invoice (R-2044), so it says "Scan to pay" and that. `partRequest` = isPartRequest(quote).
+ */
+export function upiBlockWords(a: { partRequest: boolean; billOfSupply: boolean }): { title: string; note: string } {
+  const doc = a.billOfSupply ? "a Bill of Supply" : "a GST tax invoice";
+  if (a.partRequest) {
+    return {
+      title: "Scan to pay",
+      note: `Amount and quote number are pre-filled. ${doc.charAt(0).toUpperCase()}${doc.slice(1)} is raised when the payment is received.`,
+    };
+  }
+  return {
+    title: "Scan to pay this advance",
+    note: `Amount and quote number are pre-filled. You'll receive a receipt voucher, and ${doc} when the order is provisioned.`,
+  };
+}
+
 export interface PartAmounts { taxable: number; tax: number; gross: number }
 
 /** seats × per-seat rate, GST on top (rounded to the rupee — the database's rule). */

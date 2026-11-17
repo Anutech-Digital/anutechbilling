@@ -308,6 +308,37 @@ export function rowsFromContentRange(header: string | null): number {
   return m ? Number(m[2]) - Number(m[1]) + 1 : 0;
 }
 
+/**
+ * R-2876: RPCs that hand back ROW LISTS inside one JSON object. Such an answer is a scalar — no Content-Range — so
+ * without this a limited role could read thousands of quote / invoice / payment rows through it at 0 rows charged,
+ * while the table reads it replaces were charged row by row. name → the keys that hold row lists.
+ */
+export const RPC_ROW_LISTS: Readonly<Record<string, readonly string[]>> = {
+  renewal_row_facts: ["quotes", "billings", "links", "invoices", "credit_notes", "debit_notes", "subscriptions", "payments"],
+};
+
+/** True when this request is one of the row-list RPCs (then its body must be counted). */
+export function isRowListRpc(path: string): boolean {
+  return path.startsWith("rpc/") && Object.hasOwn(RPC_ROW_LISTS, path.slice(4));
+}
+
+/** Rows a row-list RPC's answer carried (JSON text). 0 for any other path or an unreadable body. */
+export function rpcRowsInBody(path: string, bodyText: string): number {
+  if (!isRowListRpc(path)) return 0;
+  try {
+    const body: unknown = JSON.parse(bodyText);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return 0;
+    let n = 0;
+    for (const key of RPC_ROW_LISTS[path.slice(4)]) {
+      const list = (body as Record<string, unknown>)[key];
+      if (Array.isArray(list)) n += list.length;
+    }
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
 // ─── the whole check ────────────────────────────────────────────────────────────────────────
 
 /** Everything that runs BEFORE the query for a limited user. */
