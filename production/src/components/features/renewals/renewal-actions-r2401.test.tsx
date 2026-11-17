@@ -57,7 +57,7 @@ describe("R-2401 RenewalActions", () => {
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: /Customer not renewing/ }));
     expect(screen.getByText("Cancel subscription", { selector: "h2" })).toBeTruthy();
-    expect(screen.getByLabelText(/Reason/)).toBeTruthy();
+    expect(screen.getByLabelText(/Why is the customer leaving/)).toBeTruthy();
     /* The renewal date has passed — "At end of term" is not offered. */
     expect(screen.queryByText(/At end of term/)).toBeNull();
   });
