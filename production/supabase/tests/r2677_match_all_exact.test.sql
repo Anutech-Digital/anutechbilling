@@ -90,7 +90,12 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   -- 17 a paid expense part-settled by an advance (Rs 300) → drawer (a plain link would count the Rs 300 twice)
   ('11111111-0000-0000-0000-000000267717','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-23','UPI-SHOP 17',null,3300,0,'csv_upload'),
   -- 18 a paid expense of the same amount AND an unpaid bill of another vendor with that much due → ambiguous
-  ('11111111-0000-0000-0000-000000267718','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-24','NEFT DR-SOMEBODY 18',null,6100,0,'csv_upload');
+  ('11111111-0000-0000-0000-000000267718','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-24','NEFT DR-SOMEBODY 18',null,6100,0,'csv_upload'),
+  -- 19-22 (independent check 17 Nov): records that never went through a bank → drawer
+  ('11111111-0000-0000-0000-000000267719','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-27','SMS ALERT CHARGES',null,59,0,'csv_upload'),
+  ('11111111-0000-0000-0000-000000267720','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-28','NEFT CR-SOMEONE ELSE',null,0,6200,'csv_upload'),
+  ('11111111-0000-0000-0000-000000267721','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-29','POS AMAZON',null,1999,0,'csv_upload'),
+  ('11111111-0000-0000-0000-000000267722','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-30','NEFT DR-PRINTER',null,2222,0,'csv_upload');
 
 insert into public.quotes (id, tenant_id, lead_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
 select 'Q-R2677-' || k, 'dddddddd-0000-0000-0000-000000267701', null, 'cccccccc-0000-0000-0000-000000267701'::uuid, 'R2677 Infra Traders',
@@ -118,6 +123,17 @@ insert into public.expenses (id, tenant_id, category, vendor_name, vendor_id, ex
   ('EXP-R2677-17','dddddddd-0000-0000-0000-000000267701','Office Expenses','Shop 17',null,'2026-10-23',3300,0,'none',null,true,'2026-10-23','bank',0,null),
   ('EXP-R2677-18','dddddddd-0000-0000-0000-000000267701','Office Expenses','Somebody',null,'2026-10-24',6100,0,'none',null,true,'2026-10-24','bank',0,null);
 update public.expenses set advance_applied = 300 where id = 'EXP-R2677-17';
+-- paid from HDFC 4523 (account A): the plain-link expenses
+update public.expenses set bank_account_id = 'bbbbbbbb-0000-0000-0000-000000267701'
+ where id in ('EXP-R2677-03','EXP-R2677-04','EXP-R2677-17','EXP-R2677-18');
+insert into public.expenses (id, tenant_id, category, vendor_name, vendor_id, expense_date, amount, gst_paid, bill_type, bill_no, paid, paid_date, payment_method, tds_amount, tds_section, bank_account_id) values
+  ('EXP-R2677-19','dddddddd-0000-0000-0000-000000267701','Bank Charges','Razorpay',null,'2026-10-27',59,9,'gst',null,true,'2026-10-27','razorpay',0,null,null),
+  ('EXP-R2677-21','dddddddd-0000-0000-0000-000000267701','Office Supplies','Amazon',null,'2026-10-29',1999,0,'none',null,true,'2026-10-29','card',0,null,null),
+  ('EXP-R2677-22','dddddddd-0000-0000-0000-000000267701','Office Supplies','Printer',null,'2026-10-30',2222,0,'none',null,true,'2026-10-30','bank',0,null,null);
+insert into public.quotes (id, tenant_id, lead_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
+values ('Q-R2677-20', 'dddddddd-0000-0000-0000-000000267701', null, 'cccccccc-0000-0000-0000-000000267701', 'R2677 Infra Traders', 6200, 5254, 18, 'accepted', 'awaiting', '[]'::jsonb);
+insert into public.payments (id, tenant_id, customer_id, amount, method, reference, status, received_at, quote_id) values
+  ('f2677000-0000-4000-8000-000000000020','dddddddd-0000-0000-0000-000000267701','cccccccc-0000-0000-0000-000000267701',6200,'cash',null,'received','2026-10-28 12:00+05:30','Q-R2677-20');
 insert into public.vendor_bills (id, tenant_id, vendor_id, vendor_name, vendor_gstin, bill_no, bill_date, due_date, category, subtotal, igst, total, status, paid_amount) values
   ('BILL-R2677-18','dddddddd-0000-0000-0000-000000267701','eeeeeeee-0000-0000-0000-000000267702','R2677 Office Mart','07AAKFM2677A1Z5','OM-B18','2026-10-01','2026-10-31','COGS-Hardware',6100,0,6100,'unpaid',0);
 
@@ -137,7 +153,8 @@ begin
     into v_got
     from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267701', '2026-10-01', '2026-10-31', 'all');
   v_want := '01|exact|payment 02|ambiguous|payment 03|exact|expense 04|ambiguous|expense 07|exact|recorded_payment'
-         || ' 08|exact|payment 09|exact|payment 10|drawer|expense 11|drawer|expense 12|none|- 15|drawer|expense 16|exact|recorded_payment 17|drawer|expense 18|ambiguous|expense';
+         || ' 08|exact|payment 09|exact|payment 10|drawer|expense 11|drawer|expense 12|none|- 15|drawer|expense 16|exact|recorded_payment 17|drawer|expense 18|ambiguous|expense'
+         || ' 19|drawer|expense 20|drawer|payment 21|drawer|expense 22|drawer|expense';
   if v_got is distinct from v_want then
     raise exception 'FAIL A: preview — got: % — want: %', v_got, v_want;
   end if;
@@ -149,7 +166,7 @@ begin
     raise exception 'FAIL A: recorded payment record'; end if;
   -- money in only, October: 01 02 08 09
   select count(*) into v_n from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267701', '2026-10-01', '2026-10-31', 'in');
-  if v_n <> 4 then raise exception 'FAIL A: money-in filter gave % rows, want 4', v_n; end if;
+  if v_n <> 5 then raise exception 'FAIL A: money-in filter gave % rows, want 5', v_n; end if;
   -- no dates: the November line and the locked March line are in too
   select string_agg(right(txn_id::text, 2) || '|' || status, ' ' order by right(txn_id::text, 2)) into v_got
     from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267701', null, null, 'all')
@@ -317,6 +334,14 @@ begin
     perform public.book_bank_exact_matches('bbbbbbbb-0000-0000-0000-000000267701', '[]'::jsonb, v_run, null);
   exception when sqlstate 'P0002' then ok := true; end;
   if not ok then raise exception 'FAIL K: an undone run took another chunk'; end if;
+  -- the run tables are read-only for a login (only the functions write them)
+  ok := false;
+  begin
+    execute 'set local role authenticated';
+    insert into public.bank_exact_match_runs (tenant_id, bank_account_id) values ('dddddddd-0000-0000-0000-000000267701', 'bbbbbbbb-0000-0000-0000-000000267701');
+  exception when insufficient_privilege then ok := true; end;
+  execute 'reset role';
+  if not ok then raise exception 'FAIL K: a login could write a run row directly'; end if;
   raise notice 'K PASS: chunks = one run, scope kept, undo in pages';
 end $$;
 

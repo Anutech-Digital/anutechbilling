@@ -22,10 +22,10 @@
 --                     (a) suggest_bank_transaction_matches (the drawer's "Suggested matches") gives ONE
 --                         'exact' candidate (receipt: same amount + same day, or the line's own UTR;
 --                         expense: same amount + same day), no other candidate is 'exact' / 'high' or has
---                         the same amount; the receipt is not a customer advance (un-reconciling an advance
+--                         the same amount; the receipt was taken through a bank (method bank / bank_transfer / upi / neft / rtgs / imps / cheque — _r2677_bank_method) and is not a customer advance (un-reconciling an advance
 --                         deletes it); the expense is PAID in full (no advance applied, no earlier part, no vendor payment line on it), has no TDS, was paid from a bank (R-1911's
---                         filters: not cash / payroll / statutory / reimbursement / EMI / advance, no
---                         prepaid advance, INR, not Salaries) and not from ANOTHER account — a Mark-paid
+--                         ALLOW-list: a bank method as above — never Razorpay / card / cash / payroll …; no
+--                         prepaid advance, INR, not Salaries) and paid from THIS account (bank_account_id = the line's; only a Mark-paid booked the R-1911 way may have none); a recorded payment in (b) is a bank-method Mark-paid or a manual line of this same account — a Mark-paid
 --                         expense the vendor matcher also offers is booked the R-1911 way (b);
 --                     (b) or, for money out with no such candidate, bank_debit_vendor_auto_match
 --                         (R-1867 / R-1911) gives ONE row and it is a RECORDED payment (Bills page Pay /
@@ -122,7 +122,23 @@ create policy zzz_service_role_all on public.bank_exact_match_runs as permissive
 drop policy if exists zzz_service_role_all on public.bank_exact_match_run_lines;
 create policy zzz_service_role_all on public.bank_exact_match_run_lines as permissive for all to service_role using (true) with check (true);
 revoke all on public.bank_exact_match_runs, public.bank_exact_match_run_lines from public, anon;
+-- Read only for a login: written only by the functions below (default privileges may grant more).
+revoke insert, update, delete, truncate on public.bank_exact_match_runs, public.bank_exact_match_run_lines from authenticated, anon;
 grant select on public.bank_exact_match_runs, public.bank_exact_match_run_lines to authenticated, service_role;
+
+/* A record that money really went through a bank: these methods only (R-2677 check 17 Nov — a
+   Razorpay fee, a card, cash or "other" payment is never a bank line's twin). */
+create or replace function public._r2677_bank_method(p_method text)
+returns boolean
+language sql
+immutable
+set search_path to 'public'
+as $function$
+  select lower(btrim(coalesce(p_method, ''))) in
+         ('bank', 'bank_transfer', 'bank transfer', 'upi', 'neft', 'rtgs', 'imps', 'cheque')
+$function$;
+revoke all on function public._r2677_bank_method(text) from public, anon, authenticated;
+grant execute on function public._r2677_bank_method(text) to service_role;
 
 /* The gate: a signed-in owner / accountant of a company. Returns the company. */
 create or replace function public._r2677_exact_gate()
@@ -173,6 +189,7 @@ declare
   v_vname   text;
   v_use_rp  boolean := false;
   v_rp_vendor uuid;
+  v_method  text;
 begin
   select * into v_txn from public.bank_transactions t where t.id = p_txn_id;
   if not found then return; end if;
@@ -259,6 +276,16 @@ begin
         'A customer advance receipt — match it in the line''s drawer.'::text;
       return;
     end if;
+    if v_top.match_type = 'payment' then
+      /* A receipt taken in cash / Razorpay / card / other is never this bank line (check 17 Nov). */
+      select p.method into v_method from public.payments p
+       where p.id = public.bank_match_uuid(v_top.match_id) and p.tenant_id = v_txn.tenant_id;
+      if not public._r2677_bank_method(v_method) then
+        return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
+          format('The receipt was not taken through a bank (%s) — check it in the line''s drawer.', coalesce(nullif(btrim(v_method), ''), 'no method'));
+        return;
+      end if;
+    end if;
     if v_top.match_type = 'expense' then
       select * into v_exp from public.expenses e where e.id = v_top.match_id and e.tenant_id = v_txn.tenant_id;
       if not found or not coalesce(v_exp.paid, false) then
@@ -273,13 +300,15 @@ begin
       end if;
       /* Not paid from a bank (R-1911's own filters for a recorded payment): cash, payroll, statutory,
          reimbursement, EMI, advance, a prepaid advance, a foreign currency — or paid from ANOTHER account. */
-      if lower(coalesce(v_exp.payment_method, '')) in ('cash', 'payroll', 'statutory', 'reimbursement', 'emi', 'advance', 'employee_advance')
+      /* Check 17 Nov: ALLOW-list, not deny-list — only a bank method (a Razorpay fee, a card or a cash
+         expense is never a bank line's twin). */
+      if not public._r2677_bank_method(v_exp.payment_method)
          or v_exp.prepaid_advance_id is not null
          or upper(coalesce(v_exp.currency, 'INR')) <> 'INR'
          or v_exp.category = 'Salaries' then
         return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
           format('The expense was not paid from a bank (%s) — check it in the line''s drawer.',
-                 coalesce(nullif(v_exp.payment_method, ''), nullif(v_exp.currency, 'INR'), 'advance / salary'));
+                 coalesce(nullif(v_exp.payment_method, ''), nullif(v_exp.currency, 'INR'), 'no payment method'));
         return;
       end if;
       /* Part of it already settled another way (a vendor advance, an earlier bank part, any vendor
@@ -291,9 +320,14 @@ begin
           'Part of this expense is already settled (an advance or an earlier payment) — check it in the line''s drawer.'::text;
         return;
       end if;
-      if v_exp.bank_account_id is not null and v_exp.bank_account_id is distinct from v_txn.bank_account_id then
+      /* Paid from THIS account. Only a Mark-paid expense booked the R-1911 way may have no account yet
+         (that path writes this account onto it). */
+      if v_exp.bank_account_id is distinct from v_txn.bank_account_id
+         and not (v_use_rp and v_exp.bank_account_id is null) then
         return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
-          'The expense is recorded as paid from another account — check it in the line''s drawer.'::text;
+          case when v_exp.bank_account_id is null
+               then 'The expense has no bank account it was paid from — check it in the line''s drawer.'
+               else 'The expense is recorded as paid from another account — check it in the line''s drawer.' end;
         return;
       end if;
     end if;
@@ -307,13 +341,13 @@ begin
     if not v_credit and (
          exists (select 1 from public.vendor_bills b
                   where b.tenant_id = v_txn.tenant_id and coalesce(b.status, 'unpaid') <> 'paid'
-                    and b.total - coalesce(b.paid_amount, 0) = v_amt
+                    and v_amt in (b.total - coalesce(b.paid_amount, 0), b.total - coalesce(b.paid_amount, 0) - coalesce(b.zoho_tds_amount, 0))
                     and b.bill_date between v_txn.txn_date - 120 and v_txn.txn_date + 7
                     -- the R-1911 vendor of a recorded payment: its own bills were already weighed (auto_match)
                     and (v_rp_vendor is null or b.vendor_id is distinct from v_rp_vendor))
          or exists (select 1 from public.expenses e2
                      where e2.tenant_id = v_txn.tenant_id and e2.id <> v_top.match_id and not coalesce(e2.paid, false)
-                       and e2.amount - coalesce(e2.advance_applied, 0) - coalesce(e2.paid_amount, 0) = v_amt
+                       and v_amt in (e2.amount - coalesce(e2.advance_applied, 0) - coalesce(e2.paid_amount, 0), e2.amount - coalesce(e2.advance_applied, 0) - coalesce(e2.paid_amount, 0) - coalesce(e2.tds_amount, 0))
                        and e2.expense_date between v_txn.txn_date - 120 and v_txn.txn_date + 7)) then
       return query select 'ambiguous'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
         'An unpaid bill of this amount is also open — this line may be its payment; pick in the line''s drawer.'::text;
@@ -373,6 +407,18 @@ begin
         'Another record in the books has this amount too — pick the right one in the line''s drawer.'::text;
       return;
     end if;
+    /* The recorded payment must be a BANK payment of THIS account: a Mark-paid expense with a bank
+       method (no account, or this one); a Bills-page manual line in this same account (check 17 Nov). */
+    if exists (select 1 from public.expenses e where e.id = v_vp.doc_id and e.tenant_id = v_txn.tenant_id
+                  and (not public._r2677_bank_method(e.payment_method)
+                       or (e.bank_account_id is not null and e.bank_account_id is distinct from v_txn.bank_account_id)))
+       or exists (select 1 from public.bank_transactions m where m.id = public.bank_match_uuid(v_vp.doc_id) and m.tenant_id = v_txn.tenant_id
+                     and m.bank_account_id is distinct from v_txn.bank_account_id) then
+      return query select 'drawer'::text, 'recorded_payment'::text, v_vp.doc_id, v_vp.vendor_id,
+        concat_ws(' · ', v_vname, v_vp.bill_no), v_vp.amount, null::date,
+        'The recorded payment was not made through this bank account — check it in the line''s drawer.'::text;
+      return;
+    end if;
     if v_paid_on is null then
       return query select 'none'::text, null::text, null::text, null::uuid, null::text, null::integer, null::date,
         'The recorded payment could not be read again — open the line''s drawer.'::text;
@@ -386,12 +432,12 @@ begin
     end if;
     if exists (select 1 from public.vendor_bills b
                 where b.tenant_id = v_txn.tenant_id and coalesce(b.status, 'unpaid') <> 'paid'
-                  and b.total - coalesce(b.paid_amount, 0) = v_amt
+                  and v_amt in (b.total - coalesce(b.paid_amount, 0), b.total - coalesce(b.paid_amount, 0) - coalesce(b.zoho_tds_amount, 0))
                   and b.bill_date between v_txn.txn_date - 120 and v_txn.txn_date + 7
                   and b.vendor_id is distinct from v_vp.vendor_id)   -- its own bills: R-1911 already weighed them
        or exists (select 1 from public.expenses e2
                    where e2.tenant_id = v_txn.tenant_id and e2.id <> v_vp.doc_id and not coalesce(e2.paid, false)
-                     and e2.amount - coalesce(e2.advance_applied, 0) - coalesce(e2.paid_amount, 0) = v_amt
+                     and v_amt in (e2.amount - coalesce(e2.advance_applied, 0) - coalesce(e2.paid_amount, 0), e2.amount - coalesce(e2.advance_applied, 0) - coalesce(e2.paid_amount, 0) - coalesce(e2.tds_amount, 0))
                      and e2.expense_date between v_txn.txn_date - 120 and v_txn.txn_date + 7) then
       return query select 'ambiguous'::text, 'recorded_payment'::text, v_vp.doc_id, v_vp.vendor_id,
         concat_ws(' · ', v_vname, v_vp.bill_no), v_vp.amount, v_paid_on,
