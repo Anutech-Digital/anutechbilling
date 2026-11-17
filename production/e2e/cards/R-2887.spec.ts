@@ -5,6 +5,7 @@
  * Data (fresh every run, fixed ids, removed after): one customer, three Google subscriptions due 5 days ago —
  *   monthly flexible (term 1, billed monthly), yearly (term 12, billed yearly), annual paid monthly (term 12, billed monthly).
  */
+import { appendFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, E2E_TENANT_SQL, localDb, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
 
@@ -66,10 +67,19 @@ test.describe("R-2887 card test", () => {
       await expect(chip).toHaveText(WANT[k]);
       await expect(chip).toHaveAttribute("title", /commitment/);
     }
-    /* every row of the table has a chip when its term is known (this card's three rows); heights */
-    const heights = await page.evaluate((plans) => plans.map((p) => Math.round([...document.querySelectorAll("tbody tr")].find((tr) => (tr as HTMLElement).innerText.includes(p))!.getBoundingClientRect().height)), Object.values(PLAN));
-    test.info().annotations.push({ type: "measured", description: `1280x720 row heights ${heights.join("/")}` });
-    for (const h of heights) expect(h).toBeLessThanOrEqual(76);
+    /* The chip must not make the row taller: the Product cell is the same height on all three rows (the chip sits on
+       the plan line), and a row that is not part-billed stays <= 76px (R-2759 / R-2880). Part-billed rows are taller
+       from their Status cell ("Part not billed (Nov)" + "Hold at Google — unpaid +1") — that is R-2880's, measured
+       the same with and without the chip. */
+    const m = await page.evaluate((plans) => plans.map((p) => {
+      const tr = [...document.querySelectorAll("tbody tr")].find((r) => (r as HTMLElement).innerText.includes(p))!;
+      return { row: Math.round(tr.getBoundingClientRect().height), product: Math.round((tr.querySelector('[data-cell="product"]') as HTMLElement).getBoundingClientRect().height) };
+    }), [PLAN.M, PLAN.Y, PLAN.P]);
+    test.info().annotations.push({ type: "measured", description: `1280x720 row/product heights ${JSON.stringify(m)}` });
+    if (process.env.R2887_OUT) appendFileSync(process.env.R2887_OUT, `1280x720 ${JSON.stringify(m)}
+`);
+    expect(m[1].row, "yearly row height").toBeLessThanOrEqual(76);
+    for (const x of m) expect(x.product, "Product cell, with the chip").toBeLessThanOrEqual(m[1].product + 1);
     const spill = await page.evaluate(() => (document.querySelector('[data-testid="renewals-table"]') as HTMLElement).scrollWidth <= (document.querySelector('[data-testid="renewals-table"]') as HTMLElement).clientWidth + 1);
     expect(spill, "table not wider than its box").toBe(true);
     await page.context().close();
