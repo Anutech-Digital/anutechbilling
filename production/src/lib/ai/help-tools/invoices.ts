@@ -20,6 +20,7 @@ import { istToday } from "@/lib/dates/ist";
 import { invoiceIsOverdue, invoiceOverdueDays } from "@/lib/invoices/overdue";
 import { invoiceBalance } from "@/lib/invoices/kpis";
 import { rupee, num, formatDate } from "@/lib/utils";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { defineHelpTool, type HelpSourceRef } from "./types";
 import { cleanHelpText } from "./untrusted";
 
@@ -32,8 +33,8 @@ export const INVOICE_SCAN_MAX = 5000;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** An invoice number safe to put in a path as it is (series with a "/" or odd characters link to the list instead). */
-const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+/** Longest invoice number a citation carries (the source's ids are capped at 80). */
+const INVOICE_ID_MAX = 80;
 
 /** A real calendar day written YYYY-MM-DD (a string, never a Date — the schema stays a plain string). */
 function isRealDate(v: string): boolean {
@@ -148,10 +149,10 @@ export const listInvoices = defineHelpTool({
     const lines = [head];
     if (customer_id) {
       /* R-2776 (checker BLOCK): in one customer's scope this is the OPEN-INVOICE balance only. The Customer page's
-         Outstanding is the statement closing (R-2183) — it also takes off credit notes and unused advances — and is
-         NOT computed here (R-2884). Say so, and link the page where the real figure is. */
+         Outstanding is the statement closing (R-2183) — it also counts credit and debit notes, unused advances and
+         refunds — and is NOT computed here: customer_overview (R-2884) gives that figure. Say so, and link the page. */
       if (matched.length) lines.push(`Open-invoice balance on ${choice === "all" ? "them" : "these"} (open invoices only): ${rupee(owed)}.`);
-      lines.push("This counts open invoices only. The Customer page's Outstanding also subtracts credit notes and unused advances, so open the customer's page for the real figure.");
+      lines.push("This counts open invoices only. The Customer page's Outstanding also counts credit and debit notes, unused advances and refunds — use customer_overview (or open the customer's page) for that figure.");
     } else if (matched.length) lines.push(`Still owed on ${choice === "all" ? "them" : "these"} (Invoices page balance): ${rupee(owed)}.`);
     if (choice === "paid") lines.push("Paid here includes invoices closed by a credit note (the Invoices page shows those as Credited).");
 
@@ -164,8 +165,9 @@ export const listInvoices = defineHelpTool({
       const balance = invoiceBalance(r);
       const days = invoiceOverdueDays(r, today);
       lines.push(`- ${id} — ${customer} — dated ${formatDate(r.invoice_date)} — due ${formatDate(r.due_date)} — total ${rupee(r.amount)} — owed ${rupee(balance)} — ${bucket}${days > 0 ? ` ${days} days` : ""}`);
-      if (typeof r.id === "string" && PLAIN_ID.test(r.id)) {
-        sources.push({ table: "invoices", ids: [r.id], href: `/invoices/${r.id}`, label: `Open invoice ${id}` });
+      /* R-2884: the app's own invoiceHref encodes the number, so a series with a "/" (ANU/26-27/001) keeps its own link. */
+      if (typeof r.id === "string" && r.id.length > 0 && r.id.length <= INVOICE_ID_MAX) {
+        sources.push({ table: "invoices", ids: [r.id], href: invoiceHref(r.id), label: `Open invoice ${id}` });
       }
       return {
         invoice: id, customer, invoice_date: r.invoice_date ?? null, due_date: r.due_date ?? null,

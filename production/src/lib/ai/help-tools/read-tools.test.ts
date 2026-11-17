@@ -432,11 +432,12 @@ describe("list_invoices", () => {
     expect(r.rows ?? []).toHaveLength(0);
   });
 
-  it("an invoice number with a / links to the list, a plain number links to its invoice page", async () => {
+  it("an invoice number with a / keeps its own link through the app's invoiceHref (R-2884); a plain number links as before", async () => {
     const r = await call("list_invoices", { customer_id: C2 });
     const hrefs = r.sources.map((s) => s.href);
     expect(hrefs).toContain("/invoices/INV-007");
-    expect(hrefs.some((h) => h.includes("2026/008"))).toBe(false);
+    expect(hrefs).toContain("/invoices/INV%2F2026%2F008"); // the same address the Invoices page builds
+    expect(hrefs.some((h) => h.includes("2026/008"))).toBe(false); // never a raw "/" splitting the path
     expect(hrefs[0]).toBe(`/customers/${C2}`); // the customer's own page first (R-2776 round 2)
     expect(hrefs.slice(1).every((h) => h.startsWith("/invoices/"))).toBe(true);
     expect(r.text).toContain("INV/2026/008");
@@ -521,7 +522,7 @@ describe("customer scope says open invoices only (the Customer page Outstanding 
     const r = await call("list_invoices", { customer_id: C1 });
     expect(r.ok).toBe(true);
     expect(r.text).toContain("(open invoices only): ₹25,500.");
-    expect(r.text).toContain("This counts open invoices only. The Customer page's Outstanding also subtracts credit notes and unused advances");
+    expect(r.text).toContain("This counts open invoices only. The Customer page's Outstanding also counts credit and debit notes, unused advances and refunds — use customer_overview");
     expect(r.text).not.toContain("Invoices page balance");
     expect(r.sources[0]).toMatchObject({ table: "customers", href: `/customers/${C1}` });
     expect(r.sources.some((s) => s.href === "/invoices/INV-001")).toBe(true);
@@ -588,7 +589,10 @@ describe("customers has a per-table COLUMN allowlist in the reader", () => {
     const { containsPattern } = await import("./reader");
     expect(() => db.read("customers", "id, name, customer_number, customer_type, state, is_active, since").ilike("name", containsPattern("a"))).not.toThrow();
     expect(helpAllowedColumns("customers")).toEqual(["id", "name", "customer_number", "customer_type", "state", "is_active", "since"]);
-    expect(helpAllowedColumns("invoices")).toBeNull();
-    expect(() => db.read("invoices", "id, customer_gstin")).not.toThrow(); // not on a column allowlist yet (its tools pick their columns in code)
+    /* R-2884: invoices / payments / notes / project / subscription / quote reads have their own allowlist now — no GSTIN, address, bank or note */
+    expect(helpAllowedColumns("invoices")).toContain("net_payable");
+    expect(helpAllowedColumns("leads")).toBeNull(); // still the old rule
+    expect(() => db.read("invoices", "id, customer_gstin")).toThrow(/column allowlist/);
+    expect(() => db.read("leads", "id, company")).not.toThrow();
   });
 });

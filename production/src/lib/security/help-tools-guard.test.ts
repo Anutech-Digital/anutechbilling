@@ -126,6 +126,10 @@ const HELP_GRAPH_ALLOWED: readonly string[] = [
      page shows, so it calls this one file the page calls. Read in full: imports only utils, sale-documents,
      cash-received, amount-due and receivables (all above); no React, no network, no env, no side effect at import. */
   "src/lib/customers/statement-core.ts",
+  /* R-2884 (reviewed): the app's own invoiceHref (R-086) — list_invoices cites each invoice by it, so a number with a
+     "/" (ANU/26-27/001) keeps its link. Read in full: no imports, only string building with encodeURIComponent /
+     decodeURIComponent, no ambient power. */
+  "src/app/(app)/invoices/invoice-href.ts",
 ];
 /** npm packages the files on HELP_GRAPH_ALLOWED may import as values (pure formatters only). */
 const FOLLOWED_NPM_ALLOWED = ["clsx", "tailwind-merge", "zod"];
