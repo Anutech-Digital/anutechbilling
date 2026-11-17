@@ -414,40 +414,33 @@
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(9) li { color: var(--w-ink); }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(9) > div > div > div:last-child li { color: var(--w-muted) !important; }
 
-/* ── 10 · Talk to a person: one compact card, the support photo as its own panel ────────────────
-   Owner, 17 Nov 2026: a background image (public/hosting-support-bg.webp — a support agent with a
-   headset), then "still not looks good — background image can be shown better way, overall more
-   compact". The band behind the whole section (washes, fades, the agent under the cards) is gone:
-   the section is one white rounded card on the page ground — the heading and the four channels on
-   the left as small two-by-two tiles (icon beside the title), the photo on the right as a clean panel
-   filling the card's height, nothing laid over it. Phones and tablets: the photo panel on top. */
+/* ── 10 · Talk to a person: the support banner behind, the channels on the left ──────────────────
+   Owner, 17 Nov 2026 — after a photo background and a photo panel — "use the first attached image in
+   this section as background image": public/hosting-talk-banner.webp (2000×400, a pale sky-to-teal
+   band, empty on the left, glass support icons — chat, headset, clock, tag — on the right). It fills
+   the band, anchored right so the icons stay in view; the heading and the four channels (compact
+   two-by-two tiles, icon beside the title) sit in the open left part. Phones: one column of tiles
+   over a lighter wash. Same words. */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) {
-  background: var(--w-bg) !important; padding-top: clamp(32px, 4vw, 56px) !important; padding-bottom: clamp(32px, 4vw, 56px) !important;
-}
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div {
-  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); grid-template-rows: auto 1fr; column-gap: 0;
-  padding: 0 !important; overflow: hidden; background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 28px;
-  box-shadow: 0 24px 50px -36px rgba(18, 49, 42, 0.35);
-}
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div::after {
-  content: ""; grid-column: 2; grid-row: 1 / -1; min-height: 340px;
-  background: #DCEBFA url(/hosting-support-bg.webp) 68% center / cover no-repeat;
+  background: #E6F2F5 url(/hosting-talk-banner.webp) right center / cover no-repeat !important;
+  padding-top: clamp(36px, 4.4vw, 64px) !important; padding-bottom: clamp(36px, 4.4vw, 64px) !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) h2 {
-  grid-column: 1; margin: 0 !important; padding: clamp(24px, 3vw, 36px) clamp(22px, 3vw, 36px) 18px;
-  font-size: clamp(1.6rem, 2.6vw, 2.1rem) !important; line-height: 1.15 !important;
+  margin: 0 0 20px !important; font-size: clamp(1.7rem, 2.8vw, 2.2rem) !important; line-height: 1.15 !important; max-width: 620px;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div {
-  grid-column: 1; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 12px !important; align-content: start;
-  padding: 0 clamp(22px, 3vw, 36px) clamp(24px, 3vw, 36px); max-width: none !important; margin-top: 0 !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 12px !important; align-content: start;
+  margin-top: 0 !important; max-width: min(720px, 62%) !important;
 }
-/* each channel: a small tile — icon beside the title, the line and the link under it */
+/* each channel: a small white tile — icon beside the title, the line and the link under it */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div {
   display: grid !important; grid-template-columns: 40px minmax(0, 1fr); column-gap: 12px; row-gap: 4px; align-items: center; align-content: start;
-  padding: 14px 16px !important; border-radius: 16px !important; background: var(--w-bg) !important; border: 1px solid var(--w-line) !important;
-  box-shadow: none !important; transition: border-color .2s ease, background-color .2s ease, transform .25s cubic-bezier(.22,.61,.36,1);
+  padding: 14px 16px !important; border-radius: 16px !important; background: rgba(255, 255, 255, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.95) !important; box-shadow: 0 14px 30px -20px rgba(14, 80, 110, 0.35) !important;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  transition: border-color .2s ease, background-color .2s ease, transform .25s cubic-bezier(.22,.61,.36,1);
 }
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div:hover { background: var(--w-surface) !important; border-color: #C8DDD4 !important; transform: translateY(-2px); }
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div:hover { background: #FFFFFF !important; border-color: #C8DDD4 !important; transform: translateY(-2px); }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > :first-child { grid-column: 1; grid-row: 1; width: 40px !important; height: 40px !important; margin: 0 !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > div { grid-column: 2; grid-row: 1; font-size: 17px !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > p { grid-column: 1 / -1; margin: 6px 0 0 !important; color: var(--w-muted) !important; font-size: 14px !important; line-height: 1.5 !important; }
@@ -455,14 +448,21 @@
 @media (prefers-reduced-motion: reduce) {
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div:hover { transform: none; }
 }
-/* Tablets and phones: the photo panel across the top of the card, the words under it. */
+/* 1000–1699px: the banner's icons take a fixed ~700px on the right, so 2 × 2 tiles would sit on them —
+   the four tiles go in one row under the heading instead (a shorter band: the chat and headset icons
+   beside the heading, the lower ones softly behind the frosted tiles). */
+@media (min-width: 1000px) and (max-width: 1699px) {
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; max-width: none !important; }
+}
+/* Narrower screens: the tiles take the full width (the icons sit behind the right-hand tiles). */
 @media (max-width: 999px) {
-  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; }
-  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div::after { grid-column: 1; grid-row: 1; min-height: 0; aspect-ratio: 16 / 8; background-position: 72% 30%; }
-  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) h2 { grid-row: 2; }
-  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div { grid-row: 3; }
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div { max-width: none !important; }
 }
 @media (max-width: 559px) {
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) {
+    /* the calm left of the banner (pale sky, soft waves): its icons would blow up and blur at this size */
+    background: #EAF3F7 url(/hosting-talk-banner.webp) left bottom / auto 100% no-repeat !important;
+  }
   .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div { grid-template-columns: minmax(0, 1fr) !important; }
 }
 
