@@ -101,7 +101,9 @@ async function refreshAccountTypes(admin: AdminRpc, db: FyImportDb, tenantId: st
  * the rest with the next "Read from Zoho again") and saved. An account Zoho does not know stores
  * nothing — its documents stay refused ("not read yet", fail closed). What was found is saved even when
  * a later read fails; the day limit and a stale token (401) go up, any other failure only stops these reads.
+ * They also stop after MISSING_ACCOUNTS_MS.
  */
+const MISSING_ACCOUNTS_MS = 20_000;
 async function readMissingAccountTypes(admin: AdminRpc, db: FyImportDb, tenantId: string, orgId: string, token: string,
   fy: string, count: () => void): Promise<void> {
   let ids: string[];
@@ -118,7 +120,10 @@ async function readMissingAccountTypes(admin: AdminRpc, db: FyImportDb, tenantId
   }
   const found: ZohoAccount[] = [];
   let stop: unknown = null;
+  /* A slow Zoho must not run the request out (maxDuration) before what was found is saved. */
+  const until = Date.now() + MISSING_ACCOUNTS_MS;
   for (const id of ids) {
+    if (Date.now() > until) break;
     count();
     try {
       const a = await readChartAccount(orgId, token, id);

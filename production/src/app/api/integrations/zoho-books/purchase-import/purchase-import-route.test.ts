@@ -39,6 +39,9 @@ const st = vi.hoisted(() => ({
   oneReads: [] as string[],
   one: {} as Record<string, string>,
   oneError: {} as Record<string, Error>,
+  /* how long one by-id read takes on the test's clock (Date.now is moved on by it) */
+  oneTakesMs: 0,
+  skewMs: 0,
 }));
 
 vi.mock("@/lib/integrations/zoho-books/fy-fetch", async (orig) => ({
@@ -51,6 +54,7 @@ vi.mock("@/lib/integrations/zoho-books/fy-fetch", async (orig) => ({
   },
   readChartAccount: async (_o: string, _t: string, id: string) => {
     st.oneReads.push(id);
+    st.skewMs += st.oneTakesMs;
     if (st.oneError[id]) throw st.oneError[id];
     return st.one[id] ? { id, name: `Zoho ${id}`, code: "", type: st.one[id], active: false } : null;
   },
@@ -142,7 +146,7 @@ beforeEach(() => {
   st.readerRpcs = []; st.readerHolder = null; st.scanSteps = 0;
   st.scanResult = { listed: 3, detailed: 3, listDone: true, complete: true, busy: false, calls: 2 };
   st.types = { A1: "expense" }; st.typesAt = new Date().toISOString(); st.coaReads = 0; st.coaError = null; st.typesSaved = [];
-  st.coaCalls = 1; st.oneReads = []; st.one = {}; st.oneError = {};
+  st.coaCalls = 1; st.oneReads = []; st.one = {}; st.oneError = {}; st.oneTakesMs = 0; st.skewMs = 0;
 });
 
 describe("R-2502 purchase-import route", () => {
@@ -476,6 +480,22 @@ describe("R-2915 purchase-import route — an account the chart lists missed is 
       expect(st.oneReads).toEqual(["GONE"]);
       expect(st.scanSteps).toBe(1);
     } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("a slow Zoho: the by-id reads stop after 20 s and what was found is saved (the request never runs out first)", async () => {
+    env();
+    const realNow = Date.now.bind(Date);
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + st.skewMs);
+    try {
+      again();
+      st.one = { GONE: "expense", "OLD-LOAN": "long_term_liability", "OLD-PANTRY": "expense" };
+      st.oneTakesMs = 11_000;
+      const res = await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(res.status).toBe(200);
+      expect(st.oneReads).toEqual(["GONE", "OLD-LOAN"]);
+      expect(st.typesSaved[1]).toEqual([{ id: "GONE", type: "expense" }, { id: "OLD-LOAN", type: "long_term_liability" }]);
+      expect(st.scanSteps).toBe(1);
+    } finally { spy.mockRestore(); vi.unstubAllEnvs(); }
   });
 
   it("types still fresh for this read → no chart read and no by-id read (no Zoho call on every request)", async () => {
