@@ -125,6 +125,10 @@ online **test** environment — never production — and the daily live-error ro
 Say all of that to the human in ≤10 lines, then ask nothing — continue with what they asked,
 or, if they asked "what next", propose the top unblocked task.
 
+## Long sessions hand over (R-2898, 17 Nov 2026)
+
+Every person's Claude follows the same rule. Handoff = a board doc (collection `coordinator`, `handoff-<person>`, plus `handoff-team`): in-flight cards + where each stands, next steps in order, owner-pending questions, rules learned today. New session reads it FIRST, then re-checks git, board, CI and usage before acting, and never redoes a job another session still owns. Old session (context 60%+, ~8 hours, after a staging train or usage-limit stop): refresh the doc, make each in-flight card's liveLog say "done …; next …", tell the owner to open a new session, take no new work. Skill: `.claude/skills/session-handoff`; hooks in `.claude/settings.json` only remind (`production/scripts/ops/session-health.mjs`, `session-start-note.mjs`).
+
 ## While working
 
 - **Claim** before you start: update the task to `status: "doing"` (pin `if_version`).

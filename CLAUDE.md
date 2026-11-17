@@ -19,6 +19,10 @@ On the user's FIRST message of a session (even "hi"):
 
 Card fields: `id`, `title`, `why`, `fix`, `doneWhen`, `where`, `files` (folders it touches), `priority` p0–p3, `rank` (1 = next), `status` = `list` → `doing` → `review` → `live` (merged, waits for Thursday deploy) / `done`; `goodFor` (who it suits — a preference, not a lock), `assignedTo` (pinned by Pardeep — a lock), `claimedBy`, `claimedAt`, `liveLog` [{at, text}] + `nowDoing` (live progress, see below), `finishedAt`, `commits`, `checked`, `howToCheck`; human steps: `step`, `stepFor`, `stepAfterDeploy`, `stepDoneAt`. A one-line card someone typed has `draft: true` — fill its fields before building it. Times only from `date -u`.
 
+## Long sessions hand over (R-2898, 17 Nov 2026)
+
+A coordinator session that runs a day+ gets long, slow and slips (times from memory, wrong folder/worktree). So it hands over: see [`.claude/skills/session-handoff`](.claude/skills/session-handoff/SKILL.md) — handoff lives on the BOARD (collection `coordinator`, doc `handoff-<person>` + `handoff-team`). New session: read it FIRST, re-check git/board/CI/usage, never redo an in-flight job. Old session at context 60%+ or ~8 h: refresh the doc, tell the owner to open a new session, take no new work. Project hooks (`.claude/settings.json`) remind you at session start, when the session is long, and before compaction — they only remind; you do the writes.
+
 ## Team model — AI custom-software company (1 Oct 2026, Pardeep)
 
 AI writes the software; the four people do only what AI can't. Full model (roles, the 7 steps of a client project, board): `docs/TEAM-PROTOCOL.md` → "Team model". New client project: `docs/project-template/`. Your person's daily checklist: `docs/role-routines/<name>.md`.

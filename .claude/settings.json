@@ -13,11 +13,48 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "timeout": 5,
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/production/scripts/ops/session-start-note.mjs\"",
+            "statusMessage": "Board handoff reminder…"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "timeout": 5,
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/production/scripts/ops/session-health.mjs\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "timeout": 5,
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/production/scripts/ops/session-health.mjs\" compact"
+          }
+        ]
+      }
     ]
   },
   "permissions": {
     "allow": [
-"Bash(env -u SUPABASE_ACCESS_TOKEN npx supabase db query --linked -f supabase/maintenance/*)",
+      "Bash(env -u SUPABASE_ACCESS_TOKEN npx supabase db query --linked -f supabase/maintenance/*)",
       "Bash(git push anutech HEAD:deploy)",
       "Bash(env -u SUPABASE_ACCESS_TOKEN npx supabase db query --linked -f supabase/tests/*)",
       "Bash(cd \"C:/dev/ResellerOSv3 - Copy/production\" && env -u SUPABASE_ACCESS_TOKEN npx supabase db query --linked -f supabase/tests/*)"
