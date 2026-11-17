@@ -193,10 +193,10 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, c
       <p className="flex min-w-0 items-baseline gap-x-1.5 text-ink" title={line1}>
         {onOpen ? (
           <button type="button" onClick={onOpen} data-testid="renewal-open-drawer" aria-label={`${line1} — open details`}
-            className="block min-w-0 truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            className="block w-full min-w-0 truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
             {line1}
           </button>
-        ) : <span className="block min-w-0 truncate">{line1}</span>}
+        ) : <span className="block truncate">{line1}</span>}
         {commitment && (
           <span className="shrink-0 whitespace-nowrap rounded-sm bg-paper-2 px-1 text-2xs leading-4 text-ink-2" title={commitment.title} data-testid="renewal-commitment">{commitment.text}</span>
         )}
