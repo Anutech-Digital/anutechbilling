@@ -20,21 +20,24 @@ const CUST = "c2759000-0000-4000-8000-000000000001";
 const SUB_L = "c2759000-0000-4000-8000-000000000021";
 const SUB_Q = "c2759000-0000-4000-8000-000000000022";
 const SUB_S = "c2759000-0000-4000-8000-000000000023";
+const SUB_P = "c2759000-0000-4000-8000-000000000024";
 const BILL_Q = "c2759000-0000-4000-8000-000000000031";
+const BILL_P = "c2759000-0000-4000-8000-000000000032";
+const PART_PLAN = "CT R2759 Part Billed Plan";
 const NAME = "CT R2759 Very Long Customer Name Infotech Private Limited Bengaluru";
 const LONG_PLAN = "CT R2759 Google Workspace Business Starter Flexible Plan With A Very Long Name";
-const INVOICES = ["INV-CT2759-Q"];
+const INVOICES = ["INV-CT2759-Q", "INV-CT2759-P"];
 const db = () => localDb("R-2759");
 const T = E2E_TENANT_SQL;
 
 function clean(): void {
   localCleanupDeleteIssuedInvoice(db(), "R-2759", {
     invoiceIds: INVOICES,
-    before: `update public.subscription_billings set invoice_id = null where id = '${BILL_Q}' and tenant_id = ${T};
+    before: `update public.subscription_billings set invoice_id = null where id in ('${BILL_Q}', '${BILL_P}') and tenant_id = ${T};
              update public.subscriptions set renewal_quote_id = null where id = '${SUB_S}' and tenant_id = ${T};`,
-    after: `delete from public.subscription_billings where id = '${BILL_Q}' and tenant_id = ${T};
+    after: `delete from public.subscription_billings where id in ('${BILL_Q}', '${BILL_P}') and tenant_id = ${T};
             delete from public.quotes where id = 'Q-CT2759-S' and tenant_id = ${T};
-            delete from public.subscriptions where id in ('${SUB_L}', '${SUB_Q}', '${SUB_S}') and tenant_id = ${T};
+            delete from public.subscriptions where id in ('${SUB_L}', '${SUB_Q}', '${SUB_S}', '${SUB_P}') and tenant_id = ${T};
             delete from public.customers where id = '${CUST}' and tenant_id = ${T};`,
   });
 }
@@ -65,14 +68,26 @@ function seed(): void {
               public.ist_today() + 12, 12, public.ist_today() - 1, public.ist_today() + 14, 108607.2, 92040, 18,
               jsonb_build_array(jsonb_build_object('name', 'CT R2759 line', 'qty', 40, 'rate', 2301, 'commitment', 'annual_yearly')));
     update public.subscriptions set renewal_quote_id = 'Q-CT2759-S' where id = '${SUB_S}';
+    -- R-2896: a PART-BILLED row in its worst shape (the staging one): billed monthly, the renewal date passed 3 days
+    -- ago (Google hold) and the next part not billed ("Part not billed (<Mon>)"), an earlier part still unpaid (a second flag).
+    insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, term_months, billing_cycle,
+                                      start_date, renewal_date, status, renewal_state, auto_renew)
+      values ('${SUB_P}', ${T}, '${CUST}', '${NAME}', '${PART_PLAN}', 'google', 4, 1000, 12, 'monthly',
+              (public.ist_today() - 3 - interval '12 months')::date, public.ist_today() - 3, 'active', 'notice_sent', true);
+    insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on, period_start, period_end, taxable_amount, tax_rate)
+      values ('${BILL_P}', ${T}, '${SUB_P}', (public.ist_today() - 3 - interval '12 months')::date, 11, public.ist_today() - 40,
+              (public.ist_today() - 3 - interval '1 month')::date, public.ist_today() - 3, 1000, 18);
+    insert into public.invoices (id, tenant_id, customer_id, customer_name, quote_id, status, amount, tax_amount, paid_amount, invoice_date, due_date)
+      values ('INV-CT2759-P', ${T}, '${CUST}', '${NAME}', null, 'pending', 1180, 180, 0, public.ist_today() - 33, public.ist_today() - 20);
+    update public.subscription_billings set invoice_id = 'INV-CT2759-P' where id = '${BILL_P}';
     commit;`);
 }
 
-async function openAt(page: Page, width: number, height: number): Promise<void> {
+async function openAt(page: Page, width: number, height: number, bucket = "d30", plan = LONG_PLAN): Promise<void> {
   await page.setViewportSize({ width, height });
-  await openAppPage(page, "/renewals?bucket=d30", /Renewals/);
+  await openAppPage(page, `/renewals?bucket=${bucket}`, /Renewals/);
   await expect(page.getByTestId("renewals-table")).toBeVisible({ timeout: 60_000 });
-  await expect(page.locator("tr", { hasText: LONG_PLAN }).filter({ visible: true })).toHaveCount(1, { timeout: 60_000 });
+  await expect(page.locator("tr", { hasText: plan }).filter({ visible: true })).toHaveCount(1, { timeout: 60_000 });
   /* the chips settle once the documents are read (R-2758) */
   await expect(page.getByTestId("renewals-table").getByTestId("stage-chip-loading")).toHaveCount(0, { timeout: 60_000 });
 }
@@ -97,9 +112,9 @@ async function fits(page: Page): Promise<void> {
 
 /* R-2880: the limit is 76px (three text lines: R-2759 two, R-2854's quote line the third — "at most 3 text lines, ~76px").
    Rows were 83px (R-2854, f7e61d717): a long plan name on TWO lines in Product (4-line cell) and the Last bill cell + 6px padding. */
-async function rowsShort(page: Page): Promise<void> {
+async function rowsShort(page: Page, plans: string[] = [LONG_PLAN, "CT R2759 Quarterly Plan", "CT R2759 Sent Plan"]): Promise<void> {
   const heights: string[] = [];
-  for (const plan of [LONG_PLAN, "CT R2759 Quarterly Plan", "CT R2759 Sent Plan"]) {
+  for (const plan of plans) {
     const r = await page.locator("tr", { hasText: plan }).filter({ visible: true }).evaluate((tr) => ({
       h: tr.getBoundingClientRect().height,
       cells: [...tr.querySelectorAll("td")].map((td) => Math.round(([...td.children] as HTMLElement[]).reduce((m, c) => Math.max(m, c.getBoundingClientRect().height), 0)) + ":" + (td as HTMLElement).innerText.replace(/\s+/g, " ").slice(0, 40)),
@@ -108,7 +123,7 @@ async function rowsShort(page: Page): Promise<void> {
     expect(r.h, `${plan} row height — cells ${r.cells.join(" | ")}`).toBeLessThanOrEqual(76);
   }
   const w = page.viewportSize()?.width;
-  test.info().annotations.push({ type: "measured", description: `row heights at ${w}px (long plan / quarterly / quote sent): ${heights.join(" / ")}` });
+  test.info().annotations.push({ type: "measured", description: `row heights at ${w}px (${plans.length === 1 ? plans[0] : "long plan / quarterly / quote sent"}): ${heights.join(" / ")}` });
 }
 
 test.describe("R-2759 card test", () => {
@@ -116,7 +131,7 @@ test.describe("R-2759 card test", () => {
   test.describe.configure({ mode: "serial" });
 
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
-  test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
+  test.afterAll(() => { if (CARD_TESTS_ON && process.env.R2759_KEEP !== "1") clean(); });
 
   test("Step 1: at 1280×800 (sidebar open) the TABLE shows, no horizontal scroll, Action on screen, short rows", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
@@ -138,6 +153,21 @@ test.describe("R-2759 card test", () => {
     await openAt(page, 1920, 1080);
     await fits(page);
     await rowsShort(page);
+    await page.context().close();
+  });
+
+  /* R-2896: the part-billed row ("Part not billed (<Mon>)" + the vendor-hold flag + "+N") was 91px at 1280x720 (R-2887's
+     worker) — the other rows' fixtures had none, so this promise passed without it. Same ≤ 76px, same three widths. */
+  test("Step 4: a part-billed row (part not billed + vendor hold + another flag) is ≤ 76px at 1280×720, 1568 and 1920 and still says the part", async ({ browser, baseURL }) => {
+    const page = await pageAs(browser, baseURL, "owner");
+    for (const [w, h] of [[1280, 720], [1568, 900], [1920, 1080]] as const) {
+      await openAt(page, w, h, "overdue", PART_PLAN);
+      const row = page.locator("tr", { hasText: PART_PLAN }).filter({ visible: true });
+      await expect(row.getByTestId("stage-chip")).toContainText(/Part not billed/);
+      await expect(row.locator('[data-flag="vendorHold"]')).toContainText(/Hold at Google/);
+      await fits(page);
+      await rowsShort(page, [PART_PLAN]);
+    }
     await page.context().close();
   });
 

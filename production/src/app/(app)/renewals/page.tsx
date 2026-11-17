@@ -159,7 +159,7 @@ function StageChip({ stage, size, compact = false, canQuotes = false }: { stage:
     && (stage.key === "sent" || stage.key === "draft" || stage.key === "quote-closed") ? `/quotes/${encodeURIComponent(stage.quoteId)}` : null;
   const badge = <Badge kind={stage.tone} size={size} dot className={compact ? "max-w-full whitespace-normal text-left" : undefined}>{c.chip}</Badge>;
   return (
-    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key} title={compact ? [stage.label, stage.note, stage.quoteId].filter(Boolean).join(" · ") : undefined}>
+    <div className={cn("min-w-0", compact && "[&_span]:leading-[14px] [&_p]:leading-[14px]")} data-testid="stage-chip" data-stage={stage.key} title={compact ? [stage.label, stage.note, stage.quoteId].filter(Boolean).join(" · ") : undefined}>
       <div className="flex min-w-0 flex-wrap items-center gap-1">
         {quoteHref
           ? <Link href={quoteHref as never} className="max-w-full rounded-full hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" aria-label={`${stage.label} — open ${stage.quoteId}`} data-testid="stage-chip-quote">{badge}</Link>
@@ -167,7 +167,7 @@ function StageChip({ stage, size, compact = false, canQuotes = false }: { stage:
       </div>
       {/* R-2854: ONE line under the chip — its flag in words (never an icon-only pill; "+N more" for the rest), else the
           chip's note. In the table a flagged row's note stays in the tooltip (the Due column shows the same day count). */}
-      {stage.flags.length > 0 && <div className="mt-1"><StageFlagLine flags={stage.flags} all={!compact} /></div>}
+      {stage.flags.length > 0 && <div className={compact ? "mt-0.5" : "mt-1"}><StageFlagLine flags={stage.flags} all={!compact} /></div>}
       {c.line2 && !(compact && stage.flags.length > 0) && <p className="mt-1 break-words text-2xs leading-4 text-ink-3 tabular-nums" data-testid="stage-line2">{c.line2}</p>}
     </div>
   );
