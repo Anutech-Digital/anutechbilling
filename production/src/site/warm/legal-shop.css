@@ -469,11 +469,11 @@
 /* /ssl hero as a photo band, like the home page hero (owner, 17 Nov 2026). One photo —
    public/ssl-hero-photo.webp, a laptop with floating security icons on a desk — fills a full-bleed band
    behind the heading and the lead (cover, cropped a little above centre so the shield, certificate and
-   padlock show); a light wash on the left keeps the words calm. The band ends above the price cards
-   (it ran ~70px behind them and hid the bottom of each picture — owner, 17 Nov 2026). Four rotating illustrations were tried first; the owner kept
+   padlock show); a light wash on the left keeps the words calm. The band runs the whole section, the price
+   cards floating on it (owner, 17 Nov 2026: "let those cards float without any background colour"). Four rotating illustrations were tried first; the owner kept
    only this photo ("Remove the other rotating image except the new one"), then added three SSL
    illustrations after it ("Add these 3 images", public/ssl-hero-1…3.webp): four slides, 7s each.
-   The three show whole — sized to the band's height,
+   The three show whole at the heading row's size (58% of the band, top right),
    their right edge on the content's right edge (--w-content), the band filled with their edge colour
    (the left wash softens slide 2's uneven edge); the photo fills the band. Reduced motion: the photo. */
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]):has(> .wrap > .grid-4 > .card-highlight) { padding-top: 0; }
@@ -483,8 +483,8 @@
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::after,
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::before {
-  content: ""; grid-column: 1 / -1; grid-row: 1; align-self: stretch; width: auto; height: auto; max-width: none;
-  margin: 0 calc(50% - 50vw); border-radius: 0; box-shadow: none; pointer-events: none;
+  content: ""; grid-column: 1 / -1; grid-row: 1 / span 2; align-self: stretch; width: auto; height: auto; max-width: none;
+  margin: 0 calc(50% - 50vw) calc(-1 * clamp(27px, 3.52vw, 50px)); border-radius: 0; box-shadow: none; pointer-events: none;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::after {
   z-index: -2; background: #F0F8F3 url(/ssl-hero-photo.webp) no-repeat;
@@ -493,9 +493,9 @@
 }
 @keyframes ssl-warm-slides {
   0%, 22%   { background-image: url(/ssl-hero-photo.webp); background-color: #F0F8F3; background-size: cover; background-position: right 28%; }
-  25%, 47%  { background-image: url(/ssl-hero-1.webp); background-color: #FEFEFE; background-size: auto 100%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) center; }
-  50%, 72%  { background-image: url(/ssl-hero-2.webp); background-color: #F1F6F7; background-size: auto 100%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) center; }
-  75%, 97%  { background-image: url(/ssl-hero-3.webp); background-color: #EDF5F7; background-size: auto 100%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) center; }
+  25%, 47%  { background-image: url(/ssl-hero-1.webp); background-color: #FEFEFE; background-size: auto 58%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) top 16px; }
+  50%, 72%  { background-image: url(/ssl-hero-2.webp); background-color: #F1F6F7; background-size: auto 58%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) top 16px; }
+  75%, 97%  { background-image: url(/ssl-hero-3.webp); background-color: #EDF5F7; background-size: auto 58%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) top 16px; }
   100%      { background-image: url(/ssl-hero-photo.webp); background-color: #F0F8F3; background-size: cover; background-position: right 28%; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -509,7 +509,7 @@
 }
 @media (max-width: 979px) {
   .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::after,
-  .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::before { grid-row: 1; max-width: none; height: auto; }
+  .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::before { grid-row: 1; margin-bottom: 0; max-width: none; height: auto; }
   .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::before {
     background: linear-gradient(180deg, rgba(238, 247, 243, 0.86) 0%, rgba(238, 247, 243, 0.78) 60%, var(--w-bg) 100%);
   }
