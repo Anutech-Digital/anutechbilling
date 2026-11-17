@@ -38,10 +38,10 @@ vi.mock("@/lib/queries/payroll", () => ({
   useEmployees: () => ({ data: [{ id: "emp-asha", name: "ASHA RANI", designation: "Accountant", joining_date: null }] }),
   useEmployeeSalaryHistory: () => ({ data: rows, isLoading: false }),
   useSalaryPayments: () => ({ data: rows, isLoading: false, isSuccess: true }),
-  useUnlinkedSalaryBankLines: () => ({ data: new Map() }),
   useSalaryBankLines: () => ({ data: new Map([["sal-aug", { txnId: "txn-aug", accountId: "acct-hdfc" }]]) }),
   useSalaryRevisions: () => ({ data: [], isSuccess: true }),
 }));
+vi.mock("@/lib/queries/salary-bank-lines", () => ({ useUnlinkedSalaryBankLines: () => ({ data: new Map() }) }));
 
 import SalaryRegisterPage from "./page";
 

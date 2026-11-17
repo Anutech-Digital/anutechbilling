@@ -20,7 +20,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
 import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
-import { resolveSalaryBankLines, salariesNeedingBankLine, groupWaitingBankLines, type BankLineFacts, type BankLineRef, type WaitingBankLine } from "@/lib/payroll/salary-bank-link";
+import { resolveSalaryBankLines, salariesNeedingBankLine, type BankLineFacts, type BankLineRef } from "@/lib/payroll/salary-bank-link";
 import { bookedSalaryMonths, deleteBlockMessage, hasDeleteBlockers, type DeleteBlockers } from "@/lib/payroll/statutory";
 import { arrearsSummary, type ArrearsSummary, type SalaryRevision } from "@/lib/payroll/salary-revision";
 
@@ -455,39 +455,33 @@ export function useSalaryPayments(period?: string) {
 
 
 /**
- * R-1831 / R-2894: unlinked money-out bank lines whose amount equals one of these salaries' net —
- * the fact behind "Paid — link bank line" (lib/payroll/salary-status.ts). Keyed by whole rupees →
- * EVERY such line (date, narration, bank account), oldest first; candidateBankLines() orders them
- * nearest a salary's pay date. Was one account id per amount, so a second same-amount line (the
- * other month's) was never offered. Only lines on or after `since` (the first salary month's first
- * day) count — an older line cannot pay this month. Same tenant, never a line already linked.
+ * R-1831: unlinked money-out bank lines whose amount equals one of these salaries' net —
+ * the fact behind "Paid — link bank line" (lib/payroll/salary-status.ts). Keyed by whole
+ * rupees → the account holding the line, so the next-step button can open that account's
+ * reconcile with ?match=<net> (the bank page's existing deep link). Only lines on or after
+ * `since` (the first salary month's first day) count — an older line cannot pay this month.
  */
 export function useUnlinkedSalaryBankLines(nets: number[], since: string | null) {
   const amounts = [...new Set(nets.filter((n) => n > 0).map((n) => Math.round(n)))].sort((a, b) => a - b);
   return useQuery({
-    queryKey: ["bank_transactions", "unlinked-salary-lines", since ?? "", amounts.join(",")],
+    queryKey: ["bank_transactions", "unlinked-salary-amounts", since ?? "", amounts.join(",")],
     enabled: amounts.length > 0 && Boolean(since),
-    queryFn: async (): Promise<Map<number, WaitingBankLine[]>> => {
+    queryFn: async (): Promise<Map<number, string>> => {
       const supabase = createClient();
-      const tid = await tenantId();
-      const rows = await fetchAllRows<WaitingBankLine & { tenant_id: string; matched_to_type: string | null }>((from, to) => supabase
+      const rows = await fetchAllRows<{ id: string; debit: number; bank_account_id: string }>((from, to) => supabase
         .from("bank_transactions")
-        .select("id, debit, bank_account_id, txn_date, description, tenant_id, matched_to_type")
-        .eq("tenant_id", tid)
+        .select("id, debit, bank_account_id")
         .is("matched_to_type", null)
         .in("debit", amounts)
         .gte("txn_date", since!)
         .order("id", { ascending: true })
         .range(from, to));
-      /* A salary's own reconciled line is linked even if the line row says nothing. */
-      const ids = rows.map((r) => r.id);
-      const linked = new Set<string>();
-      for (let i = 0; i < ids.length; i += 150) {
-        const { data, error } = await supabase.from("salary_payments").select("reconciled_txn_id").in("reconciled_txn_id", ids.slice(i, i + 150));
-        if (error) throw error;
-        for (const r of data ?? []) if (r.reconciled_txn_id) linked.add(r.reconciled_txn_id as string);
+      const byAmount = new Map<number, string>();
+      for (const r of rows) {
+        const k = Math.round(r.debit);
+        if (!byAmount.has(k)) byAmount.set(k, r.bank_account_id);
       }
-      return groupWaitingBankLines(rows, tid, linked);
+      return byAmount;
     },
     staleTime: 30_000,
   });

@@ -33,9 +33,9 @@ vi.mock("@/lib/queries/payroll", () => ({
   useEmployees: () => ({ data: [{ id: "emp-sajan", name: "SAJAN SINGH NEGI", designation: "Engineer", joining_date: null }] }),
   useEmployeeSalaryHistory: () => ({ data: rows, isLoading: false }),
   useSalaryPayments: () => ({ data: [] }),
-  useUnlinkedSalaryBankLines: () => ({ data: new Map() }),
   useSalaryBankLines: () => ({ data: new Map([["sal-apr", { txnId: "txn-21may", accountId: "acct-hdfc" }]]) }),
 }));
+vi.mock("@/lib/queries/salary-bank-lines", () => ({ useUnlinkedSalaryBankLines: () => ({ data: new Map() }) }));
 
 import SalaryRegisterPage from "./page";
 
