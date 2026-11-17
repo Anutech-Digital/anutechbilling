@@ -28,6 +28,21 @@ const st = vi.hoisted(() => ({
   readerHolder: null as string | null,
   scanSteps: 0,
   scanResult: { listed: 3, detailed: 3, listDone: true, complete: true, busy: false, calls: 2 } as Record<string, unknown>,
+  /* R-2681: this company's stored Zoho account types, when they were read, the chart-of-accounts reads and saves. */
+  types: {} as Record<string, string>,
+  typesAt: null as string | null,
+  coaReads: 0,
+  coaError: null as Error | null,
+  typesSaved: [] as Array<Array<{ id: string; type: string }>>,
+}));
+
+vi.mock("@/lib/integrations/zoho-books/fy-fetch", async (orig) => ({
+  ...(await orig<typeof import("@/lib/integrations/zoho-books/fy-fetch")>()),
+  readChartOfAccounts: async () => {
+    st.coaReads += 1;
+    if (st.coaError) throw st.coaError;
+    return [{ id: "A1", name: "Software", code: "", type: "expense", active: true }, { id: "A-FD", name: "Fixed Deposit", code: "", type: "other_current_asset", active: true }];
+  },
 }));
 
 vi.mock("@/lib/integrations/zoho-books/fy-import/scan", async (orig) => ({
@@ -67,7 +82,7 @@ vi.mock("@/lib/integrations/zoho-books/purchase-import/store", async (orig) => (
   readPurchaseContext: async (_db: unknown, _t: string, _r: unknown, accountMap: Record<string, string>) => (st.mapsSeen.push(accountMap), {
     fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null,
     vendors: [{ id: "v1", name: "Test Vendor", gstin: null, zohoContactId: "VZ1" }], categoryMap: { A1: "Software" }, imported: new Set<string>(),
-    bankAccounts: ACCTS, accountMap,
+    bankAccounts: ACCTS, accountMap, accountTypes: st.types,
   }),
   readPaymentContext: async (_db: unknown, _t: string, _r: unknown, accountMap: Record<string, string>, bills: Array<{ zohoId: string; total: number; tdsAmount: number; tdsSection: string | null }>) => ({
     fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null, targets: st.targets, importedPayments: new Set<string>(),
@@ -77,6 +92,9 @@ vi.mock("@/lib/integrations/zoho-books/purchase-import/store", async (orig) => (
   readBankAccounts: async () => ACCTS,
   readOtherPurchasesByMonth: async () => [{ month: "2025-05", count: 3, amount: 4200 }],
   readCategoryMap: async () => ({ A1: "Software" }),
+  readAccountTypes: async () => ({ types: st.types }),
+  readAccountTypesNewest: async () => st.typesAt,
+  saveAccountTypes: async (_admin: unknown, _t: string, accounts: Array<{ id: string; type: string }>) => { st.typesSaved.push(accounts.map((a) => ({ id: a.id, type: a.type }))); return accounts.length; },
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({ rpc: async (fn: string, args: Record<string, unknown>) => { st.rpc.push({ fn, args }); return st.rpcResult; } }),
@@ -112,6 +130,7 @@ beforeEach(() => {
   st.saved = {}; st.savedUse = []; st.mapsSeen = [];
   st.readerRpcs = []; st.readerHolder = null; st.scanSteps = 0;
   st.scanResult = { listed: 3, detailed: 3, listDone: true, complete: true, busy: false, calls: 2 };
+  st.types = { A1: "expense" }; st.typesAt = new Date().toISOString(); st.coaReads = 0; st.coaError = null; st.typesSaved = [];
 });
 
 describe("R-2502 purchase-import route", () => {
@@ -269,6 +288,81 @@ describe("R-2661 purchase-import route — one Zoho reader at a time", () => {
       await POST(req({ action: "read", fy: "2025-26", kind: "vendorpayments" }));
       expect(readerCalls()).toEqual(["zoho_reader_take", "zoho_reader_release"]);
       expect(st.readerRpcs[1][1]).toEqual({ p_tenant: "t1", p_name: "FY 2025-26 purchases from Zoho" });
+    } finally { vi.unstubAllEnvs(); }
+  });
+});
+
+describe("R-2681 purchase-import route — Zoho's own account type", () => {
+  const env = () => { vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "id"); vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "secret"); };
+
+  it("preview: a bill on a mapped fixed-deposit account is 'Not an expense — needs another path'; types not read → left out; unmapped list carries the type", async () => {
+    st.types = { A1: "other_current_asset" };
+    let body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.purchases.counts.import).toBe(0);
+    expect(body.purchases.skipped).toContainEqual(expect.objectContaining({ number: "VB-1",
+      reason: 'Not an expense — needs another path: in Zoho, "Software" is an account of type "other current asset". Fixed deposits, loans, GST, assets and advances are never booked as an expense.' }));
+    st.types = {};
+    body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.purchases.skipped).toContainEqual(expect.objectContaining({ number: "VB-1", reason: expect.stringMatching(/^Zoho account types are not read yet/) }));
+    st.types = { A1: "expense", A7: "other_current_liability" };
+    st.facts.bills = [bill({ lines: [{ accountId: "A7", accountName: "Output CGST", description: "", hsn: "", qty: 1, taxable: 1000, tax: 0, itcEligible: true }] })];
+    body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.purchases.unmapped).toEqual([expect.objectContaining({ accountId: "A7", type: "other_current_liability", notExpense: true })]);
+    expect(st.rpc).toEqual([]);
+  });
+
+  it("saveMap refuses an expense category for an account Zoho types as not an expense; clearing it is allowed", async () => {
+    st.types = { A1: "expense", "A-FD": "other_current_asset" };
+    const res = await POST(req({ action: "saveMap", fy: "2025-26", rows: [{ zohoAccountId: "A-FD", zohoAccountName: "Fixed Deposit", category: "Rates & Taxes" }] }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('In Zoho, "Fixed Deposit" is an account of type "other current asset" — not an expense, it cannot get an expense category.');
+    expect(st.rpc).toEqual([]);
+    expect((await POST(req({ action: "saveMap", fy: "2025-26", rows: [{ zohoAccountId: "A-FD", category: "" }] }))).status).toBe(200);
+    expect(st.rpc[0].fn).toBe("save_zoho_account_categories");
+  });
+
+  it("read: the chart of accounts is read and stored when no types are stored or they are over 12 h old — not on every press", async () => {
+    env();
+    try {
+      st.typesAt = new Date().toISOString();
+      await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(st.coaReads).toBe(0);
+      st.typesAt = null;
+      await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(st.coaReads).toBe(1);
+      expect(st.typesSaved[0]).toEqual([{ id: "A1", type: "expense" }, { id: "A-FD", type: "other_current_asset" }]);
+      st.typesAt = new Date(Date.now() - 13 * 3600_000).toISOString();
+      await POST(req({ action: "read", fy: "2025-26", kind: "bills" }));
+      expect(st.coaReads).toBe(2);
+      expect(st.scanSteps).toBe(3);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("read: a chart-of-accounts failure with OLDER types stored keeps them and the read goes on; with NONE stored the owner sees the error", async () => {
+    env();
+    try {
+      const { ZohoApiError } = await import("@/lib/integrations/zoho-books/api");
+      st.coaError = new ZohoApiError("Zoho Books returned an error. Try again; if it repeats, disconnect and connect again.", "books_500", 500);
+      st.typesAt = new Date(Date.now() - 13 * 3600_000).toISOString();
+      const res = await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(res.status).toBe(200);
+      expect(st.typesSaved).toEqual([]);
+      expect(st.scanSteps).toBe(1);
+      st.typesAt = null;
+      const res2 = await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(res2.status).toBe(502);
+      expect((await res2.json()).error).toMatch(/Zoho Books returned an error/);
+      expect(st.scanSteps).toBe(1);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("read: 'Read from Zoho again' (a new list read started after the types were read) reads them again within the 12 h", async () => {
+    env();
+    try {
+      st.typesAt = new Date(Date.now() - 3600_000).toISOString();
+      st.runs.expenses = { nextPage: 1, listDone: false, listStartedAt: new Date().toISOString() } as never;
+      await POST(req({ action: "read", fy: "2025-26", kind: "expenses" }));
+      expect(st.coaReads).toBe(1);
     } finally { vi.unstubAllEnvs(); }
   });
 });

@@ -8,7 +8,7 @@
 --      A4 two documents + two debits of one amount = 'ambiguous' (4 rows); the Zoho reference = the
 --         line's own UTR picks the one pair (sure) — the other document stays ambiguous (fail closed);
 --      A5 paid from the card account: never paired with the bank account's same-amount debit; petty
---         cash, a USD row, a Salaries row and a non-Zoho expense are not listed;
+--         cash, a USD row and a non-Zoho expense are not listed (R-2913: a Zoho-imported Salaries row IS listed — r2913 test; only Payroll's own are not);
 --      A6 the only same-amount debit is already reconciled as an expense = 'booked_elsewhere';
 --      A7 paid date on / before the books lock = 'locked';
 --      A8 19 days apart with no reference = 'no_line' naming that debit; 24 days apart WITH the same
@@ -30,6 +30,21 @@
 --   C. A manager is refused; the other company's owner sees only its own one pair.
 
 begin;
+
+-- R-2681: the import now needs Zoho's account types (fail closed). Every account this test's Zoho
+-- documents use is an expense / COGS account in Zoho, so each scan row seeds its accounts as 'expense'
+-- (rolled back with the file).
+create function public._r2681_test_seed_types() returns trigger language plpgsql security definer set search_path to 'public' as $f$
+begin
+  if to_regclass('public.zoho_account_types') is null then return new; end if;
+  insert into public.zoho_account_types (tenant_id, zoho_account_id, account_type)
+  select distinct new.tenant_id, l->>'accountId', 'expense'
+    from jsonb_array_elements(case when jsonb_typeof(new.payload->'lines') = 'array' then new.payload->'lines' else '[]'::jsonb end) l
+   where coalesce(l->>'accountId', '') <> ''
+  on conflict do nothing;
+  return new;
+end $f$;
+create trigger r2681_test_seed_types after insert or update on public.zoho_fy_scan for each row execute function public._r2681_test_seed_types();
 
 create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
 begin
