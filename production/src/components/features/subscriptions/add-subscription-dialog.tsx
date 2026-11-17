@@ -226,7 +226,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
      Still true after the fix: a HALF-typed decimal ("136.") reads back as "" from
      a type="number" input, because the DOM sanitises its own value. That is
-     browser behaviour, not this component's. Prices here are whole rupees, so
+     browser behaviour, not this component's. Prices here are whole rupees (R-2883 refuses paise), so
      the alternative — type="text" + inputMode="decimal", losing min= and the
      spinner — is not worth it. See add-subscription-price-input.test.tsx. */
   const [seatsText, setSeatsText] = React.useState("10");
@@ -243,6 +243,10 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
   /** ₹/seat in the CHOSEN unit — per month for both monthly choices, per year for
    *  yearly. `terms.unit` says which; nothing below may assume. */
   const pricePerSeat = Number.parseFloat(priceText) || 0;
+  /** R-2883 (Pardeep, 17 Nov): whole rupees only. quotes.subtotal / amount are INTEGER columns, so a
+   *  price with paise (799.50 x 3 = 2398.5) failed the save. It is refused here, before save, and never
+   *  rounded silently — on every path (Postpaid, Payment Received, Opening). */
+  const priceHasPaise = Number.isFinite(pricePerSeat) && Math.abs(pricePerSeat - Math.round(pricePerSeat)) > 1e-9;
   /** Yearly-with-one-invoice keeps being the default, so an operator who ignores the
    *  new dropdown gets exactly the behaviour that shipped before it existed. */
   const [billingChoice, setBillingChoice] = React.useState<BillingChoice>("annual_yearly");
@@ -855,6 +859,10 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       toast.error("Payment due date is required for postpaid", {
         description: "Enter the date you agreed the balance is due — it drives the countdown and the overdue highlight.",
       });
+      return;
+    }
+    if (priceHasPaise) {
+      toast.error("Enter a whole-rupee price", { description: "Paise are not stored — type the price without paise, e.g. 800 not 799.50." });
       return;
     }
     if (seats <= 0) {
@@ -1670,6 +1678,11 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 onChange={(e) => { setPriceText(e.target.value); setPriceHint(null); setPriceProposal(null); }}
                 required
               />
+              {priceHasPaise && (
+                <p role="alert" className="mt-1 text-2xs font-semibold leading-snug text-rose" data-testid="price-whole-rupee">
+                  Enter a whole-rupee price
+                </p>
+              )}
               {priceHint && (
                 <p className="mt-1 text-2xs leading-snug text-ink-2" data-testid="price-switch-hint">
                   {priceHint}
@@ -1966,7 +1979,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" disabled={submitting} className="font-bold px-5">
+            <Button variant="primary" type="submit" disabled={submitting || priceHasPaise} className="font-bold px-5">
               {submitting ? "Creating Records..." : "⚡ Activate Subscription & Auto-Sync Ledger"}
             </Button>
           </div>
