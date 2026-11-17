@@ -22,7 +22,7 @@
  * it is built from the documented `chartofaccounts/accounttransactions` (ZohoBooks.accountants.READ).
  * The year-end tie-out (R-2506) compares it with Zoho's own Trial Balance screen.
  */
-import { getOne, listPage, PAGE_SIZE, ZohoApiError } from "./api";
+import { getOne, isZohoDayLimit, listPage, PAGE_SIZE, ZohoApiError } from "./api";
 import { paceWaitMs, ZOHO_CALLS_PER_MIN, type PaceEntry } from "./zoho-pace";
 import { FY_DOC_KINDS, fyDateRange, type DateRange, type FyDocKind } from "./config";
 
@@ -374,7 +374,13 @@ export async function readChartOfAccounts(orgId: string, token: string, f: Fetch
   for (const filter of COA_FILTERS) {
     for (let page = 1; page <= MAX_PAGE; page++) {
       onCall?.();
-      const p = await coaPage(orgId, token, page, f, filter, "account_name");
+      let p;
+      try { p = await coaPage(orgId, token, page, f, filter, "account_name"); } catch (e) {
+        /* The inactive list is the extra pass: Zoho refusing it never loses the whole list already read
+           (the day limit and a stale token still go up). */
+        if (filter === COA_FILTERS[0] || !(e instanceof ZohoApiError) || isZohoDayLimit(e) || e.status === 401) throw e;
+        break;
+      }
       let fresh = 0;
       for (const a of p.rows) if (!byId.has(a.id)) { byId.set(a.id, a); fresh += 1; }
       if (fresh === 0 || !(p.more || p.full)) break;

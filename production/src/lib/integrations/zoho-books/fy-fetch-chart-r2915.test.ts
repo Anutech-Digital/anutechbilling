@@ -82,6 +82,16 @@ describe("R-2915 readChartOfAccounts — every account, every page", () => {
     expect(lists(urls, "AccountType.Inactive")).toHaveLength(1);
   });
 
+  it("Zoho refusing the inactive list keeps the whole list already read; a stale token there still goes up", async () => {
+    const base = fakeZoho({ all: [{ rows: [acc("a1"), acc("a2")], more: false }] });
+    const refuse = (status: number, code: number) => (async (input: string) => (new URL(input).searchParams.get("filter_by") === "AccountType.Inactive"
+      ? json({ code, message: "no" }, status) : base.f(input))) as unknown as typeof fetch;
+    expect((await readChartOfAccounts(ORG, TOKEN, refuse(400, 2))).map((x) => x.id)).toEqual(["a1", "a2"]);
+    await expect(readChartOfAccounts(ORG, TOKEN, refuse(401, 57))).rejects.toThrow();
+    const allDown = (async () => json({ code: 9, message: "down" }, 500)) as unknown as typeof fetch;
+    await expect(readChartOfAccounts(ORG, TOKEN, allDown)).rejects.toThrow();
+  });
+
   it("sorts by a column that cannot tie (account name) — pages of blank account codes shift", async () => {
     const { f, urls } = fakeZoho({ all: [{ rows: [acc("a1")], more: false }] });
     await readChartOfAccounts(ORG, TOKEN, f);
