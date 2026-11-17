@@ -18,5 +18,10 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default function SignupLayout({ children }: { children: React.ReactNode }) {
-  return <PersonalSignupFlagProvider enabled={personalSignupEnabled()}>{children}</PersonalSignupFlagProvider>;
+  /* data-auth-page: the Warm theme styles this page (extra-forms.css); display: contents, no box. */
+  return (
+    <div data-auth-page="signup" style={{ display: "contents" }}>
+      <PersonalSignupFlagProvider enabled={personalSignupEnabled()}>{children}</PersonalSignupFlagProvider>
+    </div>
+  );
 }

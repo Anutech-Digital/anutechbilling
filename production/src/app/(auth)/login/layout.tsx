@@ -11,5 +11,6 @@ export const metadata: Metadata = {
 };
 
 export default function LoginLayout({ children }: { children: React.ReactNode }) {
-  return children;
+  /* data-auth-page: the Warm theme styles this page (extra-forms.css); display: contents, no box. */
+  return <div data-auth-page="login" style={{ display: "contents" }}>{children}</div>;
 }
