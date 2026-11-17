@@ -58,7 +58,8 @@ const asToolResults = (run: LoopRun): HelpToolResult[] =>
   run.results.map((r) => ({ tool: r.name as HelpDataToolName, ok: true, text: r.text, href: r.href, label: r.label, sources: r.sources }));
 
 export interface HelpLoopArgs {
-  session: HelpSession;
+  /** Opens THE question's one session (the route's sessionOnce). Called inside the loop's guard: a refused session is a plain answer, never a 500. */
+  openSession: () => HelpSession;
   userId: string;
   tenantId: string;
   role: string | null | undefined;
@@ -78,7 +79,7 @@ export async function answerWithTools(a: HelpLoopArgs): Promise<HelpLoopResult> 
   let run: LoopRun;
   try {
     const ask = claudeToolAsk({ apiKey: a.apiKey, model: a.model, system: a.system, user: a.user, client: a.client });
-    run = await runHelpToolLoop(a.session, { userId: a.userId, tenantId: a.tenantId, role: a.role }, ask, a.onCall);
+    run = await runHelpToolLoop(a.openSession(), { userId: a.userId, tenantId: a.tenantId, role: a.role }, ask, a.onCall);
   } catch (err) {
     console.error("[ai/help] loop failed:", (err as Error)?.message);
     return { answer: plain(LOOP_MESSAGES.model_error), outcome: "model_error", sources: [], tokensIn: 0, tokensOut: 0 };

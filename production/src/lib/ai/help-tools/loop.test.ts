@@ -22,6 +22,7 @@ const { openHelpSession } = await import("./session");
 const { defineHelpTool } = await import("./types");
 const { buildRegistry, helpToolsFor } = await import("./registry");
 const { runHelpTools } = await import("./runner");
+const { runHelpToolLoop } = await import("../help-data-tools");
 const { helpToolRateOk, resetHelpToolRate, HELP_TOOL_RATE } = await import("./limits");
 const { runToolLoop, HELP_LOOP_ROUNDS_MAX } = await import("./loop");
 const { HELP_UNTRUSTED_BEGIN, HELP_UNTRUSTED_END } = await import("./untrusted");
@@ -411,5 +412,18 @@ describe("JSON schema generation", () => {
 
   it("the six real tools offer an empty closed object", () => {
     for (const t of helpToolsFor("owner")) expect(t.inputSchema).toEqual({ type: "object", properties: {}, required: [], additionalProperties: false });
+  });
+});
+
+describe("runHelpToolLoop (the route's wiring): the tools offered are the role's", () => {
+  it("owner is offered the registry's tools; another role is offered none of the owner-only tools", async () => {
+    const offered = async (role: string) => {
+      let names: string[] = [];
+      await runHelpToolLoop(openHelpSession(), { userId: U, tenantId: A, role }, async (ask) => { names = ask.tools.map((t) => t.name); return end("{}"); });
+      return names.sort();
+    };
+    expect(await offered("owner")).toEqual(["active_subscriptions", "leads_by_stage", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]);
+    expect(await offered("manager")).toEqual([]);
+    expect(await offered("not_a_role")).toEqual([]);
   });
 });
