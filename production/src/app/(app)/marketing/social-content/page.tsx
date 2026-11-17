@@ -217,7 +217,8 @@ export default function SocialContentPage() {
       {picturing === target && <p role="status" className="text-xs text-ink-3">The AI is drawing the picture… about 15 seconds.</p>}
       {pictureProblem?.target === target && <p role="alert" className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">{pictureProblem.text}</p>}
       {value && (shown
-        ? <div className="overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={shown} alt="Picture preview" className="max-h-60 w-full object-contain" /></div>
+        ? <div className="overflow-hidden rounded-lg border border-hairline bg-paper-2">{/* eslint-disable-next-line @next/next/no-img-element -- R-2904: Facebook CDN / any public picture link, short-lived signed URL; next/image would need every Meta host in remotePatterns */}
+<img src={shown} alt="Picture preview" className="max-h-60 w-full object-contain" /></div>
         : isAi && <p className="text-xs text-ink-3">Picture saved. Facebook did not send a preview just now.</p>)}
     </div>;
   }
@@ -695,7 +696,8 @@ export default function SocialContentPage() {
             {editing === item.id ? <div className="mt-3 space-y-2"><textarea aria-label="Post text" className={`${inputClass} min-h-28`} value={editCaption} maxLength={2200} onChange={e => setEditCaption(e.target.value)} />{pictureBox(item.id, editMediaUrl, setEditMediaUrl, item.topic, editCaption, "Picture", editMediaUrl === item.media_url ? item.media_preview : null)}<label className="block text-xs font-medium text-ink-2">Post time, India time<input type="datetime-local" className={`${inputClass} mt-1`} value={editPostAt} onChange={e => setEditPostAt(e.target.value)} /></label><div className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => void act(item.id, "save", { caption: editCaption, mediaUrl: editMediaUrl || null, scheduledAt: editPostAt || null })}>Save changes</Button><Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button></div></div>
               : <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{item.caption || (item.format === "story" ? "Picture-only Story" : "No text")}</p>{item.media_url && (pagePhotoId(item.media_url) && !item.media_preview
                 ? <p className="mt-3 text-xs text-ink-3">AI picture saved in your Facebook Page&apos;s photos (Facebook did not send a preview just now).</p>
-                : <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={pagePhotoId(item.media_url) ? item.media_preview! : item.media_url} alt="Post picture" className="max-h-80 w-full object-contain" /></div>)}</>}
+                : <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2">{/* eslint-disable-next-line @next/next/no-img-element -- R-2904: Facebook CDN / any public picture link, short-lived signed URL; next/image would need every Meta host in remotePatterns */}
+<img src={pagePhotoId(item.media_url) ? item.media_preview! : item.media_url} alt="Post picture" className="max-h-80 w-full object-contain" /></div>)}</>}
             {item.status === "published" && (item.stats ? <p className="mt-2 text-xs text-ink-2">Results: {statsLine(item.stats) || "no numbers from Meta yet"}</p> : <p className="mt-2 text-xs text-ink-3">Results are read 2 days after posting, when the AI plans the week.</p>)}
             {item.error && <p className="mt-2 rounded-lg bg-rose-soft p-2 text-xs text-rose-ink">Meta said: {item.error} — fix it, then press Schedule again.</p>}
             <div className="mt-4 flex flex-wrap gap-2 border-t border-hairline pt-3">
