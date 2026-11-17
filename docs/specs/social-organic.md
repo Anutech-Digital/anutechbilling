@@ -1,70 +1,127 @@
-# G-SOCIAL: organic Facebook + Instagram growth
+# G-SOCIAL: organic social growth (Facebook, Instagram, LinkedIn)
 
-Started 5 Nov 2026, from a request by Abhishek. Board goal card: `G-SOCIAL`.
+Started 5 Nov 2026 from Abhishek's request. Reshaped 12 Nov 2026 (v2): one place to grow the
+company's organic audience, where an AI agent does every action the platforms allow, and a person
+can watch it, change it, stop it, or do the same action by hand. Board goal card: `G-SOCIAL`.
+v3 (12 Nov 2026, Abhishek): AI pictures per post (R-2697), a strategy per platform, post results,
+and weekly learning (R-2705..R-2707).
 
 ## 1. Goal
 
-The marketing team grows the followers of the company's connected Facebook Page and Instagram professional account.
-- AI writes the posts and the comment replies.
-- A person approves every post and every reply before it goes out.
-- The app publishes at the planned time.
+The marketing person opens **Marketing → Social growth** and:
+- sees the followers on Facebook, Instagram and LinkedIn and how they move week by week;
+- sets each AI action to **Off / Ask me first / Autopilot**;
+- reads a live list of what the AI did and will do, with Edit / Stop on every item, and one big
+  **Stop all AI** switch;
+- does any of the same actions by hand from the same page;
+- gets a short daily to-do list for the actions the platforms do not let software do.
 
-**Measure:** one post a week is planned, approved and published from the app for 4 weeks in a row, and the report shows the follower change for each week.
+**Measure:** for 4 weeks in a row at least 3 posts a week go out on every connected platform from
+the app, comments get an answer within a day, and the page shows the follower change each week.
 
-## 2. Users & flows
+## 2. What grows an organic audience — and who does it
 
-| Who | Screen | Does |
+| Action | AI (via API) | Notes |
 |---|---|---|
-| Owner | Marketing → Facebook Page | Connects the Page once, which also links its Instagram account. |
-| Marketing / manager / owner | Marketing → Social content | Writes a draft, or presses "AI write" on a topic. Sets the post time. Presses Submit for review. |
-| Owner / manager | Social content | Approves the draft or sends it back. An approved post becomes Scheduled. |
-| System (cron) | — | Publishes Scheduled posts when their time comes. Every Monday it prepares drafts, and never publishes them. |
-| Marketing / manager / owner | Social content → Comments | Sees new comments with an AI reply draft. Edits it, then presses Send reply. |
-| Owner / manager | Social content → Report | Sees followers, reach, the best post and AI advice for next week. |
+| Post 3–5 times a week at good times, varied formats | ✅ FB, IG (needs a picture), LinkedIn Page | Picture library for IG |
+| Answer comments on our posts quickly | ✅ FB, IG, LinkedIn | R-2689 |
+| Learn what worked, write more of it | ✅ weekly report + next week's brief | R-2690 |
+| Answer DMs | later | needs extra Meta permission and the 24-hour rule |
+| Like / comment on others' posts, join groups, invite people to like the Page, follow accounts | ❌ never by software | breaks Meta / LinkedIn rules, can get the Page blocked → **daily to-do list** for the person (R-2691) |
 
-## 3. Rules
+## 3. Users & flows
 
-- Nothing reaches Facebook or Instagram without a person's approval: neither a post nor a reply.
-- Never auto-follow, auto-like, auto-DM or comment on other people's pages. These break Meta's rules and can get the Page blocked.
-- Only owner and manager approve. Marketing writes drafts. Other roles cannot open the screen.
-- Page tokens are sealed in `tenant_secrets` and never reach the browser.
-- Instagram needs a public HTTPS image or video URL. Meta cannot fetch a `localhost` URL.
-- Every time shown on screen is IST.
+| Who | Does |
+|---|---|
+| Owner | Connects Facebook Page (links Instagram) and LinkedIn Company Page once; adds a Gemini key; sets each AI action's mode; can press **Stop all AI**. |
+| Marketing / manager | Writes posts and replies by hand; approves AI items when the mode is Ask me first; Stops / edits any scheduled item. |
+| AI (crons) | Plans the week's posts (Monday), publishes approved items at their time, drafts or sends comment replies, takes a daily follower snapshot. Never acts while Stop all AI is on. |
 
-## 4. Data
+## 4. Rules
 
-- `tenant_secrets.facebook_page_*`: 7 columns, all secret.
-- `social_content`: drafts and posts. Columns: status `draft → review → approved/scheduled → published | failed`, platform, format, caption, media_url, scheduled_at (R-2510), external_id, error.
-- `social_content_settings`: auto_drafts, brief, last_generated_on.
-- New in R-2511: `social_comments`, the comments fetched from our posts plus the AI reply and its reply status.
-- New in R-2512: `social_follower_snapshots`, one row a day per platform.
+- **Stop all AI** wins over every mode: while it is on, no AI item is planned or published; items
+  already scheduled by the AI wait (shown as "Paused").
+- Mode per action: Off (AI does nothing), Ask me first (AI items wait in Waiting for approval),
+  Autopilot (AI items go out at their time). Items a person writes always follow the normal approval flow.
+- Every AI or person action is written to the activity list (who, what, where, when, result).
+- Never auto-follow, auto-like, auto-DM, or comment on other people's pages.
+- Only the owner changes modes and resumes the AI; marketing (and owner/manager) approve, schedule, stop and change strategies (R-2709).
+- Tokens stay sealed in `tenant_secrets`; never sent to the browser. Times shown in IST.
+- **Same idea, not the same words (R-2705):** each platform has a strategy (kinds of post with %
+  share, tone, length, hashtags, posting hour, avoid). Topic and picture are shared; the text is
+  written per platform from its strategy, and each platform posts at its own hour.
+- **Learning (R-2707):** weekly, before planning, with 3+ posts with results (last 6 weeks) on a
+  platform, the AI keeps what worked and changes what did not. Autopilot → new version active;
+  Ask me first → it waits as proposed for **Use it / Keep old**. Owner/manager may edit any time
+  (a new version). Fewer results → no change, the plan note says how many more are needed.
+- **Comments (R-2689):** Off / Ask me first (default) / Autopilot. The AI writes a reply to each new
+  comment; on Autopilot it sends questions/praise itself, never complaints (a person answers) or
+  spam. Checked every ~25 min by the social-publish cron and by "Check comments now". Needs Meta
+  `pages_read_user_content`, `pages_manage_engagement`, `instagram_manage_comments` (switched on with
+  `META_COMMENT_SCOPES=1` after adding them in the Meta app); without them the page says so.
+- **Followers + weekly report (R-2690):** today's count is saved daily (cron + page open); cards show
+  the change over 7 / 30 days and a 30-day line. The weekly plan writes a report (followers, posts,
+  best post, comments answered) with the AI's advice from real numbers only; "Make report now" too.
+- **Daily to-do (R-2691):** 5 things only a person may do (invites, commenting on others' posts,
+  sharing to groups, real photos, reviews), made once a day; ticks are saved and logged in Activity.
+- **Many Pages (R-2729..R-2731):** connecting Facebook saves every Page the login manages (token sealed
+  in `social_page_tokens`, service role only); the chosen Page is the main one and is on, others are
+  switched on in "Manage Pages". Every post, comment, strategy, follower count and report carries its
+  `page_id`; each Page posts with its own token. "All Pages" shows each Page's followers, waiting
+  approvals and comments; a post can go to several Pages (the AI adjusts the text per Page; an AI
+  picture is copied to each Page's photos). The to-do list is one list for all Pages.
+- **AI pictures (R-2697):** one picture per post, no words/logos/prices/real people, kept as an
+  unpublished photo on the Page; the fresh image link is read just before posting.
 
-## 5. Constraints
+## 5. Data
 
-- Meta Graph API scopes:
-  - Facebook Page: `pages_manage_posts`, `pages_read_engagement`, `pages_manage_engagement` (to reply), `read_insights`.
-  - Instagram: `instagram_basic`, `instagram_content_publish`, `instagram_manage_comments`, `instagram_manage_insights`.
-- New scopes need the Page to be connected again.
-- Meta App Review is needed before these scopes work on Pages whose admins are not app testers.
-- Rate limits are per Page token. The crons process at most 25 items per company per run.
-- New migrations go in `prisma/migrations`. `supabase/migrations` is frozen.
+- `social_content` (posts, all platforms; R-2688 adds `linkedin`), `social_content_settings`
+  (brief, autopilot, posts_per_week, picture_urls; R-2687 adds `ai_paused`).
+- New `social_activity` (R-2687): tenant_id, at, actor (`ai` / user id), platform, action, detail,
+  content_id, result.
+- R-2689 `social_comments`; R-2690 `social_follower_snapshots` (one row a day per platform).
+- R-2705 `social_strategy` (tenant, platform, version, plan jsonb, reason, status active /
+  proposed / replaced / rejected; one active + one proposed per platform). `social_content` gains
+  `post_type`, `strategy_version`, `stats` jsonb (reach, likes, comments, shares, saves), `stats_at`.
+- R-2706 results are read 2+ days after posting (≤ 40 a run) when the week is planned.
+- R-2689 `social_comments` (platform, external_id, author, message, kind, status new/draft/replied/
+  ignored/failed, ai_reply, reply, replied_by ai/person); `social_followers` (one row per day per
+  platform); `social_reports` (per week); `social_todo` (per day, items jsonb).
+  `social_content_settings` gains `comment_mode`, `comments_checked_at`, `comments_problem`,
+  `followers_checked_on`. Migration 20261117060538.
 
-## 6. Owner decisions
+## 6. Constraints
+
+- Meta scopes as before plus `pages_manage_engagement`, `instagram_manage_comments`,
+  `read_insights`, `instagram_manage_insights` (reconnect needed). LinkedIn: `w_organization_social`,
+  `r_organization_social`, follower stats need `rw_organization_admin`.
+- Instagram needs a public HTTPS picture. Rate limits per token; crons ≤ 25 items per company per run.
+
+## 7. Owner decisions
 
 | Question | Answer | Who, date |
 |---|---|---|
-| Must a person approve every post and reply? | Yes, always | Abhishek, 5 Nov 2026 |
-| Who may approve? | Owner and manager (default built) | decided in session, 5 Nov 2026 |
-| How many posts a week? | 3–5 suggested. The Monday AI draft count is a setting (default 1 per platform) | decided in session, 5 Nov 2026 |
+| Must a person approve every post? | Replaced: per action **Off / Ask me first / Autopilot**, plus Stop all AI | Abhishek, 11–12 Nov 2026 |
+| Who may approve? | **The marketing person** approves the AI's posts (owner/manager may, need not). A person's own post is scheduled straight away ("Schedule post"). AI posts waiting → bell to marketing (owner when none). Resume AI + AI settings stay owner-only (R-2709) | Abhishek, 12 Nov 2026 (was: owner and manager, 5 Nov) |
+| Posts a week | 3 default, 1–7 setting | decided in session, 11 Nov 2026 |
+| Same text on every platform? | No — same topic + picture, text per platform from its strategy | Abhishek, 12 Nov 2026 |
+| Strategy should update from data | Yes — weekly; keep what works, change what does not | Abhishek, 12 Nov 2026 |
+| One company, many Pages? | Yes — one person runs the Pages of several business portfolios (each with its Instagram) from one screen: Page picker + All Pages; each Page has its own brief and AI mode; Stop all AI stays company-wide (R-2729..R-2731) | Abhishek, 13 Nov 2026 |
+| Which Pages does the marketing team see? | All Pages | Abhishek, 13 Nov 2026 |
+| Score of a post | likes + 2×comments + 3×shares + 3×saves; 3 results minimum to learn | decided in session, 12 Nov 2026 |
 
-## 7. Cards graph
+## 8. Cards graph
 
 ```
-R-2509 (fix Codex work: tests, migrations, safety)
-   ├─> R-2510 (scheduled auto-publish)  ──> R-2512 (weekly report)
-   └─> R-2511 (comments + AI reply)
+R-2687 (Social growth page: platforms + modes + activity list + Stop all AI)
+   ├─> R-2688 (LinkedIn posts in the same queue)
+   ├─> R-2689 (comment replies: AI + manual)
+   ├─> R-2690 (follower tracking + weekly report)
+   └─> R-2691 (daily to-do list)
 ```
 
-- Wave 1: R-2509.
-- Wave 2: R-2510 and R-2511 run in parallel. They share no files, apart from each adding its own new migration folder.
-- Wave 3: R-2512.
+R-2697 (AI picture per post) → R-2705 (strategy per platform + per-platform text)
+   → R-2706 (post results) → R-2707 (weekly learning)
+```
+
+- Wave 1: R-2687. Wave 2: R-2688, R-2689. Wave 3: R-2690, R-2691. R-2697 → R-2705 → R-2706 → R-2707 in order.

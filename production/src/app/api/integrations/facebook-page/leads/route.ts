@@ -15,7 +15,7 @@ export const maxDuration = 120;
 export async function POST(request: NextRequest) {
   const caller = await facebookPageCaller();
   if (!caller) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!caller.canManage) return NextResponse.json({ error: "Only an owner or manager can fetch Facebook leads.", description: "Ask the owner to press Fetch leads now." }, { status: 403 });
+  if (!caller.canManage) return NextResponse.json({ error: "Only the owner, a manager or marketing can fetch Facebook leads.", description: "Ask the owner to press Fetch leads now." }, { status: 403 });
   const body = await request.json().catch(() => null) as { days?: unknown } | null;
   const days = typeof body?.days === "number" && Number.isInteger(body.days) && body.days >= 1 && body.days <= 90 ? body.days : 30;
   try {

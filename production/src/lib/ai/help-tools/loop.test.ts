@@ -239,9 +239,31 @@ describe("bounds", () => {
     const d = drive([eight()]);
     const run = await d.run();
     expect(run.outcome).toBe("calls_cap");
-    expect(seen.count).toBe(20); // 8 + 8 + 4, the rest refused
+    expect(seen.count).toBe(16); // 8 + 8; the third turn (8 more = 24) is refused whole BEFORE the runner counts it (R-2776)
     expect(d.asks).toHaveLength(3);
-    expect(run.results).toHaveLength(20);
+    expect(run.results).toHaveLength(16);
+  });
+
+  it("R-2776: a turn with more calls than the question cap is refused BEFORE it spends the person's budget", async () => {
+    const fifty = askTools(...Array.from({ length: 50 }, (_, i) => ({ id: `t${i}`, name: "thing_count" })));
+    const d = drive([fifty, end("{}")]);
+    const run = await d.run();
+    expect(run.outcome).toBe("calls_cap");
+    expect(seen.count).toBe(0);
+    expect(d.ran).toHaveLength(0); // the runner never saw the turn
+    expect(run.toolCalls).toBe(0);
+    for (let i = 0; i < HELP_TOOL_RATE.limit; i++) expect(helpToolRateOk(U), `call ${i + 1}`).toBe(true); // the whole 120 are still there
+    expect(helpToolRateOk(U)).toBe(false);
+  });
+
+  it("R-2776: a turn that does not fit in what is left of the question is refused whole, earlier results kept", async () => {
+    const ten = () => askTools(...Array.from({ length: 10 }, (_, i) => ({ id: `t${i}`, name: "thing_count" })));
+    const d = drive([ten(), askTools(...Array.from({ length: 11 }, (_, i) => ({ id: `u${i}`, name: "thing_count" })))]);
+    const run = await d.run();
+    expect(run.outcome).toBe("calls_cap");
+    expect(seen.count).toBe(10);
+    expect(run.results).toHaveLength(10);
+    expect(d.ran).toHaveLength(1);
   });
 
   it("the question's call count is one count over all rounds (one session)", async () => {
@@ -411,7 +433,8 @@ describe("JSON schema generation", () => {
   });
 
   it("the six real tools offer an empty closed object", () => {
-    for (const t of helpToolsFor("owner")) expect(t.inputSchema).toEqual({ type: "object", properties: {}, required: [], additionalProperties: false });
+    const SIX = ["active_subscriptions", "renewals_due", "overdue_invoices", "todays_followups", "open_quotes", "leads_by_stage"];
+    for (const t of helpToolsFor("owner").filter((x) => SIX.includes(x.name))) expect(t.inputSchema).toEqual({ type: "object", properties: {}, required: [], additionalProperties: false });
   });
 });
 
@@ -422,7 +445,7 @@ describe("runHelpToolLoop (the route's wiring): the tools offered are the role's
       await runHelpToolLoop(openHelpSession(), { userId: U, tenantId: A, role }, async (ask) => { names = ask.tools.map((t) => t.name); return end("{}"); });
       return names.sort();
     };
-    expect(await offered("owner")).toEqual(["active_subscriptions", "leads_by_stage", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]);
+    expect(await offered("owner")).toEqual(["active_subscriptions", "customer_overview", "find_customer", "leads_by_stage", "list_invoices", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]); // the six R-421 tools + find_customer, list_invoices (R-2776) + customer_overview (R-2884)
     expect(await offered("manager")).toEqual([]);
     expect(await offered("not_a_role")).toEqual([]);
   });

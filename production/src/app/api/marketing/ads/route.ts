@@ -50,7 +50,7 @@ const patchSchema = z.object({
 });
 
 export const PATCH = withRoute(
-  { route: "api/marketing/ads", input: patchSchema, roles: ["owner", "manager"] },
+  { route: "api/marketing/ads", input: patchSchema, roles: ["owner", "manager", "marketing"] },
   async ({ input, tenantId, user }) => {
     const { error } = await createAdminClientFor(user.id).from("ad_accounts")
       .update({ enabled: input.enabled, updated_at: new Date().toISOString() })
@@ -63,7 +63,7 @@ export const PATCH = withRoute(
 const removeSchema = z.object({ accountId: z.string().uuid() });
 
 export const DELETE = withRoute(
-  { route: "api/marketing/ads", input: removeSchema, roles: ["owner", "manager"] },
+  { route: "api/marketing/ads", input: removeSchema, roles: ["owner", "manager", "marketing"] },
   async ({ input, tenantId, user }) => {
     const now = new Date().toISOString();
     const { data, error } = await createAdminClientFor(user.id).from("ad_accounts")

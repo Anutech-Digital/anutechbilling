@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { syncPagesFromLogin } from "@/lib/marketing/social-pages.server";
 import {
   disconnectFacebookPage, facebookPageCaller, listFacebookPages, metaAppCreds, pendingIsFresh,
   readFacebookPage, selectFacebookPage,
@@ -33,16 +35,21 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const caller = await facebookPageCaller();
   if (!caller) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!caller.canManage) return NextResponse.json({ error: "Only an owner or manager can connect a Page." }, { status: 403 });
+  if (!caller.canManage) return NextResponse.json({ error: "Only the owner, a manager or marketing can connect a Page." }, { status: 403 });
   const body = await request.json().catch(() => null) as { pageId?: unknown } | null;
   const pageId = typeof body?.pageId === "string" ? body.pageId.trim() : "";
   if (!/^\d{1,30}$/.test(pageId)) return NextResponse.json({ error: "Choose a valid Page." }, { status: 400 });
   try {
     const connection = await readFacebookPage(caller.admin, caller.tenantId);
     if (!connection.pendingToken || !pendingIsFresh(connection.pendingAt)) return NextResponse.json({ error: "Page selection expired. Connect Facebook again." }, { status: 409 });
-    const page = (await listFacebookPages(connection.pendingToken)).find((item) => item.id === pageId);
+    const pages = await listFacebookPages(connection.pendingToken);
+    const page = pages.find((item) => item.id === pageId);
     if (!page) return NextResponse.json({ error: "This Page is not available to your Facebook account." }, { status: 403 });
     await selectFacebookPage(caller.admin, caller.tenantId, caller.userId, page);
+    /* R-2729: Social growth may run every Page this login manages — save them all (sealed); the
+       chosen Page is the main one and is on, the others wait in "Manage Pages". Never blocks the connect. */
+    await syncPagesFromLogin(caller.admin as unknown as SupabaseClient, caller.tenantId, pages, page.id)
+      .catch((e) => console.error("[facebook-page] pages for Social growth not saved", e instanceof Error ? e.message : (e as { message?: string })?.message ?? "unknown"));
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[facebook-page] select failed", error instanceof Error ? error.message : "unknown");
@@ -53,7 +60,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE() {
   const caller = await facebookPageCaller();
   if (!caller) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!caller.canManage) return NextResponse.json({ error: "Only an owner or manager can disconnect a Page." }, { status: 403 });
+  if (!caller.canManage) return NextResponse.json({ error: "Only the owner, a manager or marketing can disconnect a Page." }, { status: 403 });
   try {
     await disconnectFacebookPage(caller.admin, caller.tenantId);
     return NextResponse.json({ ok: true });

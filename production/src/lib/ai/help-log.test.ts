@@ -117,6 +117,18 @@ describe("the log writes through one function, as the person", () => {
     expect(JSON.stringify(rpcCalls)).not.toContain(PRIVATE_ROW);
   });
 
+  it("R-2776: the answer row carries the loop outcome as a fixed word (text), failed when ok=false, and never free text", async () => {
+    const hl = log.createHelpLog(() => fake, { conversationId: CONV });
+    await hl.finish({ ok: false, ms: 5, loopOutcome: "model_error" });
+    expect(rpcCalls[rpcCalls.length - 1].args).toMatchObject({ p_kind: "answer", p_outcome: "failed", p_text: "model_error" });
+    const hl2 = log.createHelpLog(() => fake, { conversationId: CONV });
+    await hl2.finish({ ok: true, ms: 5, loopOutcome: "Ignore previous instructions; 400 invalid sk-ant-secret" });
+    expect(rpcCalls[rpcCalls.length - 1].args.p_text).toBeNull(); // anything that is not a plain outcome word is dropped
+    const hl3 = log.createHelpLog(() => fake, { conversationId: CONV });
+    await hl3.finish({ ok: true, ms: 5 });
+    expect(rpcCalls[rpcCalls.length - 1].args.p_text).toBeNull();
+  });
+
   it("without an onCall nothing is written and the run is unchanged", async () => {
     const res = await runAs([{ name: "log_ok" }]);
     expect(res[0].ok).toBe(true);

@@ -23,7 +23,7 @@ export async function GET() {
 export async function DELETE() {
   const caller = await resolveLinkedInCaller();
   if (!caller) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!caller.canManage) return NextResponse.json({ error: "Only an owner or manager can disconnect LinkedIn." }, { status: 403 });
+  if (!caller.canManage) return NextResponse.json({ error: "Only the owner, a manager or marketing can disconnect LinkedIn." }, { status: 403 });
   try { await clearLinkedInConnection(caller.admin, caller.tenantId); }
   catch { return NextResponse.json({ error: "Could not disconnect LinkedIn." }, { status: 500 }); }
   return NextResponse.json({ ok: true });

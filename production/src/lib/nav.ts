@@ -511,14 +511,14 @@ const TEAM_CHAT: UserRole[] = [...STAFF, "marketing"];
 export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/quotes/new": "Opened by the New quote / Send quote buttons on Quotes, leads and deals",
   /* G-SOCIAL (5 Nov 2026): Marketing Hub tool pages — each opens from its card on /marketing (tool-catalog.ts / hub-navigation.ts) */
-  "/marketing/ads/accounts": "Manage ad accounts; opened from Ad accounts (live) on the Marketing Hub",
+  "/marketing/ads/accounts": "Manage ad accounts; opened from Paid ads on the Marketing Hub",
   "/marketing/email": "Email tool page; opened from its Marketing Hub card",
   "/marketing/facebook": "Facebook Page connection; opened from the Social (organic) cards on the Marketing Hub",
   "/marketing/linkedin": "LinkedIn Company Page; opened from its Marketing Hub card",
   "/marketing/linkedin-ads": "LinkedIn Ads setup; opened from its Marketing Hub card and Ad accounts",
   "/marketing/listings": "Listings & marketplaces group page; opened from the Marketing Hub",
   "/marketing/paid-ads": "Paid ads group page; opened from the Marketing Hub",
-  "/marketing/social-content": "Social content studio (drafts, review, publish); opened from Social (organic) and Facebook Page",
+  "/marketing/social-content": "Social growth (AI agent, activity, posts); opened from Social (organic) and Facebook Page",
   "/marketing/social-organic": "Social (organic) group page; opened from the Marketing Hub",
   "/marketing/website-tracking": "Website & tracking group page; opened from the Marketing Hub",
   "/marketing/whatsapp-calling": "WhatsApp & calling group page; opened from the Marketing Hub",
@@ -599,8 +599,8 @@ export const APP_NAV: NavSection[] = [
           { id: "cold-calling", href: "/marketing/cold-calling", label: "Cold Calling", icon: "phone", roles: ["owner", "manager", "sales_senior", "sales", "marketing"], hint: "AI agent calls an imported list; interested ones go to Sales & Pipeline" },
           /* R-1793 (23 Oct 2026, Abhishek): marketing asks the owner for a budget, billing pays it.
              A CHILD (not a directory row) so billing / accountant — who do not get the Hub — see the
-             Hub as a heading with just this row. Manager is not in it: only the three people are. */
-          { id: "marketing-budget", href: "/marketing/budget", label: "Budget & Payments", icon: "wallet", roles: ["owner", "marketing", "billing", "accountant"], hint: "Marketing asks for a budget, the owner approves, billing pays up to it" },
+             Hub as a heading with just this row. R-2868 (16 Nov): manager added — the marketing login is a Manager. */
+          { id: "marketing-budget", href: "/marketing/budget", label: "Budget & Payments", icon: "wallet", roles: ["owner", "marketing", "manager", "billing", "accountant"], hint: "Marketing asks for a budget, the owner approves, billing pays up to it" },
         ],
         directory: [
           /* R-1879 (25 Oct 2026, epic R-1874): one line → a Google + Meta ad plan, step by step. */
@@ -608,24 +608,24 @@ export const APP_NAV: NavSection[] = [
           { id: "marketing-campaigns", href: "/marketing/campaigns", label: "Campaign budgets", icon: "target", roles: OMK, group: "Plan & spend", hint: "Each campaign's budget, dates and target, with spend and leads" },
           { id: "marketing-spend", href: "/marketing/spend",   label: "Spend",          icon: "wallet", roles: OMK, group: "Plan & spend" },
           { id: "marketing-roas",  href: "/marketing/reports", label: "ROAS & CAC",     icon: "chart",  roles: OMK, group: "Plan & spend" },
-          { id: "campaigns",       href: "/campaigns",         label: "Email campaigns", icon: "mail",    roles: OM, group: "Campaigns" },
-          { id: "email-templates", href: "/marketing/templates", label: "Email templates", icon: "file", roles: OM, group: "Campaigns" },
-          { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Message many leads at once with an approved template" },
+          { id: "campaigns",       href: "/campaigns",         label: "Email campaigns", icon: "mail",    roles: OMK, group: "Campaigns" },
+          { id: "email-templates", href: "/marketing/templates", label: "Email templates", icon: "file", roles: OMK, group: "Campaigns" },
+          { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OMK, group: "Campaigns", hint: "Message many leads at once with an approved template" },
           /* S28: renewal / invoice reminders on WhatsApp — switch, template per kind, send log. */
-          { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Renewal and invoice reminders on WhatsApp — ON/OFF, template, log" },
-          { id: "ad-platforms",    href: "/marketing/ads",      label: "Ad accounts (live)", icon: "trending_up", roles: OMK, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
+          { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OMK, group: "Campaigns", hint: "Renewal and invoice reminders on WhatsApp — ON/OFF, template, log" },
+          { id: "ad-platforms",    href: "/marketing/ads",      label: "Paid ads", icon: "trending_up", roles: OMK, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
           { id: "ad-landing-pages", href: "/marketing/landing-pages", label: "Ads landing pages", icon: "layout", roles: OMK, group: "Ads & tracking", hint: "Ad final URL, phone preview, leads received" },
           { id: "marketing-links", href: "/marketing/links",   label: "Tracking links", icon: "globe",  roles: OMK, group: "Ads & tracking", hint: "A link per ad or post — the lead source is set automatically" },
           { id: "lead-gen",        href: "/lead-gen",          label: "Lead sources",    icon: "target",  roles: OMK, group: "Ads & tracking" },
-          { id: "indiamart-leads", href: "/marketing/indiamart", label: "IndiaMART leads", icon: "inbox", roles: ["owner"], group: "Ads & tracking", hint: "Save the CRM key — IndiaMART enquiries become leads automatically" },
+          { id: "indiamart-leads", href: "/marketing/indiamart", label: "IndiaMART leads", icon: "inbox", roles: OMK, group: "Ads & tracking", hint: "Save the CRM key — IndiaMART enquiries become leads automatically" },
           { id: "google-business", href: "/marketing/google-business", label: "Google Business Profile", icon: "map_pin", roles: OMK, group: "Reputation", hint: "Maps/Search par listing kitni dikhi, calls, reviews — Google se seedha" },
           { id: "google-reviews",  href: "/marketing/reviews",   label: "Google reviews",  icon: "award", roles: OMK, group: "Reputation", hint: "Khush customers se Google review maango" },
-          { id: "coupons",         href: "/coupons",           label: "Coupons",         icon: "ticket",  roles: OM, group: "Offers & new leads" },
+          { id: "coupons",         href: "/coupons",           label: "Coupons",         icon: "ticket",  roles: OMK, group: "Offers & new leads" },
           { id: "online-promos",   href: "/online-promos",     label: "Website offer banner", icon: "sparkles", roles: OMK, group: "Offers & new leads" },
-          { id: "lead-finder",     href: "/marketing/lead-finder", label: "AI Lead Finder", icon: "sparkles", roles: OM, group: "Offers & new leads", hint: "An agent finds customers like yours on the public web — approve to add a lead" },
+          { id: "lead-finder",     href: "/marketing/lead-finder", label: "AI Lead Finder", icon: "sparkles", roles: OMK, group: "Offers & new leads", hint: "An agent finds customers like yours on the public web — approve to add a lead" },
         ],
       },
-      { id: "referrals",       href: "/referrals",        label: "Referrals",     icon: "award",  roles: OM },
+      { id: "referrals",       href: "/referrals",        label: "Referrals",     icon: "award",  roles: OMK },
       // The ONLY entry partner_agent can see besides Help. It is also ROLE_HOME for that
       // role, so this line is what keeps their login from looping.
       { id: "partners",  href: "/partners",             label: "Partners",         icon: "award", roles: ["owner", "manager", "partner_agent"] },
@@ -975,6 +975,10 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/setup":                  { tail: ["Setup Wizard"], under: "Settings" },
   /* R-2115 checker: the personal Account page (avatar menu) read "Home > Dashboard". */
   "/account":                { tail: ["Account"], under: "Personal" },
+  /* R-2671: Sales › Marketing Hub › Paid ads › Manage ad accounts (it read "… › Ad accounts (live)"). */
+  "/marketing/ads/accounts": { tail: ["Manage ad accounts"] },
+  /* R-2687: Sales › Marketing Hub › Social growth (it read only "… › Marketing Hub"). */
+  "/marketing/social-content": { tail: ["Social growth"] },
 };
 
 /** The crumb of every APP_NAV entry, from where it sits. */

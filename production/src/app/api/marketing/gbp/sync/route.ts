@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 export const POST = withRoute(
-  { route: "api/marketing/gbp/sync", roles: ["owner", "manager"] },
+  { route: "api/marketing/gbp/sync", roles: ["owner", "manager", "marketing"] },
   async ({ tenantId, user }) => {
     const admin = createAdminClient();
     const { data: loc } = await admin.from("gbp_locations").select("connected_user_id").eq("tenant_id", tenantId).limit(1).maybeSingle();

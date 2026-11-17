@@ -22,7 +22,7 @@ export async function resolveLinkedInCaller(): Promise<LinkedInCaller | null> {
   const { data } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   const row = data as { tenant_id?: string | null; role?: string | null } | null;
   if (!row?.tenant_id) return null;
-  return { userId: user.id, tenantId: row.tenant_id, canManage: row.role === "owner" || row.role === "manager", admin: createAdminClientFor(user.id) };
+  return { userId: user.id, tenantId: row.tenant_id, canManage: row.role === "owner" || row.role === "manager" || row.role === "marketing" /* R-2897 */, admin: createAdminClientFor(user.id) };
 }
 
 const COLS = "tenant_id, linkedin_access_token, linkedin_access_expires_at, linkedin_organization_urn, linkedin_organization_name";

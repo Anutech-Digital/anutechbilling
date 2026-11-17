@@ -14,6 +14,11 @@ describe("mayDo (S19)", () => {
     expect(mayDo("sales", "campaign.send")).toBe(false);
     expect(mayDo("support", "contacts.import")).toBe(false);
   });
+  it("R-2897: marketing connects and syncs marketing accounts, not other company accounts", () => {
+    expect(mayDo("marketing", "integration.marketing")).toBe(true);
+    expect(mayDo("marketing", "integration.company")).toBe(false);
+    expect(mayDo("sales", "integration.marketing")).toBe(false);
+  });
   it("no role → no", () => {
     expect(mayDo(null, "seats.change")).toBe(false);
     expect(mayDo("nonsense", "integration.company")).toBe(false);
@@ -30,9 +35,9 @@ const ROUTES: [string, keyof typeof ACTION_ROLES][] = [
   ["app/api/seat-requests/[id]/decide/route.ts", "seats.change"],
   ["app/api/campaigns/send/route.ts", "campaign.send"],
   ["app/api/contacts/import/route.ts", "contacts.import"],
-  ["app/api/integrations/google-ads/connect/route.ts", "integration.company"],
-  ["app/api/integrations/google-business/connect/route.ts", "integration.company"],
-  ["app/api/integrations/meta-ads/connect/route.ts", "integration.company"],
+  ["app/api/integrations/google-ads/connect/route.ts", "integration.marketing"],
+  ["app/api/integrations/google-business/connect/route.ts", "integration.marketing"],
+  ["app/api/integrations/meta-ads/connect/route.ts", "integration.marketing"],
   /* R-880 */
   ["app/api/quotes/[id]/raise-instalments/route.ts", "money.record"],
   ["app/api/payments/[id]/receipt/route.ts", "money.record"],

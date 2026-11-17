@@ -20,7 +20,7 @@ const schema = z.object({
 });
 
 export const POST = withRoute(
-  { route: "api/leads/finder/contacts", input: schema, roles: ["owner", "manager"] },
+  { route: "api/leads/finder/contacts", input: schema, roles: ["owner", "manager", "marketing"] },
   async ({ input, tenantId }) => {
     if (input.mode === "people") {
       try { return await searchPeople(createAdminClient(), tenantId, { ids: input.ids }); }

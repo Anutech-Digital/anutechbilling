@@ -19,7 +19,7 @@ const input = z.object({
   clicks: z.coerce.number().int().min(0), leads: z.coerce.number().int().min(0),
 });
 
-export const POST = withRoute({ route: "api/marketing/linkedin-ads/metrics", input, roles: ["owner", "manager"] }, async ({ input: row, tenantId, user }) => {
+export const POST = withRoute({ route: "api/marketing/linkedin-ads/metrics", input, roles: ["owner", "manager", "marketing"] }, async ({ input: row, tenantId, user }) => {
   const { error } = await (createAdminClientFor(user.id) as any).from("linkedin_ad_metrics").upsert({
     tenant_id: tenantId, day: row.day, campaign_name: row.campaignName, spend: row.spend,
     impressions: row.impressions, clicks: row.clicks, leads: row.leads, updated_at: new Date().toISOString(),

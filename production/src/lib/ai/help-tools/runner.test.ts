@@ -295,7 +295,7 @@ describe("runner rules", () => {
       expect(r.refusal).toBe("not_allowed");
       expect(log).toHaveLength(0);
     }
-    expect(helpToolsFor("owner").map((t) => t.name)).toEqual([...HELP_DATA_TOOL_NAMES]);
+    expect(helpToolsFor("owner").map((t) => t.name).filter((n) => (HELP_DATA_TOOL_NAMES as readonly string[]).includes(n))).toEqual([...HELP_DATA_TOOL_NAMES]); // R-2776: the registry has more tools than the legacy six
     expect(helpToolsFor("hacker")).toEqual([]);
   });
 

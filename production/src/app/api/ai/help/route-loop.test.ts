@@ -111,7 +111,7 @@ describe("HELP_AI_V2 on, owner: the native tool-use loop", () => {
     expect(first.betas).toContain("server-side-fallback-2026-07-01");
     expect(first.fallbacks).toBe("default");
     const tools = first.tools as { name: string; strict: boolean; input_schema: { additionalProperties: boolean } }[];
-    expect(tools.map((t) => t.name).sort()).toEqual(["active_subscriptions", "leads_by_stage", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["active_subscriptions", "customer_overview", "find_customer", "leads_by_stage", "list_invoices", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]);
     expect(tools.every((t) => t.strict === true && t.input_schema.additionalProperties === false)).toBe(true);
     expect(String(first.system)).toContain("UNTRUSTED DATA");
     expect(String(first.system)).toContain("DATA TOOLS:");
@@ -180,6 +180,29 @@ describe("HELP_AI_V2 on, owner: the native tool-use loop", () => {
     expect(text).not.toContain("529");
   });
 
+  it("R-2776: an API 400 (bad tool schema) is counted — the help log row says failed + model_error, not ok", async () => {
+    api.throwNext = Object.assign(new Error("400 invalid_request_error: tools.0.custom.input_schema is not valid"), { status: 400 });
+    const res = await ask("kitne subscription");
+    expect(res.status).toBe(200);
+    const answer = db.rpc.map((c) => c.args).filter((a) => a.p_kind === "answer");
+    expect(answer).toHaveLength(1);
+    expect(answer[0].p_outcome).toBe("failed");
+    expect(answer[0].p_text).toBe("model_error");
+    expect(JSON.stringify(db.rpc)).not.toContain("input_schema"); // the outcome word only — never the API's text
+  });
+
+  it("R-2776: a good answer is logged did + answer; a refusal says refusal (and is not 'failed' as a model error is)", async () => {
+    api.script = [final(REPLY)];
+    await ask("kitne subscription");
+    const a1 = db.rpc.map((c) => c.args).filter((a) => a.p_kind === "answer").at(-1);
+    expect([a1?.p_outcome, a1?.p_text]).toEqual(["did", "answer"]);
+    db.rpc = [];
+    api.script = [msg("refusal", [])];
+    await ask("kitne subscription");
+    const a2 = db.rpc.map((c) => c.args).filter((a) => a.p_kind === "answer").at(-1);
+    expect(a2?.p_text).toBe("refusal");
+  });
+
   it("a refused session (service-role key on the client) is a plain answer, status 200 — never a 500, no AI call", async () => {
     db.key = `x.${Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url")}.y`;
     const res = await ask("kitne subscription");
@@ -211,11 +234,12 @@ describe("HELP_AI_V2 on, owner: the native tool-use loop", () => {
     const batch = (r: number) => msg("tool_use", Array.from({ length: 8 }, (_, i) => toolUse(`tu_${r}_${i}`, "active_subscriptions")));
     api.script = [batch(1), batch(2), batch(3), batch(4)];
     const body = await (await ask("kitne subscription")).json();
-    expect(api.bodies).toHaveLength(3); // 8 + 8 + 4 ok, the rest refused → stop
+    expect(api.bodies).toHaveLength(3); // 8 + 8 ok; the third turn (24 in all) is refused whole before it is run or counted (R-2776) → stop
     expect(body.reply).toContain("Active subscriptions: 2");
     const calls = db.rpc.map((c) => c.args).filter((r) => r.p_kind === "tool");
-    expect(calls.filter((r) => r.p_outcome === "did")).toHaveLength(20);
-    expect(calls.filter((r) => r.p_outcome === "refused").length).toBeGreaterThan(0);
+    expect(calls.filter((r) => r.p_outcome === "did")).toHaveLength(16);
+    expect(calls.filter((r) => r.p_outcome === "refused")).toHaveLength(0); // nothing was spent on the refused turn
+    expect(db.rpc.map((c) => c.args).filter((r) => r.p_kind === "answer").at(-1)?.p_text).toBe("calls_cap");
   });
 });
 

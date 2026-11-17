@@ -82,14 +82,14 @@ const NO_KEY = "No AI (Gemini) key is set for this company, so AI Help cannot an
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;
 
 /* R-2778: what the assistant log needs at the end of ANY exit (early return or a throw). */
-interface HelpTrace { log: HelpLog | null; ok: boolean; model: string | null; askedAt: number; tokensIn: number | null; tokensOut: number | null }
+interface HelpTrace { log: HelpLog | null; ok: boolean; model: string | null; askedAt: number; tokensIn: number | null; tokensOut: number | null; loopOutcome: string | null }
 
 export async function POST(request: NextRequest) {
-  const trace: HelpTrace = { log: null, ok: false, model: null, askedAt: Date.now(), tokensIn: null, tokensOut: null };
+  const trace: HelpTrace = { log: null, ok: false, model: null, askedAt: Date.now(), tokensIn: null, tokensOut: null, loopOutcome: null };
   try {
     return await handlePost(request, trace);
   } finally {
-    await trace.log?.finish({ ok: trace.ok, ms: Date.now() - trace.askedAt, model: trace.model, tokensIn: trace.tokensIn, tokensOut: trace.tokensOut });
+    await trace.log?.finish({ ok: trace.ok, ms: Date.now() - trace.askedAt, model: trace.model, tokensIn: trace.tokensIn, tokensOut: trace.tokensOut, loopOutcome: trace.loopOutcome });
   }
 }
 
@@ -196,6 +196,7 @@ ${what}` };
     sources = loop.sources;
     trace.tokensIn = loop.tokensIn;
     trace.tokensOut = loop.tokensOut;
+    trace.loopOutcome = loop.outcome;
   }
   const raw = answer ? null : await ask(offerTools ? helpDataToolsPrompt() : null, null);
   const wanted = !answer && offerTools ? parseToolRequest(raw) : [];
@@ -241,6 +242,7 @@ ${what}` };
       .slice(0, 3)
       .map((r) => ({ id: r.id, title: r.title }));
   }
-  trace.ok = true;
+  /* R-2776: a model / API error (or a reply that was no answer at all) is a FAILED question in the log, not ok. */
+  trace.ok = trace.loopOutcome !== "model_error" && trace.loopOutcome !== "malformed";
   return NextResponse.json({ ...answer, similar, ai: true, ...(sources ? { sources } : {}) });
 }

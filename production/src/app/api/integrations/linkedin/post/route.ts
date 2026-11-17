@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   const caller = await resolveLinkedInCaller();
   if (!caller) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!caller.canManage) return NextResponse.json({ error: "Only an owner or manager can publish on LinkedIn." }, { status: 403 });
+  if (!caller.canManage) return NextResponse.json({ error: "Only the owner, a manager or marketing can publish on LinkedIn." }, { status: 403 });
   const body = await request.json().catch(() => null) as { text?: unknown; organizationUrn?: unknown; organizationName?: unknown } | null;
   const text = typeof body?.text === "string" ? body.text.trim() : "";
   const urn = typeof body?.organizationUrn === "string" ? body.organizationUrn.trim() : "";
