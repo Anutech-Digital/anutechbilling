@@ -436,7 +436,7 @@
   padding: 14px 20px !important; min-height: 54px !important; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 17px !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp #faq button[aria-expanded] > span { color: var(--w-teal) !important; }
-.anutech-site[data-site-theme="warm"] .hlp #faq > div > div > div > p { padding: 0 22px 20px !important; color: var(--w-muted) !important; }
+.anutech-site[data-site-theme="warm"] .hlp #faq > div > div > div > .s-collapse p { padding: 0 22px 20px !important; color: var(--w-muted) !important; }
 
 /* ── 12 · Closing card: mint, rounded, teal buttons ───────────────────────────────────────── */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(12) { background: var(--w-bg) !important; }

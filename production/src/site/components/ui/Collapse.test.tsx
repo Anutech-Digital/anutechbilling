@@ -79,6 +79,19 @@ describe("every website FAQ opens and closes smoothly", () => {
     expect(src).toMatch(/s-details/);
   });
 
+  // Owner, 17 Nov 2026: the /domains FAQ answer touched its box's left edge — the Warm rule that
+  // padded it matched "row > p", and <Collapse> had put the <p> one wrapper deeper. A Warm rule for a
+  // FAQ answer must reach it inside the wrapper.
+  it.each([
+    ["src/site/warm/domains.css", "section#faq > div:last-child > div > .s-collapse p"],
+    ["src/site/warm/hosting.css", ".hlp #faq > div > div > div > .s-collapse p"],
+    ["src/site/warm/email.css", "section#faq > div > .s-collapse p"],
+  ])("%s pads the FAQ answer inside the <Collapse> wrapper", (file, selector) => {
+    const css = read(file);
+    expect(css).toContain(selector);
+    expect(css).not.toMatch(/#faq[^{]*> div > p \{/);
+  });
+
   it("the pricing FAQ no longer uses the Radix keyframe that needed a variable it never set", () => {
     expect(read("src/app/(public)/_components/pricing-sections.tsx")).not.toContain("animate-accordion-down");
   });

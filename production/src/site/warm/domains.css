@@ -453,7 +453,7 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#faq > div:last-child > div > button[aria-expanded="true"] > span:last-child {
   background: var(--w-teal); border-color: var(--w-teal); color: var(--w-on-teal) !important;
 }
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#faq > div:last-child > div > p { padding: 0 22px 20px !important; font-size: 16px !important; color: var(--w-muted) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#faq > div:last-child > div > .s-collapse p { padding: 0 20px 20px !important; font-size: 16px !important; color: var(--w-muted) !important; }
 
 /* ── 8 · Closing: a mint rounded card ───────────────────────────────────────────────────── */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section:last-of-type { padding-top: 0 !important; }

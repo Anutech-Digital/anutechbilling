@@ -269,7 +269,7 @@
   background: var(--w-mint); color: var(--w-teal-dark) !important; font-family: var(--font-site-body), "Inter", sans-serif !important; font-size: 18px !important;
 }
 .anutech-site[data-site-theme="warm"] section#faq button[aria-expanded="true"] > span:last-child { background: var(--w-teal); color: var(--w-on-teal) !important; }
-.anutech-site[data-site-theme="warm"] section#faq > div > p { padding-right: 48px !important; }
+.anutech-site[data-site-theme="warm"] section#faq > div > .s-collapse p { padding-right: 48px !important; }
 
 /* ── /email on narrower screens ───────────────────────────────────────────────────────────── */
 @media (max-width: 979px) {
