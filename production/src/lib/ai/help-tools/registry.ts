@@ -14,6 +14,8 @@ import { isUserRole, type UserRole } from "@/lib/auth/roles";
 import { canOpenRoute } from "@/lib/nav";
 import { isHelpToolDef, type HelpToolDef } from "./types";
 import { DATA_TOOLS } from "./data-tools";
+import { CUSTOMER_TOOLS } from "./customers";
+import { INVOICE_TOOLS } from "./invoices";
 
 /** Read-only view of a set of tools. `values()` hands out a fresh array each time. */
 export interface HelpToolRegistry {
@@ -38,7 +40,7 @@ export function buildRegistry(tools: readonly HelpToolDef[]): HelpToolRegistry {
   return Object.freeze(registry) as unknown as HelpToolRegistry;
 }
 
-export const HELP_TOOL_REGISTRY: HelpToolRegistry = buildRegistry([...DATA_TOOLS] as unknown as HelpToolDef[]);
+export const HELP_TOOL_REGISTRY: HelpToolRegistry = buildRegistry([...DATA_TOOLS, ...CUSTOMER_TOOLS, ...INVOICE_TOOLS] as unknown as HelpToolDef[]);
 
 /**
  * May this role run this tool? Fail-closed: no role / unknown role / not in the tool's roles /

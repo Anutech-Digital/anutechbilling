@@ -29,7 +29,7 @@ type Tables = Database["public"]["Tables"];
 export type TenantTable = { [K in keyof Tables]: "tenant_id" extends keyof Tables[K]["Row"] ? K : never }[keyof Tables];
 
 /** Tables help tools may read. Add a table here only with the tool that needs it. */
-export const HELP_READ_TABLES = ["subscriptions", "invoices", "quotes", "leads"] as const satisfies readonly TenantTable[];
+export const HELP_READ_TABLES = ["subscriptions", "invoices", "quotes", "leads", "customers"] as const satisfies readonly TenantTable[];
 export type HelpReadTable = (typeof HELP_READ_TABLES)[number];
 
 /** Credential tables: never readable by a help tool, even if someone adds them to the list above. */

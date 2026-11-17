@@ -433,7 +433,8 @@ describe("JSON schema generation", () => {
   });
 
   it("the six real tools offer an empty closed object", () => {
-    for (const t of helpToolsFor("owner")) expect(t.inputSchema).toEqual({ type: "object", properties: {}, required: [], additionalProperties: false });
+    const SIX = ["active_subscriptions", "renewals_due", "overdue_invoices", "todays_followups", "open_quotes", "leads_by_stage"];
+    for (const t of helpToolsFor("owner").filter((x) => SIX.includes(x.name))) expect(t.inputSchema).toEqual({ type: "object", properties: {}, required: [], additionalProperties: false });
   });
 });
 
@@ -444,7 +445,7 @@ describe("runHelpToolLoop (the route's wiring): the tools offered are the role's
       await runHelpToolLoop(openHelpSession(), { userId: U, tenantId: A, role }, async (ask) => { names = ask.tools.map((t) => t.name); return end("{}"); });
       return names.sort();
     };
-    expect(await offered("owner")).toEqual(["active_subscriptions", "leads_by_stage", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]);
+    expect(await offered("owner")).toEqual(["active_subscriptions", "find_customer", "leads_by_stage", "list_invoices", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]); // the six R-421 tools + find_customer, list_invoices (R-2776)
     expect(await offered("manager")).toEqual([]);
     expect(await offered("not_a_role")).toEqual([]);
   });
