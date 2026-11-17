@@ -128,6 +128,33 @@
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(5) { grid-area: desc; min-height: 0 !important; margin-top: 2px !important; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(6) { grid-area: cta; margin-top: 8px !important; }
 }
+/* Under 1200px (owner, 17 Nov 2026: "Content should be centralized for mobile/responsive design"):
+   the hero's words are already centred; now the pill is a compact one-line badge (it ran the full
+   width, its dot stranded at the left), and each suite card is centred too — logo, price, per-day
+   line, what it is, "See editions" — with "Most teams pick this" on the card's top edge and no
+   empty space left by the classic layout's fixed heights. */
+@media (max-width: 1199px) {
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > div:first-child {
+    width: fit-content; max-width: 100%; margin-inline: auto !important; padding: 6px 12px !important; gap: 6px !important;
+    font-size: 12px !important; line-height: 1.4; white-space: nowrap;
+  }
+  @media (max-width: 359px) {
+    .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > div:first-child { white-space: normal; }
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > div:has(> button[aria-pressed]) {
+    gap: 22px !important; text-align: center !important; padding-top: 12px;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] {
+    display: flex !important; flex-direction: column !important; align-items: center !important; text-align: center !important; padding: 26px 20px 20px !important;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span { justify-content: center !important; text-align: center; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(1) {
+    position: absolute; top: -13px; left: 50%; transform: translateX(-50%); width: auto !important; min-height: 0 !important; margin: 0 !important; white-space: nowrap;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(3) { flex-wrap: wrap; margin-top: 12px !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(5) { min-height: 0 !important; margin-top: 10px !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] > span:nth-child(6) { margin-top: 12px !important; }
+}
 @media (min-width: 1200px) and (prefers-reduced-motion: reduce) {
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed]:hover { transform: none; }
 }
