@@ -8,7 +8,7 @@
 --      A4 two documents + two debits of one amount = 'ambiguous' (4 rows); the Zoho reference = the
 --         line's own UTR picks the one pair (sure) — the other document stays ambiguous (fail closed);
 --      A5 paid from the card account: never paired with the bank account's same-amount debit; petty
---         cash, a USD row, a Salaries row and a non-Zoho expense are not listed;
+--         cash, a USD row and a non-Zoho expense are not listed (R-2913: a Zoho-imported Salaries row IS listed — r2913 test; only Payroll's own are not);
 --      A6 the only same-amount debit is already reconciled as an expense = 'booked_elsewhere';
 --      A7 paid date on / before the books lock = 'locked';
 --      A8 19 days apart with no reference = 'no_line' naming that debit; 24 days apart WITH the same
