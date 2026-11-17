@@ -511,3 +511,27 @@
   .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form.space-y-4:has(#companyName, #p-fullName) > .h-px { margin-block: 2px !important; }
   .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form.space-y-4:has(#companyName, #p-fullName) > button[type="submit"] { margin-top: 6px !important; }
 }
+
+/* /login wider (owner, 17 Nov 2026: "form design is too narrow"): from 1024px the card is 920px and
+   splits in two — the heading, the test logins and Google on the left; "or use email" and the email
+   form on the right, a thin line between; notices across the top; the sign-up line and the policy
+   links across the bottom. Same order for screen readers and keyboards. Under 1024px: one column. */
+@media (min-width: 1024px) {
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"] #password) > main > .max-w-md { max-width: 920px; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 64px; row-gap: 20px; align-items: start;
+    padding: 44px 48px 36px;
+  }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password)::before {
+    content: ""; grid-column: 2; grid-row: 1 / 4; justify-self: start; align-self: stretch; width: 1px; margin-left: -32px; background: var(--w-line);
+  }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > div.text-center { grid-column: 1; grid-row: 1; margin: 0; text-align: left; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > section[data-local-test-login] { grid-column: 1; grid-row: 2; margin: 0; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > button.rounded-md { grid-column: 1; grid-row: 3; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > .my-5 { grid-column: 2; grid-row: 1 / 4; margin: 0; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > form { grid-column: 2; grid-row: 1 / 4; margin-top: 40px; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > [role="alert"] { grid-column: 1 / -1; order: -1; margin: 0; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > p { grid-column: 1 / -1; margin-top: 0; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > p.mt-5 { margin-top: 8px; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page="login"]) div.bg-paper.rounded-lg > .p-4:has(#password) > p.mt-1 { margin-top: -14px; }
+}
