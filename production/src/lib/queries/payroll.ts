@@ -585,7 +585,7 @@ export async function fetchEmployeeSalaryHistory(employeeId: string): Promise<Sa
   const supabase = createClient();
   const { data, error } = await supabase
     .from("salary_payments").select("*")
-    .eq("employee_id", employeeId)
+    .eq("employee_id", employeeId!)
     .order("period", { ascending: true });
   if (error) throw error;
   return (data ?? []) as SalaryPayment[];
