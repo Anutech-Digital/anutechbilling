@@ -57,7 +57,7 @@ const MSG: Record<string, { ok: boolean; text: string }> = {
   noaccounts: { ok: false, text: "This login has no ad account — connect with the email that runs your ads." },
   badstate: { ok: false, text: "The sign-in expired — connect again." },
   notconfigured: { ok: false, text: "App keys are not set." },
-  role: { ok: false, text: "Only an owner or manager can connect ad accounts." },
+  role: { ok: false, text: "Only the owner, a manager or marketing can connect ad accounts." },
   error: { ok: false, text: "Could not connect — try again." },
 };
 

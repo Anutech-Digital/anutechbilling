@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.redirect(`${origin}/login`);
   /* S19: a company-wide account — owner / manager only (per-user Gmail and Contacts stay open). */
   const { data: me } = await createClient().from("users").select("role").eq("id", user.id).maybeSingle();
-  if (!mayDo((me as { role?: string | null } | null)?.role, "integration.company")) {
+  if (!mayDo((me as { role?: string | null } | null)?.role, "integration.marketing")) {
     return NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=google-ads&google=role`);
   }
   const creds = googleOAuthCreds();

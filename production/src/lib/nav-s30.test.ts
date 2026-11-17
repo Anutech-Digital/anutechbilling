@@ -71,6 +71,10 @@ const ADDED_FOR_EVERY_ROLE = ["/help"];
  *  (/api/leads/indiamart) is owner-only, so a manager gets no row (middleware does not gate
  *  managers, and the page tells one who can do it). */
 const ADDED_FOR_OWNER = ["/marketing/indiamart"];
+/** R-2897 (17 Nov 2026, Abhishek: "give these all tab right to marketing person"): every Marketing Hub
+ *  page the owner / manager had — email campaigns + templates, WhatsApp broadcast + reminders,
+ *  IndiaMART, coupons, AI Lead Finder, referrals — now for the marketing role too. */
+const ADDED_17NOV_MARKETING_HUB = ["/campaigns", "/marketing/templates", "/marketing/whatsapp", "/marketing/whatsapp/reminders", "/marketing/indiamart", "/coupons", "/marketing/lead-finder", "/referrals"];
 /** 30 Sep 2026: Deals back in Sell, for the roles that see Sales & Pipeline. R-057 moved WON
  *  leads to /deals only; with no nav entry a sales user could not open /deals at all (the
  *  guard bounced it to /leads), so this is a real, named grant — not a snapshot drift. */
@@ -199,6 +203,9 @@ const addedFor = (role: string) => [
   ...(["owner", "manager", "sales", "sales_senior"].includes(role) ? ADDED_19OCT_COLD_CALLING : []),
   ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
   ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),
+  // R-2897 (17 Nov 2026, Abhishek): marketing runs every Marketing Hub tab; IndiaMART opens to manager + marketing.
+  ...(role === "manager" ? ["/marketing/indiamart"] : []),
+  ...(role === "marketing" ? ADDED_17NOV_MARKETING_HUB : []),
   // R-2868 (16 Nov 2026, Abhishek): the marketing login is a Manager, so a manager opens Budget too.
   ...(role === "manager" ? ADDED_23OCT_BUDGET : []),
   ...(["owner", "manager", "marketing"].includes(role) ? ADDED_25OCT_COPILOT : []),

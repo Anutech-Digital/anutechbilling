@@ -19,7 +19,7 @@ const schema = z.object({
 });
 
 export const POST = withRoute(
-  { route: "api/marketing/gbp/reply", input: schema, roles: ["owner", "manager"] },
+  { route: "api/marketing/gbp/reply", input: schema, roles: ["owner", "manager", "marketing"] },
   async ({ input, tenantId, user }) => {
     const admin = createAdminClient();
     const { data: review } = await admin.from("gbp_reviews")

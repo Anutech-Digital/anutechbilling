@@ -11,7 +11,7 @@ export const maxDuration = 300;
 const schema = z.object({ profileId: z.string().min(1, "profileId is required.") });
 
 export const POST = withRoute(
-  { route: "api/leads/finder/run", input: schema, roles: ["owner", "manager"] },
+  { route: "api/leads/finder/run", input: schema, roles: ["owner", "manager", "marketing"] },
   async ({ input, tenantId }) => {
     try {
       return { ...(await runLeadFinder(createAdminClient(), tenantId, input.profileId, "manual")) };

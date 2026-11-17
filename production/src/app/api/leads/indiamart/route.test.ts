@@ -121,11 +121,13 @@ describe("GET", () => {
     expect(await (await GET(req("GET"))).json()).toMatchObject({ ok: true, total_imported: null });
   });
 
-  it("is owner-only, with who to ask", async () => {
-    state.role = "manager";
+  it("R-2897: owner, manager and marketing only, with who to ask", async () => {
+    state.role = "marketing";
+    expect((await GET(req("GET"))).status).toBe(200);
+    state.role = "sales";
     const res = await GET(req("GET"));
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/Ask the owner/);
+    expect((await res.json()).error).toMatch(/Ask one of them/);
   });
 });
 
@@ -159,7 +161,7 @@ describe("POST", () => {
     for (const l of logs) expect(JSON.stringify(l.mock.calls)).not.toContain(KEY);
   });
 
-  it("is owner-only", async () => {
+  it("refuses a role outside owner / manager / marketing", async () => {
     state.role = "sales";
     expect((await POST(req("POST", { crm_key: KEY }))).status).toBe(403);
     expect(state.upserts).toEqual([]);
@@ -174,8 +176,8 @@ describe("DELETE", () => {
     expect(state.eqs).toContainEqual(["tenant_secrets", "tenant_id", "T1"]);
   });
 
-  it("is owner-only", async () => {
-    state.role = "manager";
+  it("refuses a role outside owner / manager / marketing", async () => {
+    state.role = "billing";
     expect((await DELETE(req("DELETE"))).status).toBe(403);
     expect(state.updates).toEqual([]);
   });

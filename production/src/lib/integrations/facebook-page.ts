@@ -46,7 +46,7 @@ export async function facebookPageCaller() {
   if (!data?.tenant_id) return null;
   return {
     userId: user.id, tenantId: data.tenant_id,
-    canManage: mayDo(data.role, "integration.company"),
+    canManage: mayDo(data.role, "integration.marketing"),
     admin: createAdminClientFor(user.id),
   };
 }

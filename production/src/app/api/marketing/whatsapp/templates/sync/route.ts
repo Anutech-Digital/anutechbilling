@@ -35,8 +35,8 @@ interface MetaTemplate {
    (the page is owner/manager in nav; the API took any signed-in member). */
 export const POST = withRoute({
   route: "api/marketing/whatsapp/templates/sync",
-  roles: ACTION_ROLES["integration.company"],
-  roleHint: forbiddenMessage("integration.company"),
+  roles: ACTION_ROLES["integration.marketing"],
+  roleHint: forbiddenMessage("integration.marketing"),
 }, async ({ tenantId, user }) => {
   const creds = await resolveWhatsAppCreds(tenantId);
   if (!creds?.businessAccountId) {

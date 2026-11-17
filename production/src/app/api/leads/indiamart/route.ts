@@ -25,7 +25,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const ROUTE = "api/leads/indiamart";
-const OWNER_ONLY = { roles: ["owner"] as const, roleHint: "Only the workspace owner can save the IndiaMART key. Ask the owner." };
+/* R-2897 (17 Nov 2026, Abhishek): the marketing person runs IndiaMART leads too (owner, manager, marketing). */
+const OWNER_ONLY = { roles: ["owner", "manager", "marketing"] as const, roleHint: "Only the owner, a manager or marketing can save the IndiaMART key. Ask one of them." };
 
 export const GET = withRoute({ route: ROUTE, ...OWNER_ONLY }, async ({ tenantId, user }) => {
   const db = createAdminClientFor(user.id);

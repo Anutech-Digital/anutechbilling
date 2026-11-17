@@ -15,11 +15,16 @@ export const ACTION_ROLES = {
   /** add-seats, extend, approve/decline a customer's seat request — they change the bill. */
   "seats.change": ["owner", "manager", "billing"],
   /** a campaign reaches every recipient at once. */
-  "campaign.send": ["owner", "manager"],
+  /** R-2897: the marketing person sends campaigns too. */
+  "campaign.send": ["owner", "manager", "marketing"],
   /** a bulk import writes the whole contact book. */
   "contacts.import": ["owner", "manager"],
   /** company-wide ad / Business Profile accounts. */
   "integration.company": ["owner", "manager"],
+  /** R-2897 (17 Nov 2026, Abhishek): marketing accounts — ad accounts (Google / Meta / LinkedIn),
+   *  their sync, the Facebook Page, LinkedIn Page, Google Business Profile. The marketing person runs
+   *  these, so marketing may too. Company-wide non-marketing ones stay on integration.company. */
+  "integration.marketing": ["owner", "manager", "marketing"],
   /** R-880: raise an instalment invoice, attach / replace a payment receipt. Same list as
    *  MONEY_RECORD_ROLES in roles.ts (R-718, Pardeep's table: record = O/M/A/B). */
   "money.record": ["owner", "manager", "accountant", "billing"],
@@ -41,6 +46,7 @@ const WHAT: Record<GuardedAction, string> = {
   "campaign.send": "send a campaign",
   "contacts.import": "import contacts",
   "integration.company": "connect company accounts",
+  "integration.marketing": "connect or sync marketing accounts",
   "money.record": "record money (instalment invoices, payment receipts)",
   "quote.accept": "mark a quote accepted",
   "vault.upload": "upload to the document vault",

@@ -35,7 +35,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const caller = await facebookPageCaller();
   if (!caller) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!caller.canManage) return NextResponse.json({ error: "Only an owner or manager can connect a Page." }, { status: 403 });
+  if (!caller.canManage) return NextResponse.json({ error: "Only the owner, a manager or marketing can connect a Page." }, { status: 403 });
   const body = await request.json().catch(() => null) as { pageId?: unknown } | null;
   const pageId = typeof body?.pageId === "string" ? body.pageId.trim() : "";
   if (!/^\d{1,30}$/.test(pageId)) return NextResponse.json({ error: "Choose a valid Page." }, { status: 400 });
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE() {
   const caller = await facebookPageCaller();
   if (!caller) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!caller.canManage) return NextResponse.json({ error: "Only an owner or manager can disconnect a Page." }, { status: 403 });
+  if (!caller.canManage) return NextResponse.json({ error: "Only the owner, a manager or marketing can disconnect a Page." }, { status: 403 });
   try {
     await disconnectFacebookPage(caller.admin, caller.tenantId);
     return NextResponse.json({ ok: true });

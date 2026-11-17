@@ -34,7 +34,7 @@ const RESULT: Record<string, string> = {
   noaccounts: "This login has no ad accounts. Use the login that manages the ads.",
   badstate: "The sign-in expired. Try connecting again.",
   notconfigured: "App keys are missing. Complete setup first.",
-  role: "Only an owner or manager can connect ad accounts.",
+  role: "Only the owner, a manager or marketing can connect ad accounts.",
   error: "Could not connect. Try again.",
 };
 

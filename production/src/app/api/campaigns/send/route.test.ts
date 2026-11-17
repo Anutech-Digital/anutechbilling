@@ -90,7 +90,7 @@ describe("campaigns send — role gate (R-217)", () => {
     expect(res.status).toBe(403);
     const json = await res.json();
     expect(json.ok).toBe(false);
-    expect(json.error).toBe("Only Owner, Manager can send a campaign. Ask one of them to do it.");
+    expect(json.error).toBe("Only Owner, Manager, Marketing can send a campaign. Ask one of them to do it.");
     expect(db.reads).toEqual([]);
     expect(mail.send).not.toHaveBeenCalled();
   });
