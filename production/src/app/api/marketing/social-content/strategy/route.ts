@@ -15,6 +15,7 @@ import { resolveGeminiConfig } from "@/lib/ai/gemini";
 import { canReviewSocial, socialRole } from "@/lib/marketing/social-content";
 import { decideProposal, editStrategy, ensureStrategies } from "@/lib/marketing/social-strategy.server";
 import { readAutopilotSettings } from "@/lib/marketing/social-autopilot.server";
+import { briefForPage } from "@/lib/marketing/social-page-brief.server";
 import { STRATEGY_PLATFORMS } from "@/lib/marketing/social-strategy";
 
 export const dynamic = "force-dynamic";
@@ -47,7 +48,8 @@ export async function POST(req: Request) {
     if (!ai.apiKey) return NextResponse.json({ error: "AI is not set up yet.", description: "Add a Gemini key in Settings → Integrations, then try again." }, { status: 409 });
     const settings = await readAutopilotSettings(r.session, page.page_id);
     if (settings.ai_paused) return NextResponse.json({ error: "The AI is stopped (Stop all AI).", description: "Press Resume AI first." }, { status: 409 });
-    await ensureStrategies(r.session, page.page_id, ai, settings.brief);
+    const brief = await briefForPage(createAdminClientFor(r.session.userId) as unknown as SupabaseClient, r.session.tenantId, page.page_id, settings.brief);
+    await ensureStrategies(r.session, page.page_id, ai, brief);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[social-strategy] start failed", e instanceof Error ? e.message : "unknown");

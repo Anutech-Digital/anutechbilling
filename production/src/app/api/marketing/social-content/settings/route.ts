@@ -19,7 +19,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
 const body = z.object({
   autoDrafts: z.boolean(),
   brief: z.string().trim().max(1000),
@@ -44,7 +44,7 @@ export async function PUT(req: Request) {
   const { autoDrafts, brief, autopilot, postsPerWeek, pictures } = parsed.data;
   const page = await pageFor(session, parsed.data.pageId);
   if (!page) return NextResponse.json({ error: "Connect a Facebook Page first.", description: "Marketing Hub → Facebook Page." }, { status: 409 });
-  if ((autoDrafts || autopilot) && !brief) return NextResponse.json({ error: "Tell the AI what to write about first.", description: "Fill in the box with your products, customers and tone." }, { status: 400 });
+  /* 17 Nov 2026: the brief is optional — the AI reads the Page's about, services and posts itself. */
   const links = parsePictureLinks(pictures);
   if (links.bad.length) return NextResponse.json({ error: `This picture link is not a public https link: ${links.bad[0].slice(0, 80)}`, description: "Use one https link per line, or remove that line." }, { status: 400 });
   if (pictures.split(/\r?\n/).filter((l) => l.trim()).length > MAX_PICTURES) return NextResponse.json({ error: `Use at most ${MAX_PICTURES} picture links.` }, { status: 400 });

@@ -239,13 +239,21 @@ export default function AdPlatformsPage() {
                   </div>
                   {!selectedAccount && canAskBudget(budgets.data?.role) && <button type="button" onClick={() => setBudgetPlatform(p)} aria-label={`Request ${PLATFORM_LABEL[p]} budget`} className="whitespace-nowrap text-xs text-ink-3 underline hover:text-ink">{pc.budget ? "Request more" : "Request budget"} →</button>}
                 </div>
-                <div className="mt-2 flex items-baseline gap-3 flex-wrap">
-                  <span className="font-serif text-3xl text-ink tabular-nums">{rupee(pc.spent)}</span>
-                  <span className="text-xs text-ink-3">{pc.daysGone}/{pc.daysInMonth} days · {rupee(pc.dailyRate)}/day · month estimate <b className="text-ink-2">{rupee(pc.projected)}</b>{pc.budget ? ` of ${rupee(pc.budget)} approved (${pc.projectedPct}%)` : ""}</span>
-                </div>
-                {pc.budget && (
-                  <div className="mt-2 h-2 rounded bg-paper-2 overflow-hidden">
-                    <div className={cn("h-full", pc.verdict === "over" ? "bg-rose" : pc.verdict === "under" ? "bg-indigo" : "bg-emerald")} style={{ width: `${Math.min(100, (pc.spent / pc.budget) * 100)}%` }} />
+                {/* 17 Nov 2026 (Abhishek): only what is left of the approved amount. */}
+                {pc.budget ? (
+                  <>
+                    <div className="mt-2 flex items-baseline gap-2 flex-wrap">
+                      <span className={cn("font-serif text-3xl tabular-nums", pc.spent > pc.budget ? "text-rose" : "text-ink")}>{rupee(Math.abs(pc.budget - pc.spent))}</span>
+                      <span className="text-xs text-ink-3">{pc.spent > pc.budget ? "over" : "left"} of <b className="text-ink-2">{rupee(pc.budget)}</b></span>
+                    </div>
+                    <div className="mt-2 h-2 rounded bg-paper-2 overflow-hidden" aria-hidden="true">
+                      <div className={cn("h-full", pc.verdict === "over" ? "bg-rose" : pc.verdict === "under" ? "bg-indigo" : "bg-emerald")} style={{ width: `${Math.min(100, (pc.spent / pc.budget) * 100)}%` }} />
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-2 flex items-baseline gap-2 flex-wrap">
+                    <span className="font-serif text-3xl text-ink tabular-nums">{rupee(pc.spent)}</span>
+                    <span className="text-xs text-ink-3">spent this month</span>
                   </div>
                 )}
               </Card>

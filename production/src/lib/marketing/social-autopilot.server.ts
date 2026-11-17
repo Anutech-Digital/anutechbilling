@@ -23,6 +23,8 @@ import { DEFAULT_PLANS, atIstHour, describePlan, pickTypes } from "@/lib/marketi
 import { notifyPeople } from "@/lib/notifications/notify.server";
 import { makeWeeklyReport } from "@/lib/marketing/social-report.server";
 import { pageConnection } from "@/lib/marketing/social-pages.server";
+import { businessBrief } from "@/lib/marketing/social-page-brief";
+import { readPageProfileBrief } from "@/lib/marketing/social-page-brief.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -69,7 +71,6 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
   const last = s.last_generated_on ? (typeof s.last_generated_on === "string" ? s.last_generated_on.slice(0, 10) : utcDateISO(s.last_generated_on)) : null;
   if (!opts.force && (!s.auto_drafts || last === today)) return { ok: false, reason: "Weekly AI posts are off, or this week is already planned.", status: 409 };
   if (s.ai_paused) return { ok: false, reason: "The AI is stopped (Stop all AI). Press Resume AI first.", status: 409 };
-  if (!s.brief.trim()) return { ok: false, reason: "Tell the AI what to write about first (the box under AI posts), then save.", status: 400 };
   /* R-2729: this Page's own token (the main Page's connection for companies set up before many Pages). */
   let connection: { pageId: string | null; pageToken: string | null } = await pageConnection(admin as unknown as SupabaseClient, session.tenantId, pageId);
   if (!connection.pageToken) { const main = await readFacebookPage(admin, session.tenantId); if (main.pageId === pageId) connection = main; }
@@ -77,11 +78,14 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
   const ai = await resolveGeminiConfig(admin, session.tenantId);
   if (!ai.apiKey) return { ok: false, reason: "Add an AI key first: Settings → Integrations → Gemini.", status: 409 };
   const instagram = await instagramForPage(connection.pageId, connection.pageToken).catch(() => null);
+  /* 17 Nov 2026 (Abhishek): the AI learns the business from the Page itself (about, services,
+     products, recent posts); the owner's box is optional extra guidance that comes first. */
+  const brief = businessBrief(s.brief, await readPageProfileBrief(connection.pageId, connection.pageToken).catch(() => ""));
 
   /* R-2706: read the results of last weeks' posts first; R-2705/R-2707: start each platform's
      strategy if it has none, then let the AI keep what worked and change what did not. */
   const results = await refreshPostStats(session, connection.pageToken, now, pageId).catch(() => ({ read: 0, noPermission: false }));
-  let strategies = await ensureStrategies(session, pageId, ai, s.brief).catch(() => null);
+  let strategies = await ensureStrategies(session, pageId, ai, brief).catch(() => null);
   const learned = strategies ? await learnStrategies(session, ai, { autopilot: s.autopilot, now, pageId }).catch(() => []) : [];
   if (learned.some((l) => l.outcome === "changed")) strategies = await readStrategies(session, pageId).catch(() => strategies);
   const fb = strategies ? planFor(strategies, "facebook") : { plan: DEFAULT_PLANS.facebook, version: null };
@@ -90,23 +94,25 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
   const count = Math.max(1, Math.min(7, s.posts_per_week || 3));
   const types = pickTypes(fb.plan.mix, count);
   let capMessage: string | null = null;
+  let aiProblem = "";
   const result = await geminiJson<{ posts?: { topic?: string; type?: string; facebook?: string; instagram?: string }[] }>({
-    apiKey: ai.apiKey, model: ai.model, tenantId: session.tenantId, label: "marketing/social-autopilot", temperature: 0.7,
+    apiKey: ai.apiKey, model: ai.model, tenantId: session.tenantId, label: "marketing/social-autopilot", temperature: 0.7, timeoutMs: 45_000,
     system: "You plan honest, useful B2B social media posts for a cloud services reseller that wants more followers. For each post write one text per platform, each following that platform's strategy (length, tone, hashtags) — the same idea, NOT the same words. Return JSON {\"posts\":[{\"topic\":\"…\",\"type\":\"…\",\"facebook\":\"…\",\"instagram\":\"…\"}]}. No invented results, prices, offers, testimonials or customer names. No engagement bait. No links in Instagram text. Each post has ONE picture: never say swipe, slides or carousel.",
     user: [
       `Write ${count} posts. Kind of each post, in order: ${types.join(", ")}.`,
       describePlan("facebook", fb.plan),
       instagram ? describePlan("instagram", ig.plan) : "No Instagram this week: leave \"instagram\" empty.",
-      `Business guidance: ${s.brief}`,
+      `About the business: ${brief}`,
     ].join("\n"),
     onCapReached: (m) => { capMessage = m; },
+    onFailure: (why) => { aiProblem = why; },
   });
   if (capMessage) return { ok: false, reason: capMessage, status: 429 };
   const posts = (result?.posts ?? []).map((p, i) => ({
     facebook: (p.facebook ?? "").trim().slice(0, 2200), instagram: (p.instagram ?? "").trim().slice(0, 2200),
-    topic: (p.topic ?? s.brief).trim().slice(0, 500), type: types[i] ?? types[0],
+    topic: (p.topic || s.page_name || "Post").trim().slice(0, 500), type: types[i] ?? types[0],
   })).filter((p) => p.facebook).slice(0, count);
-  if (posts.length === 0) return { ok: false, reason: "The AI did not return any posts. Press Plan this week now again.", status: 502 };
+  if (posts.length === 0) return { ok: false, reason: aiProblem ? `The AI could not write the posts: ${aiProblem}` : "The AI did not return any posts. Press Plan this week now again.", status: 502 };
 
   const slots = planSlots(now, posts.length);
   const status = planStatus(s.autopilot);
@@ -131,7 +137,7 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
     }
   }
   /* R-2690: the weekly report is written with the plan (never stops the plan). */
-  await makeWeeklyReport(session, ai, s.brief, now, pageId).catch((e) => console.error("[social-report] weekly failed", e instanceof Error ? e.message : "unknown"));
+  await makeWeeklyReport(session, ai, brief, now, pageId).catch((e) => console.error("[social-report] weekly failed", e instanceof Error ? e.message : "unknown"));
   /* R-2709: "Ask me first" — tell the marketing person (the owner when there is none) that posts wait for them. */
   if (!s.autopilot && created > 0) {
     const marketing = await withTenant(session, (tx) => tx.$queryRaw<{ n: bigint }[]>`

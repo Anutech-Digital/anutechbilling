@@ -71,7 +71,7 @@ export async function ensureStrategies(session: TenantSession, pageId: string, a
   let fromAi: Record<string, unknown> = {};
   if (ai.apiKey) {
     const result = await geminiJson<Record<string, unknown>>({
-      apiKey: ai.apiKey, model: ai.model, tenantId: session.tenantId, label: "marketing/social-strategy", temperature: 0.4,
+      apiKey: ai.apiKey, model: ai.model, tenantId: session.tenantId, label: "marketing/social-strategy", temperature: 0.4, timeoutMs: 45_000,
       system: `You are a social media strategist for a B2B cloud services reseller in India that wants more followers. For each platform asked, return a strategy in this JSON shape: ${PLAN_SHAPE}. Use what usually works on that platform (Facebook: conversation and community; Instagram: picture first, short, saves; LinkedIn: expert, practical, professional). Each post is text plus ONE picture (no carousels, videos or reels yet). Honest only: no invented results, prices or testimonials. Return {"facebook":{…},"instagram":{…},"linkedin":{…}} with only the platforms asked.`,
       user: `Platforms: ${missing.join(", ")}. Business: ${brief || "a cloud services reseller (Google Workspace, Microsoft 365, Zoho) for small businesses"}.`,
     });
@@ -80,7 +80,7 @@ export async function ensureStrategies(session: TenantSession, pageId: string, a
   for (const p of missing) {
     const used = Boolean(fromAi[p]);
     const plan = normalisePlan(fromAi[p], DEFAULT_PLANS[p]);
-    await saveVersion(session, pageId, p, plan, used ? `First strategy, written by the AI from your business brief and what usually works on ${name(p)}.` : `First strategy: what usually works on ${name(p)}. The AI will improve it from your results.`, "active", false);
+    await saveVersion(session, pageId, p, plan, used ? `First strategy, written by the AI from your Page (its services, products and posts) and what usually works on ${name(p)}.` : `First strategy: what usually works on ${name(p)}. The AI will improve it from your results.`, "active", false);
     await logPersonActivity(session, { pageId, actor: "ai", platform: p, action: "Wrote a strategy", detail: plan.summary });
   }
   return readStrategies(session, pageId);
