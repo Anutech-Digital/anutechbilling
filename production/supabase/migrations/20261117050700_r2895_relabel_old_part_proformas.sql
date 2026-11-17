@@ -149,7 +149,11 @@ as $$
            (q.subscription_billing_id is not null or q.cancelled_part_billing_id is not null) as is_part,
            (q.cancelled_at is not null or q.cancelled_part_billing_id is not null) as cancelled,
            (q.invoice_id is not null or q.payment_status::text = 'invoiced'
-            or exists (select 1 from public.subscription_billings b where b.id = q.subscription_billing_id and b.invoice_id is not null)) as invoiced,
+            or exists (select 1 from public.invoices i where i.quote_id = q.id)
+            or exists (select 1 from public.subscription_billings b
+                        where b.invoice_id is not null
+                          and (b.id = q.subscription_billing_id
+                               or b.id::text in (select l2 ->> 'billing_id' from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l2)))) as invoiced,
            (q.payment_status::text in ('partial', 'received')
             or exists (select 1 from public.payments p where p.quote_id = q.id and p.status::text = 'received' and p.amount > 0)) as paid
       from public.quotes q
@@ -215,7 +219,11 @@ begin
          and q.payment_status::text in ('none', 'awaiting')
          and q.status::text in ('sent', 'viewed', 'accepted')
          and not exists (select 1 from public.payments p where p.quote_id = q.id and p.status::text = 'received' and p.amount > 0)
-         and not exists (select 1 from public.subscription_billings b where b.id = q.subscription_billing_id and b.invoice_id is not null);
+         and not exists (select 1 from public.invoices i where i.quote_id = q.id)
+         and not exists (select 1 from public.subscription_billings b
+                          where b.invoice_id is not null
+                            and (b.id = q.subscription_billing_id
+                                 or b.id::text in (select l2 ->> 'billing_id' from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l2)));
       get diagnostics v_n = row_count;
       perform set_config('app.r2895_repair', '', true);
       if v_n = 1 then
@@ -224,6 +232,10 @@ begin
         v_done := v_done + 1;
       end if;
     end loop;
+    -- a row skipped by the per-row guard (became paid / invoiced / changed meanwhile) → keep nothing
+    if v_done <> v_n_plan then
+      raise exception 'R-2895: % proforma(s) were to change but % did (one was skipped — became paid / invoiced / changed since the plan). Nothing changed — read the report again.', v_n_plan, v_done;
+    end if;
   end if;
 
   return jsonb_build_object('repair', 'R-2895 relabel old part proformas', 'run_id', case when p_apply then v_run end,

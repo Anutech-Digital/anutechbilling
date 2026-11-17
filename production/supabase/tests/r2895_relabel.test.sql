@@ -68,6 +68,14 @@ end $f$;
 
 create temp table t_lbl (k text primary key, q text) on commit drop;
 
+/* Switchable skip: while r2895.skip = '1' an UPDATE of PI-R2895-001 does nothing (stands for a row the per-row guard skips). */
+create function pg_temp.zz_skip() returns trigger language plpgsql as $s$
+begin
+  if current_setting('r2895.skip', true) = '1' and old.id = 'PI-R2895-001' then return null; end if;
+  return new;
+end $s$;
+create trigger zz_r2895_skip before update on public.quotes for each row execute function pg_temp.zz_skip();
+
 do $$
 declare
   v_c uuid; b uuid; v_q text;
@@ -121,6 +129,24 @@ begin
           jsonb_build_array(jsonb_build_object('id', 'x', 'name', 'Advance payment for month 1 · setup', 'qty', 1, 'rate', 4500, 'cost', 0)),
           4500, 0, 0, 18, 'Advance payment for month 1 · setup');
   insert into t_lbl values ('N3', 'Q-R2895-N3');
+  -- I2: unpaid-looking proforma (sent / awaiting) but an INVOICE points at it (invoices.quote_id) → invoiced, untouched
+  v_c := pg_temp.cust(12); b := pg_temp.part(12, v_c);
+  v_q := pg_temp.pi(12, b, v_c, 'sent', 'awaiting', v_line, v_notes);
+  set local session_replication_role = replica;
+  insert into public.invoices (id, tenant_id, customer_name, amount, quote_id) values ('INV-R2895-1', 'b2895000-0000-0000-0000-0000000000f1', 'R2895 C12', 5310, v_q);
+  set local session_replication_role = origin;
+  insert into t_lbl values ('I2', v_q);
+  -- T: Bill-together proforma — the LEAD part (its own link) has no invoice, but the 2nd line's part has one → invoiced, untouched
+  v_c := pg_temp.cust(13); b := pg_temp.part(13, v_c);
+  insert into t_lbl values ('T', pg_temp.pi(13, b, v_c, 'sent', 'awaiting',
+    jsonb_build_array(
+      jsonb_build_object('id', 'part-1-1', 'name', 'Starter · a.in · 5 seats', 'description', v_desc, 'qty', 5, 'rate', 450, 'cost', 0, 'billing_id', b::text),
+      jsonb_build_object('id', 'part-1-2', 'name', 'Starter · b.in · 5 seats', 'description', v_desc, 'qty', 5, 'rate', 450, 'cost', 0, 'billing_id', 'b2895000-0000-0000-0000-000000000314')),
+    v_notes));
+  v_c := pg_temp.cust(14); b := pg_temp.part(14, v_c);
+  set local session_replication_role = replica;
+  update public.subscription_billings set invoice_id = 'INV-R2895-1' where id = b;
+  set local session_replication_role = origin;
 end $$;
 
 -- before snapshot of every one of my quotes (everything except line_items + notes) and of the line keys
@@ -136,59 +162,61 @@ declare
 begin
   -- ── PLAN ──────────────────────────────────────────────────────────────
   if (select count(*) from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k in ('U1','U2','A') and p.verdict = 'change') <> 3 then
-    v_fails := v_fails || 'PLAN: U1 / U2 / A should be change';
+    v_fails := array_append(v_fails, ('PLAN: U1 / U2 / A should be change')::text);
   end if;
-  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'P')  <> 'paid' then v_fails := v_fails || 'PLAN: P not paid'; end if;
-  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'PP') <> 'paid' then v_fails := v_fails || 'PLAN: PP not paid'; end if;
-  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'I')  <> 'invoiced' then v_fails := v_fails || 'PLAN: I not invoiced'; end if;
-  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'C')  <> 'cancelled' then v_fails := v_fails || 'PLAN: C not cancelled'; end if;
-  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'X')  <> 'closed' then v_fails := v_fails || 'PLAN: X not closed'; end if;
-  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'N2') <> 'label_shape_unrecognised' then v_fails := v_fails || 'PLAN: N2 not label_shape_unrecognised'; end if;
-  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'N3') <> 'not_a_part_request' then v_fails := v_fails || 'PLAN: N3 not not_a_part_request'; end if;
-  if exists (select 1 from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'N1') then v_fails := v_fails || 'PLAN: N1 (Payment for … product) listed'; end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'P')  <> 'paid' then v_fails := array_append(v_fails, ('PLAN: P not paid')::text); end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'PP') <> 'paid' then v_fails := array_append(v_fails, ('PLAN: PP not paid')::text); end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'I')  <> 'invoiced' then v_fails := array_append(v_fails, ('PLAN: I not invoiced')::text); end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'I2') <> 'invoiced' then v_fails := array_append(v_fails, 'PLAN: I2 (an invoice has quote_id) not invoiced'::text); end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'T') <> 'invoiced' then v_fails := array_append(v_fails, 'PLAN: T (together proforma, 2nd line part invoiced) not invoiced'::text); end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'C')  <> 'cancelled' then v_fails := array_append(v_fails, ('PLAN: C not cancelled')::text); end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'X')  <> 'closed' then v_fails := array_append(v_fails, ('PLAN: X not closed')::text); end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'N2') <> 'label_shape_unrecognised' then v_fails := array_append(v_fails, ('PLAN: N2 not label_shape_unrecognised')::text); end if;
+  if (select p.verdict from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'N3') <> 'not_a_part_request' then v_fails := array_append(v_fails, ('PLAN: N3 not not_a_part_request')::text); end if;
+  if exists (select 1 from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'N1') then v_fails := array_append(v_fails, ('PLAN: N1 (Payment for … product) listed')::text); end if;
   -- the label text in the plan
   if (select p.old_text from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'U1') <> 'Advance payment for month 1 · 1 Nov–30 Nov 2026'
      or (select p.new_text from public.r2895_plan() p join t_lbl l on l.q = p.quote_id where l.k = 'U1') <> 'Payment for month 1 · 1 Nov–30 Nov 2026' then
-    v_fails := v_fails || 'PLAN: U1 old / new text';
+    v_fails := array_append(v_fails, ('PLAN: U1 old / new text')::text);
   end if;
 
   -- ── DRY ───────────────────────────────────────────────────────────────
   r := public.r2895_repair(false);
-  if (r->>'applied')::boolean or (r->>'changed')::int <> 0 or r->>'run_id' is not null then v_fails := v_fails || 'DRY: reported a change'; end if;
+  if (r->>'applied')::boolean or (r->>'changed')::int <> 0 or r->>'run_id' is not null then v_fails := array_append(v_fails, ('DRY: reported a change')::text); end if;
   if exists (select 1 from t_before b join public.quotes q on q.id = b.id where q.line_items is distinct from b.line_items or q.notes is distinct from b.notes) then
-    v_fails := v_fails || 'DRY: wrote';
+    v_fails := array_append(v_fails, ('DRY: wrote')::text);
   end if;
 
   -- ── EXPECT: a wrong expected count refuses, nothing changes ─────────────
   select count(*) into v_tot from public.r2895_plan() where verdict = 'change';
   begin
     perform public.r2895_repair(true, v_tot + 1);
-    v_fails := v_fails || 'EXPECT: wrong count did not raise';
+    v_fails := array_append(v_fails, ('EXPECT: wrong count did not raise')::text);
   exception when others then
-    if sqlerrm not like 'R-2895: the report said%' then v_fails := v_fails || ('EXPECT: other error ' || sqlerrm); end if;
+    if sqlerrm not like 'R-2895: the report said%' then v_fails := array_append(v_fails, (('EXPECT: other error ' || sqlerrm))::text); end if;
   end;
   if exists (select 1 from t_before b join public.quotes q on q.id = b.id where q.line_items is distinct from b.line_items or q.notes is distinct from b.notes) then
-    v_fails := v_fails || 'EXPECT: wrote after refusing';
+    v_fails := array_append(v_fails, ('EXPECT: wrote after refusing')::text);
   end if;
 
   -- ── APPLY ─────────────────────────────────────────────────────────────
   r := public.r2895_repair(true, v_tot);
   v_run := (r->>'run_id')::uuid;
-  if (r->>'changed')::int <> v_tot then v_fails := v_fails || ('APPLY: changed ' || (r->>'changed') || ' of ' || v_tot); end if;
+  if (r->>'changed')::int <> v_tot then v_fails := array_append(v_fails, (('APPLY: changed ' || (r->>'changed') || ' of ' || v_tot))::text); end if;
   if (select count(*) from public.r2895_repair_log g where g.run_id = v_run and g.tenant_id = 'b2895000-0000-0000-0000-0000000000f1') <> 3 then
-    v_fails := v_fails || 'APPLY: log should hold U1, U2, A';
+    v_fails := array_append(v_fails, ('APPLY: log should hold U1, U2, A')::text);
   end if;
   if exists (select 1 from public.r2895_repair_log g where g.run_id = v_run and (g.applied_by is null or g.applied_at is null or g.before_lines = g.after_lines)) then
-    v_fails := v_fails || 'APPLY: log row without who / when / change';
+    v_fails := array_append(v_fails, ('APPLY: log row without who / when / change')::text);
   end if;
   -- every column but line_items + notes identical on EVERY quote of the company (updated_at too)
   if exists (select 1 from t_before b join public.quotes q on q.id = b.id where (to_jsonb(q) - 'line_items' - 'notes') is distinct from b.rowx) then
-    v_fails := v_fails || 'APPLY: a column other than line_items / notes changed';
+    v_fails := array_append(v_fails, ('APPLY: a column other than line_items / notes changed')::text);
   end if;
   -- unchanged rows keep their lines and notes exactly
   if exists (select 1 from t_before b join public.quotes q on q.id = b.id join t_lbl l on l.q = q.id
               where l.k not in ('U1', 'U2', 'A') and (q.line_items is distinct from b.line_items or q.notes is distinct from b.notes)) then
-    v_fails := v_fails || 'APPLY: a paid / invoiced / cancelled / closed / not-a-label row changed';
+    v_fails := array_append(v_fails, ('APPLY: a paid / invoiced / cancelled / closed / not-a-label row changed')::text);
   end if;
   -- changed rows: per line only name / description differ; same line count; text now reads Payment for
   if exists (
@@ -199,65 +227,79 @@ begin
                          join jsonb_array_elements(q.line_items) with ordinality n(x, i) using (i)
                         where (o.x - 'name' - 'description') is distinct from (n.x - 'name' - 'description'))
             or q.line_items::text like '%Advance payment for%' or coalesce(q.notes, '') like 'Advance payment for%')
-  ) then v_fails := v_fails || 'APPLY: lines differ beyond name / description, or old text left'; end if;
+  ) then v_fails := array_append(v_fails, ('APPLY: lines differ beyond name / description, or old text left')::text); end if;
   if (select q.line_items->0->>'description' from public.quotes q join t_lbl l on l.q = q.id where l.k = 'U1') <> 'Payment for month 1 · 1 Nov–30 Nov 2026'
      or (select q.notes from public.quotes q join t_lbl l on l.q = q.id where l.k = 'U1') <> 'Payment for month 1 · 1 Nov–30 Nov 2026. Due on 1 Nov 2026. The tax invoice is issued when this is paid.'
      or (select q.line_items->0->>'name' from public.quotes q join t_lbl l on l.q = q.id where l.k = 'U1') <> 'Google Workspace Business Starter · r2895.example.test · 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)' then
-    v_fails := v_fails || 'APPLY: U1 text';
+    v_fails := array_append(v_fails, ('APPLY: U1 text')::text);
   end if;
   if (select q.line_items->0->>'name' from public.quotes q join t_lbl l on l.q = q.id where l.k = 'U2') <> 'Payment for Q2 · 28 Jan–27 Apr 2027'
      or (select q.line_items->1->>'description' from public.quotes q join t_lbl l on l.q = q.id where l.k = 'U2') <> 'Payment for Q2 · 28 Jan–27 Apr 2027'
      or (select q.line_items->1->>'name' from public.quotes q join t_lbl l on l.q = q.id where l.k = 'U2') <> 'Starter · b.in · 5 seats' then
-    v_fails := v_fails || 'APPLY: U2 text (name-label line, description-label line, product name kept)';
+    v_fails := array_append(v_fails, ('APPLY: U2 text (name-label line, description-label line, product name kept)')::text);
   end if;
-  if current_setting('app.r2895_repair', true) not in ('', 'off') then v_fails := v_fails || 'APPLY: flag left on'; end if;
+  if current_setting('app.r2895_repair', true) not in ('', 'off') then v_fails := array_append(v_fails, ('APPLY: flag left on')::text); end if;
 
   -- ── IDEMPOTENT ────────────────────────────────────────────────────────
   r2 := public.r2895_repair(true);
-  if (r2->>'changed')::int <> 0 then v_fails := v_fails || ('IDEMPOTENT: second run changed ' || (r2->>'changed')); end if;
+  if (r2->>'changed')::int <> 0 then v_fails := array_append(v_fails, (('IDEMPOTENT: second run changed ' || (r2->>'changed')))::text); end if;
 
   -- ── UNDO ──────────────────────────────────────────────────────────────
   r2 := public.r2895_undo(v_run);
-  if (r2->>'undone')::int <> v_tot or (r2->>'changed_since_left')::int <> 0 then v_fails := v_fails || ('UNDO: ' || r2::text); end if;
+  if (r2->>'undone')::int <> v_tot or (r2->>'changed_since_left')::int <> 0 then v_fails := array_append(v_fails, (('UNDO: ' || r2::text))::text); end if;
   if exists (select 1 from t_before b join public.quotes q on q.id = b.id
               where q.line_items is distinct from b.line_items or q.notes is distinct from b.notes
                  or (to_jsonb(q) - 'line_items' - 'notes') is distinct from b.rowx) then
-    v_fails := v_fails || 'UNDO: a quote is not exactly as before';
+    v_fails := array_append(v_fails, ('UNDO: a quote is not exactly as before')::text);
   end if;
   r2 := public.r2895_undo(v_run);
-  if (r2->>'undone')::int <> 0 then v_fails := v_fails || 'UNDO: second undo changed rows'; end if;
+  if (r2->>'undone')::int <> 0 then v_fails := array_append(v_fails, ('UNDO: second undo changed rows')::text); end if;
 
   -- ── NOTES switch: p_notes = false leaves the notes lead as it is ──────────
   r := public.r2895_repair(true, null, false);
   if (select q.notes from public.quotes q join t_lbl l on l.q = q.id where l.k = 'U1') <> (select b.notes from t_before b join t_lbl l on l.q = b.id where l.k = 'U1')
      or (select q.line_items->0->>'description' from public.quotes q join t_lbl l on l.q = q.id where l.k = 'U1') <> 'Payment for month 1 · 1 Nov–30 Nov 2026' then
-    v_fails := v_fails || 'NOTES: p_notes=false changed the notes or skipped the line';
+    v_fails := array_append(v_fails, ('NOTES: p_notes=false changed the notes or skipped the line')::text);
   end if;
   perform public.r2895_undo((r->>'run_id')::uuid);
+
+  -- ── SKIPPED ROW: changed <> expected → raise, nothing kept ───────────────
+  select count(*) into v_tot from public.r2895_plan() where verdict = 'change';
+  perform set_config('r2895.skip', '1', true);
+  begin
+    perform public.r2895_repair(true, v_tot);
+    v_fails := array_append(v_fails, 'SKIP: a skipped row did not raise'::text);
+  exception when others then
+    if sqlerrm not like 'R-2895: % were to change but %' then v_fails := array_append(v_fails, ('SKIP: other error ' || sqlerrm)::text); end if;
+  end;
+  perform set_config('r2895.skip', '0', true);
+  if exists (select 1 from t_before b join public.quotes q on q.id = b.id where q.line_items is distinct from b.line_items or q.notes is distinct from b.notes) then
+    v_fails := array_append(v_fails, 'SKIP: something was kept after the raise'::text);
+  end if;
 
   -- ── SINCE THE REPORT: a row becomes paid → the guarded run raises, nothing is kept ───────────────
   select count(*) into v_tot from public.r2895_plan() where verdict = 'change';
   update public.quotes set payment_status = 'received' where id = (select q from t_lbl where k = 'A');
   begin
     perform public.r2895_repair(true, v_tot);
-    v_fails := v_fails || 'SINCE: ran although a row became paid';
+    v_fails := array_append(v_fails, ('SINCE: ran although a row became paid')::text);
   exception when others then
-    if sqlerrm not like 'R-2895: the report said%' then v_fails := v_fails || ('SINCE: other error ' || sqlerrm); end if;
+    if sqlerrm not like 'R-2895: the report said%' then v_fails := array_append(v_fails, (('SINCE: other error ' || sqlerrm))::text); end if;
   end;
   if (select q.line_items::text like '%Advance payment for%' from public.quotes q join t_lbl l on l.q = q.id where l.k = 'A') is not true then
-    v_fails := v_fails || 'SINCE: the paid row was relabelled';
+    v_fails := array_append(v_fails, ('SINCE: the paid row was relabelled')::text);
   end if;
 
   -- ── GRANTS ────────────────────────────────────────────────────────────
   for v_k in select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and (p.proname like 'r2895\_%' or p.proname = 'tg_r2895_keep_updated_at') loop
     if has_function_privilege('anon', v_k::regprocedure, 'execute') or has_function_privilege('authenticated', v_k::regprocedure, 'execute') then
-      v_fails := v_fails || ('GRANTS: executable by anon / authenticated: ' || v_k);
+      v_fails := array_append(v_fails, (('GRANTS: executable by anon / authenticated: ' || v_k))::text);
     end if;
   end loop;
   if has_table_privilege('authenticated', 'public.r2895_repair_log', 'insert') or has_table_privilege('authenticated', 'public.r2895_repair_log', 'update')
      or has_table_privilege('authenticated', 'public.r2895_repair_log', 'delete') or has_table_privilege('anon', 'public.r2895_repair_log', 'select') then
-    v_fails := v_fails || 'GRANTS: r2895_repair_log writable / readable by a request login';
+    v_fails := array_append(v_fails, ('GRANTS: r2895_repair_log writable / readable by a request login')::text);
   end if;
 
   if array_length(v_fails, 1) > 0 then

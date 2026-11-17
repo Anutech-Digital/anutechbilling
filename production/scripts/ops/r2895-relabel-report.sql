@@ -40,7 +40,11 @@ with c as (
          (q.subscription_billing_id is not null or q.cancelled_part_billing_id is not null) as is_part,
          (q.cancelled_at is not null or q.cancelled_part_billing_id is not null) as cancelled,
          (q.invoice_id is not null or q.payment_status::text = 'invoiced'
-          or exists (select 1 from public.subscription_billings b where b.id = q.subscription_billing_id and b.invoice_id is not null)) as invoiced,
+          or exists (select 1 from public.invoices i where i.quote_id = q.id)
+            or exists (select 1 from public.subscription_billings b
+                        where b.invoice_id is not null
+                          and (b.id = q.subscription_billing_id
+                               or b.id::text in (select l2 ->> 'billing_id' from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l2)))) as invoiced,
          (q.payment_status::text in ('partial', 'received')
           or exists (select 1 from public.payments p where p.quote_id = q.id and p.status::text = 'received' and p.amount > 0)) as paid,
          exists (select 1 from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l
@@ -88,7 +92,11 @@ with c as (
          (q.subscription_billing_id is not null or q.cancelled_part_billing_id is not null) as is_part,
          (q.cancelled_at is not null or q.cancelled_part_billing_id is not null) as cancelled,
          (q.invoice_id is not null or q.payment_status::text = 'invoiced'
-          or exists (select 1 from public.subscription_billings b where b.id = q.subscription_billing_id and b.invoice_id is not null)) as invoiced,
+          or exists (select 1 from public.invoices i where i.quote_id = q.id)
+            or exists (select 1 from public.subscription_billings b
+                        where b.invoice_id is not null
+                          and (b.id = q.subscription_billing_id
+                               or b.id::text in (select l2 ->> 'billing_id' from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l2)))) as invoiced,
          (q.payment_status::text in ('partial', 'received')
           or exists (select 1 from public.payments p where p.quote_id = q.id and p.status::text = 'received' and p.amount > 0)) as paid,
          exists (select 1 from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l
@@ -128,7 +136,11 @@ with c as (
          (q.subscription_billing_id is not null or q.cancelled_part_billing_id is not null) as is_part,
          (q.cancelled_at is not null or q.cancelled_part_billing_id is not null) as cancelled,
          (q.invoice_id is not null or q.payment_status::text = 'invoiced'
-          or exists (select 1 from public.subscription_billings b where b.id = q.subscription_billing_id and b.invoice_id is not null)) as invoiced,
+          or exists (select 1 from public.invoices i where i.quote_id = q.id)
+            or exists (select 1 from public.subscription_billings b
+                        where b.invoice_id is not null
+                          and (b.id = q.subscription_billing_id
+                               or b.id::text in (select l2 ->> 'billing_id' from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l2)))) as invoiced,
          (q.payment_status::text in ('partial', 'received')
           or exists (select 1 from public.payments p where p.quote_id = q.id and p.status::text = 'received' and p.amount > 0)) as paid,
          exists (select 1 from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l
@@ -167,7 +179,11 @@ with c as (
          (q.subscription_billing_id is not null or q.cancelled_part_billing_id is not null) as is_part,
          (q.cancelled_at is not null or q.cancelled_part_billing_id is not null) as cancelled,
          (q.invoice_id is not null or q.payment_status::text = 'invoiced'
-          or exists (select 1 from public.subscription_billings b where b.id = q.subscription_billing_id and b.invoice_id is not null)) as invoiced,
+          or exists (select 1 from public.invoices i where i.quote_id = q.id)
+            or exists (select 1 from public.subscription_billings b
+                        where b.invoice_id is not null
+                          and (b.id = q.subscription_billing_id
+                               or b.id::text in (select l2 ->> 'billing_id' from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l2)))) as invoiced,
          (q.payment_status::text in ('partial', 'received')
           or exists (select 1 from public.payments p where p.quote_id = q.id and p.status::text = 'received' and p.amount > 0)) as paid,
          exists (select 1 from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l
@@ -208,7 +224,11 @@ with c as (
          (q.subscription_billing_id is not null or q.cancelled_part_billing_id is not null) as is_part,
          (q.cancelled_at is not null or q.cancelled_part_billing_id is not null) as cancelled,
          (q.invoice_id is not null or q.payment_status::text = 'invoiced'
-          or exists (select 1 from public.subscription_billings b where b.id = q.subscription_billing_id and b.invoice_id is not null)) as invoiced,
+          or exists (select 1 from public.invoices i where i.quote_id = q.id)
+            or exists (select 1 from public.subscription_billings b
+                        where b.invoice_id is not null
+                          and (b.id = q.subscription_billing_id
+                               or b.id::text in (select l2 ->> 'billing_id' from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l2)))) as invoiced,
          (q.payment_status::text in ('partial', 'received')
           or exists (select 1 from public.payments p where p.quote_id = q.id and p.status::text = 'received' and p.amount > 0)) as paid,
          exists (select 1 from jsonb_array_elements(case when jsonb_typeof(q.line_items) = 'array' then q.line_items else '[]'::jsonb end) l
