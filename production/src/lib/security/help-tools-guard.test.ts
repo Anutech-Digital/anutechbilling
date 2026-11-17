@@ -120,6 +120,16 @@ const HELP_GRAPH_ALLOWED: readonly string[] = [
   "src/lib/security/secret-columns.ts", "src/lib/accounting/sale-documents.ts",
   "src/lib/leads/capture-channel.ts", "src/lib/payments/cash-received.ts", "src/lib/payments/amount-due.ts",
   "src/lib/payments/receivables.ts", "src/lib/phone.ts", "src/lib/gst/countries.ts",
+  /* R-2884 (reviewed): the PURE half of the Customer page's balance — buildCustomerStatement and the
+     Outstanding / credit split, extracted from the client module customer-statement.ts (react-query +
+     browser Supabase client, which this guard refuses). customer_overview must give the SAME number the
+     page shows, so it calls this one file the page calls. Read in full: imports only utils, sale-documents,
+     cash-received, amount-due and receivables (all above); no React, no network, no env, no side effect at import. */
+  "src/lib/customers/statement-core.ts",
+  /* R-2884 (reviewed): the app's own invoiceHref (R-086) — list_invoices cites each invoice by it, so a number with a
+     "/" (ANU/26-27/001) keeps its link. Read in full: no imports, only string building with encodeURIComponent /
+     decodeURIComponent, no ambient power. */
+  "src/app/(app)/invoices/invoice-href.ts",
 ];
 /** npm packages the files on HELP_GRAPH_ALLOWED may import as values (pure formatters only). */
 const FOLLOWED_NPM_ALLOWED = ["clsx", "tailwind-merge", "zod"];

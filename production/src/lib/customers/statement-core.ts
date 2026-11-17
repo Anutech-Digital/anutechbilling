@@ -1,0 +1,339 @@
+/**
+ * The customer Statement tab (Zoho "Statement") — a running balance of what the customer owes.
+ *
+ * R-1682 (staging T-19, 19 Oct 2026): INV ₹7,646 billed, ₹7,646 paid, cancelled, credit note
+ * ₹6,372. The Statement showed only +7,646 and −7,646 (closing ₹0) while the overview said
+ * "₹6,372 credit": credit notes and debit notes were not on it at all, and a refunded payment
+ * showed only the refund (its receipt vanished), so a refund made the customer look as if they
+ * owed it again.
+ *
+ * Now, the same entries the books' customer ledger uses (src/lib/accounting/reports-reference.ts,
+ * referenceCustomerLedgerEntries):
+ *   invoice        debit (owed)
+ *   debit note     debit
+ *   payment        credit — every payment, refunded or not (the money did come in)
+ *   credit note    credit
+ *   refund         debit  — on the refund date (money went back)
+ *   project receipt credit
+ * closing = invoices + debit notes − payments − credit notes + refunds. Positive = the customer
+ * owes; negative = the company owes the customer (open credit to use or refund).
+ *
+ * R-1632 (weekly audit 19 Oct 2026) — the same closing as /collections (invoiceAmountDue per
+ * invoice) minus the customer's open credit:
+ *   - a VOID or DRAFT invoice is not owed: no line (and no line for a note against it);
+ *   - a WRITTEN-OFF invoice (R-1635) stays on as issued, and a "Written off" credit line on
+ *     the write-off date clears what was still due on it (invoiceAmountDue before the
+ *     write-off) — /collections asks for nothing on it;
+ *   - a payment counts the CASH that came in (cashReceived: amount − credit_applied, R-1565);
+ *     the credit it spent was already counted on the payment that created it. A refund gives
+ *     back that same cash;
+ *   - payments belong to the customer by the /payments rule (paymentBelongsTo: own
+ *     customer_id, else the customer on its quote) — statementPayments().
+ */
+import { rupee } from "@/lib/utils";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { cashReceived } from "@/lib/payments/cash-received";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { subscriptionReceivable, type SubscriptionDueFields } from "@/lib/payments/receivables";
+
+export type StatementLink =
+  | { kind: "invoice"; invoiceId: string }
+  | { kind: "payment"; quoteId: string }
+  | { kind: "projectPayment"; invoiceId: string | null; projectId: string };
+
+export interface StatementRow {
+  date: string;
+  desc: string;
+  debit: number;
+  credit: number;
+  balance: number;
+  link: StatementLink;
+}
+
+export interface StatementProjectPayment {
+  received_at: string; amount: number | null; reference?: string | null; project_title: string; invoice_id?: string | null; project_id: string;
+  /** R-2029: what ties several instalments to ONE bank receipt (the bank line it was reconciled to). */
+  bank_txn_id?: string | null;
+  /** 'tds' = the TDS part of an instalment (no bank line of its own). */
+  method?: string | null;
+  milestone_id?: string | null;
+  /** "Kist 1 — advance" → shown as "Kist 1". */
+  milestone_label?: string | null;
+}
+
+const KIST_SHOWN = 2;
+
+/** "Kist 1 + Kist 2" — the short part of each label (before " — "), at most two, then "+ N more". */
+function kistList(labels: readonly string[]): string {
+  const short = [...new Set(labels.map((l) => l.split(" — ")[0].trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  const head = short.slice(0, KIST_SHOWN).join(" + ");
+  return short.length > KIST_SHOWN ? `${head} + ${short.length - KIST_SHOWN} more` : head;
+}
+
+/**
+ * R-2029 (27 Oct 2026, SCN Bharat Apps): one ₹2,12,400 bank receipt paid Kist 1 and Kist 2 and
+ * showed as two identical "Payment received · SCN-… ₹1,06,200" rows, plus two "TDS 194J …
+ * ₹11,800" rows. Now ONE row per bank receipt (instalments sharing a bank_txn_id), amounts
+ * summed, instalments named — and ONE TDS row for the TDS of those instalments (same project,
+ * same day, a milestone in the receipt). A receipt for a single instalment reads as before.
+ * Only the rows are merged: every rupee stays, so the running and closing balance do not move.
+ */
+export function groupProjectReceipts(
+  list: readonly StatementProjectPayment[],
+): { date: string; desc: string; credit: number; link: StatementLink }[] {
+  const byBank = new Map<string, StatementProjectPayment[]>();
+  for (const p of list) {
+    if (p.bank_txn_id && p.method !== "tds") byBank.set(p.bank_txn_id, [...(byBank.get(p.bank_txn_id) ?? []), p]);
+  }
+  const used = new Set<StatementProjectPayment>();
+  const out: { date: string; desc: string; credit: number; link: StatementLink }[] = [];
+  const day = (d: string) => (d ?? "").slice(0, 10);
+  for (const group of byBank.values()) {
+    if (group.length < 2) continue;
+    const first = group[0];
+    const ms = new Set(group.map((p) => p.milestone_id).filter(Boolean));
+    const tds = list.filter((p) => p.method === "tds" && p.milestone_id && ms.has(p.milestone_id)
+      && p.project_id === first.project_id && day(p.received_at) === day(first.received_at));
+    const kists = kistList(group.map((p) => p.milestone_label ?? ""));
+    const invoices = new Set(group.map((p) => p.invoice_id ?? null));
+    const link: StatementLink = { kind: "projectPayment", invoiceId: invoices.size === 1 ? first.invoice_id ?? null : null, projectId: first.project_id };
+    const ref = first.reference?.trim() || first.project_title;
+    out.push({
+      date: first.received_at, desc: `Payment received · ${ref}${kists ? ` · ${kists}` : ""}`,
+      credit: group.reduce((s, p) => s + (p.amount ?? 0), 0), link,
+    });
+    group.forEach((p) => used.add(p));
+    if (tds.length >= 2) {
+      const section = (tds[0].reference ?? "").split(" @")[0].trim() || "TDS";
+      out.push({
+        date: tds[0].received_at, desc: `${section}${kists ? ` · ${kistList(tds.map((p) => p.milestone_label ?? ""))}` : ""}`,
+        credit: tds.reduce((s, p) => s + (p.amount ?? 0), 0), link,
+      });
+      tds.forEach((p) => used.add(p));
+    }
+  }
+  for (const p of list) {
+    if (used.has(p)) continue;
+    out.push({
+      date: p.received_at, desc: `Payment received · ${p.reference?.trim() || p.project_title}`,
+      credit: p.amount ?? 0,
+      link: { kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id },
+    });
+  }
+  return out;
+}
+
+export interface StatementInput {
+  /** R-1739: an invoice imported from Zoho Books (document_kind opening_invoice) is the
+   *  customer's opening balance — only what was still due when it came in (opening_balance);
+   *  its earlier Zoho receipts were never recorded here. */
+  invoices: ReadonlyArray<{
+    id: string; invoice_date: string; amount: number | null; document_kind?: string | null; opening_balance?: number | null;
+    /** R-2884: the quote it was raised from — a subscription whose quote has an invoice is not "owed, not invoiced yet". */
+    quote_id?: string | null;
+    /** R-1632: void / draft → not on the statement. Omitted = issued (older callers). */
+    status?: string | null;
+    /** R-1632: what invoiceAmountDue reads — the write-off line clears exactly that. */
+    net_payable?: number | null; paid_amount?: number | null; written_off_at?: string | null;
+  }>;
+  payments: ReadonlyArray<{
+    id: string; quote_id: string | null; invoice_id?: string | null; amount: number | null; status: string;
+    /** R-1565: the part of `amount` paid from the customer's credit, not new money. */
+    credit_applied?: number | null;
+    received_at: string; refunded_at?: string | null;
+    receipt_voucher_no?: string | null; refund_voucher_no?: string | null;
+  }>;
+  creditNotes: ReadonlyArray<{ id: string; invoice_id: string | null; credit_date: string; amount: number | null; reason?: string | null }>;
+  debitNotes: ReadonlyArray<{ id: string; invoice_id: string | null; debit_date: string; amount: number | null; reason?: string | null }>;
+  projectPayments: ReadonlyArray<StatementProjectPayment>;
+  /** Optional "— ₹X bank + ₹Y TDS" tail for a payment row (R-523). */
+  paymentSplit?: (paymentId: string, amount: number) => string | null;
+  /** R-2029: is this quote an R-1863 customer-advance holder (isCustomerAdvanceQuote)? Its
+   *  payment reads "Advance (RV-…)" — the same credit, the same balance, only the label. */
+  isAdvanceQuote?: (quoteId: string) => boolean;
+  /** R-2183: subscription dues no invoice asks for yet (subscriptionReceivable, R-1708) — the
+   *  instalment is owed before its tax invoice is raised. Omitted = none. */
+  uninvoicedDues?: ReadonlyArray<StatementUninvoicedDue>;
+}
+
+/** R-2183: one subscription's balance whose quote has no invoice yet (lib/payments/receivables.ts). */
+export interface StatementUninvoicedDue { quoteId: string; date: string; due: number }
+
+/**
+ * R-1680: a running balance below zero is money the customer has with us — "₹5,000 credit",
+ * the closing line's own words. rupee(-5000) printed "₹-5,000" in the Balance column.
+ */
+export function statementBalanceText(balance: number): string {
+  return balance < 0 ? `${rupee(-balance)} credit` : rupee(balance);
+}
+
+/**
+ * R-2183 (Zoho audit 31 Oct, ABDCA): the Overview said "Outstanding ₹1,632" (the subscription's
+ * balance) and this statement said "Closing ₹1,554 credit" (only the RV received against that
+ * not-yet-invoiced instalment). The instalment is owed before its tax invoice exists, so it is a
+ * debit line here — the due PLUS what was already received on that quote without an invoice
+ * (the subscription balance is already net of it) — and the closing is the ONE customer balance
+ * the Overview shows too (deriveCustomerInsights). advanceNotes: "Advance ₹1,554 against
+ * Q-…, ₹1,632 still due" — shown under both figures.
+ */
+export function buildCustomerStatement(input: StatementInput): { rows: StatementRow[]; closing: number; advanceNotes: string[] } {
+  type Raw = Omit<StatementRow, "balance"> & { order: number };
+  const raw: Raw[] = [];
+  /* R-1632: a void invoice was never a supply (only drafts are voided — an issued one is
+     reversed with a credit note, 20260927140000) and a draft is not issued yet. */
+  const offStatement = new Set(
+    input.invoices.filter((i) => i.status === "void" || i.status === "draft").map((i) => i.id),
+  );
+  for (const i of input.invoices) {
+    if (offStatement.has(i.id)) continue;
+    const opening = isOpeningInvoice(i);
+    raw.push({
+      date: i.invoice_date,
+      desc: opening ? `Opening balance · ${i.id} (imported from Zoho Books)` : `Invoice ${i.id}`,
+      debit: opening ? i.opening_balance ?? 0 : i.amount ?? 0, credit: 0, link: { kind: "invoice", invoiceId: i.id }, order: 0,
+    });
+    if (i.written_off_at) {
+      /* R-1635: the invoice stays issued; what was still due on it is no longer asked for. */
+      const due = invoiceAmountDue({ ...i, written_off_at: null });
+      if (due > 0) {
+        raw.push({
+          date: i.written_off_at, desc: `Written off · ${i.id} (not collected)`,
+          debit: 0, credit: due, link: { kind: "invoice", invoiceId: i.id }, order: 5,
+        });
+      }
+    }
+  }
+  for (const d of input.debitNotes) {
+    if (d.invoice_id && offStatement.has(d.invoice_id)) continue;
+    raw.push({
+      date: d.debit_date, desc: `Debit note ${d.id}${d.invoice_id ? ` · on ${d.invoice_id}` : ""}`,
+      debit: d.amount ?? 0, credit: 0,
+      link: d.invoice_id ? { kind: "invoice", invoiceId: d.invoice_id } : { kind: "invoice", invoiceId: d.id }, order: 1,
+    });
+  }
+  for (const p of input.payments) {
+    /* R-1632: the cash that came in — credit spent here was counted when it was received. */
+    const amount = cashReceived({ amount: p.amount ?? 0, credit_applied: p.credit_applied });
+    /* R-1739: a payment on an imported Zoho invoice has no quote — it opens that invoice. */
+    const link: StatementLink = p.quote_id ? { kind: "payment", quoteId: p.quote_id } : { kind: "invoice", invoiceId: p.invoice_id ?? "" };
+    const split = input.paymentSplit?.(p.id, amount) ?? null;
+    const advance = !!p.quote_id && (input.isAdvanceQuote?.(p.quote_id) ?? false);
+    raw.push({
+      date: p.received_at,
+      desc: advance
+        ? `Advance${p.receipt_voucher_no ? ` (${p.receipt_voucher_no})` : ""}${split ? ` — ${split}` : ""}`
+        : `Payment received${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}${split ? ` — ${split}` : ""}`,
+      debit: 0, credit: amount, link, order: 2,
+    });
+    if (p.status === "refunded") {
+      raw.push({
+        date: p.refunded_at ?? p.received_at,
+        desc: `Refund${p.refund_voucher_no ? ` · ${p.refund_voucher_no}` : ""}`,
+        debit: amount, credit: 0, link, order: 4,
+      });
+    }
+  }
+  for (const c of input.creditNotes) {
+    if (c.invoice_id && offStatement.has(c.invoice_id)) continue;
+    raw.push({
+      date: c.credit_date, desc: `Credit note ${c.id}${c.invoice_id ? ` · on ${c.invoice_id}` : ""}`,
+      debit: 0, credit: c.amount ?? 0,
+      link: c.invoice_id ? { kind: "invoice", invoiceId: c.invoice_id } : { kind: "invoice", invoiceId: c.id }, order: 3,
+    });
+  }
+  const advanceNotes: string[] = [];
+  for (const d of input.uninvoicedDues ?? []) {
+    if (!(d.due > 0)) continue;
+    const advance = input.payments
+      .filter((p) => p.quote_id === d.quoteId && !p.invoice_id && p.status === "received")
+      .reduce((sum, p) => sum + cashReceived({ amount: p.amount ?? 0, credit_applied: p.credit_applied }), 0);
+    raw.push({
+      date: d.date, desc: `Instalment due · ${d.quoteId} (not invoiced yet)`,
+      debit: d.due + advance, credit: 0, link: { kind: "payment", quoteId: d.quoteId }, order: -1,
+    });
+    if (advance > 0) advanceNotes.push(`Advance ${rupee(advance)} against ${d.quoteId}, ${rupee(d.due)} still due`);
+  }
+  for (const g of groupProjectReceipts(input.projectPayments)) {
+    raw.push({ ...g, debit: 0, order: 2 });
+  }
+  /* Day first (YYYY-MM-DD of the stored value), then invoice → debit note → payment →
+     credit note → refund, so a same-day refund never dips below what it reverses. */
+  raw.sort((a, b) => (a.date ?? "").slice(0, 10).localeCompare((b.date ?? "").slice(0, 10)) || a.order - b.order
+    || (a.date ?? "").localeCompare(b.date ?? ""));
+  let bal = 0;
+  const rows = raw.map(({ order: _order, ...r }) => { bal += r.debit - r.credit; return { ...r, balance: bal }; });
+  return { rows, closing: bal, advanceNotes };
+}
+
+
+
+/* ───────── R-2884 (17 Nov 2026): the pure half of the Customer page balance ─────────
+   The Customer page's Outstanding is this statement's closing. Help AI's customer_overview must give
+   the SAME number, and the help-tools guard refuses the client module (react-query + browser Supabase
+   client) this file was in — so everything that decides the number lives HERE: no React, no client
+   imports, nothing but arithmetic over rows. customer-statement.ts re-exports it; the page and the
+   tool call these same functions. */
+
+/**
+ * The subscription's balance that NO invoice asks for yet — the statement's "Instalment due ·
+ * <quote> (not invoiced yet)" line (R-2818: renewals/owed.ts re-exports this one function): only with a
+ * quote, and only while that quote has no invoice.
+ */
+export function uninvoicedSubscriptionDue(sub: SubscriptionDueFields, invoicedQuoteIds: ReadonlySet<string>): number {
+  if (!sub.quote_id) return 0;
+  return subscriptionReceivable(sub, invoicedQuoteIds);
+}
+
+/** A subscription row as the statement reads it — only what bears on a not-yet-invoiced due. */
+export interface StatementSubscription extends SubscriptionDueFields {
+  start_date?: string | null; created_at?: string | null;
+}
+
+/**
+ * R-2183 / R-2818: the instalments owed before any invoice exists — one per subscription whose quote has
+ * no invoice. `invoices` = ALL the customer's invoices (void ones too: the quote counts as invoiced).
+ */
+export function statementUninvoicedDues(
+  subs: readonly StatementSubscription[],
+  invoices: ReadonlyArray<{ quote_id?: string | null }>,
+): StatementUninvoicedDue[] {
+  const invoicedQuoteIds = new Set(invoices.map((i) => i.quote_id).filter((q): q is string => !!q));
+  return subs.flatMap((s) => {
+    const due = uninvoicedSubscriptionDue(s, invoicedQuoteIds);
+    return due > 0 && s.quote_id ? [{ quoteId: s.quote_id, date: (s.start_date ?? s.created_at ?? "").slice(0, 10), due }] : [];
+  });
+}
+
+/**
+ * The Customer page's Outstanding / credit from the statement closing (deriveCustomerInsights, R-2183):
+ * the closing to the paisa; Outstanding = it when above zero; credit = how far below zero it is.
+ */
+export function outstandingFromClosing(closing: number): { closing: number; outstanding: number; credit: number } {
+  const c = Math.round(closing * 100) / 100;
+  return { closing: c, outstanding: Math.max(0, c), credit: c < 0 ? -c : 0 };
+}
+
+/** Everything the Customer page reads to build one customer's balance (rows as the page loads them). */
+export interface CustomerBalanceInput {
+  invoices: StatementInput["invoices"];
+  payments: StatementInput["payments"];
+  creditNotes: StatementInput["creditNotes"];
+  debitNotes: StatementInput["debitNotes"];
+  projectPayments: StatementInput["projectPayments"];
+  subscriptions: readonly StatementSubscription[];
+}
+
+/**
+ * R-2884: one customer's balance exactly as the Customer page works it out — the Statement
+ * (buildCustomerStatement, with the subscription instalments owed before an invoice exists) and its
+ * closing split into Outstanding / credit (deriveCustomerInsights). `payments` must already be the
+ * customer's (own customer_id, or on one of their quotes — the /payments rule).
+ */
+export function customerBalance(i: CustomerBalanceInput): { statement: ReturnType<typeof buildCustomerStatement>; closing: number; outstanding: number; credit: number } {
+  const statement = buildCustomerStatement({
+    invoices: i.invoices, payments: i.payments, creditNotes: i.creditNotes, debitNotes: i.debitNotes,
+    projectPayments: i.projectPayments, uninvoicedDues: statementUninvoicedDues(i.subscriptions, i.invoices),
+  });
+  return { statement, ...outstandingFromClosing(statement.closing) };
+}

@@ -111,7 +111,7 @@ describe("HELP_AI_V2 on, owner: the native tool-use loop", () => {
     expect(first.betas).toContain("server-side-fallback-2026-07-01");
     expect(first.fallbacks).toBe("default");
     const tools = first.tools as { name: string; strict: boolean; input_schema: { additionalProperties: boolean } }[];
-    expect(tools.map((t) => t.name).sort()).toEqual(["active_subscriptions", "find_customer", "leads_by_stage", "list_invoices", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["active_subscriptions", "customer_overview", "find_customer", "leads_by_stage", "list_invoices", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]);
     expect(tools.every((t) => t.strict === true && t.input_schema.additionalProperties === false)).toBe(true);
     expect(String(first.system)).toContain("UNTRUSTED DATA");
     expect(String(first.system)).toContain("DATA TOOLS:");

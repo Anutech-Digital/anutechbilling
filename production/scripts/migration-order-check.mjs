@@ -57,6 +57,7 @@ const NOT_YET_ON_PRODUCTION = new Set([
   "20261101211500_r2017_storage_anon_grants.sql",      // R-2357: hard `set role supabase_storage_admin` + a peek staging cannot read; train 11dc3606e stopped at the peek, never applied it
   "20261105190824_r2515_sez_zero_rated.sql",           // R-2515: its create_direct_invoice copy carried a raw auth.role() trusted list (R-2487 scan, CI red 905229c9e); fixed in place before any train deployed it
   "20261107033008_r2534_bank_ref_key.sql",             // R-2534: same — its suggest_bank_transaction_matches copy carried R-2364's raw auth.role() list (CI red 0550923a0); fixed in place, not on staging/main yet
+  "20261117060542_r2868_budget_manager_can_ask.sql",   // R-2909: raised on prisma-made marketing_budgets absent from the CI SQL chain (SQL CI red ab6ace2df); not on staging/main yet
 ]);
 
 /**

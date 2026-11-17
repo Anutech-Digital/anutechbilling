@@ -31,7 +31,7 @@ function fakeDb(existing: { page_id: string; active: boolean }[], token?: string
 }
 
 const T = "11111111-1111-4111-8111-111111111111";
-const PAGES = [{ id: "111", name: "Anutech", access_token: "tokA" }, { id: "222", name: "Neo Trail", access_token: "tokN" }, { id: "333", name: "Delfos", access_token: "tokD" }];
+const PAGES = [{ id: "111", name: "Anutech", access_token: "tokA" }, { id: "222", name: "Neo Trail", access_token: "tokN" }, { id: "333", name: "Third Page", access_token: "tokD" }];
 
 describe("R-2729 saving the Pages of a Facebook login", () => {
   it("seals every token, saves Instagram, switches the main Page on and new Pages off, keeps known Pages' choice", async () => {

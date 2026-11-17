@@ -6,11 +6,20 @@
 -- canAskBudget); this lets the database accept the manager's own request. Reading stays as before:
 -- a person sees the budgets they asked for, the owner / billing / accountant see all. Approving stays
 -- owner-only (the update trigger in 20261024060820_r1792_marketing_budget is unchanged).
+--
+-- R-2909 (17 Nov 2026): both tables are made by prisma/migrations (R-1792), not by this chain, so a
+-- DB built only from baseline + supabase/migrations (the CI SQL job) lacks them — there each one is
+-- skipped with a NOTICE (same as gp09b, R-2123). Where they exist (staging / live / local) the
+-- policy is exactly the one above. Fixed in place: no train had deployed this file yet.
 begin;
 do $$
 declare t text;
 begin
   foreach t in array array['marketing_budgets', 'marketing_payment_requests'] loop
+    if to_regclass('public.' || t) is null then
+      raise notice 'R-2909: public.% not on this DB (prisma-made, R-1792) — skipped', t;
+      continue;
+    end if;
     execute format('drop policy if exists r1792_insert on public.%I', t);
     execute format(
       'create policy r1792_insert on public.%I for insert to authenticated

@@ -445,7 +445,7 @@ describe("runHelpToolLoop (the route's wiring): the tools offered are the role's
       await runHelpToolLoop(openHelpSession(), { userId: U, tenantId: A, role }, async (ask) => { names = ask.tools.map((t) => t.name); return end("{}"); });
       return names.sort();
     };
-    expect(await offered("owner")).toEqual(["active_subscriptions", "find_customer", "leads_by_stage", "list_invoices", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]); // the six R-421 tools + find_customer, list_invoices (R-2776)
+    expect(await offered("owner")).toEqual(["active_subscriptions", "customer_overview", "find_customer", "leads_by_stage", "list_invoices", "open_quotes", "overdue_invoices", "renewals_due", "todays_followups"]); // the six R-421 tools + find_customer, list_invoices (R-2776) + customer_overview (R-2884)
     expect(await offered("manager")).toEqual([]);
     expect(await offered("not_a_role")).toEqual([]);
   });

@@ -52,15 +52,23 @@
  * read-only). An explicit --dry-run never waits; it only warns. A run that may wait needs a long timeout
  * (35 min) or the background — a 2-minute tool call would be cut off mid-wait.
  *
+ * R-2910 (17 Nov 2026, Pardeep): Abhishek puts his own work on staging himself. Step 0 of every train
+ * (dry run AND --push): after the fetch, commits on anutech/staging that are not in the pinned sha and not
+ * in manager-pardeep (train merges — second parent already in manager-pardeep — do not count), and commits on
+ * anutech/Abhishek not in the sha nor in manager-pardeep, are listed (sha, date, author, subject, migrations)
+ * and the train STOPS (exit 8): bring them into manager-pardeep first (card, review, merge, independent
+ * check, push, CI green), then train. Emergencies only: --allow-staging-ahead "<reason>" (printed + logged).
+ *
  * Exit 0 = ok (dry run done / pushed / nothing new). 1 = error or refused. 2 = merge conflict.
  * 3 = DB step needed. 4 = pushed, but the migration check could not run. 5 = pushed, and the
  * staging DB is missing migrations. 6 = pushed, migrations fine, but the smoke is red.
  * 7 = DB step needed but Cloud SQL is still busy after the 30-min wait — do NOT run the DB step yet.
+ * 8 = (R-2910) staging / anutech/Abhishek carry direct work that manager-pardeep does not have — stop.
  * Run from production/.
  */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, existsSync, rmSync, readdirSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync, readdirSync, appendFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { REPO, REMOTE, BRANCH, WORKFLOW, ciDecision } from "./staging-gate.mjs";
@@ -75,10 +83,12 @@ export const PUSH_ARGS = ["push", REMOTE, "HEAD:staging"];
 /** R-2719: the read-only wait the DB step starts with (first printed command of every DB step). */
 export const DB_WAIT_COMMAND = "node scripts/ops/staging-train.mjs --db-wait";
 export const EXIT_DB_BUSY = 7;
+export const EXIT_STAGING_AHEAD = 8;
+export const ABHISHEK_BRANCH = "Abhishek";
 
-/** argv (without node + script) → { dbDone, push, help, sha, dryRun, dbWait }. */
+/** argv (without node + script) → { dbDone, push, help, sha, dryRun, dbWait, allowStagingAhead }. */
 export function parseArgs(argv) {
-  const out = { dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: false };
+  const out = { dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: false, allowStagingAhead: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--db-done") out.dbDone = true;
@@ -86,11 +96,15 @@ export function parseArgs(argv) {
     else if (a === "--dry-run") out.dryRun = true;
     else if (a === "--db-wait") out.dbWait = true;
     else if (a === "--help" || a === "-h") out.help = true;
-    else if (a === "--sha" || a.startsWith("--sha=")) {
+    else if (a === "--allow-staging-ahead" || a.startsWith("--allow-staging-ahead=")) {
+      const v = a === "--allow-staging-ahead" ? argv[++i] : a.slice("--allow-staging-ahead=".length);
+      if (!v || v.trim().length < 8 || v.startsWith("--")) throw new Error('--allow-staging-ahead "<wajah>" chahiye (kam se kam 8 akshar — emergency ki wajah)');
+      out.allowStagingAhead = v.trim();
+    } else if (a === "--sha" || a.startsWith("--sha=")) {
       const v = a === "--sha" ? argv[++i] : a.slice("--sha=".length);
       if (!v || !/^[0-9a-f]{7,40}$/i.test(v)) throw new Error("--sha <commit> chahiye (7–40 hex)");
       out.sha = v.toLowerCase();
-    } else throw new Error(`Unknown argument ${a} (sirf --sha <commit> / --dry-run / --db-done / --push / --db-wait / --help)`);
+    } else throw new Error(`Unknown argument ${a} (sirf --sha <commit> / --dry-run / --db-done / --push / --db-wait / --allow-staging-ahead "<wajah>" / --help)`);
   }
   if (out.dryRun && out.push) throw new Error("--dry-run aur --push saath nahi — dry-run kabhi push nahi karta");
   if (out.dbWait && (out.push || out.dbDone || out.dryRun || out.sha)) throw new Error("--db-wait akela chalta hai — sirf Cloud SQL khaali hone ka intezaar karta hai");
@@ -134,7 +148,60 @@ export function pinnedDbStepLines(sha, names, tmpDir) {
   ];
 }
 
-const CARD_RE = /\bR-\d{2,4}[a-z]?\b/g;
+/**
+ * R-2910: work somebody put on staging (or on anutech/Abhishek) that manager-pardeep does not have.
+ * git(args) → stdout (throws on a non-zero exit). sha = the pinned (or picked) commit.
+ * Staging side: `rev-list --parents <sha>..staging ^manager-pardeep`; a merge whose SECOND parent is already
+ * in manager-pardeep is a train merge, not a direct push. Abhishek side: his commits not in the sha and not
+ * in manager-pardeep. → [{ sha, where: "staging" | "Abhishek" | "staging + Abhishek", date, author, subject, migrations }]
+ */
+export function findDirectPushes(sha, git) {
+  const mp = `${REMOTE}/${BRANCH}`;
+  const inMp = (ref) => { try { git(["merge-base", "--is-ancestor", ref, mp]); return true; } catch { return false; } };
+  const lines = (t) => String(t ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  /* Baseline = the newest train merge on staging (first-parent chain, second parent in manager-pardeep). Staging
+     still carries ~88 old R-161-era commits manager-pardeep never had (no train ever merged them); everything up
+     to the last train merge was already passed over, so only what came AFTER it is a new direct push. */
+  let baseline = null;
+  for (const line of lines(git(["rev-list", "--first-parent", "--parents", "--max-count=300", `${REMOTE}/${STAGING}`]))) {
+    const [c, , p2] = line.split(/\s+/);
+    if (p2 && inMp(p2)) { baseline = c; break; }
+  }
+  const staging = [];
+  const exclude = baseline ? [`^${baseline}`] : [];
+  for (const line of lines(git(["rev-list", "--parents", `${sha}..${REMOTE}/${STAGING}`, `^${mp}`, ...exclude]))) {
+    const [c, , p2] = line.split(/\s+/);
+    if (p2 && inMp(p2)) continue; // train merge of a manager-pardeep commit
+    staging.push(c);
+  }
+  const abhishek = lines(git(["rev-list", `${sha}..${REMOTE}/${ABHISHEK_BRANCH}`, `^${mp}`]));
+  return [...new Set([...staging, ...abhishek])].map((c) => {
+    const [full, date, author, subject] = git(["log", "-1", "--format=%H%x1f%cI%x1f%an%x1f%s", c]).trim().split("\x1f");
+    let migrations = [];
+    try { migrations = lines(git(["diff", "--name-only", `${c}^1`, c, "--", MIGRATIONS_DIR, "production/prisma/migrations"])); } catch { /* root commit */ }
+    const where = staging.includes(c) && abhishek.includes(c) ? "staging + Abhishek" : staging.includes(c) ? "staging" : "Abhishek";
+    return { sha: full, where, date, author, subject, migrations };
+  });
+}
+
+/** Hinglish lines for the refusal (or, with an override reason, the logged warning). */
+export function stagingAheadLines(found, override = null) {
+  const lines = [`✗ ${found.length} commit(s) staging par / anutech/Abhishek par hain jo manager-pardeep me nahi hain:`];
+  for (const f of found) {
+    lines.push(`  ${f.sha.slice(0, 8)}  ${String(f.date).slice(0, 16)}  ${f.author}  [${f.where}]  ${f.subject}`);
+    if (f.migrations.length) lines.push(`      migrations: ${f.migrations.map((m) => m.split("/").pop()).join(", ")}`);
+  }
+  if (override) {
+    lines.push(`! OVERRIDE (--allow-staging-ahead): ${override}`);
+    lines.push("  Ye board par us card ki liveLog me likho — train chal rahi hai, par ye commits manager-pardeep me nahi hain.");
+  } else {
+    lines.push("Abhishek (ya kisi aur) ne staging par seedha kaam daala hai — pehle use manager-pardeep mein laao (card banao, review, merge, independent check, push, CI green), phir train.");
+    lines.push('Steps: .claude/skills/staging-train/SKILL.md → step 0. Sirf emergency me: --allow-staging-ahead "<wajah>" (log hota hai).');
+  }
+  return lines;
+}
+
+const CARD_RE =/\bR-\d{2,4}[a-z]?\b/g;
 
 /** Commit subjects → unique card ids ("R-161", "R-381b"), sorted by number. */
 export function extractCardIds(subjects) {
@@ -388,6 +455,18 @@ async function main() {
     process.exit(1);
   }
 
+  /* R-2910 step 0: Abhishek's own staging pushes come first. */
+  if (pick) {
+    let found;
+    try { found = findDirectPushes(pick, (a) => git(a, { cwd: root })); }
+    catch (e) { console.error(`✗ staging/Abhishek check nahi chala (${e.message}) — train nahi chalegi.`); process.exit(1); }
+    if (found.length) {
+      for (const l of stagingAheadLines(found, args.allowStagingAhead)) console.log(l);
+      if (!args.allowStagingAhead) process.exit(EXIT_STAGING_AHEAD);
+      try { appendFileSync(path.join(os.homedir(), ".claude", "staging-train-override.log"), `${new Date().toISOString()} ${pick.slice(0, 8)} ${args.allowStagingAhead} :: ${found.map((f) => f.sha.slice(0, 8)).join(",")}\n`); } catch { /* log is best effort */ }
+    }
+  }
+
   const newerTotal = newer.running + newer.red + newer.noRun;
   if (args.sha) {
     const tip = git(["rev-parse", `${REMOTE}/${BRANCH}`], { cwd: root }).trim();
@@ -484,6 +563,7 @@ async function main() {
         execFileSync("git", PUSH_ARGS, { cwd: dir, stdio: "inherit" });
         pushed = true;
         console.log("✓ staging par push ho gaya.");
+        console.log(`Staging merge commit: ${pushedSha}   (smoke: node scripts/ops/staging-smoke.mjs --expect-sha ${pushedSha.slice(0, 12)} — manager-pardeep ka sha nahi)`);
       } else {
         console.log("(dry run — push nahi kiya; `--push` do)");
       }
