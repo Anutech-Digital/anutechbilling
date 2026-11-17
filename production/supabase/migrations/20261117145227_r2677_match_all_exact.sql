@@ -23,14 +23,14 @@
 --                         'exact' candidate (receipt: same amount + same day, or the line's own UTR;
 --                         expense: same amount + same day), no other candidate is 'exact' / 'high' or has
 --                         the same amount; the receipt is not a customer advance (un-reconciling an advance
---                         deletes it); the expense is PAID, has no TDS, was paid from a bank (R-1911's
+--                         deletes it); the expense is PAID in full (no advance applied, no earlier part, no vendor payment line on it), has no TDS, was paid from a bank (R-1911's
 --                         filters: not cash / payroll / statutory / reimbursement / EMI / advance, no
 --                         prepaid advance, INR, not Salaries) and not from ANOTHER account — a Mark-paid
 --                         expense the vendor matcher also offers is booked the R-1911 way (b);
 --                     (b) or, for money out with no such candidate, bank_debit_vendor_auto_match
 --                         (R-1867 / R-1911) gives ONE row and it is a RECORDED payment (Bills page Pay /
 --                         payment run / Expenses → Mark paid — R-1911 "match, don't add again");
---                     and no EMI of that amount is due (emi_matches_for_bank_txn), and no OTHER open line
+--                     and no EMI of that amount is due (emi_matches_for_bank_txn), no UNPAID bill / expense bill of any vendor has exactly that much due (-120 / +7 days; a recorded payment's own vendor is weighed by R-1911), and no OTHER open line
 --                     of the company (any account, same side, same amount) lies within 7 days of the
 --                     record or of the line (30 days of the line for a recorded payment) — one record
 --                     covers at most one line (money rules S7 / S9), so two lines → both 'ambiguous'.
@@ -172,6 +172,7 @@ declare
   v_rival   record;
   v_vname   text;
   v_use_rp  boolean := false;
+  v_rp_vendor uuid;
 begin
   select * into v_txn from public.bank_transactions t where t.id = p_txn_id;
   if not found then return; end if;
@@ -242,6 +243,7 @@ begin
       /* The same expense is a payment recorded on the Expenses page (Mark paid): book it the R-1911
          way (the line takes the Mark-paid's place: bank, date, method), as when it is found by (b). */
       v_use_rp := v_vp.source = 'recorded_payment';
+      if v_use_rp then v_rp_vendor := v_vp.vendor_id; end if;
     end if;
     if v_top.match_type not in ('payment', 'expense') then
       return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
@@ -280,6 +282,15 @@ begin
                  coalesce(nullif(v_exp.payment_method, ''), nullif(v_exp.currency, 'INR'), 'advance / salary'));
         return;
       end if;
+      /* Part of it already settled another way (a vendor advance, an earlier bank part, any vendor
+         payment line on it): the suggester compares the WHOLE amount, so a plain link would count the
+         settled part twice (independent check 17 Nov) — the drawer's vendor section handles parts. */
+      if coalesce(v_exp.advance_applied, 0) <> 0 or coalesce(v_exp.paid_amount, 0) <> 0
+         or exists (select 1 from public.bank_vendor_payment_lines l where l.expense_id = v_exp.id) then
+        return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
+          'Part of this expense is already settled (an advance or an earlier payment) — check it in the line''s drawer.'::text;
+        return;
+      end if;
       if v_exp.bank_account_id is not null and v_exp.bank_account_id is distinct from v_txn.bank_account_id then
         return query select 'drawer'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
           'The expense is recorded as paid from another account — check it in the line''s drawer.'::text;
@@ -289,6 +300,23 @@ begin
     if v_lock is not null and v_top.match_date <= v_lock then
       return query select 'locked'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
         format('The record is dated inside the locked books (up to %s).', to_char(v_lock, 'DD Mon YYYY'));
+      return;
+    end if;
+    /* Money out: an UNPAID bill / unpaid expense bill of any vendor with exactly this much due (the
+       vendor matcher sees only a vendor it recognises on the line) → the line may be that payment. */
+    if not v_credit and (
+         exists (select 1 from public.vendor_bills b
+                  where b.tenant_id = v_txn.tenant_id and coalesce(b.status, 'unpaid') <> 'paid'
+                    and b.total - coalesce(b.paid_amount, 0) = v_amt
+                    and b.bill_date between v_txn.txn_date - 120 and v_txn.txn_date + 7
+                    -- the R-1911 vendor of a recorded payment: its own bills were already weighed (auto_match)
+                    and (v_rp_vendor is null or b.vendor_id is distinct from v_rp_vendor))
+         or exists (select 1 from public.expenses e2
+                     where e2.tenant_id = v_txn.tenant_id and e2.id <> v_top.match_id and not coalesce(e2.paid, false)
+                       and e2.amount - coalesce(e2.advance_applied, 0) - coalesce(e2.paid_amount, 0) = v_amt
+                       and e2.expense_date between v_txn.txn_date - 120 and v_txn.txn_date + 7)) then
+      return query select 'ambiguous'::text, v_top.match_type, v_top.match_id, null::uuid, v_top.match_label, v_top.match_amount, v_top.match_date,
+        'An unpaid bill of this amount is also open — this line may be its payment; pick in the line''s drawer.'::text;
       return;
     end if;
     /* One record, one line: another OPEN line of the company could be this record too → both wait. */
@@ -354,6 +382,20 @@ begin
       return query select 'locked'::text, 'recorded_payment'::text, v_vp.doc_id, v_vp.vendor_id,
         concat_ws(' · ', v_vname, v_vp.bill_no), v_vp.amount, v_paid_on,
         format('The recorded payment is dated inside the locked books (up to %s).', to_char(v_lock, 'DD Mon YYYY'));
+      return;
+    end if;
+    if exists (select 1 from public.vendor_bills b
+                where b.tenant_id = v_txn.tenant_id and coalesce(b.status, 'unpaid') <> 'paid'
+                  and b.total - coalesce(b.paid_amount, 0) = v_amt
+                  and b.bill_date between v_txn.txn_date - 120 and v_txn.txn_date + 7
+                  and b.vendor_id is distinct from v_vp.vendor_id)   -- its own bills: R-1911 already weighed them
+       or exists (select 1 from public.expenses e2
+                   where e2.tenant_id = v_txn.tenant_id and e2.id <> v_vp.doc_id and not coalesce(e2.paid, false)
+                     and e2.amount - coalesce(e2.advance_applied, 0) - coalesce(e2.paid_amount, 0) = v_amt
+                     and e2.expense_date between v_txn.txn_date - 120 and v_txn.txn_date + 7) then
+      return query select 'ambiguous'::text, 'recorded_payment'::text, v_vp.doc_id, v_vp.vendor_id,
+        concat_ws(' · ', v_vname, v_vp.bill_no), v_vp.amount, v_paid_on,
+        'An unpaid bill of this amount is also open — this line may be its payment; pick in the line''s drawer.'::text;
       return;
     end if;
     select t.txn_date, ba.name as account into v_rival

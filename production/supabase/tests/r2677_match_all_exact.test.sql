@@ -86,7 +86,11 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   -- 15 an expense paid in CASH on the same day, same amount → drawer (never banked by the run)
   ('11111111-0000-0000-0000-000000267715','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-21','POS SOME STORE',null,2500,0,'csv_upload'),
   -- 16 Mark-paid expense of the vendor named on the line, SAME day → booked the R-1911 way (recorded_payment)
-  ('11111111-0000-0000-0000-000000267716','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-22','UPI-OFFICEMART-r2677office@okaxis-STATIONERY',null,777,0,'csv_upload');
+  ('11111111-0000-0000-0000-000000267716','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-22','UPI-OFFICEMART-r2677office@okaxis-STATIONERY',null,777,0,'csv_upload'),
+  -- 17 a paid expense part-settled by an advance (Rs 300) → drawer (a plain link would count the Rs 300 twice)
+  ('11111111-0000-0000-0000-000000267717','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-23','UPI-SHOP 17',null,3300,0,'csv_upload'),
+  -- 18 a paid expense of the same amount AND an unpaid bill of another vendor with that much due → ambiguous
+  ('11111111-0000-0000-0000-000000267718','dddddddd-0000-0000-0000-000000267701','bbbbbbbb-0000-0000-0000-000000267701','2026-10-24','NEFT DR-SOMEBODY 18',null,6100,0,'csv_upload');
 
 insert into public.quotes (id, tenant_id, lead_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
 select 'Q-R2677-' || k, 'dddddddd-0000-0000-0000-000000267701', null, 'cccccccc-0000-0000-0000-000000267701'::uuid, 'R2677 Infra Traders',
@@ -110,7 +114,12 @@ insert into public.expenses (id, tenant_id, category, vendor_name, vendor_id, ex
   ('EXP-R2677-10','dddddddd-0000-0000-0000-000000267701','Office Expenses','Some Supplier',null,'2026-10-15',4100,0,'none',null,false,null,null,0,null),
   ('EXP-R2677-11','dddddddd-0000-0000-0000-000000267701','Professional Services','Consultant',null,'2026-10-16',9000,0,'none',null,true,'2026-10-16','bank',900,'194J'),
   ('EXP-R2677-15','dddddddd-0000-0000-0000-000000267701','Office Expenses','Some Store',null,'2026-10-21',2500,0,'none',null,true,'2026-10-21','cash',0,null),
-  ('EXP-R2677-16','dddddddd-0000-0000-0000-000000267701','Office Expenses','R2677 Office Mart','eeeeeeee-0000-0000-0000-000000267702','2026-10-22',777,0,'none','OM-16',true,'2026-10-22','bank',0,null);
+  ('EXP-R2677-16','dddddddd-0000-0000-0000-000000267701','Office Expenses','R2677 Office Mart','eeeeeeee-0000-0000-0000-000000267702','2026-10-22',777,0,'none','OM-16',true,'2026-10-22','bank',0,null),
+  ('EXP-R2677-17','dddddddd-0000-0000-0000-000000267701','Office Expenses','Shop 17',null,'2026-10-23',3300,0,'none',null,true,'2026-10-23','bank',0,null),
+  ('EXP-R2677-18','dddddddd-0000-0000-0000-000000267701','Office Expenses','Somebody',null,'2026-10-24',6100,0,'none',null,true,'2026-10-24','bank',0,null);
+update public.expenses set advance_applied = 300 where id = 'EXP-R2677-17';
+insert into public.vendor_bills (id, tenant_id, vendor_id, vendor_name, vendor_gstin, bill_no, bill_date, due_date, category, subtotal, igst, total, status, paid_amount) values
+  ('BILL-R2677-18','dddddddd-0000-0000-0000-000000267701','eeeeeeee-0000-0000-0000-000000267702','R2677 Office Mart','07AAKFM2677A1Z5','OM-B18','2026-10-01','2026-10-31','COGS-Hardware',6100,0,6100,'unpaid',0);
 
 update public.tenants set books_locked_until = '2026-03-10' where id = 'dddddddd-0000-0000-0000-000000267701';
 
@@ -128,7 +137,7 @@ begin
     into v_got
     from public.bank_exact_match_candidates('bbbbbbbb-0000-0000-0000-000000267701', '2026-10-01', '2026-10-31', 'all');
   v_want := '01|exact|payment 02|ambiguous|payment 03|exact|expense 04|ambiguous|expense 07|exact|recorded_payment'
-         || ' 08|exact|payment 09|exact|payment 10|drawer|expense 11|drawer|expense 12|none|- 15|drawer|expense 16|exact|recorded_payment';
+         || ' 08|exact|payment 09|exact|payment 10|drawer|expense 11|drawer|expense 12|none|- 15|drawer|expense 16|exact|recorded_payment 17|drawer|expense 18|ambiguous|expense';
   if v_got is distinct from v_want then
     raise exception 'FAIL A: preview — got: % — want: %', v_got, v_want;
   end if;
@@ -203,7 +212,7 @@ begin
   end if;
   select string_agg(right(s->>'txn_id', 2), ' ' order by right(s->>'txn_id', 2)) into v_skip
     from jsonb_array_elements(v_res->'skipped') s;
-  if v_skip is distinct from '01 02 04 05 06 08 14 ne' then
+  if v_skip is distinct from '01 02 04 05 06 08 14 18 ne' then
     raise exception 'FAIL F: skipped % — %', v_skip, v_res->'skipped';
   end if;
   if (select s->>'reason' from jsonb_array_elements(v_res->'skipped') s where s->>'txn_id' = '11111111-0000-0000-0000-000000267708')
