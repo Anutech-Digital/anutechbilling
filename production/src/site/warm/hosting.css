@@ -415,7 +415,29 @@
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(9) > div > div > div:last-child li { color: var(--w-muted) !important; }
 
 /* ── 10 · Talk to a person (page ground, white cards) ─────────────────────────────────────── */
-.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) { background: var(--w-bg) !important; }
+/* Owner, 17 Nov 2026: "Add a background image to this section" — public/hosting-support-bg.webp (a
+   support agent with a headset on the right, open sky on the left). The band is taller so she shows
+   above the cards; a light wash over the left keeps the heading readable and fades out to the right;
+   the four channel cards are frosted so the scene shows through. */
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) {
+  background:
+    linear-gradient(90deg, rgba(244, 249, 255, 0.94) 0%, rgba(244, 249, 255, 0.8) 30%, rgba(244, 249, 255, 0.15) 58%, rgba(244, 249, 255, 0) 100%),
+    #DCEBFA url(/hosting-support-bg.webp) right 42% / cover no-repeat !important;
+  padding-top: clamp(56px, 9vw, 150px) !important; padding-bottom: clamp(40px, 5vw, 72px) !important;
+}
+.anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div {
+  background: rgba(255, 255, 255, 0.84) !important; -webkit-backdrop-filter: blur(8px) saturate(1.1); backdrop-filter: blur(8px) saturate(1.1);
+  border-color: rgba(255, 255, 255, 0.9) !important; box-shadow: 0 16px 36px -18px rgba(20, 70, 140, 0.3);
+}
+@media (max-width: 760px) {
+  .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) {
+    background:
+      linear-gradient(180deg, rgba(244, 249, 255, 0.55) 0%, rgba(244, 249, 255, 0.85) 45%, rgba(244, 249, 255, 0.92) 100%),
+      linear-gradient(180deg, rgba(220, 235, 250, 0) 300px, #DCEBFA 420px),
+      #DCEBFA url(/hosting-support-bg.webp) 68% top / auto 420px no-repeat !important;
+    padding-top: 220px !important;
+  }
+}
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) h2 { font-size: clamp(1.8rem, 3.2vw, 2.4rem) !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div { border-radius: 18px !important; padding: 20px !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) > div > div > div > div { font-size: 18px !important; }
