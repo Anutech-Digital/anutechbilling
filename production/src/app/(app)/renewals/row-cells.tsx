@@ -165,7 +165,9 @@ export function AmountTableCell({ text, gst, title }: { text: string; gst: strin
   );
 }
 
-export function ProductCell({ plan, seats, vendor, term, termShort, frequency, domain = null, onOpen, together = null, quoteLine = null, period = null }: {
+export function ProductCell({ plan, seats, vendor, term, termShort, frequency, commitment = null, domain = null, onOpen, together = null, quoteLine = null, period = null }: {
+  /** R-2887: the commitment chip beside the plan (Annual · paid yearly / Flexible (monthly)); the tooltip says it in plain words. */
+  commitment?: { text: string; title: string } | null;
   /** R-2854: this renewal's quote line (RenewalQuoteLine) — the cell's last line, on every row. */
   quoteLine?: ReactNode;
   plan: string | null; seats: number | null; vendor: string | null; term: string | null; termShort: string | null; frequency: string | null;
@@ -188,13 +190,16 @@ export function ProductCell({ plan, seats, vendor, term, termShort, frequency, d
   const title2 = [period?.title ?? (term ? `Renews for ${term}` : null), frequency].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0" data-cell="product">
-      <p className="text-ink" title={line1}>
+      <p className="flex min-w-0 items-baseline gap-x-1.5 text-ink" title={line1}>
         {onOpen ? (
           <button type="button" onClick={onOpen} data-testid="renewal-open-drawer" aria-label={`${line1} — open details`}
-            className="block w-full min-w-0 truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            className="block min-w-0 truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
             {line1}
           </button>
-        ) : <span className="block truncate">{line1}</span>}
+        ) : <span className="block min-w-0 truncate">{line1}</span>}
+        {commitment && (
+          <span className="shrink-0 whitespace-nowrap rounded-sm bg-paper-2 px-1 text-2xs leading-4 text-ink-2" title={commitment.title} data-testid="renewal-commitment">{commitment.text}</span>
+        )}
       </p>
       {together ? (
         /* R-2808: billed together last cycle — "Bills with <other plan>" takes the period's place (the period
