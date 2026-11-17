@@ -20,6 +20,7 @@ import { quoteIsPaid, quoteKindFlags } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { isPartRequest } from "@/lib/billing/part-requests";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext, invoicePeriodSubscription, type RenewedSubscriptionFacts } from "@/lib/quotes/service-period";
 import { withStoredLinePeriods } from "@/lib/quotes/stored-line-period";
@@ -327,6 +328,7 @@ export function buildQuotePdfProps(args: {
     // frozen to respect — always compute the best answer available today.
     interState:    pos.interState,
     isExport:      pos.isExport,
+    partRequest:   isPartRequest(quote as { subscription_billing_id?: string | null; cancelled_part_billing_id?: string | null }),
     billOfSupply:  pos.isExport ? null : quoteDocBillOfSupply(args.gstRegistration, a.taxRate),
     /* R-175 / R-376 (f): name the buyer's state, as the invoice does — "Haryana (06) · IGST". */
     placeOfSupply: pos.label,

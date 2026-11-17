@@ -21,11 +21,14 @@
  * read here — they are Last docs' rounds 1–2 (last-docs-data.ts readRenewalDocRows), read ONCE for
  * both; this file reads only what Last docs does not: the subscriptions made from those quotes and
  * the payments (by quote and by invoice), 4 id chunks at a time.
+ * R-2876: on the page these reads too are answered from the ONE read (row-facts-data.ts, opts.client) — the
+ * payments no longer wait for three more trips; the reads below stay the real ones as the fallback and for the drawer.
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { fetchRenewalDocRows, readRenewalDocRows, RENEWALS_READ_CONCURRENCY, type RenewalDocRows } from "./last-docs-data";
+import { withRowFacts, type FactsClient } from "./row-facts-data";
 import { lastPaidBySubscription, linkedDocs, type LastPaid, type LastPaidInput, type PaidLine } from "./last-paid";
 
 type SubRef = LastPaidInput["subs"][number];
@@ -48,7 +51,9 @@ export function useRenewalLastPaid(subs: readonly SubRef[]) {
     enabled: rows.length > 0,
     staleTime: 60_000,
     /* R-2765: the quotes / billings / invoices from Last docs' shared read — not read twice */
-    queryFn: async () => lastPaidFromDocRows(rows, await fetchRenewalDocRows(qc, rows), { concurrency: RENEWALS_READ_CONCURRENCY }),
+    queryFn: () => withRowFacts(rows,
+      async (client) => lastPaidFromDocRows(rows, await readRenewalDocRows(rows, { client }), { client }),   // R-2876: one read
+      async () => lastPaidFromDocRows(rows, await fetchRenewalDocRows(qc, rows), { concurrency: RENEWALS_READ_CONCURRENCY })),
   });
 }
 
@@ -63,9 +68,9 @@ export async function readRenewalLastPaid(rows: readonly SubRef[], opts: { histo
  * subscriptions made from those quotes and the received payments.
  */
 export async function lastPaidFromDocRows(
-  rows: readonly SubRef[], docRows: RenewalDocRows, opts: { historySize?: number; concurrency?: number } = {},
+  rows: readonly SubRef[], docRows: RenewalDocRows, opts: { historySize?: number; concurrency?: number; client?: FactsClient } = {},
 ): Promise<Map<string, LastPaid>> {
-  const supabase = createClient();
+  const supabase = (opts.client ?? createClient()) as ReturnType<typeof createClient>;
   const c = { concurrency: opts.concurrency };
   const viaSub: QuoteRow[] = docRows.viaSub.map((q) => ({
     id: q.id, renewal_subscription_id: q.renewal_subscription_id ?? null, add_seats_subscription_id: q.add_seats_subscription_id ?? null, invoice_id: q.invoice_id ?? null,
@@ -112,7 +117,7 @@ export async function lastPaidFromDocRows(
       .order("id", { ascending: true })
       .range(from, to), c),
   ]);
-  const { invoiceSubs } = linkedDocs({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices });
+  const { invoiceSubs } = linkedDocs({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, links: docRows.links });
   const byInvoice = await fetchAllRowsIn<PaymentRow, string>([...invoiceSubs.keys()], (run, from, to) => supabase
     .from("payments")
     .select(PAYMENT_COLS)
@@ -121,5 +126,5 @@ export async function lastPaidFromDocRows(
     .order("id", { ascending: true })
     .range(from, to), c);
   const payments = [...byQuote, ...byInvoice];
-  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments }, opts);
+  return lastPaidBySubscription({ subs: rows, quoteSiblings, linkedQuotes, billings, invoices, payments, links: docRows.links }, opts);
 }

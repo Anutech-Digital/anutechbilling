@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'coupons' and policyname = 'coupons_insert_om' and with_check like '%marketing%') and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'whatsapp_reminder_templates' and policyname = 'owner manager update' and qual like '%marketing%') and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'social_content_settings' and policyname = 'social_content_settings_manage' and qual like '%marketing%')
 -- deploy-key: r2897marketingrolemarketingtables
--- 20261117053806_r2897_marketing_role_marketing_tables
+-- 20261117060543_r2897_marketing_role_marketing_tables
 --
 -- R-2897 (17 Nov 2026, Abhishek): "give these all tab right to marketing person, he can perform
 -- everything on these tabs" — the Marketing Hub tabs (Paid ads, Budget, ROAS & CAC, Listings,

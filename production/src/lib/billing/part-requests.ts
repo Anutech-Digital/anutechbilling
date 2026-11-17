@@ -142,14 +142,19 @@ export function requestReminderText(a: {
 }): { subject: string; body: string } {
   /* R-2519: a PI- number is a Proforma Invoice — Zoho's wording ("Urgent: Service renewal"). */
   const pi = /^PI-/.test(a.quoteId);
+  /* R-2865: a group request's part is its short label ("Payment for Q2 · …"; older "Advance payment for
+     Q2 · …"). After "the payment for" only what it is for is said — never "the payment for Payment for …"
+     or "the payment for Advance payment for …". (The first mail of a non-PI request quotes the request's
+     own stored line as it is.) */
+  const what = PART_SHORT_LABEL.exec(a.part.trim())?.[1] ?? a.part.trim();
   const lead: Record<RequestReminderStep | "new", string> = {
-    new:           pi ? `Here is your proforma invoice ${a.quoteId} for ${a.part}. It is due on ${a.dueOn}.`
+    new:           pi ? `Here is your proforma invoice ${a.quoteId} for ${what}. It is due on ${a.dueOn}.`
                       : `Here is your payment request: ${a.part}. It is due on ${a.dueOn}.`,
-    pre_due:       `A heads-up: the payment for ${a.part} is due on ${a.dueOn}.`,
-    due_today:     `The payment for ${a.part} is due today (${a.dueOn}).`,
-    reminder:      `A reminder: the payment for ${a.part} was due on ${a.dueOn}.`,
-    retry:         `We have not yet received the payment for ${a.part}, due on ${a.dueOn}.`,
-    final:         `Final notice: the payment for ${a.part} (due ${a.dueOn}) is still open. Please pay to keep the service running.`,
+    pre_due:       `A heads-up: the payment for ${what} is due on ${a.dueOn}.`,
+    due_today:     `The payment for ${what} is due today (${a.dueOn}).`,
+    reminder:      `A reminder: the payment for ${what} was due on ${a.dueOn}.`,
+    retry:         `We have not yet received the payment for ${what}, due on ${a.dueOn}.`,
+    final:         `Final notice: the payment for ${what} (due ${a.dueOn}) is still open. Please pay to keep the service running.`,
   };
   const subject = a.step === "new"
     ? (pi ? `Proforma Invoice ${a.quoteId} — ${a.amount}` : `${a.part} — ${a.amount} (${a.quoteId})`)
@@ -248,18 +253,32 @@ export function isPartRequest(q: { subscription_billing_id?: string | null; canc
 /** The badge next to the status on a part request's page. */
 export const PART_REQUEST_BADGE = "Payment request";
 
-/** "Advance payment for Q2 · 28 Jan–27 Apr 2027" → "Q2" (the part's short name), else null.
+/* R-2865 (16 Nov 2026, Pardeep: "advance payment ka renewal quote kaise ja sakta hai"): a part request's
+   short label is "Payment for Q2 · 28 Jan–27 Apr 2027" — a payment for the service period, not an advance.
+   Requests issued before that keep their stored "Advance payment for Q2 · …", so every reader takes BOTH.
+   ONE pattern for every reader. The new text counts only in the label's own shape — month 3 / Q2 / H1 /
+   part 3 — so a product line that merely starts "Payment for …" is never taken for a label. */
+const PART_SHORT_LABEL = /^(?:Advance payment for |Payment for (?=(?:month|part) \d|[QH]\d))(.+)$/;
+
+/** True for a part request's short label — the new "Payment for …" or the older "Advance payment for …". */
+export function isPartShortLabel(text: string | null | undefined): boolean {
+  return PART_SHORT_LABEL.test((text ?? "").trim());
+}
+
+/** "Payment for Q2 · 28 Jan–27 Apr 2027" (older: "Advance payment for Q2 · …") → "Q2" (the part's short
+ *  name), else null.
  *  R-2423: a newer request's line, "<product> · <domain> · 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)",
  *  → "part 1 of 12". */
 export function partLabelOf(lineName: string | null | undefined): string | null {
   const name = (lineName ?? "").trim();
-  const m = /^Advance payment for (.+?)(?: · .*)?$/.exec(name);
-  if (m) return m[1].trim();
+  const m = PART_SHORT_LABEL.exec(name);
+  if (m) return m[1].split(" · ")[0].trim();
   const n = /\((part \d+(?: of \d+)?)\)$/.exec(name);
   return n ? n[1] : null;
 }
 
-/** R-2846: what a part request's payment is the ADVANCE for — read by the Record payment sheet. */
+/** R-2846: what a part request's payment is FOR — read by the Record payment sheet. (R-2865: it is the
+ *  payment for that service period, never called an advance; the type keeps its name.) */
 export interface PartAdvance {
   /** "month 1 · 1 Oct–31 Oct 2026" / "Q2 · 28 Jan–27 Apr 2027" / "1 Nov–30 Nov 2026"; null = not known. */
   what: string | null;
@@ -271,8 +290,8 @@ export interface PartAdvance {
 
 /**
  * R-2846 (15 Nov, Pardeep: "jab quote advance payment ka hai to record payment me advance show kyo
- * nahi kar raha"). The request's first line names its part: "Advance payment for month 1 · 1 Oct–31
- * Oct 2026" → "month 1 · 1 Oct–31 Oct 2026"; a newer line ("… · 1 Nov–30 Nov 2026 (part 1 of 12)")
+ * nahi kar raha"). The request's first line names its part: "Payment for month 1 · 1 Oct–31 Oct 2026"
+ * (older: "Advance payment for …", R-2865) → "month 1 · 1 Oct–31 Oct 2026"; a newer line ("… · 1 Nov–30 Nov 2026 (part 1 of 12)")
  * → its own period dates. A request billing several subscriptions together carries its label in the
  * first line's description (the rule of requestMailPart, part-request-chase.server.ts) and names no
  * one subscription. Facts only — nothing known stays null. Wording only, never an amount.
@@ -285,8 +304,8 @@ export function partAdvanceOf(a: {
   const first = a.lines[0];
   const group = a.lines.length > 1;
   const desc = first?.description?.trim() ?? "";
-  const label = group && desc.startsWith("Advance payment for") ? desc : (first?.name ?? "").trim();
-  const m = /^Advance payment for (.+)$/.exec(label);
+  const label = group && isPartShortLabel(desc) ? desc : (first?.name ?? "").trim();
+  const m = PART_SHORT_LABEL.exec(label);
   let what: string | null = m ? m[1].trim() : null;
   if (!what && !group) {
     const start = first?.period_start?.slice(0, 10) ?? "";
@@ -296,13 +315,14 @@ export function partAdvanceOf(a: {
   return { what, part: a.partShort?.trim() || null, subscription: group ? null : a.subscription?.trim() || null };
 }
 
-/** "Advance for <what> of <subscription> (<part>) from <customer>. …" — the part's tax invoice is
- *  raised by the payment that completes it (tg_payments_part_request_invoice; partRequestPaymentToast). */
+/** "Payment for <what> of <subscription> (<part>) from <customer>. …" — the part's tax invoice is
+ *  raised by the payment that completes it (tg_payments_part_request_invoice; partRequestPaymentToast).
+ *  R-2865: never "advance" — a renewal part is paid for its service period. */
 export function partAdvanceText(adv: PartAdvance, customerName: string): string {
   const what = adv.what ?? "this part";
   const of = adv.subscription ? ` of ${adv.subscription}` : "";
   const part = adv.part ? ` (${adv.part})` : "";
-  return `Advance for ${what}${of}${part} from ${customerName}. The tax invoice is raised when you confirm the full advance.`;
+  return `Payment for ${what}${of}${part} from ${customerName}. The tax invoice is raised when you confirm the full payment.`;
 }
 
 interface StepLike { stage: string; label: string; state: "done" | "current" | "todo" | "skipped"; detail: string }

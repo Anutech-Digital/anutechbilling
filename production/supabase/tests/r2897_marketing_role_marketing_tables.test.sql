@@ -1,6 +1,6 @@
 -- R-2897 (17 Nov 2026): the marketing login writes the Marketing Hub tables — coupons, referral
 -- partners, WhatsApp reminder templates, social content settings; a sales login still cannot.
--- Migration 20261117053806_r2897_marketing_role_marketing_tables.
+-- Migration 20261117060543_r2897_marketing_role_marketing_tables.
 -- Self-asserting, ONE transaction, rolled back. LOCAL DB only.
 begin;
 

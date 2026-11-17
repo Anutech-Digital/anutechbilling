@@ -88,7 +88,7 @@ the app, comments get an answer within a day, and the page shows the follower ch
   ignored/failed, ai_reply, reply, replied_by ai/person); `social_followers` (one row per day per
   platform); `social_reports` (per week); `social_todo` (per day, items jsonb).
   `social_content_settings` gains `comment_mode`, `comments_checked_at`, `comments_problem`,
-  `followers_checked_on`. Migration 20261113083000.
+  `followers_checked_on`. Migration 20261117060538.
 
 ## 6. Constraints
 

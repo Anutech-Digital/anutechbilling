@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_social_content_approval_guard()') and prosrc like '%R-2709%')
 -- deploy-key: r2709socialmarketingapproves
--- 20261116115628_r2709_social_marketing_approves
+-- 20261117060541_r2709_social_marketing_approves
 --
 -- R-2709 (12 Nov 2026, Abhishek) made the MARKETING person the one who approves the AI's social
 -- posts, and a person's own "Schedule post" goes straight to approved (owner and manager may too).

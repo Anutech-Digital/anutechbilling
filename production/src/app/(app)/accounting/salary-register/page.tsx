@@ -34,7 +34,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import { formatMonthLabel, fyStartYear, fyLabelOfYear, istToday } from "@/lib/dates/ist";
 import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines, useSalaryBankLines, useSalaryRevisions, type SalaryPayment } from "@/lib/queries/payroll";
-import { monthNetPay, payslipsByEmployee } from "@/lib/payroll/net-pay";
+import { monthNetPay, netPayTotal, payslipsByEmployee } from "@/lib/payroll/net-pay";
 import { revisionsByEmployee } from "@/lib/payroll/salary-revision";
 import { employeeCtc } from "@/lib/payroll/ctc";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
@@ -201,10 +201,14 @@ function MonthRegister() {
   }));
   const ctcTotals = ctcRowsData.reduce((t, r) => ({
     annualCtc: t.annualCtc + r.ctc.annualCtc, monthlyCtc: t.monthlyCtc + r.ctc.monthlyCtc, gross: t.gross + r.ctc.grossMonthly,
-    employer: t.employer + r.ctc.totalEmployerContributionMonthly, net: t.net + (r.net?.net ?? 0),
-  }), { annualCtc: 0, monthlyCtc: 0, gross: 0, employer: 0, net: 0 });
+    employer: t.employer + r.ctc.totalEmployerContributionMonthly,
+  }), { annualCtc: 0, monthlyCtc: 0, gross: 0, employer: 0 });
+  /* R-2743: the Net Take Home total is a number only once every row's net is in — it read ₹0
+     (and exported 0) while the payslips were still loading. Until then: "…" and no export. */
+  const netTotal = netPayTotal(ctcRowsData.map((r) => r.net), netReady);
 
   const exportCtcRegisterCsv = () => {
+    if (!netReady) return; // R-2743: never a CSV with nets that have not loaded
     const ctcRows = ctcRowsData.map(({ e, ctc, actual, net }) => [
       toTitleCase(e.name),
       e.designation ?? "",
@@ -229,7 +233,7 @@ function MonthRegister() {
     ]);
     const t = fyActuals.totals;
     ctcRows.push([
-      "Total", "", ctcTotals.annualCtc, ctcTotals.monthlyCtc, ctcTotals.gross, "", "", "", "", "", "", "", "", "", ctcTotals.net,
+      "Total", "", ctcTotals.annualCtc, ctcTotals.monthlyCtc, ctcTotals.gross, "", "", "", "", "", "", "", "", "", netTotal ?? "",
       t.months, t.earned, t.employerPf, t.employerEsi, t.cost,
     ]);
     const fyTag = `FY ${fyLabelOfYear(ctcFy)}`;
@@ -322,7 +326,7 @@ function MonthRegister() {
                 ? <>Each employee&apos;s monthly gross from Payroll, plus the company&apos;s cost on top (employer PF, employer ESI, gratuity) = CTC.</>
                 : <>CTC = each employee&apos;s monthly gross × 12 (company payroll policy); employer PF, employer ESI and gratuity are paid on top of it.</>} &quot;Actual FY {fyLabelOfYear(ctcFy)}&quot; = what this year&apos;s payslips really paid.</p>
             </div>
-            <Button variant="outline" size="sm" icon="download" onClick={exportCtcRegisterCsv}>
+            <Button variant="outline" size="sm" icon="download" onClick={exportCtcRegisterCsv} disabled={!netReady} title={netReady ? undefined : "Loading payslips — the Net Take Home column is not in yet"}>
               Export CTC Register CSV
             </Button>
           </div>
@@ -374,7 +378,7 @@ function MonthRegister() {
                     <td className="px-3 py-2.5 text-right font-mono">{rupee(ctcTotals.gross)}</td>
                     <td className="px-3 py-2.5" colSpan={2} />
                     <td className="px-3 py-2.5 text-right font-mono text-amber-700" colSpan={3}>{rupee(ctcTotals.employer)}</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-emerald-700">{rupee(ctcTotals.net)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-emerald-700" data-testid="ctc-net-total">{netTotal === null ? <span className="text-ink-3 font-normal" title="Loading payslips…">…</span> : rupee(netTotal)}</td>
                     <td className="px-3 py-2.5 text-right font-mono">
                       {rupee(fyActuals.totals.cost)}<div className="text-3xs text-ink-3 font-normal">{fyActuals.totals.months} payslips · salary {rupee(fyActuals.totals.earned)}</div>
                     </td>

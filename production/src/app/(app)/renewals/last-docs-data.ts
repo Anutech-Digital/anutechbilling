@@ -18,16 +18,21 @@
  * refresh the rows.
  * R-2740: readRenewalDocs is the same read as a plain function — the row drawer runs it for ONE
  * subscription with { all: true } (every quote + invoice) inside its own single query.
+ * R-2876: on the page all three rounds are answered from ONE read (row-facts-data.ts — the function
+ * renewal_row_facts); the reads below then run unchanged against that answer (opts.client). They are still the
+ * real reads when the function is missing or cannot answer in full, and for the drawer.
  */
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readTogetherLinks } from "./together-links-data";
+import { withRowFacts, type FactsClient } from "./row-facts-data";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { noteTotalsByInvoice, type NoteAmountRow } from "@/lib/invoices/note-totals";
 import {
   attachDocDetails, attachSendTimes, detailQuoteIds, lastDocsBySubscription, sendLogQuoteIds, shownInvoiceIds,
   type SendLogRow,
-  type DocBilling, type DocInvoice, type DocQuote, type DocQuoteDetail, type LastDocs, type LastDocsInput,
+  type DocBilling, type DocInvoice, type DocQuote, type DocQuoteDetail, type LastDocs, type LastDocsInput, type TogetherLink,
 } from "./last-docs";
 
 type SubRef = LastDocsInput["subs"][number];
@@ -56,7 +61,11 @@ export function useRenewalLastDocs(subs: readonly SubRef[]) {
     enabled: rows.length > 0,
     staleTime: 60_000,
     /* R-2765: rounds 1–2 come from the ONE shared read (Last paid uses the same rows) */
-    queryFn: async () => docsFromRows(rows, await fetchRenewalDocRows(qc, rows), { concurrency: RENEWALS_READ_CONCURRENCY }),   // R-2855: round 3 side by side too
+    queryFn: () => withRowFacts(rows,
+      /* R-2876: one read — the same readers, answered from memory */
+      async (client) => docsFromRows(rows, await readRenewalDocRows(rows, { client }), { client }),
+      /* the old way: R-2765 shared rounds 1–2, R-2855 round 3 side by side */
+      async () => docsFromRows(rows, await fetchRenewalDocRows(qc, rows), { concurrency: RENEWALS_READ_CONCURRENCY })),
   });
 }
 
@@ -96,6 +105,8 @@ export interface RenewalDocRows {
   /** round 1, drawer only: the revisions of those quotes (opts.moreQuotes) */
   more: DocQuote[];
   billings: DocBilling[];
+  /** R-2870: the together-quote links of the listed subscriptions (released ones left out); their quotes are in `viaSub`. */
+  links: TogetherLink[];
   /** the billed parts' proformas (quotes.subscription_billing_id) */
   parts: DocQuote[];
   /** invoices raised from the round-1 quotes (every status) */
@@ -119,9 +130,9 @@ export async function readRenewalDocs(
 /** R-2765: rounds 1–2 (see the header). `concurrency`: id chunks in flight per read (the page: 4). */
 export async function readRenewalDocRows(
   rows: readonly DocRowRef[],
-  opts: { moreQuotes?: (found: readonly DocQuote[], cols: string) => Promise<DocQuote[]>; concurrency?: number } = {},
+  opts: { moreQuotes?: (found: readonly DocQuote[], cols: string) => Promise<DocQuote[]>; concurrency?: number; /** R-2876: answer the reads from the one-read answer */ client?: FactsClient } = {},
 ): Promise<RenewalDocRows> {
-  const supabase = createClient();
+  const supabase = (opts.client ?? createClient()) as ReturnType<typeof createClient>;
   const c = { concurrency: opts.concurrency };
   /* quotes.subscription_billing_id / subscription_billings.due_on (R-2044) are not in the generated types yet — the same untyped read as next-part-request.ts. */
   const loose = supabase as unknown as SupabaseClient;
@@ -140,7 +151,8 @@ export async function readRenewalDocRows(
       .in(col, run)
       .order("id", { ascending: true })
       .range(from, to), { chunkSize: VIA_SUB_CHUNK, ...c });
-  const [viaRenewal, viaSeats, own, billings] = await Promise.all([
+  /* R-2870: the together-quote links (+ their quotes) ride in this same round — see together-links-data.ts */
+  const [viaRenewal, viaSeats, own, billings, { links, quotes: linkQuotes }] = await Promise.all([
     viaSubBy("renewal_subscription_id"),
     viaSubBy("add_seats_subscription_id"),
     fetchAllRowsIn<DocQuote, string>(ownQuoteIds, (run, from, to) => loose
@@ -151,12 +163,13 @@ export async function readRenewalDocRows(
       .range(from, to), c),
     fetchAllRowsIn<DocBilling, string>(subIds, (run, from, to) => loose
       .from("subscription_billings")
-      .select("id, subscription_id, invoice_id, term_start, period_index, due_on, period_start, period_end")
+      .select("id, subscription_id, invoice_id, term_start, period_index, due_on, period_start, period_end, taxable_amount")
       .in("subscription_id", run)
       .order("id", { ascending: true })
       .range(from, to), c),
+    readTogetherLinks(loose, subIds, QUOTE_COLS, { chunkSize: VIA_SUB_CHUNK, ...c }),
   ]);
-  const viaSub = [...new Map([...viaRenewal, ...viaSeats].map((q) => [q.id, q])).values()]
+  const viaSub = [...new Map([...viaRenewal, ...viaSeats, ...linkQuotes].map((q) => [q.id, q])).values()]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   /* R-2740 drawer: the other revisions of these quotes (drawer-data.ts readRevisions) join round 1. */
   const more = opts.moreQuotes ? await opts.moreQuotes([...viaSub, ...own], QUOTE_COLS) : [];
@@ -187,12 +200,12 @@ export async function readRenewalDocRows(
       .order("id", { ascending: true })
       .range(from, to), c),
   ]);
-  return { viaSub, own, more, billings, parts, byQuote, byId };
+  return { viaSub, own, more, billings, links, parts, byQuote, byId };
 }
 
 /** R-2765: the rows' documents from rounds 1–2, then round 3 (only for what the rows show). */
-export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, opts: { all?: boolean; concurrency?: number } = {}): Promise<Map<string, LastDocs>> {
-  const supabase = createClient();
+export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, opts: { all?: boolean; concurrency?: number; client?: FactsClient } = {}): Promise<Map<string, LastDocs>> {
+  const supabase = (opts.client ?? createClient()) as ReturnType<typeof createClient>;
   /* R-2855: round 3 read its id chunks one after another (R-2765 only did rounds 1–2) — on staging's 786
      subscriptions that was 16 requests in a row for the quote lines alone, and the Status chip waits for them.
      With `concurrency` (the page: 4) each of the three reads goes 4 chunks at a time; the quote lines are read
@@ -200,9 +213,9 @@ export async function docsFromRows(rows: readonly SubRef[], r: RenewalDocRows, o
      hundred KB, and half the requests). The drawer's one-subscription read passes none — one chunk, as before. */
   const c = { concurrency: opts.concurrency };
   const loose = supabase as unknown as SupabaseClient;
-  const { viaSub, own, more, billings, parts, byQuote, byId } = r;
+  const { viaSub, own, more, billings, links, parts, byQuote, byId } = r;
   const quotes = [...new Map([...viaSub, ...own, ...more, ...parts].map((q) => [q.id, q])).values()];
-  const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId] }, { all: opts.all });
+  const docs = lastDocsBySubscription({ subs: rows, quotes, billings, invoices: [...byQuote, ...byId], links }, { all: opts.all });
 
   const shownInvoices = shownInvoiceIds(docs);
   let read: [DocQuoteDetail[], NoteAmountRow[], NoteAmountRow[]];

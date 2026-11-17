@@ -364,6 +364,16 @@ export const SCENARIOS = [
     ],
   },
   {
+    name: "yearly-together",
+    about: "R-2850: SCN Yearly Pair Pvt Ltd with two YEARLY Google Workspace subscriptions sold on one sale quote (Q-SCN-YT-SALE) last year, renewing in 10 and 20 days — SCN Yearly Standard (20 seats × ₹1,080 a year) and SCN Yearly Starter (10 seats × ₹1,632). Renewals → '8–30' tab: Bill together offers both on ONE renewal quote (₹37,920 + GST ₹6,826 = ₹44,746). No money row is planted — the renewal quote, payments and the GST invoice are made in the app. A reload or --clear removes the customer, both subscriptions and everything billed / received for them.",
+    cards: ["R-2850"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2850000-0000-4000-8000-000000000001", "Q-SCN-YT-SALE"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xQuotes: 1 },
+    pages: [
+      { path: "renewals", for: "R-2850 '8–30' tab → SCN Yearly Pair Pvt Ltd: Bill together → ONE renewal quote with 2 lines; Record payment in full on it → both rows Renewed, one GST invoice; Cancel quote instead → both rows are free again" },
+    ],
+  },
+  {
     name: "plan-change",
     about: "R-2227 card test's own customer SCN Plan Change Co: Google Workspace Business Starter (subscription 'SCN Plan Change Starter'), 10 seats × ₹3,240/yr paid yearly, annual term from the 1st two months ago, its invoice INV-SCN-PC-1 ₹38,232 paid in full. Change plan → E2E Google Workspace Business Standard credits the whole unused Starter value. A reload or --clear removes the customer, its subscription, quotes and invoices.",
     cards: ["R-2227"],

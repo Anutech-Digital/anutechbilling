@@ -25,6 +25,7 @@ import { withRoute } from "@/lib/api/with-route";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { classifySendFailure } from "@/lib/whatsapp/send-failure";
 import { renderQuotePDF } from "@/lib/pdf";
+import { partRequestOf } from "@/lib/billing/part-request-of.server";
 import { quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
@@ -140,6 +141,7 @@ export const POST = withRoute({
       });
 
       const blob = await renderQuotePDF({
+        partRequest:   !!(await partRequestOf(admin, quote.id, tenantId)), // R-2869: same test as the quote page (subscription_billing_id)
         upiQrDataUrl:  upi?.dataUrl ?? null,
         upiVpa:        upi?.vpa ?? null,
         tenantName:    tenant?.name    ?? "Workspace",

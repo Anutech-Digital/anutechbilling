@@ -212,6 +212,47 @@ export function subscriptionForLine(s: {
   return bits.length ? bits.join(" · ") : null;
 }
 
+/**
+ * R-2871: the subscriptions a TOGETHER renewal quote renews (R-2847..R-2849: one renewal quote for
+ * 2+ yearly subscriptions). The members are the distinct line_items[].subscription_id — the same
+ * link the period context (togetherLineSubscriptions) and the bill-together route use. Returns []
+ * unless 2+ distinct subscriptions are named AND all are loaded: one subscription keeps the single
+ * "For subscription" line, and a half list would read as the whole.
+ */
+export function togetherMembers<S extends { id: string; plan?: string | null; domain?: string | null; seats?: number | null; renewal_date?: string | null }>(
+  lines: ReadonlyArray<{ subscription_id?: unknown }> | null | undefined,
+  subs: ReadonlyArray<S> | null | undefined,
+): Array<{ id: string; sub: S; text: string }> {
+  const ids: string[] = [];
+  for (const l of lines ?? []) {
+    const id = typeof l?.subscription_id === "string" ? l.subscription_id : "";
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  if (ids.length < 2) return [];
+  const out: Array<{ id: string; sub: S; text: string }> = [];
+  for (const id of ids) {
+    const sub = (subs ?? []).find((s) => s.id === id);
+    const text = subscriptionForLine(sub);
+    if (!sub || !text) return [];
+    out.push({ id, sub, text });
+  }
+  return out;
+}
+
+/** R-2871: plan names of a together quote's member lines (one per distinct line subscription_id); [] unless 2+ — read from the lines alone, so Record payment needs no extra query. */
+export function togetherPlanNames(lines: ReadonlyArray<{ name?: string | null; subscription_id?: unknown }> | null | undefined): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const l of lines ?? []) {
+    const id = typeof l?.subscription_id === "string" ? l.subscription_id : "";
+    const name = typeof l?.name === "string" ? l.name.trim() : "";
+    if (!id || seen.has(id) || !name) continue;
+    seen.add(id);
+    names.push(name);
+  }
+  return names.length >= 2 ? names : [];
+}
+
 /** Which subscription the quote is for — part's, renewed, add-seats', or the one it sold. Null = none known. */
 export function quoteSubscriptionId(
   q: QuoteKindQuote & { id: string; add_seats_subscription_id?: string | null },

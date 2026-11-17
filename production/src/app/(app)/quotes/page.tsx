@@ -88,6 +88,7 @@ import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list
 import { paidToDateOf } from "@/lib/quotes/paid-to-date";
 import { QUOTE_STATE_LABEL, QUOTE_WITH_CUSTOMER_LABEL } from "@/lib/quotes/state-labels";
 import { extensionBadgeLabel } from "@/lib/quotes/billing";
+import { isPartRequest } from "@/lib/billing/part-requests";
 import { quoteRowTotalPeriods, quoteTotalPeriodsText } from "@/lib/quotes/per-period-figures";
 import { useQuoteOpenBalances, withOpenBalances } from "@/lib/quotes/open-balances";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
@@ -1425,6 +1426,7 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
 
   return (
     <QuotePreviewDialog
+      partRequest={isPartRequest(quote as { subscription_billing_id?: string | null; cancelled_part_billing_id?: string | null })}
       open
       onOpenChange={(o) => !o && onClose()}
       tenantName={currentUser?.tenantName    ?? "Workspace"}

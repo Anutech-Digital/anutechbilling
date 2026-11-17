@@ -17,10 +17,15 @@ const st = vi.hoisted(() => ({
   rpcResult: { data: { dry_run: true, imported: 1 } as unknown, error: null as null | { message: string } },
   resets: 0,
   refreshes: 0,
+  /* R-2661: the one-reader lease calls and who holds it (null = free). */
+  readerRpcs: [] as Array<[string, Record<string, unknown>]>,
+  readerHolder: null as string | null,
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
-  resolveZohoCaller: async () => (st.role === null ? null : { userId: "u1", tenantId: "t1", role: st.role, canManage: true, admin: {} }),
+  resolveZohoCaller: async () => (st.role === null ? null : { userId: "u1", tenantId: "t1", role: st.role, canManage: true, admin: {
+    rpc: async (fn: string, args: Record<string, unknown>) => { st.readerRpcs.push([fn, args]); return { data: fn === "zoho_reader_take" ? st.readerHolder : true, error: null }; },
+  } }),
   readConnection: async () => ({ refreshToken: "rt", orgId: "600", orgName: "Org", connectedAt: null }),
   zohoAccessToken: async () => "access",
   dropZohoAccessToken: async () => {},
@@ -48,6 +53,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import { POST } from "./route";
+import { createDayMeter, forgetDayMeters, istDayOf, registerDayMeter } from "@/lib/integrations/zoho-books/zoho-day-budget";
 
 const fact = (over: Partial<ZohoSaleFacts>): ZohoSaleFacts => ({
   zohoId: "z1", number: "INV/25-26/0001", date: "2025-05-10", dueDate: null, status: "paid", zohoCustomerId: "c", customerName: "Test Buyer",
@@ -65,6 +71,76 @@ beforeEach(() => {
   st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0; st.refreshes = 0;
   st.facts = [fact({}), fact({ zohoId: "z2", number: "INV/25-26/0002", status: "void", problems: ["Void in Zoho — not a sale, not in revenue or GST."] })];
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
+  st.readerRpcs = []; st.readerHolder = null;
+});
+
+describe("R-2661 sales-import route — one Zoho reader at a time", () => {
+  const readerCalls = () => st.readerRpcs.map(([fn]) => fn);
+  const zohoPage = (more: boolean) => new Response(JSON.stringify({ code: 0, invoices: [], page_context: { page: 1, has_more_page: more } }), { status: 200 });
+
+  it("read while another read holds the company's lease: refused 409 with its name, no Zoho call, the scan untouched", async () => {
+    vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "id"); vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "secret");
+    const zoho = vi.fn(async () => zohoPage(false));
+    vi.stubGlobal("fetch", zoho);
+    st.readerHolder = "Reconcile from Zoho";
+    try {
+      const res = await POST(req({ action: "read", fy: "2025-26" }));
+      const body = await res.json();
+      expect(res.status).toBe(409);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("Another Zoho read is running for this company: Reconcile from Zoho.");
+      expect(zoho).not.toHaveBeenCalled();
+      expect(readerCalls()).toEqual(["zoho_reader_take"]);
+      expect(st.readerRpcs[0][1]).toMatchObject({ p_tenant: "t1", p_name: "FY 2025-26 sales from Zoho" });
+      expect(st.resets).toBe(0); expect(st.refreshes).toBe(0);
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
+
+  it("stopped by the day budget: the lease is let go at once (the next reader need not wait it out)", async () => {
+    vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "id"); vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "secret");
+    vi.stubGlobal("fetch", vi.fn(async () => zohoPage(false)));
+    const day = istDayOf(Date.now());
+    registerDayMeter("access", createDayMeter("t1", {
+      async read() { return { day, calls: 900, limitHitAt: null }; },
+      async add() { throw new Error("never"); },
+    }, { budget: 900, log: () => {} }));
+    st.run = { nextPage: 4, listDone: false }; st.counts = { listed: 600, detailed: 0 };
+    try {
+      const res = await POST(req({ action: "read", fy: "2025-26" }));
+      expect((await res.json()).dayLimit).toMatchObject({ calls: 900 });
+      expect(readerCalls()).toEqual(["zoho_reader_take", "zoho_reader_release"]);
+      expect(st.readerRpcs[1][1]).toEqual({ p_tenant: "t1", p_name: "FY 2025-26 sales from Zoho" });
+    } finally { forgetDayMeters(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
+
+  it("restart / preview make no Zoho call and take no lease", async () => {
+    await POST(req({ action: "restart", fy: "2025-26" }));
+    await POST(req({ action: "preview", fy: "2025-26" }));
+    expect(readerCalls()).toEqual([]);
+  });
+});
+
+describe("R-2661 sales-import route — day budget", () => {
+  it("read with the day's budget used: no Zoho call, 200 with dayLimit (calls / budget / retryAt) and the counts as saved", async () => {
+    vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "id"); vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "secret");
+    const zoho = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", zoho);
+    const day = istDayOf(Date.now());
+    registerDayMeter("access", createDayMeter("t1", {
+      async read() { return { day, calls: 900, limitHitAt: null }; },
+      async add() { throw new Error("never"); },
+    }, { budget: 900, log: () => {} }));
+    st.run = { nextPage: 4, listDone: false }; st.counts = { listed: 600, detailed: 0 };
+    try {
+      const res = await POST(req({ action: "read", fy: "2025-26" }));
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ ok: true, busy: true, complete: false, listed: 600, detailed: 0, dayLimit: { calls: 900, budget: 900, day: istDayOf(Date.now()) } });
+      expect(typeof body.dayLimit.retryAt).toBe("number");
+      expect(zoho).not.toHaveBeenCalled();
+      expect(st.resets).toBe(0); expect(st.refreshes).toBe(0);
+    } finally { forgetDayMeters(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
 });
 
 describe("R-2499 sales-import route", () => {

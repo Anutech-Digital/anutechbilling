@@ -19,14 +19,14 @@ import { priorTermOwedOf, priorTermOwedText, subscriptionOwedOf } from "./prior-
 import type { SubscriptionOwed } from "@/lib/renewals/owed";
 import { withRenewalQuote } from "./open-renewal-quotes";
 import { classifyRenewals, type RenewalGroups } from "./classify";
-import { dueDaysOf, duePeriodFacts, type DuePeriod } from "./due-anchor";
+import { dueDaysOf, duePeriodFacts, rowDue, type DuePeriod, type RowDue } from "./due-anchor";
 import {
   QUEUE_TABS, queueTabs, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
   type QueueTab, type RowStatus, type RenewalAmount, type RenewalQuoteInfo,
 } from "./queue";
 import type { RowContact } from "./queue-data";
 import { renewalFollowup, renewalDecision, type RenewalFollowup, type RenewalDecision, type RenewalFollowupRow } from "./followup";
-import { renewalFrequency, renewalCommitment, type Commitment } from "./frequency";
+import { renewalFrequency, renewalCommitment, commitmentChip, type Commitment, type CommitmentChip } from "./frequency";
 import type { LastDocs } from "./last-docs";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
 
@@ -52,6 +52,11 @@ export interface QueueItem {
    * `period.running` ("Oct unpaid · Nov running"). null = no renewal date.
    */
   period: DuePeriod | null;
+  /**
+   * R-2862: the row's ONE "due date + amount due" (due-anchor.ts rowDue) — `due.days` is `dueDays`; the tiles add
+   * `due.amount` (a late part's own value, not the whole term) and the drawer names `due.unpaidPart`.
+   */
+  due: RowDue;
   status: RowStatus;
   amount: RenewalAmount;
   contact: RowContact | undefined;
@@ -63,6 +68,8 @@ export interface QueueItem {
   /** R-2422: worked out once per row (frequency.ts) — the amount cell's words and the Commitment filter. */
   frequency: string | null;
   commitment: Commitment;
+  /** R-2887: the row chip ("Annual · paid yearly", "Flexible (monthly)") — same rule as `commitment`; null = term unknown. */
+  commitmentChip: CommitmentChip | null;
   /** R-2728: last quote sent / last invoice / the renewal quote with the customer (last-docs.ts). */
   docs: LastDocs | undefined;
   /** R-2758 (R-2738): the row's ONE stage (chip + button); null while its documents load. */
@@ -162,7 +169,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
       },
     };
     const stage = input ? renewalStage(input) : null;
-    return {
+    const item: Omit<QueueItem, "due"> = {
       stage,
       dueDays: r.dueDays,
       period: duePeriodFacts(stage, docs, r.sub, todayIst),
@@ -185,10 +192,13 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
       amount: renewalAmount(r.sub, quoteOf(r.sub), r.sub.quote_id ? f.quoteInfo?.get(r.sub.quote_id) : null),   // R-2767: sale quote's currency
       frequency: renewalFrequency(r.sub),
       commitment: renewalCommitment(r.sub),
+      commitmentChip: commitmentChip(r.sub),
       docs,
       contact: r.sub.customer_id ? f.contacts?.get(r.sub.customer_id) : undefined,
       atRisk: atRiskIds.has(r.sub.id),
     };
+    /* R-2862: the row's one due date + amount due, from the stage, period and amount just built */
+    return { ...item, due: rowDue(stage, item.period, r.sub, r.daysUntil, item.amount.value, docs) };
   };
   const items = {} as Record<QueueTab, QueueItem[]>;
   for (const t of QUEUE_TABS) items[t] = tabs[t].map(toItem);

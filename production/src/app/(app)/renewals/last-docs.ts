@@ -99,6 +99,8 @@ export interface DocBilling {
   period_start?: string | null;
   /** R-2737: exclusive (the proforma prints period_end − 1). */
   period_end?: string | null;
+  /** R-2862: the part's own ₹ before GST (subscription_billings.taxable_amount); absent = not read. */
+  taxable_amount?: number | null;
 }
 
 export interface DocInvoice {
@@ -133,7 +135,31 @@ export interface DocQuoteDetail {
 }
 
 /** A billed part's stored period; endExclusive as subscription_billings keeps it. */
-export interface DocPart { start: string | null; endExclusive: string | null }
+export interface DocPart {
+  start: string | null;
+  endExclusive: string | null;
+  /** R-2862: the part's value in ₹ before GST (several parts on one invoice: their sum); null / absent = not known. */
+  taxable?: number | null;
+}
+
+/**
+ * R-2870: one row of renewal_quote_subscriptions (R-2847) — a renewal quote billed TOGETHER names each member
+ * subscription here (the quote's own renewal_subscription_id / renewal_term_date stay empty, and paying clears the
+ * subscription's renewal_quote_id). released_at = closed with no money on it (the term is free again, history only).
+ */
+export interface TogetherLink {
+  quote_id: string;
+  subscription_id: string;
+  renewal_term_date: string;
+  /** ₹ before GST — this member's own share of the together quote. */
+  subtotal: number;
+  renewed_at: string | null;
+  released_at: string | null;
+}
+
+/** R-2870: the link rows that still tie a quote to a subscription (a released one is history). One rule for every reader. */
+export const liveTogetherLinks = <L extends Pick<TogetherLink, "released_at">>(links: readonly L[] | undefined): L[] =>
+  (links ?? []).filter((l) => !l.released_at);
 
 export interface LastDocsInput {
   subs: ReadonlyArray<{
@@ -146,6 +172,8 @@ export interface LastDocsInput {
   quotes: readonly DocQuote[];
   billings: readonly DocBilling[];
   invoices: readonly DocInvoice[];
+  /** R-2870: renewal_quote_subscriptions rows of these subscriptions — a together quote belongs to each member. */
+  links?: readonly TogetherLink[];
 }
 
 export interface LastQuote {
@@ -196,6 +224,12 @@ export interface SentRenewal {
   status: string;
   /** part: the date the billed part is due (Bill next part moved renewal_date a term on, so it is not that). */
   dueDate?: string | null;
+  /**
+   * R-2862: part — the billed part this proforma asks for (its stored period + value), from its own billing row.
+   * Before, the row found the period only through `quote` (the NEWEST quote sent): an add-seats quote sent after
+   * the part proforma hid it, and the row fell back to the next term.
+   */
+  part?: DocPart | null;
 }
 
 /** R-2748: the quote an invoice came from — just what its state words need. */
@@ -279,6 +313,17 @@ function add<K, V>(m: Map<K, Set<V>>, k: K, v: V) {
   if (s) s.add(v); else m.set(k, new Set([v]));
 }
 
+/** R-2862: the ₹ before GST of these billed parts added up, as a DocPart field; {} when any of them was read without its value. */
+function taxableOf(bs: readonly DocBilling[]): { taxable?: number } {
+  let sum = 0;
+  for (const b of bs) {
+    const v = b.taxable_amount == null ? NaN : Number(b.taxable_amount);
+    if (!Number.isFinite(v)) return {};
+    sum += v;
+  }
+  return bs.length ? { taxable: sum } : {};
+}
+
 const newer = (a: { at: string; id: string }, b: { at: string; id: string }) => a.at > b.at || (a.at === b.at && a.id > b.id);
 
 export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boolean } = {}): Map<string, LastDocs> {
@@ -290,6 +335,8 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     if (s.quote_id) add(quoteSubs, s.quote_id, s.id);
     if (s.renewal_quote_id) add(quoteSubs, s.renewal_quote_id, s.id);
   }
+  /* R-2870: a quote billed together belongs to every member subscription (even after paying cleared renewal_quote_id) */
+  for (const l of liveTogetherLinks(input.links)) if (subIds.has(l.subscription_id)) add(quoteSubs, l.quote_id, l.subscription_id);
   /* R-2830: quote id → subscription id → the part of that subscription the quote bills (lead part + each line's part) */
   const quotePart = new Map<string, Map<string, string>>();
   for (const q of input.quotes) {
@@ -344,7 +391,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
   }
   const partOf = (billingId: string | null | undefined): DocPart | null => {
     const b = billingId ? billingById.get(billingId) : undefined;
-    return b ? { start: b.period_start ?? null, endExclusive: b.period_end ?? null } : null;
+    return b ? { start: b.period_start ?? null, endExclusive: b.period_end ?? null, ...taxableOf([b]) } : null;
   };
   /** R-2830: the quote's part for THIS subscription (a together proforma has one per member). */
   const partFor = (q: DocQuote, sid: string) => partOf(quotePart.get(q.id)?.get(sid) ?? q.subscription_billing_id);
@@ -408,8 +455,8 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
     if (!bs?.length) return null;
     const starts = bs.map((b) => b.period_start ?? null);
     const ends = bs.map((b) => b.period_end ?? null);
-    if (starts.some((x) => !x) || ends.some((x) => !x)) return { start: null, endExclusive: null };
-    return { start: (starts as string[]).sort()[0], endExclusive: (ends as string[]).sort().at(-1)! };
+    if (starts.some((x) => !x) || ends.some((x) => !x)) return { start: null, endExclusive: null, ...taxableOf(bs) };
+    return { start: (starts as string[]).sort()[0], endExclusive: (ends as string[]).sort().at(-1)!, ...taxableOf(bs) };
   };
   const toLast = (i: DocInvoice, sid: string): LastInvoice => {
     const sourceQuoteId = i.quote_id ?? sourceQuoteFor(i.id, sid);
@@ -539,6 +586,7 @@ export function lastDocsBySubscription(input: LastDocsInput, opts: { all?: boole
       d.sent = {
         quoteId: part.id, kind: "part", expiresDate: part.expires_date, status: part.status,
         dueDate: partBill?.due_on ?? partBill?.period_start ?? partBill?.term_start ?? null,
+        part: partBill ? partOf(partBill.id) : null,
       };
     }
   }

@@ -50,6 +50,9 @@ export interface PaymentToRecord {
   /** R-453: a renewal quote — record_payment moves the EXISTING subscription on by a term
    *  instead of creating one. Optional; absent means a normal quote. */
   renewsSubscription?: boolean;
+  /** R-2871: a TOGETHER renewal quote renews 2+ subscriptions — their plan names (one per distinct
+   *  line subscription_id). With 2+ names the sheet says so instead of "the existing subscription". */
+  renewsSubscriptions?: readonly string[];
   /** R-2087: a support-plan upgrade quote (isSupportUpgradeQuote) — stored as a renewal
    *  (no new subscription) but record_payment moves the EXISTING subscription to the new
    *  plan and keeps its renewal date. Wins over renewsSubscription. */
@@ -155,9 +158,12 @@ export function recordPaymentConsequences(args: {
   } else if (p.renewsSubscription) {
     /* R-453: "Creates a recurring subscription" on a renewal made the owner think a second
        subscription would appear. It does not — the same one gets a new renewal date. */
+    const many = p.renewsSubscriptions ?? [];
     out.push({
       tone: "fact",
-      text: "Renews the existing subscription — the same subscription moves to its next renewal date. No new subscription is created.",
+      text: many.length >= 2
+        ? `Renews ${many.length} subscriptions: ${many.join(", ")} — each moves to its own next renewal date, on one tax invoice. No new subscription is created.`
+        : "Renews the existing subscription — the same subscription moves to its next renewal date. No new subscription is created.",
     });
   } else if (p.addsSeats) {
     /* R-542: the add-seats line carries a billing commitment, so it used to fall through to

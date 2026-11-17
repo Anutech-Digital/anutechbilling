@@ -4,10 +4,11 @@
  * not connected, empty year, DB hiccup, tenant isolation. Zoho is a fake fetch (never the real one);
  * the stores are memory. Names and numbers are made up.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { runBackgroundRead, LEASE_EXTRA_MS, RECONNECT_MESSAGE, STUCK_MS, type BgState, type BgStore, type ZohoAccess } from "./background-read";
 import type { ScanRun, ScanStore, ListedRow, ScanFacts } from "./scan";
 import { zohoReceiptFacts } from "../receipts-import/normalise";
+import { createDayMeter, forgetDayMeters, registerDayMeter, type DayCallsRow } from "../zoho-day-budget";
 
 type Facts = ScanFacts;
 
@@ -274,5 +275,263 @@ describe("R-2607 review fixes", () => {
     await runBackgroundRead({ ...x.d, budgetMs: 1_500 });
     const saved = (x.b.s.pace ?? []).reduce((s, p) => s + p.calls, 0);
     expect(saved).toBeGreaterThan(0);
+  });
+});
+
+/* R-2661 — the company's Zoho DAY budget: stop before Zoho's daily limit, carry on next day. */
+describe("R-2661 day budget in the background read", () => {
+  afterEach(() => { forgetDayMeters(); vi.useRealTimers(); });
+
+  /** A memory day-row sink for one company. */
+  function daySink(seed: DayCallsRow[] = []) {
+    const rows = new Map(seed.map((r) => [r.day, { ...r }]));
+    return {
+      rows,
+      sink: {
+        async read(day: string) { const r = rows.get(day); return r ? { ...r } : null; },
+        async add(day: string, calls: number, refusal: string | null) {
+          const r = rows.get(day) ?? { day, calls: 0, limitHitAt: null };
+          r.calls += calls; if (refusal && !r.limitHitAt) r.limitHitAt = new Date().toISOString();
+          rows.set(day, r); return { ...r };
+        },
+      },
+    };
+  }
+  /* 13 Nov 2026 10:00Z (15:30 IST); the next IST day begins 18:30Z. */
+  const DAY1 = Date.parse("2026-11-13T10:00:00Z");
+  const DAY2 = Date.parse("2026-11-13T19:00:00Z");
+
+  it("stops BEFORE the call past the budget: no Zoho call for it, cursor kept, request stays, bg_error says the budget line; next IST day carries on from the same page and each document is read once", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(DAY1);
+    const scan = memoryScan(); const b = memoryBg(); const c = clock(DAY1); const z = fakeZoho(7);  /* 3 list pages + 7 details = 10 calls */
+    const ds = daySink();
+    const meter = createDayMeter("t1", ds.sink, { budget: 5, log: () => {} });
+    registerDayMeter("tok-1", meter);   /* api.ts booksGet counts and refuses through the token */
+    const d = { store: scan.store, bg: b.bg, kind: "customerpayments" as const, toFacts: zohoReceiptFacts, fy: "2025-26",
+      access: access().a, budgetMs: 600_000, now: c.now, sleep: c.sleep, fetch: z.f, log: () => {}, dayBudget: meter };
+    const r1 = await runBackgroundRead(d);
+    expect(r1.outcome).toBe("day-limit");
+    expect(z.calls()).toBe(5);                                   /* 3 list + 2 details; the 6th was never made */
+    expect(ds.rows.get("2026-11-13")).toMatchObject({ calls: 5 });
+    expect(await scan.store.counts("2025-26")).toEqual({ listed: 7, detailed: 2 });
+    expect(scan.runs.get("2025-26")).toMatchObject({ listDone: true });
+    expect(b.s.requestedAt).not.toBeNull();                      /* the request STAYS */
+    expect(b.s.leaseUntil).toBeNull();
+    expect(b.s.error).toContain("Zoho calls today: 5 of 5");
+    expect(b.s.error).toContain("carries on after 12:00 am IST on 14 Nov 2026");
+    /* A cron tick later the same day: nothing is called, nothing new is written. */
+    const errBefore = b.s.error;
+    const r2 = await runBackgroundRead(d);
+    expect(r2.outcome).toBe("day-limit");
+    expect(z.calls()).toBe(5);
+    expect(b.s.error).toBe(errBefore);
+    /* The next IST day: the pass carries on from the saved state — no list page again, the 5 details left read once each. */
+    vi.setSystemTime(DAY2); c.set(DAY2);
+    const r3 = await runBackgroundRead(d);
+    expect(r3).toMatchObject({ outcome: "complete", listed: 7, detailed: 7 });
+    expect(z.calls()).toBe(10);
+    expect(ds.rows.get("2026-11-14")).toMatchObject({ calls: 5 });
+    expect(b.s.requestedAt).toBeNull();
+    expect(b.s.error).toBeNull();
+  });
+
+  it("the cron while the day is spent: no Zoho call, no lease, the request stays with the budget line", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(DAY1);
+    const scan = memoryScan(); const b = memoryBg(); const c = clock(DAY1); const z = fakeZoho(7);
+    const ds = daySink([{ day: "2026-11-13", calls: 900, limitHitAt: null }]);
+    const meter = createDayMeter("t1", ds.sink, { budget: 900, log: () => {} });
+    registerDayMeter("tok-1", meter);
+    const d = { store: scan.store, bg: b.bg, kind: "customerpayments" as const, toFacts: zohoReceiptFacts, fy: "2025-26",
+      access: access().a, budgetMs: 600_000, now: c.now, sleep: c.sleep, fetch: z.f, log: () => {}, dayBudget: meter, requireRequest: true };
+    const r = await runBackgroundRead(d);
+    expect(r).toMatchObject({ outcome: "day-limit", calls: 0, listed: 0, detailed: 0 });
+    expect(z.calls()).toBe(0);
+    expect(b.s.requestedAt).not.toBeNull();
+    expect(b.s.leaseUntil).toBeNull();
+    expect(b.s.error).toContain("Zoho calls today: 900 of 900");
+    /* Zoho itself refused for the day (another app shares the organization): spent even at a low count. */
+    const ds2 = daySink([{ day: "2026-11-13", calls: 12, limitHitAt: "2026-11-13T04:24:00Z" }]);
+    const meter2 = createDayMeter("t1", ds2.sink, { budget: 900, log: () => {} });
+    const b2 = memoryBg();
+    const r2 = await runBackgroundRead({ ...d, bg: b2.bg, dayBudget: meter2 });
+    expect(r2.outcome).toBe("day-limit");
+    expect(z.calls()).toBe(0);
+    expect(b2.s.error).toContain("Zoho calls today: 12 of 900");
+  });
+
+  it("without a day budget (older callers / tests) nothing changes: the year reads to the end", async () => {
+    const { d } = deps();
+    expect((await runBackgroundRead(d)).outcome).toBe("complete");
+  });
+});
+
+describe("R-2661 one Zoho reader at a time — the background read (cron + the dialog's pass)", () => {
+  /** The company's reader lease as the pass sees it: `holder` = another read holds it. */
+  function readerLease(holder: string | null = null) {
+    const r = {
+      holder, takes: [] as number[], releases: 0, failTake: false,
+      lease: {
+        async take(untilMs: number) { r.takes.push(untilMs); if (r.failTake) throw new Error("db down"); return r.holder; },
+        async release() { r.releases += 1; },
+      },
+    };
+    return r;
+  }
+
+  it("another read holds the lease: NO Zoho call, outcome other-reader, the request stays, bg_error names the running read, the run's own lease is given back; nothing is released that is not ours", async () => {
+    const rl = readerLease("Reconcile from Zoho");
+    const { d, b, z } = deps({ reader: rl.lease, requireRequest: true });
+    const r = await runBackgroundRead(d);
+    expect(r).toMatchObject({ outcome: "other-reader", calls: 0, listed: 0, detailed: 0 });
+    expect(r.error).toContain("Another Zoho read is running for this company: Reconcile from Zoho.");
+    expect(z.calls()).toBe(0);
+    expect(b.s.requestedAt).not.toBeNull();
+    expect(b.s.leaseUntil).toBeNull();
+    expect(b.s.error).toBe(r.error);
+    expect(rl.takes).toHaveLength(1);
+    expect(rl.releases).toBe(0);
+    /* That read is done: the next cron tick reads to the end and clears the line. */
+    rl.holder = null;
+    const r2 = await runBackgroundRead(d);
+    expect(r2).toMatchObject({ outcome: "complete", listed: 7, detailed: 7, error: null });
+    expect(b.s.error).toBeNull();
+  });
+
+  it("a pass that reads: takes the lease after the run's own and before the first Zoho call, renews it with every step, and lets it go when the read is complete", async () => {
+    const rl = readerLease();
+    const order: string[] = [];
+    const { d, b, z } = deps();
+    const take = rl.lease.take.bind(rl.lease);
+    const reader = { take: async (u: number) => { order.push(`take@${z.calls()}:${b.s.leaseUntil ? "run-held" : "run-free"}`); return take(u); }, release: async () => { order.push("release"); return rl.lease.release(); } };
+    const r = await runBackgroundRead({ ...d, reader });
+    expect(r.outcome).toBe("complete");
+    expect(order[0]).toBe("take@0:run-held");                     /* before any Zoho call, under the run's lease */
+    expect(rl.takes.length).toBeGreaterThan(1);                    /* renewed while it read */
+    expect(rl.takes.slice(1).every((u, i, a) => i === 0 || u >= a[i - 1])).toBe(true);   /* each renewal reaches further (the first covers the whole pass) */
+    expect(order[order.length - 1]).toBe("release");
+    expect(rl.releases).toBe(1);
+  });
+
+  it("the lease is ALWAYS let go when the pass ends: Zoho busy, a Zoho error that stops the read, a server error, the day budget, time up", async () => {
+    /* busy (429) */
+    let rl = readerLease();
+    let x = deps({ reader: rl.lease });
+    let r = await runBackgroundRead({ ...x.d, fetch: fakeZoho(7, 3, (c) => (c === 2 ? j({ code: 44, message: "too many requests" }, 429) : null)).f });
+    expect(r.outcome).toBe("busy"); expect(rl.releases).toBe(1);
+    /* Zoho refuses (stops the read) */
+    rl = readerLease(); x = deps({ reader: rl.lease });
+    r = await runBackgroundRead({ ...x.d, fetch: fakeZoho(7, 3, () => j({ code: 9, message: "no" }, 400)).f });
+    expect(r.outcome).toBe("stopped"); expect(rl.releases).toBe(1);
+    /* Zoho down (kept for the next pass) */
+    rl = readerLease(); x = deps({ reader: rl.lease });
+    r = await runBackgroundRead({ ...x.d, fetch: fakeZoho(7, 3, () => j({}, 503)).f });
+    expect(r.outcome).toBe("retry"); expect(rl.releases).toBe(1);
+    /* not connected (no Zoho call at all) */
+    rl = readerLease(); x = deps({ reader: rl.lease });
+    r = await runBackgroundRead({ ...x.d, access: async () => ({ error: "Zoho Books is not connected." }) });
+    expect(r.outcome).toBe("stopped"); expect(rl.releases).toBe(1);
+    /* time up */
+    rl = readerLease(); x = deps({ reader: rl.lease });
+    r = await runBackgroundRead({ ...x.d, budgetMs: 1_000 });
+    expect(["time", "complete"]).toContain(r.outcome); expect(rl.releases).toBe(1);
+  });
+
+  it("the run is already held by another pass of the SAME read (cron tick + open dialog): locked — the reader lease is neither taken nor released (it is that pass's)", async () => {
+    const rl = readerLease();
+    const { d, b } = deps({ reader: rl.lease });
+    b.s.leaseUntil = new Date(Date.parse("2026-11-08T10:00:00Z") + 300_000).toISOString();
+    const r = await runBackgroundRead(d);
+    expect(r.outcome).toBe("locked");
+    expect(rl.takes).toHaveLength(0);
+    expect(rl.releases).toBe(0);
+  });
+
+  it("a lease call that fails does not stop the read (the day budget is the hard stop): logged, the year is read", async () => {
+    const rl = readerLease(); rl.failTake = true;
+    const logs: string[] = [];
+    const { d } = deps({ reader: rl.lease, log: (m: string) => logs.push(m) });
+    const r = await runBackgroundRead(d);
+    expect(r).toMatchObject({ outcome: "complete", listed: 7, detailed: 7 });
+    expect(logs.some((m) => m.includes("reader lease"))).toBe(true);
+    expect(rl.releases).toBe(1);
+  });
+
+  it("the day budget comes first: spent → day-limit with no reader lease taken at all", async () => {
+    const rl = readerLease("Reconcile from Zoho");
+    const { d, z } = deps({ reader: rl.lease, dayBudget: {
+      check: async (nowMs: number) => ({ day: "2026-11-08", calls: 900, budget: 900, limitHitAt: null, spent: true, retryAt: nowMs + 1000 }),
+      remaining: async () => 0,
+    } });
+    const r = await runBackgroundRead(d);
+    expect(r.outcome).toBe("day-limit");
+    expect(z.calls()).toBe(0);
+    expect(rl.takes).toHaveLength(0);
+  });
+});
+
+describe("R-2661 checker fixes — waiting is not 'stuck', a lost pass keeps off the reader lease", () => {
+  const DAY1 = Date.parse("2026-11-13T10:00:00Z");
+  const spent = { check: async (nowMs: number) => ({ day: "2026-11-13", calls: 900, budget: 900, limitHitAt: null, spent: true, retryAt: nowMs + 1000 }), remaining: async () => 0 };
+
+  it("day-limit pass, clock +20 h, the next pass meets a 503: outcome retry and the REQUEST STAYS (not 'no progress for 30 minutes'); a second 503 a minute later still only retries; the pass after that reads the year", async () => {
+    const scan = memoryScan(); const b = memoryBg(); const c = clock(DAY1);
+    b.s.lastStepAt = new Date(DAY1 - 60_000).toISOString();           /* its last good step, a minute before the budget ran out */
+    const base = { store: scan.store, bg: b.bg, kind: "customerpayments" as const, toFacts: zohoReceiptFacts, fy: "2025-26",
+      access: access().a, budgetMs: 600_000, now: c.now, sleep: c.sleep, log: () => {}, requireRequest: true };
+    const z0 = fakeZoho(7);
+    const r1 = await runBackgroundRead({ ...base, fetch: z0.f, dayBudget: spent });
+    expect(r1.outcome).toBe("day-limit");
+    expect(z0.calls()).toBe(0);
+    /* The next IST day, 20 hours later: Zoho is down for a moment. */
+    c.set(DAY1 + 20 * 3_600_000);
+    const down = fakeZoho(7, 3, () => j({}, 503));
+    const r2 = await runBackgroundRead({ ...base, fetch: down.f });
+    expect(r2.outcome).toBe("retry");
+    expect(b.s.requestedAt).not.toBeNull();
+    expect(b.s.finishedAt).toBeNull();
+    expect(b.s.leaseUntil).toBeNull();
+    /* A minute later, down again: still a retry — the 30-minute clock started when the wait ended. */
+    c.set(c.get() + 60_000);
+    const r3 = await runBackgroundRead({ ...base, fetch: down.f });
+    expect(r3.outcome).toBe("retry");
+    expect(b.s.requestedAt).not.toBeNull();
+    /* Zoho is back: the read carries on to the end. */
+    c.set(c.get() + 60_000);
+    const r4 = await runBackgroundRead({ ...base, fetch: fakeZoho(7).f });
+    expect(r4).toMatchObject({ outcome: "complete", listed: 7, detailed: 7 });
+  });
+
+  it("the same after waiting behind another Zoho read for hours: one 503 is a retry, the request stays", async () => {
+    const holder = { name: "Reconcile from Zoho" as string | null };
+    const reader = { take: async () => holder.name, release: async () => {} };
+    const { d, b, c } = deps({ reader, requireRequest: true });
+    b.s.lastStepAt = "2026-11-08T09:59:00Z";
+    expect((await runBackgroundRead(d)).outcome).toBe("other-reader");
+    holder.name = null;
+    c.set(c.get() + 5 * 3_600_000);
+    const r = await runBackgroundRead({ ...d, fetch: fakeZoho(7, 3, () => j({}, 503)).f });
+    expect(r.outcome).toBe("retry");
+    expect(b.s.requestedAt).not.toBeNull();
+  });
+
+  it("a read that really made no progress for 30 minutes (no waiting state) still stops with the reason — R-2607 unchanged", async () => {
+    const { d, b, c } = deps({ requireRequest: true });
+    b.s.lastStepAt = "2026-11-08T09:59:00Z"; b.s.error = "Zoho Books did not answer.";
+    c.set(c.get() + 40 * 60_000);
+    const r = await runBackgroundRead({ ...d, fetch: fakeZoho(7, 3, () => j({}, 503)).f });
+    expect(r.outcome).toBe("stopped");
+    expect(r.error).toContain("no progress for 30 minutes");
+    expect(b.s.requestedAt).toBeNull();
+  });
+
+  it("a pass that LOST its run lease (taken over) does not release the reader lease — the pass that took over holds the same name", async () => {
+    let releases = 0;
+    const reader = { take: async () => null, release: async () => { releases += 1; } };
+    const { d, b } = deps({ reader });
+    /* The first Zoho answer arrives after another pass has taken the run over. */
+    const z = fakeZoho(7, 3, (call) => { if (call === 1) b.s.leaseUntil = new Date(Date.parse("2026-11-08T12:00:00Z")).toISOString(); return null; });
+    const r = await runBackgroundRead({ ...d, fetch: z.f });
+    expect(r.outcome).toBe("lost");
+    expect(releases).toBe(0);
   });
 });

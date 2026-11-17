@@ -2,12 +2,12 @@
 -- writing social_content directly; the owner / manager path still works; the cron (service role)
 -- still publishes; the OWNER approving with a post time / choosing lead forms turns the job on,
 -- never over an owner's own switch; a manager changes no switch.
--- Migrations 20261112060206_r2692_social_approval_guard + 20261116115628_r2709_social_marketing_approves.
+-- Migrations 20261112060206_r2692_social_approval_guard + 20261117060541_r2709_social_marketing_approves.
 -- Self-asserting, ONE transaction, rolled back. Run on a LOCAL DB only:
 --   begin; <migration without begin/commit>; <this file without begin/rollback>; rollback;
 --
 -- Proves:
---   A. R-2709 (16 Nov 2026, migration 20261116115628): marketing reviews too — approves a draft and
+--   A. R-2709 (16 Nov 2026, migration 20261117060541): marketing reviews too — approves a draft and
 --      inserts a scheduled (approved) post, each stamped with its own login (a forged reviewer is
 --      replaced); nobody inserts published / failed; a post sent for review has no stamp.
 --   B. Manager: review → approved works and reviewed_by is stamped with the manager (not a

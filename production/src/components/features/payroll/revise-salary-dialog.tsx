@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { rupee } from "@/lib/utils";
 import { ctcFromEmployee, employeeCtcOptions } from "@/lib/payroll/ctc";
+import { revisedTakeHome } from "@/lib/payroll/net-pay";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { DEFAULT_PAYROLL_POLICY } from "@/lib/payroll/policy";
 import { periodLabel } from "@/lib/payroll/period-label";
@@ -101,6 +102,10 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
   const daN = Math.max(0, Math.round(Number(da) || 0));
   const next = { monthly_gross: grossN, basic_monthly: basicN, da_monthly: daN };
   const breakdown = ctcFromEmployee({ ...next, ...switches }, ctcOpts);
+  /* R-2743: take-home from the ONE net-pay source (gross − PF − ESI − TDS, no PT — owner 13 Nov),
+     the same as the Employees table's In-hand; it used ctc.ts netTakeHomeMonthly (PT, no TDS).
+     The TDS reads this employee's payslips, so it waits for them. */
+  const takeHome = historyQ.isSuccess ? revisedTakeHome(next, switches, asOf, booked) : null;
 
   const same = grossN === employee.monthly_gross && basicN === employee.basic_monthly && daN === (employee.da_monthly ?? 0);
   const splitTooBig = (basicN ?? 0) + daN > grossN;
@@ -185,7 +190,7 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
                 <span>Employer PF {rupee(breakdown.employerPfMonthly)}{employee.pf_applicable ? "" : " (PF off)"}</span>
                 <span>Employer ESI {rupee(breakdown.employerEsiMonthly)}{employee.esi_applicable ? "" : " (ESI off)"}</span>
                 <span>Gratuity {rupee(breakdown.gratuityMonthly)}</span>
-                <span>Take-home about {rupee(breakdown.netTakeHomeMonthly)}</span>
+                <span data-testid="revise-take-home" title={takeHome?.explain}>Take-home (full month) {takeHome ? rupee(takeHome.net) : historyQ.isError ? "—" : "…"}</span>
               </div>
               <div className="border-t border-hairline pt-1 font-semibold text-ink">CTC {rupee(breakdown.annualCtc)}/yr ({rupee(breakdown.monthlyCtc)}/month)</div>
             </div>

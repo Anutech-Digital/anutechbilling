@@ -26,6 +26,7 @@ import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 import { SAAS_GST_RATE } from "@/lib/gst/hsn";
 import type { RenewalForecast } from "@/lib/renewals/forecast";
 import { rupee } from "@/lib/utils";
+import { liveTogetherLinks, type TogetherLink } from "./last-docs";
 import type { QueueTab, RowStatusKey } from "./queue";
 
 export const TILE_KEYS = ["overdue", "due30", "due60", "due90", "wontRenew", "renewedMonth"] as const;
@@ -64,6 +65,12 @@ export interface TileRow {
   statusKey: RowStatusKey;
   /** The row's renewal amount in whole rupees (queue.ts renewalAmount().value). */
   amount: number;
+  /**
+   * R-2862: what falls due on the row's Due date, ₹ before GST (due-anchor.ts rowDue().amount) — a part-billed row
+   * with one part unpaid owes that PART, not the term. The Overdue / Due tiles add this; absent = `amount`.
+   * Won't renew and Renewed this month stay on the term amount (the renewal's value leaving / dated in the month).
+   */
+  dueAmount?: number;
   renewalDate: string | null;
 }
 
@@ -117,7 +124,7 @@ export function monthOf(todayIst: string): MonthRange {
   return { start: `${y}-${mm}-01`, end: `${y}-${mm}-${String(last).padStart(2, "0")}`, label: MONTHS[m - 1] };
 }
 
-const inMonth = (d: string | null | undefined, month: MonthRange) => !!d && d >= month.start && d <= month.end;
+const inMonth = (d: string | null | undefined, month: Pick<MonthRange, "start" | "end">) => !!d && d >= month.start && d <= month.end;
 
 /**
  * A renewal quote whose money is fully in: received (or received and then invoiced — the invoice
@@ -227,12 +234,39 @@ export function paidRenewalsInMonth(quotes: readonly RenewalQuotePayment[], mont
   });
 }
 
+/**
+ * R-2870: a together quote (renewal_quote_subscriptions) leaves quotes.renewal_subscription_id / renewal_term_date empty, so the
+ * month read never sees it. Each live link whose term is in the month becomes ONE entry for its member: the member's own
+ * subtotal (before GST — never the whole quote on each), the quote's paid state. Ids are per member, so paidRenewalsInMonth
+ * keeps both. A quote not read (or not fully paid / closed) adds nothing — isFullyPaidRenewal decides, as for any renewal.
+ */
+export function togetherMemberPayments(
+  links: readonly TogetherLink[],
+  quotes: ReadonlyArray<Pick<RenewalQuotePayment, "id" | "amount" | "payment_amount" | "payment_status" | "status" | "tax_rate">>,
+  month: Pick<MonthRange, "start" | "end">,
+): RenewalQuotePayment[] {
+  const byId = new Map(quotes.map((q) => [q.id, q]));
+  const out: RenewalQuotePayment[] = [];
+  for (const l of liveTogetherLinks(links)) {
+    const q = byId.get(l.quote_id);
+    if (!q || !inMonth(l.renewal_term_date, month)) continue;
+    out.push({
+      id: `${q.id}#${l.subscription_id}`, amount: q.amount, payment_amount: q.payment_amount, payment_status: q.payment_status, status: q.status ?? null,
+      renewal_subscription_id: l.subscription_id, renewal_term_date: l.renewal_term_date,
+      subtotal: l.subtotal, discount_pct: 0, tax_rate: q.tax_rate ?? null,
+    });
+  }
+  return out;
+}
+
 export function renewalTiles(rows: readonly TileRow[], quotes: readonly RenewalQuotePayment[], month: MonthRange): RenewalTiles {
   const paid = paidRenewalsInMonth(quotes, month);
   const paidSubs = new Set(paid.map((q) => q.renewal_subscription_id).filter((x): x is string => !!x));
   const sum = (key: TileKey): TileFigure => {
     let count = 0, amount = 0;
-    for (const r of rows) if (tileMatches(key, r, month, paidSubs)) { count += 1; amount += Math.round(r.amount); }
+    /* R-2862: the window tiles add what is due on the Due date (a late part = that part only) */
+    const of = (r: TileRow) => (key in TILE_WINDOW_TABS ? r.dueAmount ?? r.amount : r.amount);
+    for (const r of rows) if (tileMatches(key, r, month, paidSubs)) { count += 1; amount += Math.round(of(r)); }
     return { count, amount };
   };
   /* a row already Renewed (paid, its date not moved yet) with no paid quote loaded counts as renewed too */
@@ -322,7 +356,7 @@ export function tileText(key: TileKey, t: RenewalTiles, month: MonthRange, windo
     value: rupee(f.amount, { compact: true }),
     sub,
     caption,
-    title: `${TILE_LABEL[key]}: ${rupee(f.amount)} — ${sub}. ${caption}, before GST (each renewal's next-term bill; not unpaid bills). Press to list them.`,
+    title: `${TILE_LABEL[key]}: ${rupee(f.amount)} — ${sub}. ${caption}, before GST (each renewal's next-term bill; not unpaid bills).${key in TILE_WINDOW_TABS ? " A renewal billed in parts with one part unpaid adds that part only." : ""} Press to list them.`,
   };
 }
 

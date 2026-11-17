@@ -56,6 +56,7 @@ import { StatementRow } from "@/components/ui/statement-row";
 import { OpeningBalancesCard } from "./opening-balances-card";
 import { EditLineDialog, AddLineDialog } from "./line-dialogs";
 import { AdvanceBillingCard } from "./advance-billing-card";
+import { ScheduleIIIView, ScheduleIIINotForType } from "./schedule-iii-view";
 
 export default function BalanceSheetPage() {
   const { data: auto, isLoading: autoLoading, isError: autoFailed, refetch: refetchAuto } = useBalanceSheetAuto();
@@ -102,12 +103,15 @@ export default function BalanceSheetPage() {
   const [editItem, setEditItem] = React.useState<BalanceSheetItem | null>(null);
   const [retainedInfoOpen, setRetainedInfoOpen] = React.useState(false);
   const today = istToday();
+  /* R-1855: Pvt Ltd only — the Schedule III (Division I) arrangement of this same sheet. */
+  const [view, setView] = React.useState<"standard" | "schedule3">("standard");
 
   /* R-1839: owner drawings / capital introduced — real entries, labelled by company type. */
   const profileQ = useComplianceProfile();
   const businessType: BusinessType | null = profileQ.data?.businessType ?? null;
   const words = ownerEquityWords(businessType);
   const profile = entityProfile(businessType);
+  const sched = view === "schedule3" && profile.type === "pvt_ltd";
   const movementsQ = useOwnerEquityMovements();
   const movementsMissing = movementsQ.isError && isOwnerEquityTableMissing(movementsQ.error);
   const movements = React.useMemo(() => movementsQ.data ?? [], [movementsQ.data]);
@@ -267,18 +271,34 @@ export default function BalanceSheetPage() {
             {books?.setting && <> · Books start {formatDate(books.setting)}</>}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button icon="download" onClick={exportCSV} disabled={loading || !auto}>
-            Export CSV
-          </Button>
-          <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
-            Add line
-          </Button>
+        <div className="flex gap-2 print:hidden">
+          {profile.type === "pvt_ltd" && (
+            <div role="group" aria-label="Balance Sheet format" className="inline-flex rounded-md border border-hairline overflow-hidden">
+              {([["standard", "Standard view"], ["schedule3", "Schedule III view"]] as const).map(([v, label]) => (
+                <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
+                  className={`px-3 py-1.5 text-sm ${view === v ? "bg-ink text-paper font-semibold" : "bg-paper text-ink-2 hover:bg-paper-2"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {!sched && (
+            <>
+              <Button icon="download" onClick={exportCSV} disabled={loading || !auto}>
+                Export CSV
+              </Button>
+              <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
+                Add line
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
+      {profile.type !== "pvt_ltd" && profileQ.data && <div className="mb-3"><ScheduleIIINotForType typeLabel={profile.label} /></div>}
+
       {/* R-2496: opening balances must be as at the day before the books start. */}
-      {openingWarn && books?.setting && (
+      {!sched && openingWarn && books?.setting && (
         <div role="status" className="mb-4 rounded-lg border border-amber/40 bg-amber-soft/20 px-4 py-3 text-sm text-ink">
           {openingWarn.actual
             ? <>Your opening balances are dated <b>{formatDate(openingWarn.actual)}</b>, but your books start on <b>{formatDate(books.setting)}</b>. Opening balances should be as at <b>{formatDate(openingWarn.expected)}</b> — edit them below, or change the books start on Accounting → Overview.</>
@@ -288,7 +308,7 @@ export default function BalanceSheetPage() {
 
       {/* Headline summary — Net worth reads FIRST (was buried at the very bottom
           after ~15 detail lines). Assets · Liabilities · Net worth up top. */}
-      {!loading && !failed && (
+      {!sched && !loading && !failed && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
           <Card className="min-w-0 p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total assets</div>
@@ -306,7 +326,7 @@ export default function BalanceSheetPage() {
       )}
 
       {/* Honesty note */}
-      <Card className="mb-6 bg-paper-2/40 p-3">
+      {!sched && <Card className="mb-6 bg-paper-2/40 p-3">
         <p className="text-xs text-ink-3 leading-relaxed flex items-start gap-1.5">
           <Icon name="info" size={13} className="mt-0.5 shrink-0" />
           <span>
@@ -316,12 +336,12 @@ export default function BalanceSheetPage() {
             CA-ready sheet{words.allowed ? <> (money the {words.person} takes out goes in <b>{words.register}</b> below)</> : null}. <b>Retained earnings comes from the P&amp;L; whatever the sheet still needs to balance is shown separately as an unexplained difference.</b>
           </span>
         </p>
-      </Card>
+      </Card>}
 
       {/* Financial-health / solvency indicator — prominent rose banner when net
           worth is negative, subtle green strip when solvent. Shows the key
           liquidity + leverage ratios with plain-English tooltips. */}
-      {!loading && !failed && auto && (
+      {!sched && !loading && !failed && auto && (
         <Card className={`mb-6 p-4 ${netWorth < 0 ? "border-rose/40 bg-rose/5" : "border-emerald/30 bg-emerald-soft/20"}`}>
           <div className="flex items-start gap-3">
             <Icon name={netWorth < 0 ? "alert" : "check_circle"} size={18} className={`mt-0.5 shrink-0 ${netWorth < 0 ? "text-rose" : "text-emerald"}`} />
@@ -357,6 +377,13 @@ export default function BalanceSheetPage() {
         </div>
       ) : failed ? (
         <LoadError what="Balance sheet" onRetry={() => { void refetchAuto(); void refetchItems(); booksQ.refetch(); }} />
+      ) : sched ? (
+        <ScheduleIIIView asOf={today} sheet={{ totalAssets, totalLiab, netWorth }}
+          input={{
+            auto, gstCredit, gstPayable, licenceProvision, loanLines, advanceSplit, loansTaken,
+            manualAssets: manualAssetRows, manualLiabilities: manualLiabRows, equity,
+            openingBalanceAdjustments: auto?.openingBalanceAdjustments ?? 0, unexplained,
+          }} />
       ) : (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

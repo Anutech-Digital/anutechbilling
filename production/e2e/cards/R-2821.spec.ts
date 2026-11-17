@@ -4,9 +4,13 @@
  *
  * A REAL browser measure (jsdom has no layout). At 1276x720, 1280x720 and 1920x1080, sidebar open, the
  * page shows the TABLE and:
- *   · Customer and Product & period columns are each >= 200 px wide;
- *   · the first THREE renewal rows end above the fold (bottom <= innerHeight) — with the Bill-together
- *     box / forecast closed, as a user first lands;
+ *   · R-2863 (after R-2854 "widths grow with the window" + R-2861 tiles in one row): Product & period is >= 200 px
+ *     wide and Customer >= 150 px (it was 200 for both; a 1280 window now gives Customer ~157, Product ~213), and no
+ *     name is cut with an ellipsis (a customer / product name may wrap to 2 lines);
+ *   · the first THREE renewal rows end above the fold (3rd row bottom <= innerHeight) — with the Bill-together box / forecast closed, as a
+ *     user first lands. R-2878 (after R-2863's two rows): 16 Nov the first row top was 489 and rows 83 px tall → row bottoms 572, 655, 738
+ *     of 720 (the 3rd 18 px short). Now the title + count line are 56 px not 76 (buttons float beside the title), and the tile, forecast-gap,
+ *     card-top, filter-gap and table-header paddings are 2-4 px tighter: first row top 445, bottoms 528, 611, 694 (26 px to spare);
  *   · document.scrollWidth <= innerWidth, the table is not wider than its box, no cell spills.
  * Run: `node scripts/ops/card-tests.mjs R-2821` (set R2821_OUT=<file> to write the measured numbers).
  *
@@ -20,8 +24,10 @@ import { CARD_TESTS_ON, E2E_TENANT_SQL, localCleanupDeleteIssuedInvoice, localDb
 
 const CUST_A = "c2821000-0000-4000-8000-000000000001";
 const CUST_B = "c2821000-0000-4000-8000-000000000002";
-const NAME_A = "CT R2821 Greentin Chemicals & Allied Pvt Ltd";
-const NAME_B = "CT R2821 Sharma Infotech Services LLP";
+/* ordinary business names (no "CT R2821" marker: the rows are found by the plan name, the data by fixed ids) — R-2863: the
+   marker made them 44 / 37 characters, longer than a real name, and the narrower R-2854 Customer column cut them */
+const NAME_A = "Greentin Chemicals & Allied Pvt Ltd";
+const NAME_B = "Sharma Infotech Services LLP";
 const SUBS: ReadonlyArray<{ id: string; cust: string; name: string; plan: string; vendor: string; seats: number; mrr: number; in: number }> = [
   { id: "c2821000-0000-4000-8000-000000000021", cust: CUST_A, name: NAME_A, plan: "CT R2821 Google Workspace Business Standard", vendor: "google", seats: 25, mrr: 18000, in: 9 },
   { id: "c2821000-0000-4000-8000-000000000022", cust: CUST_B, name: NAME_B, plan: "CT R2821 Microsoft 365 Business Premium", vendor: "microsoft", seats: 12, mrr: 9500, in: 11 },
@@ -85,7 +91,7 @@ async function openAt(page: Page, width: number, height: number): Promise<void> 
 
 interface Measure {
   scroll: number; inner: number; innerH: number; tableScroll: number; tableBox: number;
-  customerW: number; productW: number; firstRowTop: number; rowBottoms: number[]; rowTops: number[]; spilling: string[]; cutNames: string[];
+  blocks: Record<string, [number, number]>; customerW: number; productW: number; firstRowTop: number; rowBottoms: number[]; rowTops: number[]; spilling: string[]; cutNames: string[];
 }
 
 async function measure(page: Page): Promise<Measure> {
@@ -97,6 +103,8 @@ async function measure(page: Page): Promise<Measure> {
     return {
       scroll: document.documentElement.scrollWidth, inner: window.innerWidth, innerH: window.innerHeight,
       tableScroll: table.scrollWidth, tableBox: table.clientWidth,
+      blocks: Object.fromEntries(([["h1", "h1"], ["tiles", '[role="group"][aria-label^="Renewal totals"]'], ["tabs", '[role="tablist"]'], ["search", 'input[type="search"]'], ["thead", '[data-testid="renewals-table"] thead']] as const)
+        .map(([k, sel]) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return [k, [Math.round(r?.top ?? -1), Math.round(r?.bottom ?? -1)]]; })) as Record<string, [number, number]>,
       customerW: w("Customer"), productW: w("Product"),
       firstRowTop: Math.round(rows[0]?.getBoundingClientRect().top ?? 9999),
       rowBottoms: rows.slice(0, 5).map((r) => Math.round(r.getBoundingClientRect().bottom)),
@@ -117,7 +125,7 @@ async function check(page: Page, width: number, height: number): Promise<void> {
   expect(m.scroll, "page has no horizontal scroll").toBeLessThanOrEqual(m.inner);
   expect(m.tableScroll, "the table is not wider than its box").toBeLessThanOrEqual(m.tableBox + 1);
   expect(m.spilling, "cells spilling into the next column").toEqual([]);
-  expect(m.customerW, "Customer column width").toBeGreaterThanOrEqual(200);
+  expect(m.customerW, "Customer column width").toBeGreaterThanOrEqual(150);
   expect(m.productW, "Product & period column width").toBeGreaterThanOrEqual(200);
   expect(m.cutNames, "customer / product names cut with an ellipsis").toEqual([]);
   expect(m.rowBottoms.length, "seeded rows found").toBeGreaterThanOrEqual(3);
@@ -131,7 +139,7 @@ test.describe("R-2821 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: at 1280x720 and 1276x720 the table shows full names, 3+ rows above the fold, no sideways scroll", async ({ browser, baseURL }) => {
+  test("Step 1: at 1280x720 and 1276x720 the table shows full names, the first 3 rows above the fold, no sideways scroll", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await check(page, 1280, 720);
     await check(page, 1276, 720);
@@ -140,8 +148,9 @@ test.describe("R-2821 card test", () => {
     await page.context().close();
   });
 
-  test("Step 2: at 1920x1080 the same", async ({ browser, baseURL }) => {
+  test("Step 2: at 1568x882 and 1920x1080 the same", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
+    await check(page, 1568, 882);
     await check(page, 1920, 1080);
     await page.context().close();
   });
