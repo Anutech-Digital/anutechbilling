@@ -281,6 +281,10 @@
 .anutech-site[data-site-theme="warm"] :is(section#features, section#compare) table td[style*="tabular"] { font-family: inherit !important; }
 .anutech-site[data-site-theme="warm"] :is(section#features, section#compare) > div > div[style*="border-radius:12px"],
 .anutech-site[data-site-theme="warm"] section#compare > div[style*="border-radius:12px"] { border-radius: 14px !important; }
+/* "Still unsure? Send it on WhatsApp …" under the suite compare — centred (owner, 17 Nov 2026). */
+/* (Matched by its WhatsApp link: the compare table renders in the browser, where the inline style
+   is written "padding: 12px 16px" with spaces.) */
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) section#compare p:has(> a[href*="wa.me"]) { text-align: center; }
 
 /* ── Migration: soft photo band; each step a white card with a number badge ──────────────── */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) {
