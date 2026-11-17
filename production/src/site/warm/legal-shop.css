@@ -483,9 +483,13 @@
   margin: 0 calc(50% - 50vw) -70px; border-radius: 0; box-shadow: none; pointer-events: none;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::after {
-  /* Scaled to the band's height and anchored right, so each illustration shows whole (cover cut its
-     top off in this short, wide band); the rest is the images' own left-edge mint (#F0F8F3). */
-  z-index: -2; background: #F0F8F3 url(/ssl-hero-1.webp) right center / auto 100% no-repeat; animation: ssl-warm-slides 28s infinite;
+  /* Scaled to the band's height, so each illustration shows whole (cover cut its top off in this short,
+     wide band), and its right edge on the CONTENT's right edge — the navbar's (site-warm.css
+     --w-content) — not the screen's: on a 2000px screen it sat out at the far edge, away from the
+     heading (owner, 17 Nov 2026). The rest is the images' own left-edge mint (#F0F8F3). */
+  z-index: -2; background: #F0F8F3 url(/ssl-hero-1.webp) no-repeat;
+  background-size: auto 100%; background-position: right max(0px, calc((100% - var(--w-content)) / 2)) center;
+  animation: ssl-warm-slides 28s infinite;
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(a[href^="/quote?product=ssl"]) > .wrap:has(> .grid-4 > .card-highlight)::before {
   z-index: -1;
