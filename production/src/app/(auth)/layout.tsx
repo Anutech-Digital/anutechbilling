@@ -9,6 +9,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { brandForHost, hostFromHeaders } from "@/site/lib/host-brand";
+import { WarmScope } from "@/site/components/chrome/WarmScope";
 
 async function currentBrand() {
   return brandForHost(hostFromHeaders(await headers()));
@@ -22,8 +23,11 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function AuthLayout({ children }: { children: React.ReactNode }) {
   const brand = await currentBrand();
+  /* Website theme switch (Settings → Branding, docs/WEBSITE-THEME.md): on Warm the sign-in page is
+     restyled by extra-forms.css (matched by `auth-shell` + the password field). Classic unchanged. */
   return (
-    <div className="min-h-screen bg-paper-2/50 flex flex-col">
+    <WarmScope kind="product">
+    <div className="auth-shell min-h-screen bg-paper-2/50 flex flex-col">
       {/* Top bar with brand */}
       <header className="flex items-center justify-between gap-4 p-6">
         <Link href="/" className="flex items-center gap-2.5">
@@ -49,5 +53,6 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
         © {new Date().getFullYear()} {brand.footer}
       </footer>
     </div>
+    </WarmScope>
   );
 }

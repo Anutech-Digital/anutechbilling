@@ -7,14 +7,17 @@
      root:  .w-scope > .min-h-screen.bg-paper-2:has(#pr-name | #pr-code | done)
    - /unsubscribe (PublicShell + unsubscribe-client.tsx, w-scope-site)     artboard Unsubscribe
      root:  .w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto)
+   - /login (the (auth) layout + login/page.tsx)                           owner, 17 Nov 2026
+     root:  .w-scope > .auth-shell:has(input[autocomplete="current-password"])
    They are drawn with the app's Tailwind tokens (bg-paper, text-ink, bg-amber …). Those are
    re-pointed to the warm palette on each page root (light here, dark below), then specifics follow. */
 
 /* ── App tokens → warm palette (light) ─────────────────────────────────────────────────────── */
 .w-scope[data-site-theme="warm"] > .min-h-screen.justify-center.bg-paper,
 .w-scope[data-site-theme="warm"] > .min-h-screen.bg-paper-2:is(:has(#pr-name), :has(#pr-code), :has([data-testid="privacy-request-done"])),
-.w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) {
-  --paper: 0 0% 100%;              /* --w-surface */
+.w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto),
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) {
+  --paper: 0 0% 100%;             /* --w-surface */
   --paper-2: 100 16% 96%;          /* --w-bg */
   --ink: 157 22% 12%;              /* --w-ink */
   --ink-2: 156 15% 20%;            /* --w-ink-2 */
@@ -333,4 +336,116 @@
   .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > header nav { gap: 14px; }
   .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > footer nav { row-gap: 0; }
   .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > footer nav a { display: inline-flex; align-items: center; min-height: 44px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   /login (owner, 17 Nov 2026: "Update this login frontend with our warm theme"): the soft Warm
+   page with a mint circle top right and a marigold one bottom left; the brand in Jakarta with a
+   teal "R" tile; one white 28px card with a shadow; a big Jakarta heading; 50px fields; an
+   outlined Google button; a teal "Sign in"; teal links. Same words, same order.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) {
+  position: relative; isolation: isolate; overflow: hidden; background: var(--w-bg);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"])::before,
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"])::after {
+  content: ""; position: absolute; z-index: -1; border-radius: 50%; pointer-events: none;
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"])::before {
+  width: 560px; height: 560px; right: -200px; top: -260px; background: var(--w-mint);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"])::after {
+  width: 380px; height: 380px; left: -170px; bottom: -190px; background: var(--w-marigold-soft);
+}
+/* Brand bar */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > header {
+  padding: 20px var(--w-gutter);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > header > a > .bg-ink {
+  width: 40px; height: 40px; border-radius: 12px; background: var(--w-teal); color: var(--w-on-teal);
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif; font-size: 19px; font-weight: 800;
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > header > a > .text-sm {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif; font-size: 18px; font-weight: 800; letter-spacing: -0.01em; color: var(--w-ink);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > header > a:last-child:not(:first-child) { font-size: 14px; font-weight: 600; color: var(--w-ink-2); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > header > a:last-child:not(:first-child):hover { color: var(--w-teal); }
+/* The card */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > main { padding-top: clamp(8px, 2vw, 24px); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > main > .max-w-md { max-width: 480px; }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > main > .max-w-md > div.bg-paper {
+  background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 28px;
+  box-shadow: 0 24px 60px rgba(18, 49, 42, 0.10);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > main > .max-w-md > div.bg-paper > .p-4 {
+  padding: clamp(26px, 4vw, 40px) clamp(20px, 4vw, 38px);
+}
+/* Heading + line */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) h1 {
+  margin-bottom: 8px; font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
+  font-size: clamp(1.9rem, 3.4vw, 2.3rem); line-height: 1.1; letter-spacing: -0.02em; font-weight: 800; color: var(--w-ink);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) h1 + p { font-size: 16px; color: var(--w-muted); }
+/* Local test login panel */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) section[data-local-test-login] {
+  padding: 14px 16px 16px; border: 1px solid #CFE6DB; border-radius: 16px; background: var(--w-mint-soft);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) section[data-local-test-login] h2 { font-size: 14px; font-weight: 700; color: var(--w-ink); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) section[data-local-test-login] h2 + p { margin-bottom: 10px; font-size: 13px; color: var(--w-muted-2); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) section[data-local-test-login] button {
+  min-height: 40px; border-radius: 10px; border: 1px solid var(--w-line); background: var(--w-surface);
+  font-size: 14px; font-weight: 600; color: var(--w-ink-2); box-shadow: none;
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) section[data-local-test-login] button:hover:not(:disabled) { border-color: var(--w-teal); color: var(--w-teal); }
+/* Google: an outlined 50px button */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > button {
+  min-height: 50px; height: auto; border-radius: 12px; border: 1.5px solid var(--w-line-strong); background: var(--w-surface);
+  font-size: 15px; font-weight: 600; color: var(--w-ink); box-shadow: none;
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > button:hover:not(:disabled) { background: var(--w-bg); border-color: var(--w-teal); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > button svg { width: 18px; height: 18px; }
+/* "or use email" */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > .my-5 { margin-block: 22px; font-size: 13px; color: var(--w-muted-2); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > .my-5 > .h-px { background: var(--w-line); }
+/* Fields */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form.space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 18px; }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) { margin-top: 8px; }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form label { font-size: 14px; font-weight: 600; line-height: 1.3; color: var(--w-ink-2); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form .text-rose { color: #B4321F; }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form .justify-between a { font-size: 13px; font-weight: 700; color: var(--w-teal); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form .justify-between a:hover { color: var(--w-teal-dark); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form div.rounded-md.border:has(> input) {
+  min-height: 50px; border-radius: 12px; border-width: 1.5px; background: var(--w-surface-2);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form div.rounded-md.border > input {
+  min-height: 47px; padding: 0 14px; font-size: 16px; color: var(--w-ink);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form .relative > button[type="button"] { right: 14px; color: var(--w-muted-2); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form .relative > button[type="button"]:hover { color: var(--w-teal); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form .relative > button[type="button"] svg { width: 18px; height: 18px; }
+/* Teal "Sign in" */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form button[type="submit"] {
+  min-height: 52px; height: auto; margin-top: 24px !important; border-radius: 12px; border: 0;
+  background: var(--w-teal); color: var(--w-on-teal); font-size: 16px; font-weight: 700; box-shadow: 0 10px 24px -12px rgba(14, 107, 92, 0.6);
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) form button[type="submit"]:hover:not(:disabled) { background: var(--w-teal-dark); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) :is(form button, div.bg-paper > .p-4 > button, section[data-local-test-login] button):focus-visible {
+  outline: 3px solid var(--w-marigold); outline-offset: 3px; --tw-ring-shadow: 0 0 #0000;
+}
+/* Notices (deactivated, too many tries, confirm email …) — a marigold box, not the teal re-point */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > [role="alert"] {
+  border-radius: 12px; padding: 12px 14px; font-size: 14px;
+  background: var(--w-marigold-soft); border-color: #F1D08A; color: #6B4500;
+}
+/* "Don't have an account? Sign up" and the policy links */
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > p.mt-5 { margin-top: 22px; font-size: 14px; color: var(--w-muted); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > p.mt-5 a { color: var(--w-teal); font-weight: 700; }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > p:is(.mt-3, .mt-1) { font-size: 12.5px; line-height: 1.6; color: var(--w-muted-2); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > p.mt-3 { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--w-line); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) div.bg-paper > .p-4 > p:is(.mt-3, .mt-1) a:hover { color: var(--w-teal); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > footer { font-size: 13px; color: var(--w-muted-2); }
+@media (max-width: 480px) {
+  .w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > header { padding: 14px 16px; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > main { padding-inline: 12px; }
+  .w-scope[data-site-theme="warm"] > .auth-shell:has(input[autocomplete="current-password"]) > main > .max-w-md > div.bg-paper { border-radius: 22px; }
 }
