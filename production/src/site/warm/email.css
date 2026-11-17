@@ -104,11 +104,23 @@
     align-items: start; align-content: center; padding-top: clamp(48px, 5vw, 72px) !important; padding-bottom: clamp(48px, 5vw, 72px) !important;
   }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > * { grid-column: 1; justify-self: start; }
+  /* The words centred top-to-bottom against the card panel (owner, 17 Nov 2026): a flexible empty
+     row above and below them; the panel spans every row. Children in page order: pill, heading,
+     rates line, annual line, dots, the cards, "Not sure?". */
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child {
+    grid-template-rows: 1fr repeat(6, auto) 1fr;
+  }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > :nth-child(1) { grid-row: 2; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > :nth-child(2) { grid-row: 3; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > :nth-child(3) { grid-row: 4; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > :nth-child(4) { grid-row: 5; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > :nth-child(5) { grid-row: 6; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > :nth-child(7) { grid-row: 7; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > h1 { font-size: clamp(2.4rem, 3.6vw, 3.4rem) !important; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > p:nth-of-type(2) { margin-bottom: 18px !important; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > p:last-child { margin-top: 26px !important; max-width: 620px; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > div[style*="display:grid"] {
-    grid-column: 2; grid-row: 1 / span 7; align-self: center; justify-self: stretch;
+    grid-column: 2; grid-row: 1 / -1; align-self: center; justify-self: stretch;
     grid-template-columns: minmax(0, 1fr) !important; gap: 16px !important; margin: 0 !important;
   }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] {
