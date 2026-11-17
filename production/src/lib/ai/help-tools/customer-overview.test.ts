@@ -300,6 +300,14 @@ describe("customer_overview: the number equals the Customer page's Outstanding",
     expect(r.text).toContain("Monthly recurring revenue (active subscriptions): ₹2,000.");
   });
 
+  it("a TDS part (a project payment with method tds) is not the last payment, even when it is the newest receipt", async () => {
+    const t = TABLES();
+    t.project_payments = [...t.project_payments, { id: "PP-TDS-LATE", tenant_id: A, project_id: "PRJ-1", amount: 123, received_at: "2026-11-12T09:00:00Z", method: "tds" }];
+    const r = await call({ customer_id: C1 }, "owner", t);
+    expect(r.text).toContain("Last payment: 2026-11-03, ₹4,000 received.");
+    expect(r.rows?.[0].outstanding).toBe(pageNumbers(C1, t).outstanding); // the TDS part still counts in the balance
+  });
+
   it("scope and period are named: one customer, first to last record, as of today (IST)", async () => {
     const r = await call({ customer_id: C1 });
     expect(r.text.split("\n")[0]).toBe("Customer: Sharma Traders. Scope: this one customer only — all records from 2026-07-01 to 2026-11-03, as of 2026-11-17 (IST).");
