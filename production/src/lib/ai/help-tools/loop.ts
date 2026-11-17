@@ -142,7 +142,8 @@ export async function runToolLoop(deps: LoopDeps): Promise<LoopRun> {
       const ok = !!r?.ok && !!tool;
       /* The header is ours: the registry's name and page. A name the model made up never appears outside the markers. */
       const header = ok && tool ? `[${tool.name}] (link: ${tool.page})` : `[${tool?.name ?? "unknown_tool"}]`;
-      const body = ok && r ? r.text : refusalSentence(r?.refusal);
+      /* A tool that is not on this role's list is "no such tool" whatever the runner said — we never tell the model what exists beyond its list. */
+      const body = ok && r ? r.text : refusalSentence(tool ? r?.refusal : "unknown_tool");
       return { id: c.id, isError: !ok, text: `${header}\n${wrapUntrusted(body, { max: share, nonce })}` };
     });
     for (const r of results) if (r.ok && byName.has(r.name)) gathered.push(r);

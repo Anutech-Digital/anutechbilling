@@ -17,7 +17,7 @@ import type { HelpCallInfo } from "@/lib/ai/help-tools/runner";
 import type { HelpSourceRef } from "@/lib/ai/help-tools/types";
 import type { LoopOutcome, LoopRun } from "@/lib/ai/help-tools/loop";
 import { HELP_UNTRUSTED_RULE } from "@/lib/ai/help-tools/untrusted";
-import { runHelpToolLoop, toolFallbackAnswer, withToolLinks, type HelpDataToolName, type HelpToolResult } from "@/lib/ai/help-data-tools";
+import { runHelpToolLoop, toolFallbackAnswer, toolActions, type HelpDataToolName, type HelpToolResult } from "@/lib/ai/help-data-tools";
 import { parseHelpAnswer, type HelpAnswer } from "@/lib/ai/app-help";
 import { claudeToolAsk, type ClaudeToolClient } from "@/lib/ai/claude-tools";
 import { parseJsonReply } from "@/lib/ai/claude";
@@ -40,6 +40,16 @@ export const LOOP_MESSAGES: Readonly<Record<Exclude<LoopOutcome, "answer">, stri
   model_error: "AI Help cannot answer right now. To report a bug, use the 'Report a problem' tab in this Help panel (Ctrl+Shift+B).",
   malformed: "AI Help could not answer right now. Please try again in a minute.",
 });
+
+/**
+ * The link button of EACH tool result the answer used, deduped by the full href (path + query): two numbers
+ * on the same page but different tabs — active subscriptions and renewals due — keep their own button. At most 3.
+ */
+function withLoopLinks(answer: HelpAnswer, results: readonly HelpToolResult[]): HelpAnswer {
+  const actions = [...answer.actions];
+  for (const a of toolActions(results)) if (!actions.some((x) => x.kind === "open" && x.href === a.href)) actions.unshift(a);
+  return { ...answer, actions: actions.slice(0, 3) };
+}
 
 const plain = (reply: string): HelpAnswer => ({ reply, bugDraft: null, checklist: [], actions: [], followUps: [] });
 
@@ -81,7 +91,7 @@ export async function answerWithTools(a: HelpLoopArgs): Promise<HelpLoopResult> 
     const json = parseJsonReply(run.text);
     const parsed = parseHelpAnswer(json, a.customerIds);
     const answer = parsed ?? plain(json === undefined ? run.text.replace(/\*\*(.+?)\*\*/g, "$1").trim().slice(0, 2000) : LOOP_MESSAGES.malformed);
-    return done(withToolLinks(answer, asToolResults(run)));
+    return done(withLoopLinks(answer, asToolResults(run)));
   }
   /* Bounded / failed: the numbers already read still reach the person (links included). */
   if (run.results.length && (run.outcome === "rounds" || run.outcome === "calls_cap" || run.outcome === "time" || run.outcome === "model_error" || run.outcome === "malformed")) {
