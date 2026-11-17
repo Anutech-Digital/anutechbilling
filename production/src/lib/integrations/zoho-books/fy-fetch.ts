@@ -6,7 +6,8 @@
  *   getFyDocDetail     one document with its lines (account, HSN/SAC, tax), tax split and TDS
  *   countFyDocs        how many of each the FY has — resumable cursor; a list the stored token has
  *                      no scope for is reported in `needsReconnect`, never fatal
- *   readChartOfAccounts the organization's accounts
+ *   readChartOfAccounts the organization's accounts — every page, active and inactive (R-2915);
+ *                      readChartAccount = one account by its Zoho id
  *   trialBalanceAsAt   every account's debit / credit up to an as-at date (each account's
  *                      transactions with date_end), resumable; income / expense only from that
  *                      date's 1 April — earlier years' result is one "earlier years" equity row
@@ -21,7 +22,7 @@
  * it is built from the documented `chartofaccounts/accounttransactions` (ZohoBooks.accountants.READ).
  * The year-end tie-out (R-2506) compares it with Zoho's own Trial Balance screen.
  */
-import { getOne, listPage, ZohoApiError } from "./api";
+import { getOne, listPage, PAGE_SIZE, ZohoApiError } from "./api";
 import { paceWaitMs, ZOHO_CALLS_PER_MIN, type PaceEntry } from "./zoho-pace";
 import { FY_DOC_KINDS, fyDateRange, type DateRange, type FyDocKind } from "./config";
 
@@ -349,20 +350,52 @@ function toAccount(r: Record<string, unknown>): ZohoAccount {
   return { id: str(r.account_id), name: str(r.account_name), code: str(r.account_code), type: str(r.account_type), active: r.is_active !== false };
 }
 
-async function coaPage(orgId: string, token: string, page: number, f: Fetch) {
-  const p = await listPage("/chartofaccounts", "chartofaccounts", orgId, token, page, f, { filter_by: "AccountType.All", sort_column: "account_code" });
-  return { rows: p.rows.map(toAccount).filter((a) => a.id), more: p.more };
+/** One page of the chart. `full` = Zoho filled the page, whatever its has_more_page says. */
+async function coaPage(orgId: string, token: string, page: number, f: Fetch, filter = "AccountType.All", sort = "account_code") {
+  const p = await listPage("/chartofaccounts", "chartofaccounts", orgId, token, page, f, { filter_by: filter, sort_column: sort });
+  return { rows: p.rows.map(toAccount).filter((a) => a.id), more: p.more, full: p.rows.length >= PAGE_SIZE };
 }
 
-/** Every account (active and inactive), all pages. */
-export async function readChartOfAccounts(orgId: string, token: string, f: Fetch = fetch): Promise<ZohoAccount[]> {
-  const out: ZohoAccount[] = [];
-  for (let page = 1; page <= MAX_PAGE; page++) {
-    const p = await coaPage(orgId, token, page, f);
-    out.push(...p.rows);
-    if (!p.more) break;
+/** R-2915: Zoho's whole list, then its inactive accounts by themselves (old years' documents sit on them). */
+const COA_FILTERS = ["AccountType.All", "AccountType.Inactive"] as const;
+
+/**
+ * Every account (active and inactive), all pages, each account once (by its Zoho id). R-2915 (staging,
+ * 17 Nov: the stored chart was incomplete, ~170 documents stayed "account type not read yet"):
+ *   - sorted by account NAME — unique in Zoho, so pages cannot shift (by account code, mostly blank, a
+ *     row could repeat on one page and be missing from the next);
+ *   - a full page is followed even when Zoho says there is no more page; a page with nothing new ends
+ *     that list (Zoho ignoring `page` never loops);
+ *   - the inactive accounts are asked for by themselves too.
+ * `onCall` is told about every Zoho request BEFORE it is made (a failed one counts) — the caller's count.
+ */
+export async function readChartOfAccounts(orgId: string, token: string, f: Fetch = fetch, onCall?: () => void): Promise<ZohoAccount[]> {
+  const byId = new Map<string, ZohoAccount>();
+  for (const filter of COA_FILTERS) {
+    for (let page = 1; page <= MAX_PAGE; page++) {
+      onCall?.();
+      const p = await coaPage(orgId, token, page, f, filter, "account_name");
+      let fresh = 0;
+      for (const a of p.rows) if (!byId.has(a.id)) { byId.set(a.id, a); fresh += 1; }
+      if (fresh === 0 || !(p.more || p.full)) break;
+    }
   }
-  return out;
+  return [...byId.values()];
+}
+
+/**
+ * R-2915: ONE account by its Zoho id (GET /chartofaccounts/{id}) — for an account a document uses that
+ * the lists did not bring. null when Zoho has no such account (404 / 400), answers with another id, or
+ * gives no type: never a guessed type. Any other failure goes up.
+ */
+export async function readChartAccount(orgId: string, token: string, accountId: string, f: Fetch = fetch): Promise<ZohoAccount | null> {
+  let r: Record<string, unknown>;
+  try { r = await getOne("/chartofaccounts", "chart_of_account", orgId, token, accountId, f); } catch (e) {
+    if (e instanceof ZohoApiError && (e.status === 404 || e.status === 400)) return null;
+    throw e;
+  }
+  const a = toAccount(r);
+  return a.id === accountId && a.type.trim() ? a : null;
 }
 
 export interface TbRow { accountId: string; name: string; code: string; type: string; debitPaise: number; creditPaise: number }
