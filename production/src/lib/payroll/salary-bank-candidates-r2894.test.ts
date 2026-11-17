@@ -7,7 +7,7 @@ import {
 } from "./salary-bank-link";
 
 const T = "tenant-a";
-const row = (o: Partial<WaitingBankLine> & { id: string }) => ({
+const row = (o: Partial<WaitingBankLine> & { id: string; tenant_id?: string; matched_to_type?: string | null }) => ({
   bank_account_id: "acct-1", txn_date: "2026-10-03", description: "NEFT-SALARY", debit: 52000, tenant_id: T,
   matched_to_type: null as string | null, ...o,
 });
