@@ -33,7 +33,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { NOT_CONFIGURED_MESSAGE, FY_CALLS_PER_REQUEST, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
 import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
 import { isZohoDayLimit, ZohoApiError } from "@/lib/integrations/zoho-books/api";
-import { fyDateRange, readChartOfAccounts, type ZohoFyDocDetail } from "@/lib/integrations/zoho-books/fy-fetch";
+import { fyDateRange, readChartAccount, readChartOfAccounts, type ZohoAccount, type ZohoFyDocDetail } from "@/lib/integrations/zoho-books/fy-fetch";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { asZohoReader } from "@/lib/integrations/zoho-books/day-calls-store";
 import { zohoFyReaderName } from "@/lib/integrations/zoho-books/zoho-day-budget";
@@ -50,7 +50,7 @@ import {
   readAccountTypesNewest, saveAccountTypes, type AdminRpc,
 } from "@/lib/integrations/zoho-books/purchase-import/store";
 import { parseSaveChoice, readAccountChoices, withSavedChoices } from "@/lib/integrations/zoho-books/fy-import/account-choices";
-import { isExpenseType, typeLabel, typesStale } from "@/lib/integrations/zoho-books/purchase-import/account-types";
+import { MISSING_ACCOUNTS_PER_READ, isExpenseType, missingAccountIds, typeLabel, typesStale } from "@/lib/integrations/zoho-books/purchase-import/account-types";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -72,23 +72,69 @@ function fail(status: number, error: string) {
  * day limit and a stale token (401) go up to the caller. With NO types stored any other failure goes up
  * too (the owner sees the real error, not a silent "not read yet" loop); with older types stored it is
  * logged and the read goes on — the import refuses what those types cannot check.
+ *
+ * R-2915: every Zoho call is counted as it is made (pages of both lists + the by-id reads below; at
+ * least one even when the first failed). After the chart is saved, an account a scanned bill / expense
+ * line of this FY uses that is STILL not stored is read from Zoho by its id and saved.
  */
 async function refreshAccountTypes(admin: AdminRpc, db: FyImportDb, tenantId: string, orgId: string, token: string,
-  readStartedAt: string | null, history: PaceEntry[]): Promise<void> {
+  fy: string, readStartedAt: string | null, history: PaceEntry[]): Promise<void> {
   const newestReadAt = await readAccountTypesNewest(db, tenantId);
   if (!typesStale(newestReadAt, Date.now(), readStartedAt)) return;
+  let calls = 0;
+  const count = () => { calls += 1; };
   try {
-    let accounts: Awaited<ReturnType<typeof readChartOfAccounts>> | undefined;
-    try { accounts = await readChartOfAccounts(orgId, token); }
-    finally { history.push({ at: Date.now(), calls: chartCalls(accounts?.length) }); }
-    await saveAccountTypes(admin, tenantId, accounts);
-  } catch (e) {
-    if (isZohoDayLimit(e) || (e instanceof ZohoApiError && e.status === 401) || !newestReadAt) throw e;
-    console.error("[R-2681] Zoho chart of accounts not read — older types kept:", e instanceof Error ? e.message : e);
-  }
+    try {
+      await saveAccountTypes(admin, tenantId, await readChartOfAccounts(orgId, token, fetch, count));
+    } catch (e) {
+      if (isZohoDayLimit(e) || (e instanceof ZohoApiError && e.status === 401) || !newestReadAt) throw e;
+      console.error("[R-2681] Zoho chart of accounts not read — older types kept:", e instanceof Error ? e.message : e);
+      return;
+    }
+    await readMissingAccountTypes(admin, db, tenantId, orgId, token, fy, count);
+  } finally { history.push({ at: Date.now(), calls: Math.max(1, calls) }); }
 }
-/** Zoho calls a chart-of-accounts read made (200 accounts a page; at least one even when it failed). */
-const chartCalls = (n: number | undefined) => Math.max(1, Math.ceil((n ?? 0) / 200) || 1);
+
+/**
+ * R-2915: the accounts the chart lists did not bring. Every account id on a scanned bill / expense line
+ * of this FY with no stored type is read from Zoho by its id (at most MISSING_ACCOUNTS_PER_READ a read;
+ * the rest with the next "Read from Zoho again") and saved. An account Zoho does not know stores
+ * nothing — its documents stay refused ("not read yet", fail closed). What was found is saved even when
+ * a later read fails; the day limit and a stale token (401) go up, any other failure only stops these reads.
+ * They also stop after MISSING_ACCOUNTS_MS.
+ */
+const MISSING_ACCOUNTS_MS = 20_000;
+async function readMissingAccountTypes(admin: AdminRpc, db: FyImportDb, tenantId: string, orgId: string, token: string,
+  fy: string, count: () => void): Promise<void> {
+  let ids: string[];
+  try {
+    const [bills, exps, stored] = await Promise.all([
+      readScannedFacts<PurchaseFacts>(db, tenantId, "bills", fy),
+      readScannedFacts<PurchaseFacts>(db, tenantId, "expenses", fy),
+      readAccountTypes(db, tenantId),
+    ]);
+    ids = missingAccountIds([...bills, ...exps], stored.types).slice(0, MISSING_ACCOUNTS_PER_READ);
+  } catch (e) {
+    console.error("[R-2915] accounts missing from Zoho's chart not looked for:", e instanceof Error ? e.message : e);
+    return;
+  }
+  const found: ZohoAccount[] = [];
+  let stop: unknown = null;
+  /* A slow Zoho must not run the request out (maxDuration) before what was found is saved. */
+  const until = Date.now() + MISSING_ACCOUNTS_MS;
+  for (const id of ids) {
+    if (Date.now() > until) break;
+    count();
+    try {
+      const a = await readChartAccount(orgId, token, id);
+      if (a) found.push(a);
+    } catch (e) { stop = e; break; }
+  }
+  if (found.length) await saveAccountTypes(admin, tenantId, found);
+  if (stop === null) return;
+  if (isZohoDayLimit(stop) || (stop instanceof ZohoApiError && stop.status === 401)) throw stop;
+  console.error("[R-2915] reading Zoho accounts by id stopped:", stop instanceof Error ? stop.message : stop);
+}
 
 const isKind = (k: unknown): k is Kind => typeof k === "string" && (KINDS as readonly string[]).includes(k);
 const toFacts = (kind: Kind) => (d: ZohoFyDocDetail): ScanFacts => (kind === "vendorpayments" ? zohoVendorPaymentFacts(d) : zohoPurchaseFacts(d));
@@ -140,7 +186,7 @@ export async function POST(req: NextRequest) {
       const run = async () => {
         const token = await zohoAccessToken(caller, conn.refreshToken!, creds);
         /* R-2681: Zoho's account types first, when stale (refreshAccountTypes says when and how it fails). */
-        await refreshAccountTypes(caller.admin as unknown as AdminRpc, db, caller.tenantId, conn.orgId!, token,
+        await refreshAccountTypes(caller.admin as unknown as AdminRpc, db, caller.tenantId, conn.orgId!, token, fy,
           (await storeOf(kind).readRun(fy))?.listStartedAt ?? null, history);
         return scanStep(storeOf(kind), kind, toFacts(kind), conn.orgId!, token, fy,
           { history, maxCalls: Math.max(1, FY_CALLS_PER_REQUEST - used()) });
