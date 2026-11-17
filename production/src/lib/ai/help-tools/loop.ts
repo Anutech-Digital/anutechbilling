@@ -22,6 +22,7 @@
 import type { HelpToolDef, JsonSchema } from "./types";
 import type { HelpToolCallResult } from "./runner";
 import { newUntrustedId, wrapUntrusted } from "./untrusted";
+import { HELP_QUESTION_CALLS_MAX } from "./limits";
 
 export const HELP_LOOP_ROUNDS_MAX = 8;
 /** Everything — model calls and tool runs — for ONE question. */
@@ -122,6 +123,10 @@ export async function runToolLoop(deps: LoopDeps): Promise<LoopRun> {
     const asked = reply.calls;
     const ids = asked.map((c) => (typeof c.id === "string" && CALL_ID.test(c.id) ? c.id : ""));
     if (!asked.length || ids.some((id) => !id) || new Set(ids).size !== ids.length) return emptyRun("malformed", run);
+    /* R-2776 (finding 3 of R-2775): a turn that asks for more calls than ONE question may make (or than are
+       left of it) is refused BEFORE the runner counts a single call — otherwise 50 calls spent 50 of the
+       person's 120 although only 20 would run. The results already read still reach the answer. */
+    if (run.toolCalls + asked.length > HELP_QUESTION_CALLS_MAX) return emptyRun("calls_cap", run);
     const calls: LoopCall[] = asked.map((c, i) => ({ id: ids.at(i) ?? "", name: typeof c.name === "string" ? c.name : "", input: c.input }));
 
     run.toolCalls += calls.length;

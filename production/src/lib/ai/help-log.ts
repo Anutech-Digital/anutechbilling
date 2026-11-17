@@ -94,7 +94,7 @@ export interface HelpLog {
   /** The R-421 path (flag off): its results become tool rows. */
   legacy(results: readonly HelpToolResult[], ms: number): void;
   /** Writes the queued tool rows, then the answer row. */
-  finish(a: { ok: boolean; ms: number; model?: string | null; tokensIn?: number | null; tokensOut?: number | null }): Promise<void>;
+  finish(a: { ok: boolean; ms: number; model?: string | null; tokensIn?: number | null; tokensOut?: number | null; loopOutcome?: string | null }): Promise<void>;
 }
 
 /** A log for one question. `openClient` returns the person's own client; it is called on the first write (a refused or service-role client = no log, no error). */
@@ -169,6 +169,8 @@ export function createHelpLog(openClient: () => unknown, opts: { conversationId?
       await Promise.allSettled(rows.map(write));
       await write({
         kind: "answer", outcome: a.ok ? "did" : "failed", durationMs: Math.max(0, Math.round(a.ms)),
+        /* R-2776: how the tool loop ended (answer / model_error / refusal / calls_cap …) — a fixed word, never model text. */
+        text: typeof a.loopOutcome === "string" && /^[a-z_]{1,30}$/.test(a.loopOutcome) ? a.loopOutcome : null,
         model: a.model ?? null, tokensIn: a.tokensIn ?? null, tokensOut: a.tokensOut ?? null,
       });
     },

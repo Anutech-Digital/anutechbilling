@@ -140,7 +140,9 @@ export function hasSessionOnlyKey(value: unknown, depth = 0, seen: { n: number }
 }
 
 /** Plain values an input may hold. */
-const INPUT_LEAVES = [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodEnum, z.ZodLiteral, z.ZodDate, z.ZodNull] as const;
+/* R-2776: no z.date() (the parser would refuse the string a model sends; a date is a YYYY-MM-DD string with a regex) and no
+   z.null() / z.literal(null) (a contradictory strict schema) — nullable() is the way to allow null. */
+const INPUT_LEAVES = [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodEnum, z.ZodLiteral] as const;
 /** Plain ASCII key names only: a look-alike letter or an invisible character cannot be a key. */
 const INPUT_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -177,6 +179,8 @@ function describeInput(s: z.ZodTypeAny, keys: string[], depth = 0): string {
     return `refine[${String(effect.refinement)}](${describeInput(s.innerType() as z.ZodTypeAny, keys, depth + 1)})`;
   }
   if (s instanceof z.ZodUnion) return `union(${(s.options as z.ZodTypeAny[]).map((o) => describeInput(o, keys, depth + 1)).join("|")})`;
+  if (s instanceof z.ZodDate) throw new Error("input may not use z.date() — take a YYYY-MM-DD string checked with a regex");
+  if (s instanceof z.ZodNull || (s instanceof z.ZodLiteral && (s.value === null || s.value === undefined))) throw new Error("input may not use z.null() / z.literal(null) — use .nullable() on the field");
   if (INPUT_LEAVES.some((leaf) => s instanceof leaf)) {
     const d = s._def as { typeName?: string; checks?: unknown; values?: unknown; value?: unknown };
     /* A RegExp has no enumerable fields (JSON would write {}): sign its source and flags, so one changed in place (`.compile`) shows. */
@@ -196,6 +200,15 @@ function describeInput(s: z.ZodTypeAny, keys: string[], depth = 0): string {
  * does not take them) — the parser still refuses them, and the model gets bad_input back. Only
  * runs on a schema describeInput already accepted.
  */
+/** A field the parser accepts missing: optional / default, also inside refine and nullable (R-2776, finding 4 of R-2775). */
+function isOptionalField(s: z.ZodTypeAny, depth = 0): boolean {
+  if (depth > 10) return false;
+  if (s instanceof z.ZodOptional || s instanceof z.ZodDefault) return true;
+  if (s instanceof z.ZodEffects) return isOptionalField(s.innerType() as z.ZodTypeAny, depth + 1);
+  if (s instanceof z.ZodNullable) return isOptionalField(s.unwrap() as z.ZodTypeAny, depth + 1);
+  return false;
+}
+
 function jsonSchemaOf(s: z.ZodTypeAny, depth = 0): JsonSchema {
   if (depth > 10) throw new Error("input schema is nested too deep");
   if (s instanceof z.ZodObject) {
@@ -204,7 +217,7 @@ function jsonSchemaOf(s: z.ZodTypeAny, depth = 0): JsonSchema {
     return {
       type: "object",
       properties: Object.fromEntries(entries.map(([k, v]) => [k, jsonSchemaOf(v, depth + 1)])),
-      required: entries.filter(([, v]) => !(v instanceof z.ZodOptional || v instanceof z.ZodDefault)).map(([k]) => k),
+      required: entries.filter(([, v]) => !isOptionalField(v)).map(([k]) => k),
       additionalProperties: false,
     };
   }
@@ -222,8 +235,6 @@ function jsonSchemaOf(s: z.ZodTypeAny, depth = 0): JsonSchema {
   if (s instanceof z.ZodString) return s.isUUID ? { type: "string", format: "uuid" } : { type: "string" };
   if (s instanceof z.ZodNumber) return { type: s.isInt ? "integer" : "number" };
   if (s instanceof z.ZodBoolean) return { type: "boolean" };
-  if (s instanceof z.ZodDate) return { type: "string", format: "date-time" };
-  if (s instanceof z.ZodNull) return { type: "null" };
   throw new Error("input schema holds a type with no JSON schema");
 }
 
