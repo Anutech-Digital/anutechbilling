@@ -17,8 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { rupee, formatDate } from "@/lib/utils";
 import { useEmployeeSalaryHistory, useSalaryBankLines, useUnlinkedSalaryBankLines } from "@/lib/queries/payroll";
 import { useEmployeeLoans, LOAN_KIND_LABEL } from "@/lib/queries/employee-loans";
-import { salaryBankLink } from "@/lib/payroll/salary-bank-link";
-import { salaryBankLineKey } from "@/lib/payroll/salary-status";
+import { salaryBankLink, salaryCandidates } from "@/lib/payroll/salary-bank-link";
 import { SalaryStatusCell, SalaryBankLinkAction } from "@/app/(app)/accounting/payroll/salary-status-cell";
 import { salaryMonthRows, employeeLoansFor, waitingSalaryNets } from "@/lib/accounting/employee-salary-months";
 
@@ -68,7 +67,7 @@ export function EmployeeSalaryPayments({ employee, canWrite }: EmployeeSalaryPay
           {rows.map((r) => {
             const s = byId.get(r.id);
             if (!s) return null;
-            const link = salaryBankLink(s, bankLines?.get(s.id), waitingLines?.get(salaryBankLineKey(s.net)));
+            const link = salaryBankLink(s, bankLines?.get(s.id), salaryCandidates(waitingLines, s));
             return (
               <li key={r.id} className="px-3 py-2" data-testid="salary-month-row">
                 <div className="flex items-center justify-between gap-2">

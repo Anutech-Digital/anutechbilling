@@ -24,8 +24,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SalaryStatusCell, SalaryBankLinkAction } from "../payroll/salary-status-cell";
 import { SalaryRowActions } from "@/components/features/payroll/salary-row-actions";
-import { salaryPayState, salaryBankLineKey } from "@/lib/payroll/salary-status";
-import { salaryBankLink, type SalaryBankLink } from "@/lib/payroll/salary-bank-link";
+import { salaryPayState } from "@/lib/payroll/salary-status";
+import { salaryBankLink, salaryCandidates, type SalaryBankLink, type WaitingBankLine } from "@/lib/payroll/salary-bank-link";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteMoney } from "@/lib/nav";
 import { Icon } from "@/components/ui/icon";
@@ -74,7 +74,7 @@ const waitingNets = (rows: SalaryPayment[]) =>
 
 /** R-1895: status badge + the bank-line link under it ("Bank line" / "Not matched to bank · Match"). */
 function StatusWithBankLink({ p, link, waitingLines, canWrite }: {
-  p: SalaryPayment; link: SalaryBankLink; waitingLines?: Map<number, string>; canWrite: boolean;
+  p: SalaryPayment; link: SalaryBankLink; waitingLines?: Map<number, WaitingBankLine[]>; canWrite: boolean;
 }) {
   return (
     <div className="flex flex-col items-start gap-0.5">
@@ -157,7 +157,7 @@ function MonthRegister() {
   const canWrite = canWriteMoney(useCurrentUser().data?.role);
   const { data: waitingLines } = useUnlinkedSalaryBankLines(waitingNets(rows), `${period}-01`);
   const { data: bankLines } = useSalaryBankLines(rows);
-  const linkOf = (p: SalaryPayment) => salaryBankLink(p, bankLines?.get(p.id), waitingLines?.get(salaryBankLineKey(p.net)));
+  const linkOf = (p: SalaryPayment) => salaryBankLink(p, bankLines?.get(p.id), salaryCandidates(waitingLines, p));
 
   const exportCsv = () => {
     downloadCsv(
@@ -473,7 +473,7 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
   );
   /* R-1895: a Paid month opens the bank-statement line that paid it (mouse or Enter). */
   const { data: bankLines } = useSalaryBankLines(rows);
-  const linkOf = (p: SalaryPayment) => salaryBankLink(p, bankLines?.get(p.id), waitingLines?.get(salaryBankLineKey(p.net)));
+  const linkOf = (p: SalaryPayment) => salaryBankLink(p, bankLines?.get(p.id), salaryCandidates(waitingLines, p));
 
   /* Form 16 Part B working for one FY — the latest FY with a payslip by default. */
   const fyOptions = React.useMemo(() => Array.from(new Set(rows.map((p) => fyStartOfPeriod(p.period)))).sort((a, b) => b - a), [rows]);

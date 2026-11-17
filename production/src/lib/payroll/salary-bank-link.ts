@@ -31,7 +31,7 @@ export type BankLineRef = { txnId: string; accountId: string };
 
 export type SalaryBankLink =
   | { kind: "open"; href: string }
-  | { kind: "not_matched"; matchHref: string }
+  | { kind: "not_matched"; matchHref: string; /** R-2894: set when SEVERAL unlinked lines carry this net — the user picks. */ choices?: WaitingBankLine[] }
   | { kind: "none" };
 
 export const bankLineHref = (ref: BankLineRef) => `/accounting/banking/${ref.accountId}?txn=${ref.txnId}`;
@@ -55,18 +55,81 @@ export function resolveSalaryBankLines(
   return out;
 }
 
+/** R-2894: an unlinked money-out bank line that could be this salary's payment. */
+export type WaitingBankLine = {
+  id: string; bank_account_id: string; txn_date: string; description: string | null; debit: number;
+};
+
+/** Opens exactly this line's Reconcile sheet (bank page ?focus=), never "the first line of this amount". */
+export const bankLineFocusHref = (l: Pick<WaitingBankLine, "id" | "bank_account_id">) =>
+  `/accounting/banking/${l.bank_account_id}?focus=${l.id}`;
+
+type RawWaitingLine = WaitingBankLine & { tenant_id?: string | null; matched_to_type?: string | null };
+
 /**
- * @param waitingAccountId  a bank account holding an unlinked money-out line of exactly this net
- *                          (useUnlinkedSalaryBankLines) — Match opens that line's reconcile there.
+ * R-2894: every unlinked debit, grouped by whole-rupee amount (was: ONE account id per amount, so
+ * the second same-amount line — the other month's — could never be offered). Same tenant only, never a
+ * line that is already matched or is some salary's reconciled line (`linkedIds`), each line once.
+ * Oldest first inside an amount; candidateBankLines() puts the nearest to a salary first.
  */
-export function salaryBankLink(p: SalaryLinkFacts, line: BankLineRef | undefined, waitingAccountId?: string): SalaryBankLink {
+export function groupWaitingBankLines(
+  rows: readonly RawWaitingLine[], tenantId: string, linkedIds: ReadonlySet<string>,
+): Map<number, WaitingBankLine[]> {
+  const seen = new Set<string>();
+  const out = new Map<number, WaitingBankLine[]>();
+  const sorted = [...rows].sort((a, b) => a.txn_date.localeCompare(b.txn_date) || a.id.localeCompare(b.id));
+  for (const r of sorted) {
+    if (r.tenant_id !== tenantId || r.matched_to_type || linkedIds.has(r.id) || !(r.debit > 0) || seen.has(r.id)) continue;
+    seen.add(r.id);
+    const k = salaryBankLineKey(r.debit);
+    const list = out.get(k) ?? [];
+    list.push({ id: r.id, bank_account_id: r.bank_account_id, txn_date: r.txn_date, description: r.description ?? null, debit: r.debit });
+    out.set(k, list);
+  }
+  return out;
+}
+
+const dayNumber = (iso: string) => Math.floor(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86_400_000);
+
+/** The date a salary is compared with: its pay date, else the last day of its month. */
+export function salaryRefDate(p: { period: string; pay_date?: string | null }): string {
+  if (p.pay_date) return p.pay_date.slice(0, 10);
+  const [y, m] = p.period.split("-").map(Number);
+  return `${p.period}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
+}
+
+/** Nearest to `refDate` first; equal distance → the earlier line. A new array. */
+export function candidateBankLines(lines: readonly WaitingBankLine[] | undefined, refDate: string): WaitingBankLine[] {
+  const ref = dayNumber(refDate);
+  return [...(lines ?? [])].sort((a, b) =>
+    Math.abs(dayNumber(a.txn_date) - ref) - Math.abs(dayNumber(b.txn_date) - ref)
+    || a.txn_date.localeCompare(b.txn_date) || a.id.localeCompare(b.id));
+}
+
+/** R-2894: the lines of this salary's net, nearest its pay date first (period unknown → oldest first). */
+export function salaryCandidates(
+  waiting: ReadonlyMap<number, WaitingBankLine[]> | undefined,
+  p: { net: number; period?: string; pay_date?: string | null },
+): WaitingBankLine[] {
+  const lines = waiting?.get(salaryBankLineKey(p.net));
+  return p.period ? candidateBankLines(lines, salaryRefDate({ period: p.period, pay_date: p.pay_date })) : [...(lines ?? [])];
+}
+
+/**
+ * @param candidates  the unlinked money-out lines of exactly this net, nearest the salary first
+ *                    (candidateBankLines). One → Match opens that line; several → `choices`, the
+ *                    user picks which line paid this month.
+ */
+export function salaryBankLink(p: SalaryLinkFacts, line: BankLineRef | undefined, candidates: readonly WaitingBankLine[] = []): SalaryBankLink {
   const key = salaryPayState(p).key;
   if (key !== "paid" && key !== "partial") return { kind: "none" };
   if (line) return { kind: "open", href: bankLineHref(line) };
   if (key === "partial") return { kind: "none" };
+  if (candidates.length === 0) return { kind: "not_matched", matchHref: "/accounting/banking" };
   return {
     kind: "not_matched",
-    matchHref: waitingAccountId ? `/accounting/banking/${waitingAccountId}?match=${salaryBankLineKey(p.net)}` : "/accounting/banking",
+    matchHref: bankLineFocusHref(candidates[0]),
+    ...(candidates.length > 1 ? { choices: [...candidates] } : {}),
   };
 }
 

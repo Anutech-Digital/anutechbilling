@@ -25,7 +25,7 @@ describe("R-1895 salary → bank line", () => {
 
   it("Paid with no bank line anywhere → 'Not matched to bank' with Match into the bank reconcile", () => {
     const orphan: SalaryLinkFacts = { ...apr, id: "sal-old", reconciled_txn_id: null, expense_id: null };
-    expect(salaryBankLink(orphan, undefined, ACCT)).toEqual({ kind: "not_matched", matchHref: `/accounting/banking/${ACCT}?match=105000` });
+    expect(salaryBankLink(orphan, undefined, [{ id: "txn-x", bank_account_id: ACCT, txn_date: "2026-06-01", description: null, debit: 105000 }])).toEqual({ kind: "not_matched", matchHref: `/accounting/banking/${ACCT}?focus=txn-x` });
     // No waiting line of that amount → the Banking accounts list (pick the account, reconcile there).
     expect(salaryBankLink(orphan, undefined)).toEqual({ kind: "not_matched", matchHref: "/accounting/banking" });
   });
