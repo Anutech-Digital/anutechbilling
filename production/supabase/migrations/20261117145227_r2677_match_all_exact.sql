@@ -137,8 +137,9 @@ as $function$
   select lower(btrim(coalesce(p_method, ''))) in
          ('bank', 'bank_transfer', 'bank transfer', 'upi', 'neft', 'rtgs', 'imps', 'cheque')
 $function$;
-revoke all on function public._r2677_bank_method(text) from public, anon, authenticated;
-grant execute on function public._r2677_bank_method(text) to service_role;
+revoke all on function public._r2677_bank_method(text) from public, anon;
+-- A pure word check (no data): granted to authenticated as the R-401 rule asks of every invoker function.
+grant execute on function public._r2677_bank_method(text) to authenticated, service_role;
 
 /* The gate: a signed-in owner / accountant of a company. Returns the company. */
 create or replace function public._r2677_exact_gate()
