@@ -1,6 +1,6 @@
 -- R-2676 (11 Nov 2026, p0 paisa, G-RECON N6 / G-FY2526): the Zoho FY purchase import brings in a Zoho
 -- EXPENSE that has no vendor as a vendor-less expense paid from the mapped account
--- (import_zoho_fy_purchases, migration 20261111204524_r2676_zoho_no_vendor_expenses).
+-- (import_zoho_fy_purchases, migration 20261117124555_r2676_zoho_no_vendor_expenses).
 --   1. A Zoho BILL with no vendor still stays out.
 --   2. A no-vendor expense comes in only when EVERY line's Zoho account is mapped to an expense category:
 --      an unmapped account (fixed deposit, loan, GST, asset), a salary account (Salaries can never be mapped), or one unmapped line
