@@ -12157,6 +12157,7 @@ export type Database = {
           item_id: string | null
           last_reminder_at: string | null
           last_reminder_sent_at_v2: string | null
+          leave_reason_code: string | null
           mrr: number
           non_renew_reason: string | null
           non_renew_said_on: string | null
@@ -12211,6 +12212,7 @@ export type Database = {
           item_id?: string | null
           last_reminder_at?: string | null
           last_reminder_sent_at_v2?: string | null
+          leave_reason_code?: string | null
           mrr: number
           non_renew_reason?: string | null
           non_renew_said_on?: string | null
@@ -12265,6 +12267,7 @@ export type Database = {
           item_id?: string | null
           last_reminder_at?: string | null
           last_reminder_sent_at_v2?: string | null
+          leave_reason_code?: string | null
           mrr?: number
           non_renew_reason?: string | null
           non_renew_said_on?: string | null
@@ -17063,6 +17066,10 @@ export type Database = {
           p_subscription_id: string
         }
         Returns: Json
+      }
+      r2243_check_leave_reason: {
+        Args: { p_code: string; p_reason: string }
+        Returns: undefined
       }
       set_subscription_auto_renew: {
         Args: { p_sub_id: string; p_value: boolean }

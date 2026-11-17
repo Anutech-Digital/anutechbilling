@@ -21,12 +21,14 @@
  * R-2225 (Zoho Billing audit A1): "When" — Now (as above) or At end of term. End of term is the
  * same Won't renew flag as the drawer's button (set_subscription_non_renewing): it runs to its
  * renewal date, no renewal quote or reminder, then ends. Offered only when there is a term end.
+ *
+ * R-2243: the reason is a picklist (lib/subscriptions/leave-reasons.ts) + an optional note, required in both
+ * modes — the code is stored in subscriptions.leave_reason_code so "why customers leave" can be counted.
  */
 import * as React from "react";
 import { Dialog, DialogContent, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormField } from "@/components/ui/label";
 import { rupee, formatDate } from "@/lib/utils";
@@ -37,6 +39,8 @@ import { cancelDueSplit } from "@/lib/subscriptions/cancel-due";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
 import { canEndAtTermEnd } from "@/lib/subscriptions/non-renewing";
 import { useSetNonRenewing } from "./use-non-renewing";
+import { LeaveReasonField } from "./leave-reason-field";
+import { isLeaveReason, leaveReasonInputError, leaveReasonText, type LeaveReasonCode } from "@/lib/subscriptions/leave-reasons";
 
 /** "Cancelled on 9 Oct 2026 — Refunded, customer left · ₹956 due cleared" for the panel.
  *  R-489: the cancel columns (20261009151000) are typed in database.generated.ts now. */
@@ -66,7 +70,8 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
   const cnInvoice = cnFor ? (invoicesQ.data ?? []).find((i) => i.id === cnFor) ?? null : null;
   const cnDue = cnFor ? split.openInvoices.find((i) => i.id === cnFor)?.due ?? 0 : 0;
   const [lastDay, setLastDay] = React.useState(istToday());
-  const [reason, setReason]   = React.useState(defaultReason);
+  const [reasonCode, setReasonCode] = React.useState("");
+  const [note, setNote] = React.useState(defaultReason);
   const [clearDue, setClearDue] = React.useState(clearDueDefault);
   /* R-2225: Now, or At end of term (= Won't renew). */
   const endOffered = canEndAtTermEnd(sub);
@@ -76,17 +81,19 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
     if (!open) return;
     setWhen("now");
     setLastDay(istToday());
-    setReason(defaultReason);
+    setReasonCode("");
+    setNote(defaultReason);
     setClearDue(clearDueDefault);
   }, [open, sub.id, clearDueDefault, defaultReason]);
 
-  const reasonOk = reason.trim().length >= 5;
+  const reasonOk = leaveReasonInputError({ code: reasonCode, note }) === null;
+  const code = isLeaveReason(reasonCode) ? reasonCode : null;
   const dateOk = !!lastDay && (!sub.start_date || lastDay >= sub.start_date.slice(0, 10));
 
   const onConfirm = () => {
-    if (!reasonOk || !dateOk) return;
+    if (!reasonOk || !dateOk || !code) return;
     cancel.mutate(
-      { id: sub.id, lastDay, reason: reason.trim(), clearDue: split.clearable > 0 && clearDue },
+      { id: sub.id, lastDay, reason: leaveReasonText(code, note), reasonCode: code, clearDue: split.clearable > 0 && clearDue },
       { onSuccess: () => onOpenChange(false) },
     );
   };
@@ -134,9 +141,7 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
             <p className="text-2xs text-rose">Pick a date on or after the start ({sub.start_date?.slice(0, 10)}).</p>
           )}
           </>)}
-          <FormField label="Reason (at least 5 characters)" htmlFor="cancel-sub-reason" required>
-            <Textarea id="cancel-sub-reason" name="reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Customer moved to another provider" />
-          </FormField>
+          <LeaveReasonField idPrefix="cancel-sub-reason" code={reasonCode} note={note} onCode={setReasonCode} onNote={setNote} />
           {!atEnd && due > 0 && !invoicesKnown && (
             <p className="text-2xs text-ink-3">Checking this subscription&apos;s invoices…</p>
           )}
@@ -178,7 +183,7 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
             Keep it
           </Button>
           {atEnd ? (
-            <EndOfTermButton subId={sub.id} reason={reason} reasonOk={reasonOk} onDone={() => onOpenChange(false)} />
+            <EndOfTermButton subId={sub.id} code={code} note={note} reasonOk={reasonOk} onDone={() => onOpenChange(false)} />
           ) : (
             <Button variant="danger" onClick={onConfirm} disabled={!reasonOk || !dateOk || !invoicesKnown} loading={cancel.isPending}>
               Cancel subscription
@@ -205,16 +210,16 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
 }
 
 /** R-2225: "Stop at end of term" — Won't renew, the told-on date is today. Mounted only in that mode. */
-function EndOfTermButton({ subId, reason, reasonOk, onDone }: {
-  subId: string; reason: string; reasonOk: boolean; onDone: () => void;
+function EndOfTermButton({ subId, code, note, reasonOk, onDone }: {
+  subId: string; code: LeaveReasonCode | null; note: string; reasonOk: boolean; onDone: () => void;
 }) {
   const setNr = useSetNonRenewing();
   return (
     <Button
       variant="danger"
-      disabled={!reasonOk}
+      disabled={!reasonOk || !code}
       loading={setNr.isPending}
-      onClick={() => setNr.mutate({ id: subId, on: true, reason: reason.trim(), saidOn: istToday() }, { onSuccess: onDone })}
+      onClick={() => code && setNr.mutate({ id: subId, on: true, reason: leaveReasonText(code, note), reasonCode: code, saidOn: istToday() }, { onSuccess: onDone })}
     >
       Stop at end of term
     </Button>

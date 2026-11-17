@@ -37,19 +37,20 @@ describe("Won't renew dialog", () => {
     expect(screen.getByText(/runs till 15 Dec 2026, then ends/)).toBeTruthy();
     const btn = screen.getByRole("button", { name: "Mark Won't renew" }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText(/Why/), { target: { value: "Moving to Microsoft 365" } });
+    fireEvent.change(screen.getByLabelText(/Why is the customer leaving/), { target: { value: "competitor" } });
+    fireEvent.change(screen.getByLabelText(/Note/), { target: { value: "Moving to Microsoft 365" } });
     fireEvent.change(screen.getByLabelText(/Date the customer told you/), { target: { value: "2026-10-30" } });
     expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
     expect(nrMutate).toHaveBeenCalledWith(
-      { id: "sub-1", on: true, reason: "Moving to Microsoft 365", saidOn: "2026-10-30" },
+      { id: "sub-1", on: true, reason: "Moved to another provider — Moving to Microsoft 365", reasonCode: "competitor", saidOn: "2026-10-30" },
       expect.anything(),
     );
   });
 
   it("a future 'told on' date is refused on screen", () => {
     render(<NonRenewingDialog sub={SUB} open onOpenChange={() => {}} />);
-    fireEvent.change(screen.getByLabelText(/Why/), { target: { value: "Moving to Microsoft 365" } });
+    fireEvent.change(screen.getByLabelText(/Why is the customer leaving/), { target: { value: "competitor" } });
     fireEvent.change(screen.getByLabelText(/Date the customer told you/), { target: { value: "2026-11-05" } });
     expect(screen.getByText(/in the future/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "Mark Won't renew" }) as HTMLButtonElement).disabled).toBe(true);
@@ -97,10 +98,11 @@ describe("Cancel dialog: Now vs At end of term", () => {
     expect(screen.getByText(/15 Dec 2026/)).toBeTruthy();
     fireEvent.click(end);
     expect(document.getElementById("cancel-sub-last-day")).toBeNull();
+    fireEvent.change(document.getElementById("cancel-sub-reason-code")!, { target: { value: "closed" } });
     fireEvent.change(document.getElementById("cancel-sub-reason")!, { target: { value: "Closing the business" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop at end of term" }));
     expect(nrMutate).toHaveBeenCalledWith(
-      { id: "sub-1", on: true, reason: "Closing the business", saidOn: "2026-11-01" },
+      { id: "sub-1", on: true, reason: "Business closed — Closing the business", reasonCode: "closed", saidOn: "2026-11-01" },
       expect.anything(),
     );
     expect(cancelMutate).not.toHaveBeenCalled();
@@ -108,7 +110,7 @@ describe("Cancel dialog: Now vs At end of term", () => {
 
   it("Now still cancels as before", () => {
     render(<CancelSubscriptionDialog sub={SUB} open onOpenChange={() => {}} />);
-    fireEvent.change(document.getElementById("cancel-sub-reason")!, { target: { value: "Closing the business" } });
+    fireEvent.change(document.getElementById("cancel-sub-reason-code")!, { target: { value: "closed" } });
     fireEvent.click(screen.getByRole("button", { name: "Cancel subscription" }));
     expect(cancelMutate).toHaveBeenCalledOnce();
     expect(nrMutate).not.toHaveBeenCalled();

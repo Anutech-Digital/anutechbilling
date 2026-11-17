@@ -11,12 +11,13 @@ import * as React from "react";
 import { Dialog, DialogContent, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { FormField } from "@/components/ui/label";
 import { formatDate } from "@/lib/utils";
 import { istToday } from "@/lib/dates/ist";
 import { nonRenewingInputError } from "@/lib/subscriptions/non-renewing";
 import { useSetNonRenewing } from "./use-non-renewing";
+import { LeaveReasonField } from "./leave-reason-field";
+import { isLeaveReason, leaveReasonInputError, leaveReasonText } from "@/lib/subscriptions/leave-reasons";
 
 export function NonRenewingDialog({ sub, open, onOpenChange }: {
   sub: { id: string; customer_name: string; plan: string; renewal_date: string | null };
@@ -25,21 +26,27 @@ export function NonRenewingDialog({ sub, open, onOpenChange }: {
 }) {
   const setNr = useSetNonRenewing();
   const today = istToday();
-  const [reason, setReason] = React.useState("");
+  const [reasonCode, setReasonCode] = React.useState("");
+  const [note, setNote] = React.useState("");
   const [saidOn, setSaidOn] = React.useState(today);
   React.useEffect(() => {
     if (!open) return;
-    setReason("");
+    setReasonCode("");
+    setNote("");
     setSaidOn(istToday());
   }, [open, sub.id]);
 
-  const problem = nonRenewingInputError({ reason, saidOn, today });
-  /* Shown only for the date — the reason's rule is in its label, the button stays off until it is met. */
-  const dateProblem = saidOn > today ? problem : null;
+  /* R-2243: the reason is the shared picklist (+ note); the date rule is nonRenewingInputError's. */
+  const code = isLeaveReason(reasonCode) ? reasonCode : null;
+  const reasonProblem = leaveReasonInputError({ code: reasonCode, note });
+  const dateRule = nonRenewingInputError({ reason: "x".repeat(5), saidOn, today });
+  const problem = reasonProblem ?? dateRule;
+  /* Shown only for the date — the reason's rule is in its labels, the button stays off until it is met. */
+  const dateProblem = saidOn > today ? dateRule : null;
 
   const onConfirm = () => {
-    if (problem) return;
-    setNr.mutate({ id: sub.id, on: true, reason: reason.trim(), saidOn }, { onSuccess: () => onOpenChange(false) });
+    if (problem || !code) return;
+    setNr.mutate({ id: sub.id, on: true, reason: leaveReasonText(code, note), reasonCode: code, saidOn }, { onSuccess: () => onOpenChange(false) });
   };
 
   return (
@@ -52,10 +59,7 @@ export function NonRenewingDialog({ sub, open, onOpenChange }: {
         </DialogDescription>
 
         <div className="mt-4 space-y-3">
-          <FormField label="Why (at least 5 characters)" htmlFor="nonrenew-reason" required>
-            <Textarea id="nonrenew-reason" name="reason" rows={2} value={reason}
-              onChange={(e) => setReason(e.target.value)} placeholder="Moving to another provider" />
-          </FormField>
+          <LeaveReasonField idPrefix="nonrenew-reason" code={reasonCode} note={note} onCode={setReasonCode} onNote={setNote} />
           <FormField label="Date the customer told you" htmlFor="nonrenew-said-on" required>
             <Input id="nonrenew-said-on" name="said_on" type="date" value={saidOn} max={today}
               onChange={(e) => setSaidOn(e.target.value)} />

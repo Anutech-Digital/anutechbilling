@@ -255,7 +255,7 @@ export function useDeleteSubscription() {
 export function useCancelSubscription() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (args: { id: string; lastDay: string; reason: string; clearDue: boolean }) => {
+    mutationFn: async (args: { id: string; lastDay: string; reason: string; reasonCode?: string; clearDue: boolean }) => {
       const supabase = createClient();
       // R-489: typed straight from database.generated.ts (regenerated after 20261009151000).
       const { data, error } = await supabase.rpc("cancel_subscription", {
@@ -263,6 +263,7 @@ export function useCancelSubscription() {
         p_last_day:        args.lastDay,
         p_reason:          args.reason,
         p_clear_due:       args.clearDue,
+        ...(args.reasonCode ? { p_reason_code: args.reasonCode } : {}),   // R-2243
       });
       if (error) throw new Error(error.message);
       return data as { due_cleared: number; last_day: string; due_kept?: number; open_invoices?: string[] };

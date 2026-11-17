@@ -28,6 +28,7 @@ const INV = {
 };
 
 function fillAndConfirm() {
+  fireEvent.change(document.getElementById("cancel-sub-reason-code")!, { target: { value: "competitor" } });
   fireEvent.change(document.getElementById("cancel-sub-reason")!, { target: { value: "Customer moved away" } });
   fireEvent.click(screen.getByRole("button", { name: "Cancel subscription" }));
 }

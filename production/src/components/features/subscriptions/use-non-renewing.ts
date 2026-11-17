@@ -15,6 +15,8 @@ export interface NonRenewingArgs {
   id: string;
   on: boolean;
   reason?: string;
+  /** R-2243: the picklist code (lib/subscriptions/leave-reasons.ts), stored in subscriptions.leave_reason_code. */
+  reasonCode?: string;
   /** YYYY-MM-DD, the day the customer said it. */
   saidOn?: string;
 }
@@ -34,7 +36,7 @@ export function useSetNonRenewing() {
       const { data, error } = await supabase.rpc("set_subscription_non_renewing", {
         p_subscription_id: a.id,
         p_on:              a.on,
-        ...(a.on ? { p_reason: a.reason ?? "", p_said_on: a.saidOn } : {}),
+        ...(a.on ? { p_reason: a.reason ?? "", p_said_on: a.saidOn, ...(a.reasonCode ? { p_reason_code: a.reasonCode } : {}) } : {}),
       });
       if (error) throw new Error(error.message);
       return data as unknown as NonRenewingResult;
