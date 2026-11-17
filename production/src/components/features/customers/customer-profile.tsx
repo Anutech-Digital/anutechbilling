@@ -84,10 +84,9 @@ import { PrimaryContactLine } from "@/components/features/customers/primary-cont
 import { CustomerRelationshipChip } from "@/components/features/contacts/relationship-chip";
 import { txnHref, primaryContactOf } from "@/components/features/customers/customer-links";
 import { recordPhoneOf } from "@/lib/customers/record-phone";
-import { buildCustomerStatement, statementBalanceText, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
+import { buildCustomerStatement, statementBalanceText, statementPayments, statementUninvoicedDues, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
-import { uninvoicedSubscriptionDue } from "@/lib/renewals/owed";
 import { advanceTxnView, isPaymentTxn } from "@/components/features/customers/advance-txn";
 import { CustomerTransactionsTab, paymentReference } from "@/components/features/customers/customer-transactions-tab";
 import { useProfileTabState, type MainTab } from "./customer-profile-tab-state";
@@ -283,7 +282,6 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   // Running-balance ledger (Zoho "Statement" tab). R-1682: built by buildCustomerStatement —
   // invoices + debit notes − payments − credit notes + refunds, the same entries as the books'
   // customer ledger (a refunded payment shows its receipt AND the refund).
-  const invoicedQuoteIds = new Set(allInvoices.map((i) => i.quote_id).filter((q): q is string => !!q));
   const statement = buildCustomerStatement({
     invoices: allInvoices,
     payments: customerPayments,
@@ -296,10 +294,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     /* R-2183: a subscription instalment owed before its invoice exists (the R-1708 rule —
        subscriptionReceivable), so the closing is the same balance the Overview shows.
        R-2818: through the ONE owed rule Renewals reads too (lib/renewals/owed.ts) — same number both places. */
-    uninvoicedDues: allSubs.flatMap((s) => {
-      const due = uninvoicedSubscriptionDue(s, invoicedQuoteIds);
-      return due > 0 && s.quote_id ? [{ quoteId: s.quote_id, date: (s.start_date ?? s.created_at ?? "").slice(0, 10), due }] : [];
-    }),
+    uninvoicedDues: statementUninvoicedDues(allSubs, allInvoices),
   });
   /* R-2183: Outstanding on the Overview = this statement's closing — one balance, one function. */
   const insights = deriveCustomerInsights(c, allSubs, allInvoices, allProjects, allQuotes, receivedPaymentsTotal, statement);
