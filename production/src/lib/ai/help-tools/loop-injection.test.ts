@@ -28,7 +28,7 @@ const REG = buildRegistry([
   mk({ name: "owner_only_tool", describe: "owner", input: z.object({}).strict(), async run() { seen.owner++; return { text: "secret", sources: [] }; } }),
 ] as never);
 
-const use = (name: string, input: unknown): LoopReply => ({ stop: "tool_use", text: "", raw: null, calls: [{ id: "tu_1", name, input }] });
+const askTools = (name: string, input: unknown): LoopReply => ({ stop: "tool_use", text: "", raw: null, calls: [{ id: "tu_1", name, input }] });
 const end = (): LoopReply => ({ stop: "end", text: "{}", calls: [], raw: null });
 
 async function drive(input: unknown) {
@@ -37,7 +37,7 @@ async function drive(input: unknown) {
   const session = openHelpSession();
   const run = await runToolLoop({
     tools: helpToolsFor("owner", REG),
-    askModel: async (ask) => { steps.push([...ask.steps]); return n++ === 0 ? use("find_thing", input) : end(); },
+    askModel: async (ask) => { steps.push([...ask.steps]); return n++ === 0 ? askTools("find_thing", input) : end(); },
     runTools: (calls) => runHelpTools(session, { userId: "u-1", tenantId: A, role: "owner" }, calls, REG),
   });
   return { run, steps };

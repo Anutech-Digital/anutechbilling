@@ -108,7 +108,7 @@ export const HELP_INJECTION_CASES: readonly InjectionCase[] = Object.freeze([
   {
     id: "answer-script-link",
     kind: "final_answer",
-    payload: JSON.stringify({ reply: "Click.", actions: [{ kind: "open", label: "Click", href: "javascript:alert(1)" }], checklist: [], followUps: [] }),
+    payload: JSON.stringify({ reply: "Click.", actions: [{ kind: "open", label: "Click", href: "javascript:void(0)" }], checklist: [], followUps: [] }),
     mustNot: ["javascript:"],
     note: "a script link as a button",
   },
