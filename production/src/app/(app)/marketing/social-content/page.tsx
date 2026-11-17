@@ -122,7 +122,7 @@ export default function SocialContentPage() {
   const [showPostSettings, setShowPostSettings] = React.useState(false);
   /* R-2687: one control per AI action — Off / Ask me first / Autopilot (stored as auto_drafts + autopilot). */
   const postsMode: "off" | "ask" | "auto" = !autoDrafts ? "off" : autopilot ? "auto" : "ask";
-  function setPostsMode(m: "off" | "ask" | "auto") { setAutoDrafts(m !== "off"); setAutopilot(m === "auto"); if (m !== "off" && !brief.trim()) setShowPostSettings(true); }
+  function setPostsMode(m: "off" | "ask" | "auto") { setAutoDrafts(m !== "off"); setAutopilot(m === "auto");  }
   const settingsDirty = Boolean(state) && (autoDrafts !== state!.settings.auto_drafts || autopilot !== Boolean(state!.settings.autopilot) || postsPerWeek !== (state!.settings.posts_per_week || 3) || brief !== state!.settings.brief || pictures !== (state!.settings.picture_urls ?? []).join("\n"));
   const times = React.useMemo(() => quickTimes(), []);
 
@@ -563,7 +563,7 @@ export default function SocialContentPage() {
             </div>
           </div>
           {state.canManage && showPostSettings && <div className="space-y-4 bg-paper-2/40 p-3">
-            <label className="block text-xs font-medium text-ink-2">What should the AI write about?<textarea className={`${inputClass} mt-1 min-h-20`} maxLength={1000} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Your products, who you sell to, tone, and claims to avoid" /></label>
+            <label className="block text-xs font-medium text-ink-2">Extra guidance for the AI (optional)<span className="block font-normal text-ink-3">The AI reads your Page itself: its about, services, products and recent posts. Add anything it should know on top, like offers to push, tone, or claims to avoid.</span><textarea className={`${inputClass} mt-1 min-h-20`} maxLength={1000} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Optional: e.g. push Google Workspace for schools this month, friendly tone, no price claims" /></label>
             <div className="grid gap-4 sm:grid-cols-[200px_minmax(0,1fr)]">
               <label className="block text-xs font-medium text-ink-2">Posts per week<select className={`${inputClass} mt-1`} value={postsPerWeek} onChange={e => setPostsPerWeek(Number(e.target.value))}>{[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
               <label className="block text-xs font-medium text-ink-2">Your own picture links (optional, one per line). Leave empty and the AI makes a picture for each post<textarea className={`${inputClass} mt-1 min-h-20 font-mono text-xs`} value={pictures} onChange={e => setPictures(e.target.value)} placeholder="https://… (a public image link)" /></label>
