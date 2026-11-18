@@ -18,9 +18,19 @@
  * period are already in the name: nothing is added after it (`periodInName`; a name with a seat count gets no
  * second one — plan-seats.ts planNamesSeats, the row's own R-2857 rule). The period is still kept on the line for
  * the pop-up's overall period.
+ *
+ * R-2922 (Pardeep 18 Nov 2026, the same quote: "ye renewal quotation ki tarah jaye") — the pop-up's line reads
+ * like a renewal quotation's: the product, seats × the rate a seat, the period.
+ *   - a line whose qty IS seats (a subscription line, a part request's per-seat line) keeps its stored rate a
+ *     seat (`seatRate`): "2 seats × ₹1,656"; when the name already says the seats, "₹135 a seat" (said once).
+ *     A one-time or lump line has none — its amount is not a rate a seat;
+ *   - the oldest part requests are named by their short label ("Payment for month 1 · …") with the product in
+ *     the description: on a part request the product is shown (part-requests.ts partLineProductName).
  */
 import { lineServicePeriod, quoteLinePeriodContext, addDaysIso, isoDateOf, type LinePeriodLine, type RenewedSubscriptionFacts } from "@/lib/quotes/service-period";
 import { periodText } from "@/lib/billing/proforma";
+import { partLineProductName } from "@/lib/billing/part-requests";
+import { rupee } from "@/lib/utils";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 import { quoteTotal } from "@/app/(app)/quotes/[id]/pay-intent";
@@ -60,6 +70,8 @@ export interface PeekLine {
   domain: string | null;
   /** The line's name already says its period (a part request's R-2423 name) — never print it a second time. */
   periodInName?: boolean;
+  /** R-2922: ₹ a seat as stored on the line — only when its qty IS seats and a rate is stored; else null. */
+  seatRate?: number | null;
 }
 
 /** "1 Oct–31 Oct 2026" (the owner's words); across a year end "1 Nov 2026–31 Oct 2027". Both ends inclusive.
@@ -71,16 +83,36 @@ export function dayRange(from: string, toInclusive: string): string {
 /** A day range written in a name: "1 Oct–31 Oct 2026" / "1 Nov 2026–31 Oct 2027" (en dash or hyphen). */
 const RANGE_IN_NAME = /d{1,2} [A-Z][a-z]{2}(?: d{4})?s*[–-]s*d{1,2} [A-Z][a-z]{2} d{4}/;
 
-type RawLine = LinePeriodLine & { qty?: unknown; billing_id?: unknown; per_seat?: unknown };
+type RawLine = LinePeriodLine & { qty?: unknown; rate?: unknown; billing_id?: unknown; per_seat?: unknown };
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
-function seatsOf(line: RawLine, name: string): string | null {
+/** The line's seat count when its qty IS seats; null for a one-time / lump line or no quantity. */
+function seatQty(line: RawLine): number | null {
   /* a part request's line is stored one_time; per_seat says its qty IS the seats (R-2519) */
   const oneTime = line.per_seat !== true && (line.one_time === true || !text(line.commitment) || text(line.commitment) === "one_time");
   const n = Number(line.qty);
-  if (oneTime || planNamesSeats(name) || !Number.isFinite(n) || n <= 0) return null;
+  return oneTime || !Number.isFinite(n) || n <= 0 ? null : n;
+}
+
+function seatsOf(line: RawLine, name: string): string | null {
+  const n = seatQty(line);
+  if (n == null || planNamesSeats(name)) return null;
   return `${n.toLocaleString("en-IN")} seat${n === 1 ? "" : "s"}`;
+}
+
+/** R-2922: the stored ₹ a seat of a line whose qty is seats; null = not a seat line, no rate stored, or a line
+    with its own discount (seats × the list rate would not be what the line bills — never a sum that is off). */
+function seatRateOf(line: RawLine): number | null {
+  if (seatQty(line) == null || typeof line.rate !== "number" || !Number.isFinite(line.rate) || line.rate < 0) return null;
+  const discount = Number((line as { discount_pct?: unknown }).discount_pct ?? 0);
+  return Number.isFinite(discount) && discount > 0 ? null : line.rate;
+}
+
+/** A rate a seat in ₹, exact: whole rupees as "₹1,656", a paise rate (R-2095: ₹103.50) with its paise — the
+    seats × rate on screen must multiply out to the line. */
+export function seatRateWords(inr: number): string {
+  return rupee(inr, Number.isInteger(inr) ? {} : { decimals: 2 });
 }
 
 /**
@@ -118,7 +150,9 @@ export function peekLines(
       if (p) { from = p.from; to = p.to; }
     }
     const partSub = part ? subs.get(part.subscription_id) : undefined;
-    const name = text(l.name) || text(l.description) || "Item";
+    /* R-2922: the oldest part lines are named by their short label — show the product they are for */
+    const name = (q.subscription_billing_id ? partLineProductName(l as { name?: string | null; description?: string | null }) : null)
+      || text(l.name) || text(l.description) || "Item";
     const period = from && to ? dayRange(from, to) : null;
     return {
       name,
@@ -126,6 +160,7 @@ export function peekLines(
       period,
       from, to,
       periodInName: RANGE_IN_NAME.test(name) || (!!period && name.includes(period)),
+      seatRate: seatRateOf(l),
       domain: text(l.domain) || text(partSub?.domain) || text(subs.get(text(l.subscription_id))?.domain) || null,
     };
   });
@@ -136,11 +171,14 @@ export function peekLineText(l: PeekLine): string {
   return [l.name, l.seats, l.periodInName ? null : l.period].filter(Boolean).join(" · ");
 }
 
-/** The pop-up's small line under a product name: what the name does not already say. Null = nothing to add. */
-export function peekLineDetail(l: PeekLine): string | null {
+/** The pop-up's small line under a product name: what the name does not already say. Null = nothing to add.
+    R-2922: seats × the rate a seat, as on a renewal quotation ("2 seats × ₹1,656"); "₹135 a seat" when the name
+    already says the seats. `money` = the quote's own money words (the pop-up passes its currency's). */
+export function peekLineDetail(l: PeekLine, money: (inr: number) => string = seatRateWords): string | null {
   const domain = l.domain && !l.name.toLowerCase().includes(l.domain.toLowerCase()) ? l.domain : null;
   const period = l.periodInName ? null : l.period ?? "No period on this line";
-  return [l.seats, domain, period].filter(Boolean).join(" · ") || null;
+  const price = l.seatRate == null ? l.seats : l.seats ? `${l.seats} × ${money(l.seatRate)}` : `${money(l.seatRate)} a seat`;
+  return [price, domain, period].filter(Boolean).join(" · ") || null;
 }
 
 /** The hover card shows at most this many lines, then "+N more". */

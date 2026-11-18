@@ -11,6 +11,12 @@
  * sets the loan up AND reconciles this line as receipt 1, one transaction on the server.
  * Undo = Un-reconcile the line (latest receipt first).
  *
+ * R-2920: the loans are tick boxes — ONE line can pay off two or more loans (₹3,50,000 = ₹3,49,000
+ * left on one loan + a separate ₹1,000 loan). The borrower named in the bank line is listed and
+ * ticked first (oldest loan first, as many as the line needs); each ticked loan gets its amount and
+ * Save is on only when they add up to the bank line (lib/accounting/loan-given-split.ts). One ticked
+ * loan is the R-2340 flow unchanged; two or more save in one call (all receipts, or nothing).
+ *
  * Owner and accountant only (R-544: who the company lent money to is not for every role).
  */
 "use client";
@@ -18,7 +24,6 @@
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -28,12 +33,14 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useBankAccounts } from "@/lib/queries/bank";
 import {
   canUseLoansGiven, emiReceiptSchedule, loanGivenSetupErrors, loanGivenSetupPayload, matchLoanGivenReceipts,
-  splitRepayment, type LoanGivenSetupInput,
+  type LoanGivenSetupInput,
 } from "@/lib/accounting/loans-given";
+import { defaultTicked, maxOnLoan, orderLoanChoices, receiptPlan, typedRupees } from "@/lib/accounting/loan-given-split";
 import {
   useLoanGivenDisbursalLines, useLoansGiven, useReconcileCreditToLoanGiven, useSetUpLoanGiven,
 } from "@/lib/queries/loans-given";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
+import { LoanGivenChoiceList } from "./loan-given-split-rows";
 
 type Txn = { id: string; credit: number | null; txn_date: string; description: string | null };
 
@@ -61,29 +68,60 @@ export function LoanGivenReceiptSection({ transaction, onDone, onFooterSave }: {
     id: l.id, borrowerName: l.borrower_name, status: l.status, terms: l.terms,
     principalRepaid: l.position.principalRepaid, receipts: l.repayments.length,
   })), amount), [loans, amount]);
-  const [picked, setPicked] = React.useState("");
-  React.useEffect(() => { if (!picked && matches.length > 0) setPicked(matches[0].loanId); }, [matches, picked]);
+  /* R-2920: tick boxes — one line can pay off two or more loans. The borrower named in the bank
+     line comes first; nothing is ticked for a line that names nobody (was: the first loan listed). */
+  const choices = React.useMemo(() => orderLoanChoices(matches, loans, transaction.description), [matches, loans, transaction.description]);
+  const [picked, setPicked] = React.useState<string[] | null>(null);   // null = untouched → the default
+  const [typed, setTyped] = React.useState<Record<string, string>>({});
   const [setUpOpen, setSetUpOpen] = React.useState(false);
 
-  const m = matches.find((x) => x.loanId === picked) ?? null;
-  const loan = m ? loans.find((l) => l.id === m.loanId) : undefined;
-  const split = loan ? splitRepayment(loan.terms, loan.parts, transaction.txn_date, amount) : null;
+  const tickedLoans = React.useMemo(() => {
+    const ids = picked ?? defaultTicked(choices, loans, transaction.txn_date, amount);
+    return choices.filter((c) => ids.includes(c.loanId))
+      .map((c) => loans.find((l) => l.id === c.loanId))
+      .filter((l): l is NonNullable<typeof l> => Boolean(l));
+  }, [picked, choices, loans, transaction.txn_date, amount]);
+  const owed = React.useMemo(() => new Map(choices.flatMap((c) => {
+    const l = loans.find((x) => x.id === c.loanId);
+    return l ? [[c.loanId, maxOnLoan(l, transaction.txn_date)] as const] : [];
+  })), [choices, loans, transaction.txn_date]);
+  const many = tickedLoans.length > 1;
+  const plan = receiptPlan(
+    tickedLoans,
+    /* a field the owner emptied counts as ₹0 (the row then asks for an amount), not as "fill it for me" */
+    many ? Object.fromEntries(tickedLoans.map((l) => [l.id, typed[l.id] === undefined ? null : typedRupees(typed[l.id]) ?? 0])) : {},
+    transaction.txn_date, amount,
+  );
+  /* One loan ticked = the R-2340 flow, word for word. */
+  const split = plan.parts.length === 1 ? plan.parts[0] : null;
+  const m = split ? choices.find((x) => x.loanId === split.loanId) ?? null : null;
   const exact = matches.some((x) => x.confidence === "exact");
 
+  function toggle(loanId: string) {
+    const now = tickedLoans.map((l) => l.id);
+    setPicked(now.includes(loanId) ? now.filter((id) => id !== loanId) : [...now, loanId]);
+    setTyped({});   // the amounts are filled again for the new set of loans
+  }
+
   async function save() {
-    if (!m || !loan || !split || split.tooMuch) return;
-    await reconcile.mutateAsync({
-      txnId: transaction.id, loanId: loan.id,
-      interestPart: loan.terms.plan === "emi" ? null : split.interestPart,
-    });
+    if (!plan.canSave) return;
+    if (split) {
+      await reconcile.mutateAsync({ txnId: transaction.id, loanId: split.loanId, interestPart: split.interestForRpc });
+    } else {
+      await reconcile.mutateAsync({
+        txnId: transaction.id,
+        parts: plan.parts.map((p) => ({ loanId: p.loanId, amount: p.amount, interestPart: p.interestForRpc })),
+      });
+    }
     onDone();
   }
 
   /* R-2354: same label, same rule (a loan picked, not more than is owed), same save() — only once a
-     loan given is listed. With none yet, "Set up loan given" opens its own dialog (its Save is there). */
-  const saveLabel = m ? `Reconcile as receipt ${m.seq}` : "Pick the loan";
+     loan given is listed. With none yet, "Set up loan given" opens its own dialog (its Save is there).
+     R-2920: two or more loans → "Reconcile to N loans", on only when the amounts add up to the line. */
+  const saveLabel = m ? `Reconcile as receipt ${m.seq}` : many ? `Reconcile to ${plan.parts.length} loans` : "Pick the loan";
   useFooterSaveReport(onFooterSave, allowed && !loansQ.isLoading && matches.length > 0
-    ? { label: saveLabel, onSave: () => { void save().catch(() => { /* the hook shows the error */ }); }, disabled: !m || !split || split.tooMuch, loading: reconcile.isPending }
+    ? { label: saveLabel, onSave: () => { void save().catch(() => { /* the hook shows the error */ }); }, disabled: !plan.canSave, loading: reconcile.isPending }
     : null);
 
   if (!allowed) return null;
@@ -91,32 +129,20 @@ export function LoanGivenReceiptSection({ transaction, onDone, onFooterSave }: {
   return (
     <div className={`rounded-md border p-3 space-y-2 ${exact ? "border-indigo/50 bg-indigo-soft/25" : "border-hairline"}`} data-testid="loan-given-receipt-section">
       <p className="text-xs font-semibold text-ink-2">
-        {m && exact ? <>Looks like receipt {m.seq} of the loan you gave — <b>{m.borrowerName}</b></> : "A receipt on a loan you gave?"}
+        {m && m.confidence === "exact" ? <>Looks like receipt {m.seq} of the loan you gave — <b>{m.borrowerName}</b></> : "A receipt on a loan you gave?"}
       </p>
       <p className="text-xs text-ink-3 leading-relaxed">
         Principal back reduces the loan (an asset); the interest is income — never the whole amount as income.
+        {choices.length > 1 && " One payment for two loans? Tick both."}
       </p>
       {loansQ.isLoading ? (
         <p className="text-xs text-ink-3">Looking for the loan…</p>
       ) : matches.length > 0 ? (
         <>
-          <ul className="space-y-1.5" role="radiogroup" aria-label="Which loan given">
-            {matches.map((x) => (
-              <li key={x.loanId}>
-                <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer ${picked === x.loanId ? "border-indigo bg-paper" : "border-hairline"}`}>
-                  <input type="radio" name="loan-given-match" className="mt-1" checked={picked === x.loanId} onChange={() => setPicked(x.loanId)} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm text-ink">Receipt {x.seq} · {x.borrowerName}</span>
-                    <span className="block text-xs text-ink-3">
-                      {x.expected !== null ? <>Expected {rupee(x.expected)}</> : "No fixed receipt"}
-                      {x.expected !== null && x.expected !== amount && <> · this line is {rupee(Math.abs(amount - x.expected))} {amount > x.expected ? "more" : "less"}</>}
-                    </span>
-                  </span>
-                  {x.confidence === "exact" && <Badge kind="success" size="sm">Exact</Badge>}
-                </label>
-              </li>
-            ))}
-          </ul>
+          <LoanGivenChoiceList
+            choices={choices} amount={amount} owed={owed} plan={plan} typed={typed}
+            onToggle={toggle} onType={(id, v) => setTyped((t) => ({ ...t, [id]: v }))}
+          />
           {split && (
             <div className="rounded-md bg-paper-2/50 p-2.5 text-sm space-y-0.5" data-testid="loan-given-split">
               <div className="flex justify-between"><span className="text-ink-2">Principal back — reduces the loan</span><span className="font-mono tabular-nums">{rupee(split.principalPart)}</span></div>
@@ -124,10 +150,15 @@ export function LoanGivenReceiptSection({ transaction, onDone, onFooterSave }: {
               {split.closes && <p className="text-xs text-emerald pt-1">This receipt clears the loan.</p>}
             </div>
           )}
-          {split?.tooMuch && <p className="text-xs text-rose-ink">More than is owed — at most {rupee(split.maxAmount)} can come in on this loan.</p>}
+          {split?.tooMuch && (
+            <p className="text-xs text-rose-ink">
+              More than is owed — at most {rupee(split.maxAmount)} can come in on this loan.
+              {choices.length > 1 && " If this payment also covers another loan, tick that loan too."}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             {!onFooterSave && (
-              <Button size="sm" variant="primary" icon="check" disabled={!m || !split || split.tooMuch} loading={reconcile.isPending} onClick={save}>
+              <Button size="sm" variant="primary" icon="check" disabled={!plan.canSave} loading={reconcile.isPending} onClick={save}>
                 {saveLabel}
               </Button>
             )}

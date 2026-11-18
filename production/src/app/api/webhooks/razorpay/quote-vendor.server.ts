@@ -38,16 +38,36 @@ export function vendorFromPlan(plan: string | null | undefined): ProvisioningVen
  * fallback for hand-typed lines. Same reasoning as record_payment, which resolves
  * vendor by item_id and only name-guesses when there is no item.
  */
+/**
+ * R-2922 (18 Nov 2026): the line of a part (month / quarter / half-year) payment request — made only by the
+ * database (Bill next part / Bill together: id "part-2" / "part-2-1", one-time) — now carries its subscription's
+ * catalogue item, like a renewal quotation's line. It pays for a period of a subscription that is ALREADY
+ * running; it is never a product to set up. So its item is not read here: such a quote's vendor and domain
+ * lines are worked out exactly as before R-2922 (no catalogue item on the line → the plan's wording), and a
+ * hosting / domain item on a part line can never queue a new account or a registration.
+ */
+export function isPartRequestLine(l: unknown): boolean {
+  if (!l || typeof l !== "object") return false;
+  const line = l as { id?: unknown; one_time?: unknown };
+  return line.one_time === true && typeof line.id === "string" && /^part-\d+(?:-\d+)?$/.test(line.id);
+}
+
+/** The catalogue items the quote's lines SELL (a part request's line sells nothing new — see above). */
+function soldItemIds(lineItems: unknown): string[] {
+  return Array.isArray(lineItems)
+    ? lineItems
+        .filter((l) => !isPartRequestLine(l))
+        .map((l) => (l && typeof l === "object" ? (l as { item_id?: unknown }).item_id : null))
+        .filter((v): v is string => typeof v === "string" && v.length > 0)
+    : [];
+}
+
 export async function vendorForQuote(
   db: ReturnType<typeof createAdminClient>,
   lineItems: unknown,
   plan: string | null | undefined,
 ): Promise<ProvisioningVendor> {
-  const ids = Array.isArray(lineItems)
-    ? lineItems
-        .map((l) => (l && typeof l === "object" ? (l as { item_id?: unknown }).item_id : null))
-        .filter((v): v is string => typeof v === "string" && v.length > 0)
-    : [];
+  const ids = soldItemIds(lineItems);
   if (ids.length === 0) return vendorFromPlan(plan);
 
   const { data } = await db.from("items").select("vendor").in("id", ids);
@@ -74,11 +94,7 @@ export async function domainItemIdsForQuote(
   db: ReturnType<typeof createAdminClient>,
   lineItems: unknown,
 ): Promise<Set<string>> {
-  const ids = Array.isArray(lineItems)
-    ? lineItems
-        .map((l) => (l && typeof l === "object" ? (l as { item_id?: unknown }).item_id : null))
-        .filter((v): v is string => typeof v === "string" && v.length > 0)
-    : [];
+  const ids = soldItemIds(lineItems);
   if (ids.length === 0) return new Set();
   const { data } = await db.from("items").select("id, vendor").in("id", ids);
   return new Set(

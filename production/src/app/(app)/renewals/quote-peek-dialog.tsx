@@ -59,7 +59,8 @@ import { istToday } from "@/lib/dates/ist";
 import { docMoney, quoteStateLabel, type LastDocs } from "./last-docs";
 import { rowRenewalQuote } from "./row-quote";
 import { useRowQuoteLines, type PeekRef } from "./quote-peek-data";
-import { peekLineDetail, peekLineText, peekPeriod, peekTotals, type PeekLine } from "./quote-peek";
+import { peekLineDetail, peekLineText, peekPeriod, peekTotals, seatRateWords, type PeekLine } from "./quote-peek";
+import { isForeignCurrency } from "@/lib/currency";
 
 /** Statuses a quote can still be sent / shared in (a closed quote's next step is on its own page). */
 const SHAREABLE = new Set(["draft", "sent", "viewed", "accepted"]);
@@ -169,13 +170,18 @@ export function QuotePeekDialog({ quoteId, onClose, lines, linesFailed = false, 
             : lines.length === 0 ? <p className="text-sm text-ink-3">No product lines on this quote.</p>
             : (
               <ul className="divide-y divide-hairline/70 text-sm" data-testid="quote-peek-lines">
-                {lines.map((l, n) => (
-                  <li key={n} className="py-1.5" data-testid="quote-peek-line">
-                    <p className="break-words text-ink">{l.name}</p>
-                    {peekLineDetail(l) && <p className="break-words text-xs text-ink-3 tabular-nums">{peekLineDetail(l)}</p>}
-                    <span className="sr-only">{peekLineText(l)}</span>
-                  </li>
-                ))}
+                {lines.map((l, n) => {
+                  /* R-2922: seats × the rate a seat, like a renewal quotation's line — exact ₹ (a paise rate keeps
+                     its paise), or the quote's own currency */
+                  const detail = peekLineDetail(l, isForeignCurrency(cur.currency) ? money : seatRateWords);
+                  return (
+                    <li key={n} className="py-1.5" data-testid="quote-peek-line">
+                      <p className="break-words text-ink">{l.name}</p>
+                      {detail && <p className="break-words text-xs text-ink-3 tabular-nums" data-testid="quote-peek-line-detail">{detail}</p>}
+                      <span className="sr-only">{peekLineText(l)}</span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
         </section>

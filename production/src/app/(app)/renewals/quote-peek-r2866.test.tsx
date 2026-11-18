@@ -67,7 +67,8 @@ describe("R-2866 — a quote's product lines with their periods (quote-peek.ts)"
     const q = pq({ subscription_billing_id: "B1", line_items: [{ name: named, qty: 473, rate: 5, per_seat: true, one_time: true, period_start: "2026-10-01", period_end: "2026-10-31", billing_id: "B1" }] });
     const lines = peekLines(q, new Map([["B1", billing("B1", "S1", "2026-10-01", "2026-11-01")]]), new Map<string, PeekSub>([["S1", { id: "S1", domain: "ravi.in" }]]));
     expect(lines.map(peekLineText)).toEqual([named]);
-    expect(peekLineDetail(lines[0])).toBeNull();                       // the domain, seats and period are all in the name
+    expect(peekLineDetail(lines[0])).toBe("₹5 a seat");                // the domain, seats and period are all in the name; R-2922 adds only the rate a seat
+    expect(peekLineDetail({ ...lines[0], seatRate: null })).toBeNull();   // no rate stored → nothing is added after the name
     expect(peekPeriod(lines)).toBe("1 Oct–31 Oct 2026");               // the pop-up's overall period still knows it
     /* an older part request (short name): per_seat's qty IS the seats, the part's period is added */
     const old = pq({ subscription_billing_id: "B1", line_items: [{ name: STARTER, qty: 473, per_seat: true, one_time: true }] });
@@ -254,6 +255,16 @@ describe("R-2866 — the quote pop-up (quote-peek-dialog.tsx)", () => {
     expect(screen.getByTestId("quote-peek-total").textContent).toBe("₹3,823");
     expect(screen.getByTestId("quote-peek-no-payments")).toBeTruthy();
     expect(screen.getByTestId("quote-peek-received").textContent).toBe("Received ₹0 of ₹3,823 · ₹3,823 still due");
+  });
+
+  it("R-2922: a line reads like a renewal quotation's — seats × the rate a seat under the product (exact ₹; a foreign quote in its own currency)", () => {
+    st.quote = fullQuote(); st.payments = [];
+    const { unmount } = render(<QuotePeekDialog quoteId={QID} onClose={() => {}} lines={[{ ...LINES[0], seatRate: 103.5 }]} todayIst={TODAY} />);
+    expect(screen.getByTestId("quote-peek-line-detail").textContent).toBe("473 seats × ₹103.50 · 1 Oct–31 Oct 2026");
+    unmount();
+    st.quote = fullQuote({ currency: "USD", exchange_rate: 90 });
+    render(<QuotePeekDialog quoteId={QID} onClose={() => {}} lines={[{ ...LINES[0], seatRate: 450 }]} todayIst={TODAY} />);
+    expect(screen.getByTestId("quote-peek-line-detail").textContent).toBe("473 seats × $5 · 1 Oct–31 Oct 2026");
   });
 
   it("a part proforma: 'Renewal · Part 1 of 1 · Oct 2026' and its pay-by date; payments so far are listed", () => {
