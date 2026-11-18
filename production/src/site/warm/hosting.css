@@ -123,7 +123,7 @@
 /* Section rhythm: no hairlines between bands; colour changes do the separating. */
 .anutech-site[data-site-theme="warm"] .hlp > section { border-bottom: 0 !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(n+3) {
-  padding-top: clamp(40px, 4.4vw, 64px) !important; padding-bottom: clamp(40px, 4.4vw, 64px) !important;
+  padding-top: calc(clamp(40px, 4.4vw, 64px) * var(--w-space, 1)) !important; padding-bottom: calc(clamp(40px, 4.4vw, 64px) * var(--w-space, 1)) !important;
 }
 /* Sections: the navbar's gutter (their inline 20px), inner box = the navbar's content width. */
 .anutech-site[data-site-theme="warm"] .hlp > section { padding-left: var(--w-gutter) !important; padding-right: var(--w-gutter) !important; }
@@ -149,7 +149,7 @@
 /* ── 1 · Hero: dark forest band, photo slideshow under a forest tint ───────────────────────── */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1) {
   position: relative; isolation: isolate; background: var(--w-forest);
-  padding: clamp(25px, 3.2vw, 45px) var(--w-gutter) clamp(28px, 3vw, 40px) !important;
+  padding: calc(clamp(25px, 3.2vw, 45px) * var(--w-space, 1)) var(--w-gutter) calc(clamp(28px, 3vw, 40px) * var(--w-space, 1)) !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(1)::before {
   content: ""; position: absolute; inset: 0; z-index: -2;
@@ -227,7 +227,7 @@
 
 /* ── 2 · Quick-jump: a white card inside the same forest band ──────────────────────────────── */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(2) {
-  background: var(--w-forest) !important; padding: 0 var(--w-gutter) clamp(22px, 2.88vw, 40px) !important;
+  background: var(--w-forest) !important; padding: 0 var(--w-gutter) calc(clamp(22px, 2.88vw, 40px) * var(--w-space, 1)) !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(2) > div {
   background: var(--w-surface); border: 1px solid var(--w-line); border-radius: var(--w-radius-card);
@@ -423,7 +423,7 @@
    over a lighter wash. Same words. */
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) {
   background: #E6F2F5 url(/hosting-talk-banner.webp) right center / cover no-repeat !important;
-  padding-top: clamp(36px, 4.4vw, 64px) !important; padding-bottom: clamp(36px, 4.4vw, 64px) !important;
+  padding-top: calc(clamp(36px, 4.4vw, 64px) * var(--w-space, 1)) !important; padding-bottom: calc(clamp(36px, 4.4vw, 64px) * var(--w-space, 1)) !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(10) h2 {
   margin: 0 0 20px !important; font-size: clamp(1.7rem, 2.8vw, 2.2rem) !important; line-height: 1.15 !important; max-width: 620px;
@@ -488,7 +488,7 @@
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(12) { background: var(--w-bg) !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(12) > div {
   background: var(--w-mint) !important; border: 0 !important; border-radius: 28px !important;
-  padding: clamp(23px, 2.97vw, 42px) clamp(20px, 2.29vw, 32px) !important;
+  padding: calc(clamp(23px, 2.97vw, 42px) * var(--w-space, 1)) clamp(20px, 2.29vw, 32px) !important;
 }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(12) h2 span { color: var(--w-ink) !important; }
 .anutech-site[data-site-theme="warm"] .hlp > section:nth-of-type(12) p { color: var(--w-ink-2) !important; font-size: 18px !important; }

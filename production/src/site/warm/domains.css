@@ -108,13 +108,13 @@
   font-weight: 700 !important; letter-spacing: 0.08em !important; color: var(--w-teal) !important;
 }
 /* Section wrappers: the navbar's content box (site-warm.css --w-row) and band rhythm. */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section { max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-block: clamp(27px, 3.52vw, 50px) !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section { max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-block: calc(clamp(27px, 3.52vw, 50px) * var(--w-space, 1)) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) :is(h2) { font-size: clamp(2rem, 3.6vw, 2.44rem) !important; line-height: 1.12 !important; }
 
 /* ── 1 · Search: dark band, photo slideshow under a tint, the form as a white pill card ─── */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search {
   position: relative; isolation: isolate; max-width: 1008px !important;
-  padding-block: clamp(22px, 2.88vw, 40px) clamp(25px, 3.2vw, 45px) !important;
+  padding-block: calc(clamp(22px, 2.88vw, 40px) * var(--w-space, 1)) calc(clamp(25px, 3.2vw, 45px) * var(--w-space, 1)) !important;
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#search) > section#search::before {
   content: ""; position: absolute; z-index: -2; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw);

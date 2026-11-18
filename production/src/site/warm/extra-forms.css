@@ -46,7 +46,7 @@
 .w-scope[data-site-theme="warm"] > .min-h-screen.justify-center.bg-paper {
   position: relative; isolation: isolate; overflow: hidden;
   background: var(--w-bg);
-  padding: clamp(48px, 7vw, 110px) clamp(16px, 4vw, 24px);
+  padding: calc(clamp(48px, 7vw, 110px) * var(--w-space, 1)) clamp(16px, 4vw, 24px);
 }
 .w-scope[data-site-theme="warm"] > .min-h-screen.justify-center.bg-paper::before,
 .w-scope[data-site-theme="warm"] > .min-h-screen.justify-center.bg-paper::after {
@@ -61,7 +61,7 @@
 .w-scope[data-site-theme="warm"] > .min-h-screen.justify-center.bg-paper > .max-w-md {
   max-width: 560px; box-sizing: border-box;
   background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 28px;
-  padding: clamp(28px, 4vw, 48px) clamp(20px, 4vw, 44px);
+  padding: calc(clamp(28px, 4vw, 48px) * var(--w-space, 1)) clamp(20px, 4vw, 44px);
   display: flex; flex-direction: column; align-items: center; gap: 14px;
   box-shadow: 0 24px 60px rgba(18, 49, 42, 0.10);
 }
@@ -117,7 +117,7 @@
 }
 .w-scope[data-site-theme="warm"] > .min-h-screen.bg-paper-2:has(#pr-name, #pr-code, [data-testid="privacy-request-done"]) > main {
   max-width: 688px; box-sizing: border-box;
-  padding: clamp(28px, 4vw, 64px) clamp(16px, 4vw, 24px) clamp(36px, 5vw, 72px);
+  padding: calc(clamp(28px, 4vw, 64px) * var(--w-space, 1)) clamp(16px, 4vw, 24px) calc(clamp(36px, 5vw, 72px) * var(--w-space, 1));
 }
 .w-scope[data-site-theme="warm"] > .min-h-screen.bg-paper-2:has(#pr-name, #pr-code, [data-testid="privacy-request-done"]) > main > .rounded-2xl {
   background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 24px;
@@ -248,15 +248,15 @@
 /* Title band: h1 + subtitle get a full-width white background between them */
 .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > main {
   max-width: 760px; position: relative; isolation: isolate;
-  padding: 0 clamp(16px, 4vw, 24px) clamp(36px, 4.6vw, 64px);
+  padding: 0 clamp(16px, 4vw, 24px) calc(clamp(36px, 4.6vw, 64px) * var(--w-space, 1));
 }
 .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > main > h1 {
-  position: relative; margin: 0; padding-top: clamp(28px, 3.6vw, 52px);
+  position: relative; margin: 0; padding-top: calc(clamp(28px, 3.6vw, 52px) * var(--w-space, 1));
   font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
   font-size: clamp(2.4rem, 5vw, 3.2rem); line-height: 1.06; letter-spacing: -0.03em; font-weight: 800; color: var(--w-ink);
 }
 .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > main > h1 + p {
-  position: relative; margin: 0; padding: 8px 0 clamp(20px, 2.6vw, 36px);
+  position: relative; margin: 0; padding: 8px 0 calc(clamp(20px, 2.6vw, 36px) * var(--w-space, 1));
   font-size: 15px; color: var(--w-muted-2);
 }
 .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > main > h1::before,
@@ -268,9 +268,9 @@
 
 /* The message card */
 .w-scope[data-site-theme="warm"].w-scope-site > .min-h-screen.bg-paper:has(> main.max-w-3xl.mx-auto) > main > .prose-resellersos {
-  position: relative; box-sizing: border-box; margin-top: clamp(24px, 3.2vw, 44px);
+  position: relative; box-sizing: border-box; margin-top: calc(clamp(24px, 3.2vw, 44px) * var(--w-space, 1));
   background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 24px;
-  padding: clamp(22px, 3vw, 34px) clamp(22px, 3vw, 34px) clamp(22px, 3vw, 34px) calc(clamp(22px, 3vw, 34px) + 70px);
+  padding: calc(clamp(22px, 3vw, 34px) * var(--w-space, 1)) clamp(22px, 3vw, 34px) calc(clamp(22px, 3vw, 34px) * var(--w-space, 1)) calc(clamp(22px, 3vw, 34px) + 70px);
   min-height: calc(52px + 2 * clamp(22px, 3vw, 34px));
   box-shadow: 0 18px 44px rgba(18, 49, 42, 0.07);
 }
@@ -371,14 +371,14 @@
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) > header > a:last-child:not(:first-child) { font-size: 14px; font-weight: 600; color: var(--w-ink-2); }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) > header > a:last-child:not(:first-child):hover { color: var(--w-teal); }
 /* The card */
-.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) > main { padding-top: clamp(8px, 2vw, 24px); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) > main { padding-top: calc(clamp(8px, 2vw, 24px) * var(--w-space, 1)); }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) > main > .max-w-md { max-width: 480px; }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) > main div.bg-paper.rounded-lg {
   background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 28px;
   box-shadow: 0 24px 60px rgba(18, 49, 42, 0.10);
 }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) > main div.bg-paper.rounded-lg > .p-4 {
-  padding: clamp(26px, 4vw, 40px) clamp(20px, 4vw, 38px);
+  padding: calc(clamp(26px, 4vw, 40px) * var(--w-space, 1)) clamp(20px, 4vw, 38px);
 }
 /* Heading + line */
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) h1 {

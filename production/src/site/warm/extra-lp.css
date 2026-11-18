@@ -58,7 +58,7 @@
 .w-scope[data-site-theme="warm"] .gw .gw-sticky .gw-wa::before { display: none; }
 
 /* ── Hero ─────────────────────────────────────────────────────────────────────────────────── */
-.w-scope[data-site-theme="warm"] .gw .gw-hero { position: relative; isolation: isolate; overflow: hidden; background: transparent; padding: clamp(28px, 3.6vw, 52px) 0; }
+.w-scope[data-site-theme="warm"] .gw .gw-hero { position: relative; isolation: isolate; overflow: hidden; background: transparent; padding: calc(clamp(28px, 3.6vw, 52px) * var(--w-space, 1)) 0; }
 .w-scope[data-site-theme="warm"] .gw .gw-hero::before,
 .w-scope[data-site-theme="warm"] .gw .gw-hero::after { content: ""; position: absolute; z-index: -1; border-radius: 50%; pointer-events: none; }
 .w-scope[data-site-theme="warm"] .gw .gw-hero::before { width: 620px; height: 620px; right: -200px; top: -260px; background: var(--w-marigold-soft); }
@@ -143,7 +143,7 @@
 .w-scope[data-site-theme="warm"] .gw .gw-strip-row span::first-letter { color: var(--w-teal); }
 
 /* ── Apps: one card each ──────────────────────────────────────────────────────────────────── */
-.w-scope[data-site-theme="warm"] .gw .gw-apps-sec { padding: clamp(28px, 3.6vw, 52px) 0 8px; }
+.w-scope[data-site-theme="warm"] .gw .gw-apps-sec { padding: calc(clamp(28px, 3.6vw, 52px) * var(--w-space, 1)) 0 8px; }
 .w-scope[data-site-theme="warm"] .gw .gw-apps {
   background: transparent; border: 0; box-shadow: none; border-radius: 0; overflow: visible;
   grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); gap: 12px;
@@ -159,7 +159,7 @@
 /* ── Section heads ────────────────────────────────────────────────────────────────────────── */
 .w-scope[data-site-theme="warm"] .gw .gw-kicker { color: var(--w-teal); font-size: 14px; font-weight: 700; letter-spacing: 0.08em; }
 .w-scope[data-site-theme="warm"] .gw .gw-h3 { margin: 8px 0 0; font-size: clamp(1.8rem, 3.2vw, 2.2rem); line-height: 1.15; letter-spacing: -0.02em; font-weight: 800; color: var(--w-ink); }
-.w-scope[data-site-theme="warm"] .gw .gw-sec { padding: clamp(28px, 3.6vw, 52px) 0; }
+.w-scope[data-site-theme="warm"] .gw .gw-sec { padding: calc(clamp(28px, 3.6vw, 52px) * var(--w-space, 1)) 0; }
 
 /* ── Steps ────────────────────────────────────────────────────────────────────────────────── */
 .w-scope[data-site-theme="warm"] .gw .gw-steps { margin-top: 22px; gap: 16px; }
@@ -173,7 +173,7 @@
 /* ── Offer: a white band holding the benefits panel and the price card ───────────────────── */
 .w-scope[data-site-theme="warm"] .gw .gw-offer {
   position: relative; isolation: isolate; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start;
-  padding: clamp(28px, 3.6vw, 52px) 0;
+  padding: calc(clamp(28px, 3.6vw, 52px) * var(--w-space, 1)) 0;
 }
 .w-scope[data-site-theme="warm"] .gw .gw-offer::before,
 .w-scope[data-site-theme="warm"] .gw section:has(> .gw-why)::before {
@@ -295,10 +295,10 @@
 .w-scope[data-site-theme="warm"] .gw .gw-faq p { padding: 0 22px 20px; color: var(--w-muted); }
 
 /* ── Final CTA: teal wave card ────────────────────────────────────────────────────────────── */
-.w-scope[data-site-theme="warm"] .gw .gw-final { padding-bottom: clamp(28px, 3.6vw, 52px); }
+.w-scope[data-site-theme="warm"] .gw .gw-final { padding-bottom: calc(clamp(28px, 3.6vw, 52px) * var(--w-space, 1)); }
 .w-scope[data-site-theme="warm"] .gw .gw-cta {
   background: #0E6B5C url("/site/warm/6cdcd82171e8c4cbac2b9ef955fa097a.jpg") center / cover no-repeat;
-  border-radius: 28px; padding: clamp(24px, 3vw, 44px) clamp(20px, 2.6vw, 40px); gap: 28px;
+  border-radius: 28px; padding: calc(clamp(24px, 3vw, 44px) * var(--w-space, 1)) clamp(20px, 2.6vw, 40px); gap: 28px;
   grid-template-columns: 1fr 1fr; box-shadow: 0 24px 60px rgba(14, 107, 92, 0.22);
 }
 .w-scope[data-site-theme="warm"] .gw .gw-cta .gw-h3 { margin-top: 0; color: #FFFFFF; }

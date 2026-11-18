@@ -345,7 +345,7 @@
 /* ── CTA band above the footer: the design's rounded teal "wave" card ───────────────────────── */
 .anutech-site[data-site-theme="warm"] > section:has(+ footer) {
   background: transparent !important;
-  padding: clamp(25px, 3.2vw, 45px) var(--w-gutter) !important;
+  padding: calc(clamp(25px, 3.2vw, 45px) * var(--w-space, 1)) var(--w-gutter) !important;
   color: #FFFFFF;
 }
 /* The card's edges = the navbar's content edges (site-warm.css --w-content). */
@@ -354,7 +354,7 @@
   background: var(--w-teal) url(/site/warm/6cdcd82171e8c4cbac2b9ef955fa097a.jpg) center / cover no-repeat;
   border-radius: 28px;
   box-shadow: 0 24px 60px rgba(14, 107, 92, 0.22);
-  padding: clamp(23px, 2.97vw, 42px) clamp(20px, 2.29vw, 32px) !important;
+  padding: calc(clamp(23px, 2.97vw, 42px) * var(--w-space, 1)) clamp(20px, 2.29vw, 32px) !important;
   flex-direction: column;
   align-items: center !important;
   text-align: center;
@@ -415,7 +415,7 @@
 .anutech-site[data-site-theme="warm"] > footer {
   background: var(--w-surface) !important;
   border-top: 1px solid var(--w-line) !important;
-  padding: clamp(28px, 3.2vw, 44px) 0 0 !important;
+  padding: calc(clamp(28px, 3.2vw, 44px) * var(--w-space, 1)) 0 0 !important;
   color: var(--w-muted);
   overflow-x: clip;
 }
@@ -489,7 +489,7 @@
 .anutech-site[data-site-theme="warm"] > footer > .wrap > div:last-child {
   position: relative;
   isolation: isolate;
-  margin-top: clamp(28px, 3vw, 40px) !important;
+  margin-top: calc(clamp(28px, 3vw, 40px) * var(--w-space, 1)) !important;
   padding: 18px 0 !important;
   border-top: 0 !important;
   font-size: 13px !important;

@@ -26,6 +26,7 @@
   --w-row: 1180px; --w-gutter: clamp(16px, 4vw, 24px);
   --w-content: calc(var(--w-row) - 2 * var(--w-gutter));
   --w-card: min(var(--w-content), calc(100% - 2 * var(--w-gutter)));
+  --w-space: 0.75; /* section spacing knob — same as site-warm.css "Shared warm tokens" */
   /* The app's own tokens (HSL channels, as globals.css) re-pointed at the warm palette */
   --paper: 100 14% 96%;          /* #F5F7F4 */
   --paper-2: 0 0% 100%;          /* #FFFFFF */
@@ -74,14 +75,14 @@
 
 /* ── Shared section rhythm: the navbar's content box (--w-row) and big 800-weight headings ── */
 .anutech-product[data-site-theme="warm"] main > section:not(:first-of-type) > div { max-width: var(--w-row); padding-left: var(--w-gutter); padding-right: var(--w-gutter); }
-.anutech-product[data-site-theme="warm"] main > section:not(:first-of-type) > div { padding-top: clamp(40px, 5vw, 72px); padding-bottom: clamp(40px, 5vw, 72px); }
+.anutech-product[data-site-theme="warm"] main > section:not(:first-of-type) > div { padding-top: calc(clamp(40px, 5vw, 72px) * var(--w-space, 1)); padding-bottom: calc(clamp(40px, 5vw, 72px) * var(--w-space, 1)); }
 .anutech-product[data-site-theme="warm"] main > section h2 { font-size: clamp(2rem, 3.6vw, 2.44rem); line-height: 1.15; color: var(--w-ink); }
 .anutech-product[data-site-theme="warm"] main > section { border-top: 0; }
 
 /* ── Hero: forest band, photo on the right under a left-to-right shade ── */
 .anutech-product[data-site-theme="warm"] main > section:first-of-type {
   position: relative; isolation: isolate; max-width: none; margin: 0;
-  padding: clamp(56px, 6vw, 96px) max(var(--w-gutter), calc((100% - var(--w-content)) / 2));
+  padding: calc(clamp(56px, 6vw, 96px) * var(--w-space, 1)) max(var(--w-gutter), calc((100% - var(--w-content)) / 2));
   min-height: min(640px, 80vh); box-sizing: border-box;
   display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
   background: var(--w-forest); color: #FFFFFF;
@@ -238,7 +239,7 @@
 /* ── Pricing: light-blue photo panel with a white card ── */
 .anutech-product[data-site-theme="warm"] #pricing { background: var(--w-bg); }
 .anutech-product[data-site-theme="warm"] #pricing > div {
-  box-sizing: border-box; margin-top: clamp(32px, 4vw, 56px); margin-bottom: clamp(32px, 4vw, 56px);
+  box-sizing: border-box; margin-top: calc(clamp(32px, 4vw, 56px) * var(--w-space, 1)); margin-bottom: calc(clamp(32px, 4vw, 56px) * var(--w-space, 1));
   width: calc(100% - 2 * var(--w-gutter)); max-width: var(--w-content);
   padding: clamp(24px, 3vw, 44px) !important; border-radius: 28px; min-height: 380px;
   background: linear-gradient(90deg, rgba(232, 242, 252, 0.96) 0%, rgba(232, 242, 252, 0.9) 38%, rgba(232, 242, 252, 0.62) 60%, rgba(232, 242, 252, 0.55) 100%),

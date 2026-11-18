@@ -34,7 +34,7 @@
 /* ── Hero: dark forest band, photo slideshow under a tint, text on the left ───────────────── */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child {
   position: relative; isolation: isolate; text-align: left !important;
-  max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-top: 48px !important; padding-bottom: 56px !important;
+  max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-top: calc(48px * var(--w-space, 1)) !important; padding-bottom: calc(56px * var(--w-space, 1)) !important;
 }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child::before {
   content: ""; position: absolute; z-index: -2; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw);
@@ -101,7 +101,7 @@
 @media (min-width: 1200px) {
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child {
     display: grid !important; grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr); column-gap: clamp(40px, 4.5vw, 72px);
-    align-items: start; align-content: center; padding-top: clamp(48px, 5vw, 72px) !important; padding-bottom: clamp(48px, 5vw, 72px) !important;
+    align-items: start; align-content: center; padding-top: calc(clamp(48px, 5vw, 72px) * var(--w-space, 1)) !important; padding-bottom: calc(clamp(48px, 5vw, 72px) * var(--w-space, 1)) !important;
   }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > * { grid-column: 1; justify-self: start; }
   /* The words centred top-to-bottom against the card panel (owner, 17 Nov 2026): a flexible empty
@@ -193,7 +193,7 @@
 }
 
 /* ── Products: dark users strip, then the edition cards on the ground ─────────────────────── */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#products { max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-top: 48px !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#products { max-width: var(--w-row) !important; padding-inline: var(--w-gutter) !important; padding-top: calc(48px * var(--w-space, 1)) !important; }
 .anutech-site[data-site-theme="warm"] section#products > div:first-child {
   background: var(--w-forest) !important; border: 0 !important; border-radius: 20px !important; padding: 16px 24px !important;
   box-shadow: var(--w-shadow);
@@ -288,7 +288,7 @@
 
 /* ── Migration: soft photo band; each step a white card with a number badge ──────────────── */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) {
-  margin-top: 56px; border: 0 !important; background-color: #EAF3F0 !important;
+  margin-top: calc(56px * var(--w-space, 1)); border: 0 !important; background-color: #EAF3F0 !important;
   background-image: linear-gradient(90deg, rgba(236,246,242,0.96) 0%, rgba(236,246,242,0.9) 45%, rgba(236,246,242,0.72) 100%), url(/site/warm/b57235dc64991b679efcfbac3de9d077.jpg) !important;
   background-size: cover !important; background-position: center, right center !important; background-repeat: no-repeat !important;
 }
@@ -321,7 +321,7 @@
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has(figure) figcaption span[style*="IBM Plex Mono"] { font-family: inherit !important; font-weight: 700; }
 
 /* ── Anutech Mail: a mint rounded panel on the ground, the price in a white card ─────────── */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#anutech-mail { background: transparent !important; border: 0 !important; padding: 56px 0 0; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#anutech-mail { background: transparent !important; border: 0 !important; padding: calc(56px * var(--w-space, 1)) 0 0; }
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div {
   max-width: var(--w-card) !important; box-sizing: border-box; background: var(--w-mint); border-radius: 28px; padding: 44px 44px !important;
 }
@@ -340,7 +340,7 @@
 .anutech-site[data-site-theme="warm"] section#anutech-mail > div > div:last-child > a:hover { background: var(--w-teal-dark) !important; }
 
 /* ── Facts: a dark forest bar, figures left-aligned, the first in marigold ───────────────── */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has([data-grid-2up]):not(#catalogue) { background: transparent !important; border: 0 !important; padding: 40px 0 56px; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has([data-grid-2up]):not(#catalogue) { background: transparent !important; border: 0 !important; padding: calc(40px * var(--w-space, 1)) 0 calc(56px * var(--w-space, 1)); }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:has([data-grid-2up]):not(#catalogue) > div {
   --hv-ink: #FFFFFF; --hv-blue: #FFFFFF; --hv-sec: #D5E3DD;
   max-width: var(--w-card) !important; box-sizing: border-box; background: var(--w-forest); border-radius: 24px; padding: 32px 36px !important;
@@ -355,7 +355,7 @@
 }
 
 /* ── FAQ: white band, bold questions, +/− in a mint circle ───────────────────────────────── */
-.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#faq { position: relative; isolation: isolate; max-width: 908px !important; padding-top: 56px !important; padding-bottom: 56px !important; }
+.anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#faq { position: relative; isolation: isolate; max-width: 908px !important; padding-top: calc(56px * var(--w-space, 1)) !important; padding-bottom: calc(56px * var(--w-space, 1)) !important; }
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#faq::before {
   content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: var(--w-surface);
 }
@@ -382,7 +382,7 @@
   .anutech-site[data-site-theme="warm"] section#anutech-mail > div { padding: 32px 24px !important; }
 }
 @media (max-width: 639px) {
-  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child { text-align: center !important; padding-top: 36px !important; padding-bottom: 40px !important; }
+  .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child { text-align: center !important; padding-top: 36px !important; padding-bottom: calc(40px * var(--w-space, 1)) !important; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > h1 { margin-inline: auto !important; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child > div:first-child { font-size: 13px !important; }
   .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section:first-child button[aria-pressed] { text-align: left; }
@@ -555,7 +555,7 @@
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-cards > .wp-card:last-child:not(.wp-pop) .wp-brand { align-self: flex-start; background: #FFFFFF; border-radius: 8px; padding: 2px 8px; margin-bottom: 0; }
 
 /* ── Compare table: white full-bleed band, warm rows, Standard column in mint ─────────────── */
-.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-compare { position: relative; isolation: isolate; margin-top: 56px; padding: clamp(25px, 3.2vw, 45px) 0; }
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-compare { position: relative; isolation: isolate; margin-top: calc(56px * var(--w-space, 1)); padding: calc(clamp(25px, 3.2vw, 45px) * var(--w-space, 1)) 0; }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-compare::before {
   content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: var(--w-surface);
 }
@@ -578,7 +578,7 @@
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-pick button.on { background: var(--w-teal); color: var(--w-on-teal); }
 
 /* ── FAQ: centred heading, white cards with a teal sign ───────────────────────────────────── */
-.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq { margin: 0 auto; padding: clamp(25px, 3.2vw, 45px) 0 0; gap: 12px; }
+.anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq { margin: 0 auto; padding: calc(clamp(25px, 3.2vw, 45px) * var(--w-space, 1)) 0 0; gap: 12px; }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq h2 { text-align: center; }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq details { background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 16px; }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .wp-root) .wp-root .wp-faq details[open] { border-color: var(--w-line-strong); box-shadow: 0 10px 24px rgba(18, 49, 42, 0.06); }

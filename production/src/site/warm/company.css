@@ -24,7 +24,7 @@
    Anutech column is a teal-headed mint column.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates) {
-  position: relative; isolation: isolate; overflow: hidden; padding: clamp(27px, 3.52vw, 50px) 0 clamp(30px, 3.84vw, 54px);
+  position: relative; isolation: isolate; overflow: hidden; padding: calc(clamp(27px, 3.52vw, 50px) * var(--w-space, 1)) 0 calc(clamp(30px, 3.84vw, 54px) * var(--w-space, 1));
 }
 .anutech-site[data-site-theme="warm"] #main > section.section:has(> .wrap > .tablewrap > table.rates)::before {
   content: ""; position: absolute; z-index: -1; width: 560px; height: 560px; border-radius: 50%;
@@ -114,10 +114,10 @@
    heading, the four "elsewhere vs with Anutech" cards apart, the margin calculator on white
    (slider tiles, then a forest card with the margin), and ResellerOS as a mint rounded card.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
-.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child { padding-top: 0; padding-bottom: clamp(27px, 3.52vw, 50px); }
+.anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child { padding-top: 0; padding-bottom: calc(clamp(27px, 3.52vw, 50px) * var(--w-space, 1)); }
 .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child {
-  position: relative; isolation: isolate; max-width: none !important; margin-bottom: clamp(32px, 3.84vw, 56px) !important;
-  padding: clamp(36px, 4.4vw, 64px) 0 clamp(36px, 4.2vw, 60px); display: flex; flex-direction: column; gap: 18px;
+  position: relative; isolation: isolate; max-width: none !important; margin-bottom: calc(clamp(32px, 3.84vw, 56px) * var(--w-space, 1)) !important;
+  padding: calc(clamp(36px, 4.4vw, 64px) * var(--w-space, 1)) 0 calc(clamp(36px, 4.2vw, 60px) * var(--w-space, 1)); display: flex; flex-direction: column; gap: 18px;
 }
 .anutech-site[data-site-theme="warm"] #main:has(> #margin) > section:first-child > .wrap > div:first-child::before {
   content: ""; position: absolute; z-index: -2; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw);
@@ -228,7 +228,7 @@
 }
 
 /* Margin calculator: a white band; slider tiles on the left, the margin in a forest card. */
-.anutech-site[data-site-theme="warm"] #main > #margin { background: var(--w-surface) !important; padding-block: clamp(27px, 3.52vw, 50px); }
+.anutech-site[data-site-theme="warm"] #main > #margin { background: var(--w-surface) !important; padding-block: calc(clamp(27px, 3.52vw, 50px) * var(--w-space, 1)); }
 .anutech-site[data-site-theme="warm"] #margin .wrap-inner { gap: 24px !important; align-items: stretch !important; }
 @media (min-width: 980px) {
   .anutech-site[data-site-theme="warm"] #margin .wrap-inner { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) !important; }
@@ -303,7 +303,7 @@
    product button top-right; the software-pricing line as a mint note.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child {
-  position: relative; isolation: isolate; overflow: hidden; padding: clamp(25px, 3.2vw, 45px) 0 clamp(20px, 2.29vw, 32px);
+  position: relative; isolation: isolate; overflow: hidden; padding: calc(clamp(25px, 3.2vw, 45px) * var(--w-space, 1)) 0 calc(clamp(20px, 2.29vw, 32px) * var(--w-space, 1));
 }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section:first-child::before {
   content: ""; position: absolute; z-index: -1; width: 520px; height: 520px; border-radius: 50%; background: var(--w-marigold-soft); right: -160px; top: -220px;
@@ -372,7 +372,7 @@
 }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody th .meta { color: var(--w-muted-2); font-size: 13px; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody tr:hover { background: var(--w-mint-soft); }
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section-tight { padding: 18px 0 clamp(27px, 3.52vw, 50px); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section-tight { padding: 18px 0 calc(clamp(27px, 3.52vw, 50px) * var(--w-space, 1)); }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section-tight .meta {
   padding: 18px 22px; background: var(--w-mint); border-radius: 16px; color: var(--w-teal-dark); font-size: 15px;
   text-align: center; /* owner, 17 Nov 2026: "Centeralize the text" */
@@ -402,7 +402,7 @@
    Scoped by the page's own search box (no other page has it).
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child {
-  position: relative; isolation: isolate; overflow: hidden; padding: clamp(25px, 3.2vw, 45px) 0 clamp(27px, 3.52vw, 50px);
+  position: relative; isolation: isolate; overflow: hidden; padding: calc(clamp(25px, 3.2vw, 45px) * var(--w-space, 1)) 0 calc(clamp(27px, 3.52vw, 50px) * var(--w-space, 1));
 }
 .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child::before {
   content: ""; position: absolute; z-index: -1; width: 520px; height: 520px; border-radius: 50%; background: var(--w-mint); right: -160px; top: -220px;
@@ -422,7 +422,7 @@
   background: url(/site/warm/6257661abb76d551611b3ed1b334829a.svg) center / cover no-repeat;
 }
 .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) > section:first-child > .wrap > [data-grid] {
-  grid-area: body; margin-top: clamp(24px, 2.6vw, 36px); gap: 23px !important;
+  grid-area: body; margin-top: calc(clamp(24px, 2.6vw, 36px) * var(--w-space, 1)); gap: 23px !important;
 }
 @media (min-width: 980px) {
   .anutech-site[data-site-theme="warm"] #main:has(input[aria-label="Search help topics"]) [data-grid] { grid-template-columns: minmax(0, 1fr) minmax(0, 440px) !important; }
@@ -575,7 +575,7 @@
    payable amount in marigold. The generated quotation (data-quote-doc) stays a white document.
    Only shape and colour change here: every line, price and total is the component's own.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
-.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child { padding: clamp(22px, 2.88vw, 40px) 0 clamp(27px, 3.52vw, 50px); }
+.anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child { padding: calc(clamp(22px, 2.88vw, 40px) * var(--w-space, 1)) 0 calc(clamp(27px, 3.52vw, 50px) * var(--w-space, 1)); }
 .anutech-site[data-site-theme="warm"] #main:has([data-grid="quote"]) > section:first-child > .wrap {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); grid-template-areas: "intro photo" "builder builder"; gap: 28px 40px; align-items: center;
 }
@@ -752,7 +752,7 @@
    state colour, so "Down" still reads red and "Operational" green.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section:first-child {
-  padding: 0 0 clamp(36px, 4.6vw, 64px); overflow-x: clip;
+  padding: 0 0 calc(clamp(36px, 4.6vw, 64px) * var(--w-space, 1)); overflow-x: clip;
 }
 /* The wrap is a one-column grid: rows 1–4 are the hero (the band is a pseudo element behind them),
    the service cards follow in their own grid (row 5, see below). Content box = the navbar's. */
@@ -775,7 +775,7 @@
 }
 /* Hero: title, lead, the overall state, the last-checked line. */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > h1 {
-  grid-column: 1 / -1; grid-row: 1; margin: 0 !important; padding-top: clamp(44px, 6vw, 84px);
+  grid-column: 1 / -1; grid-row: 1; margin: 0 !important; padding-top: calc(clamp(44px, 6vw, 84px) * var(--w-space, 1));
   font-size: clamp(2.4rem, 5vw, 3.3rem); line-height: 1.05; letter-spacing: -0.03em; color: #FFFFFF;
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.25);
 }
@@ -810,7 +810,7 @@
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"][style*="--danger"] { background: #FDE8E4 !important; border-color: #E9A89B !important; color: #7A1F10 !important; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"][style*="--danger"]::before { background: #B3321D; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > p.meta {
-  grid-column: 1 / -1; grid-row: 4; margin: 14px 0 0 !important; padding-bottom: clamp(40px, 5vw, 72px);
+  grid-column: 1 / -1; grid-row: 4; margin: 14px 0 0 !important; padding-bottom: calc(clamp(40px, 5vw, 72px) * var(--w-space, 1));
   font-size: 14px; color: rgba(225, 238, 232, 0.78);
 }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > p.meta time { color: #FFFFFF; font-weight: 600; }
