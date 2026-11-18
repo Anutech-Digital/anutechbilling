@@ -12,6 +12,12 @@
  * ₹40,02,110 FD auto-redeem line had "Other income" pre-picked (one click = ₹40 L booked as income).
  * An FD redeem / premature closure / sweep line pre-picks Interest received → Fixed deposit → that FD
  * with "FD closed" ticked, i.e. the R-2366 closure above (principal back + the rest as interest).
+ *
+ * R-2935 (staging 18 Nov, HDFC 4523): a bank that pays the FD on three lines (… REDEEM PRINCIPAL /
+ * … REDEEM INTEREST / … REDEEM TAX) — the INTEREST line books as plain interest (redeemVerdict: by
+ * itself when the FD's balance is already 0, else after the owner ticks "Interest only"; held while
+ * the FD's money could be inside it); the PRINCIPAL line is never income — not as Other income
+ * either. A held save says why next to the button (footer reason), not only in the form.
  */
 "use client";
 
@@ -22,7 +28,7 @@ import { Input } from "@/components/ui/input";
 import { rupee } from "@/lib/utils";
 import { useBankAccounts, type BankTransactionRow } from "@/lib/queries/bank";
 import { useBookInterestIncome, useBookOtherIncome, type OtherIncomeHead } from "@/lib/queries/bank-other-income";
-import { fdRedeemGuess, guessInterestSource, interestSplit, looksLikeInterest, type InterestSource } from "@/lib/banking/interest-income";
+import { fdRedeemGuess, fdRedeemPart, guessInterestSource, interestSplit, looksLikeInterest, redeemVerdict, type InterestSource } from "@/lib/banking/interest-income";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 export { looksLikeInterest };
@@ -37,7 +43,8 @@ function defaultPrincipal(fd: FdLite | null | undefined, amount: number): string
 
 type PrePick = {
   head: OtherIncomeHead | null; source: InterestSource; fdId: string; closure: boolean; principalText: string;
-  /** The narration says an FD came back (fdRedeemGuess) — interest without "FD closed" is refused. */
+  /** The narration says an FD came back (fdRedeemGuess) — interest without "FD closed" is refused
+   *  while the principal could be in the line (redeemVerdict, R-2935). */
   redeem: boolean;
 };
 
@@ -46,6 +53,10 @@ function pickFor(description: string | null | undefined, fds: readonly FdLite[],
   const g = fdRedeemGuess(description, fds);
   const fd = g.fdId ? fds.find((a) => a.id === g.fdId) ?? null : null;
   if (g.redeem) {
+    /* R-2935: the bank's own "… REDEEM INTEREST" line — interest only, the FD named, nothing to split. */
+    if (redeemVerdict({ description, redeem: true, credit: amount, fd, fds }) !== "hold") {
+      return { head: "interest", source: "fd", fdId: fd?.id ?? "", closure: false, principalText: "", redeem: true };
+    }
     return { head: "interest", source: "fd", fdId: fd?.id ?? "", closure: !!fd, principalText: fd ? defaultPrincipal(fd, amount) : "", redeem: true };
   }
   const interest = looksLikeInterest(description);
@@ -57,6 +68,13 @@ function pickFor(description: string | null | undefined, fds: readonly FdLite[],
 }
 
 const REDEEM_NEEDS_CLOSURE = "This line looks like an FD coming back — pick the FD and tick “FD closed”, so the principal is not booked as income.";
+
+/** R-2935: an "… INTEREST" redeem line with nothing in the books proving the principal is elsewhere. */
+const SAY_INTEREST_ONLY = "Tick “Interest only” if the principal came on its own bank line — or pick the FD and tick “FD closed” if the principal is in this line.";
+/** R-2935: a redeem line is the FD's money (or part of it) — never plain Other income. */
+const REDEEM_NOT_OTHER = "This line looks like an FD coming back — it is not other income. Use Interest received, or Own transfer for the principal.";
+/** R-2935: the bank's "… REDEEM PRINCIPAL" line — the FD's own money, never income. */
+const PRINCIPAL_LINE = "This line is the FD principal coming back, not income — reconcile it under Own transfer, from the FD account.";
 
 const PICK_HEAD = "Pick Interest received or Other income";
 
@@ -94,10 +112,12 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   const [closure, setClosure] = React.useState(first.closure);
   const [principalText, setPrincipalText] = React.useState(first.principalText);
   const [tdsText, setTdsText] = React.useState("");
+  /* R-2935: the owner's own word that a redeem line is interest only (asked when the books cannot tell). */
+  const [interestOnly, setInterestOnly] = React.useState(false);
   const touched = React.useRef(false);
   const lastLine = React.useRef(lineKey);
   React.useEffect(() => {
-    if (lastLine.current !== lineKey) { lastLine.current = lineKey; touched.current = false; setTdsText(""); }
+    if (lastLine.current !== lineKey) { lastLine.current = lineKey; touched.current = false; setTdsText(""); setInterestOnly(false); }
     if (touched.current) return;
     setHead(first.head); setSource(first.source); setFdId(first.fdId);
     setClosure(first.closure); setPrincipalText(first.principalText);
@@ -110,11 +130,22 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   const tds = head === "interest" ? rupeesIn(tdsText) : 0;
   const split = interestSplit({ credit: amount, principal: principal || 0, tds: tds || 0, fdBalance: isClosure ? fd?.current_balance ?? null : null });
   const badNumber = Number.isNaN(principal) || Number.isNaN(tds);
-  const interestError = head !== "interest" ? null
-    : first.redeem && !isClosure ? REDEEM_NEEDS_CLOSURE
+  /* R-2935: a redeem line books as plain interest only when the principal cannot be inside it. */
+  const verdict = isClosure ? "free" : redeemVerdict({
+    description: transaction.description, redeem: first.redeem, credit: amount, fd: source === "fd" ? fd : null, fds,
+  });
+  const askInterestOnly = head === "interest" && verdict === "ask";
+  const part = fdRedeemPart(transaction.description);
+  const splitError = head === "other" ? (first.redeem ? REDEEM_NOT_OTHER : null)
+    : head !== "interest" ? null
+    : verdict === "hold" ? REDEEM_NEEDS_CLOSURE
+    : verdict === "ask" && !interestOnly ? SAY_INTEREST_ONLY
     : badNumber ? "Enter amounts in rupees."
     : isClosure && principal <= 0 ? "Enter the principal coming back from the FD."
     : split.error;
+  /* The bank's "… PRINCIPAL" line (one that does not also say interest) has nothing to split off —
+     say where it goes instead. */
+  const interestError = splitError && !badNumber && part === "principal" && !looksLikeInterest(transaction.description) ? PRINCIPAL_LINE : splitError;
 
   function pickFd(id: string) {
     touch();
@@ -154,7 +185,8 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   const disabled = amount <= 0 || head === null || !!interestError;
   useFooterSaveReport(onFooterSave, {
     label: saveLabel, onSave: () => { void submit(); }, disabled, loading: pending,
-    disabledReason: head === null ? `${PICK_HEAD} first.` : null,
+    /* R-2935: a held save says why next to the button — the form's own line may be scrolled away. */
+    disabledReason: head === null ? `${PICK_HEAD} first.` : amount > 0 ? interestError : null,
   });
 
   return (
@@ -172,6 +204,7 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
         ))}
       </div>
       {head === null && !onFooterSave && <p className="text-xs text-ink-3">{PICK_HEAD}.</p>}
+      {head === "other" && interestError && <p className="text-xs text-rose-ink" aria-live="polite">{interestError}</p>}
 
       {head === "interest" && (
         <div className="space-y-2 border-t border-hairline pt-2">
@@ -203,6 +236,13 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
             </div>
           )}
 
+          {askInterestOnly && (
+            <label className="flex items-center gap-2 text-xs text-ink-2">
+              <input type="checkbox" checked={interestOnly} onChange={(e) => { touch(); setInterestOnly(e.target.checked); }} />
+              Interest only — the principal came on its own bank line
+            </label>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {isClosure && (
               <label className="text-xs text-ink-3 space-y-1">
@@ -217,6 +257,12 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
                 aria-label="TDS deducted by the bank" placeholder="0" />
             </label>
           </div>
+
+          {first.redeem && part === "interest" && (
+            <p className="text-xs text-ink-3">
+              If the bank took the TDS as its own bank line (… TAX), leave TDS at 0 here and book that line under Tax → TDS cut by bank.
+            </p>
+          )}
 
           <p className="text-xs text-ink-2" aria-live="polite">
             {interestError ? <span className="text-rose-ink">{interestError}</span> : (

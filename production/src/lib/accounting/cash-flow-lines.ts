@@ -39,6 +39,7 @@ export function lineLabel(t: Pick<CashFlowTxn, "matched_to_type" | "category" | 
     case "salary":      return "Salary";
     case "split":       return "Salary / advance";
     case "statutory":   return "Tax & statutory";
+    case "tds_receivable": return "TDS cut by bank (receivable)";   // R-2935
     case "prepaid":     return "Prepaid advance";
     case "expense":     return t.category ? t.category : "Expense";
     case "vendor_bill": return "Vendor bill";

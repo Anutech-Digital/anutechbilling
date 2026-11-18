@@ -87,3 +87,85 @@ export function fdRedeemGuess(description: string | null | undefined, fds: reado
   const word = REDEEM_WORD.test(d) && (fdContext || fdId !== null);
   return { redeem: !interestOnly && (word || fdId !== null), fdId };
 }
+
+/**
+ * R-2935 (staging 18 Nov 2026, HDFC 4523): HDFC pays a closed FD on three bank lines —
+ * "FD REDEEM PRINCIPAL", "FD REDEEM INTEREST" and "FD REDEEM TAX". Which part does this line say
+ * it is? null = it does not say (one line with everything, or not an FD line at all).
+ */
+export type FdRedeemPart = "principal" | "interest" | "tax";
+
+const PRINCIPAL_WORD = /\b(prin|princ|principal|prncpl)\b/i;
+const TAX_WORD = /\b(tax|tds)\b/i;
+
+export function fdRedeemPart(description: string | null | undefined): FdRedeemPart | null {
+  const d = (description ?? "").replace(/[_-]+/g, " ");
+  if (PRINCIPAL_WORD.test(d)) return "principal";
+  if (looksLikeInterest(d)) return "interest";
+  if (TAX_WORD.test(d)) return "tax";
+  return null;
+}
+
+/** An FD as the closure guard needs it. */
+export type FdForGuard = { id: string; current_balance?: number | null };
+
+/**
+ * R-2935: may a redeem line (fdRedeemGuess().redeem) be booked as plain interest, without the
+ * "FD closed" split? Only its INTEREST part may, and never silently unless the books show the
+ * principal is already out:
+ *   "hold" — the line says PRINCIPAL, or says nothing about interest (as R-2390); or it says
+ *            INTEREST but the picked FD still holds money that fits in this line (0 < balance ≤
+ *            line); no FD picked → the same test against every FD of the company.
+ *   "free" — it says INTEREST and the picked FD's balance is exactly 0: its principal line is
+ *            already reconciled, so this line cannot be the principal.
+ *   "ask"  — it says INTEREST but nothing proves the principal is elsewhere (no FD picked, the
+ *            FD's balance unknown, or the FD still holds more than the line — a part-withdrawal
+ *            would look the same): the owner must say "Interest only" himself.
+ * A line that is not a redeem line is always "free".
+ */
+export type RedeemVerdict = "free" | "ask" | "hold";
+
+export function redeemVerdict(input: {
+  description: string | null | undefined;
+  redeem: boolean;
+  credit: number;
+  fd: FdForGuard | null;
+  fds: readonly FdForGuard[];
+}): RedeemVerdict {
+  if (!input.redeem) return "free";
+  if (fdRedeemPart(input.description) !== "interest") return "hold";
+  const holdsPrincipal = (fd: FdForGuard) => (fd.current_balance ?? 0) > 0 && input.credit >= (fd.current_balance ?? 0);
+  if (!input.fd) return input.fds.some(holdsPrincipal) ? "hold" : "ask";
+  if (holdsPrincipal(input.fd)) return "hold";
+  return input.fd.current_balance === 0 ? "free" : "ask";
+}
+
+/**
+ * R-2935: a money-OUT line that is the bank's own TDS on interest ("FD REDEEM TAX", "TDS ON FD INT")
+ * — TDS receivable (Sec 194A), not a challan the company paid and not an expense.
+ */
+export function looksLikeInterestTds(description: string | null | undefined): boolean {
+  const d = (description ?? "").replace(/[_-]+/g, " ");
+  if (!TAX_WORD.test(d)) return false;
+  /* A payment the company itself made (challan, 201(1A) interest, a quarter's deposit), or money
+     put INTO a tax-saver FD, is not the bank's TDS. */
+  if (/\b(itns|challan|cin|advance\s*tax|self\s*assessment|income\s*tax|gst\w*|tcs|201|q[1-4]|tax\s*sav\w*)\b/i.test(d)) return false;
+  /* "FD REDEEM TAX", "TAX DEDUCTED ON TERM DEPOSIT" — an FD named (the bare word "deposit" is not enough) … */
+  if (/\b(fdr?|f\.d\.?|fixed\s*dep\w*|term\s*dep\w*|tdr)\b/i.test(d)) return true;
+  /* … or "TDS ON INT", "TAX ON SB INTEREST". */
+  return /\b(tds|tax)\s+(ded\w*\s+)?on\s+(\w+\s+)?int(erest)?\b/i.test(d);
+}
+
+/** An interest row a bank's TDS line can belong to (bank_interest_without_tds). */
+export type InterestForTds = { id: string; income_date: string; amount: number };
+
+/**
+ * R-2935: which booked interest is this TDS line for? Only a same-day interest the TDS is 10% (or
+ * 20%, no PAN) of — within ₹1 — is pre-picked, and only when exactly one fits. Anything less sure
+ * → "" (the owner picks): a wrong pick marks the wrong interest and a wrong gross for 26AS.
+ */
+export function pickInterestForTds(rows: readonly InterestForTds[], tds: number, txnDate: string): string {
+  const sameDay = rows.filter((r) => r.income_date === txnDate && r.amount > tds);
+  const byRate = sameDay.filter((r) => [0.1, 0.2].some((rate) => Math.abs(r.amount * rate - tds) <= 1));
+  return byRate.length === 1 ? byRate[0].id : "";
+}

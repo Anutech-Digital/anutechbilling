@@ -26,7 +26,8 @@ export function groupOf(matchedToType: string | null): PaidGroup | null {
     case "vendor_payment":      return "vendors";   // R-1866
     case "salary":
     case "split":               return "salaries";
-    case "statutory":           return "statutory";
+    case "statutory":
+    case "tds_receivable":      return "statutory";   // R-2935: TDS a bank cut on interest
     case "prepaid":
     case "referral_commission": return "advances";
     case "transfer":            return null;              // own money moving — not a payment
