@@ -150,8 +150,10 @@
 .anutech-site[data-site-theme="warm"] .hc .hc-hero {
   position: relative; isolation: isolate;
   grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-  grid-template-areas: "text form" "visual visual";
-  gap: 40px; padding-block: 45px 0;
+  grid-template-areas: "text form";
+  /* The ResellerOS drawing used to sit under the band here; it moved to the Proof section
+     (18 Nov 2026), so the band now closes under the text and the form. */
+  gap: 40px; padding-block: 45px clamp(40px, 4.4vw, 64px);
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero::before {
   content: ""; position: absolute; z-index: -3; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw);
@@ -172,15 +174,6 @@
 @media (prefers-reduced-motion: reduce) {
   .anutech-site[data-site-theme="warm"] .hc .hc-hero::before { animation: none; }
 }
-/* The product preview sits below the band, on the page ground: its own full-width ground
-   covers the dark layers from its top edge down. */
-.anutech-site[data-site-theme="warm"] .hc .hc-hero-visual {
-  position: relative; max-width: none; width: 100%; justify-self: center; padding: 0 0 clamp(32px, 4.16vw, 58px);
-}
-.anutech-site[data-site-theme="warm"] .hc .hc-hero-visual::before {
-  content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: var(--w-bg);
-}
-
 /* ── ResellerOS "Today" preview (ProductPeek) — as the design draws it (artboard Main,
    "ResellerOS preview"): a white window with 24px corners, a grey title bar with traffic-light
    dots, a forest sidebar with a solid teal "Today", soft grey rows with colour-coded type tags
@@ -354,25 +347,33 @@
   .anutech-site[data-site-theme="warm"] .hc #software .hc-grid3 { grid-row: auto; order: 1; } /* after the photo (::after is last in the DOM) */
 }
 
-/* ── Proof: mint band, a wide photo on top, then the text beside the list ──────────────── */
+/* ── Proof: mint band; the text beside the ResellerOS drawing, the six ticks across under them ──
+   Owner, 18 Nov 2026: the drawing left the hero (where it sat alone under the photo band) and
+   illustrates this section instead. It replaces the wide office photo that opened the section, so
+   the band has one picture: the software the words are about. */
 .anutech-site[data-site-theme="warm"] .hc .hc-proof {
-  position: relative; isolation: isolate; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  padding-block: clamp(36px, 4.4vw, 64px); gap: 35px;
+  position: relative; isolation: isolate; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  grid-template-areas: "text visual" "list list";
+  padding-block: clamp(40px, 5vw, 72px); gap: 36px 48px;
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof::before {
   content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; left: calc(50% - 50vw); right: calc(50% - 50vw); background: var(--w-mint);
 }
-.anutech-site[data-site-theme="warm"] .hc .hc-proof::after {
-  content: ""; grid-column: 1 / -1; grid-row: 1; height: clamp(154px, 21vw, 280px);
-  background: url(/site/warm/c88525bf772afe60547d448a1a0d13b7.jpg) center 35% / cover no-repeat; border-radius: 22px;
+.anutech-site[data-site-theme="warm"] .hc .hc-proof-visual { padding: 0 0 18px; }
+/* In this narrower column the drawing's menu is a little slimmer (phones keep the drawing's own
+   one-column layout, set below). */
+@media (min-width: 641px) {
+  .anutech-site[data-site-theme="warm"] .hc .hc-proof-visual .pk-body { grid-template-columns: 180px minmax(0, 1fr); }
 }
-.anutech-site[data-site-theme="warm"] .hc .hc-proof > * { grid-row: 2; }
+.anutech-site[data-site-theme="warm"] .hc .hc-proof-visual .pk-win { box-shadow: 0 30px 70px rgba(18, 49, 42, 0.16); }
+.anutech-site[data-site-theme="warm"] .hc .hc-proof-visual .pk-cap { color: var(--w-ink-2); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-eyebrow { color: var(--w-teal-dark); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-sub { font-size: 17px; color: var(--w-ink-2); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-btn-ghost { background: var(--w-teal); color: var(--w-on-teal); border-color: var(--w-teal); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof-list {
   background: transparent; border: 0; border-radius: 0; padding: 0; gap: 0 28px;
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  /* Six ticks: three a row on desktop (two even rows), two on tablets, one on phones. */
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof-list li { padding: 12px 0; border-bottom: 1px solid #B9DCCF; font-size: 16px; color: var(--w-ink); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof-list li span { color: var(--w-teal); }
@@ -601,13 +602,12 @@
   .anutech-site[data-site-theme="warm"] .hc .hc-steps li::before { top: 56px; bottom: 6px; left: 23px; right: auto; width: 2px; height: auto; }
 }
 @media (max-width: 980px) {
-  .anutech-site[data-site-theme="warm"] .hc .hc-hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "text" "form" "visual"; gap: 28px; padding-top: 32px; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "text" "form"; gap: 28px; padding-top: 32px; }
   .anutech-site[data-site-theme="warm"] .hc .hc-hero::after { background: rgba(18,49,42,0.88); }
   .anutech-site[data-site-theme="warm"] .hc .hc-hero-text { padding-bottom: 0; }
   .anutech-site[data-site-theme="warm"] .hc .hc-hero-form { justify-self: stretch; max-width: none; padding-bottom: 40px; }
-  .anutech-site[data-site-theme="warm"] .hc .hc-hero-visual { max-width: 640px; padding-top: 32px; }
-  .anutech-site[data-site-theme="warm"] .hc .hc-proof { grid-template-columns: minmax(0, 1fr); }
-  .anutech-site[data-site-theme="warm"] .hc .hc-proof > * { grid-row: auto; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-proof { grid-template-columns: minmax(0, 1fr); grid-template-areas: "text" "visual" "list"; }
+  .anutech-site[data-site-theme="warm"] .hc .hc-proof-visual { justify-self: center; width: 100%; max-width: 640px; }
 }
 @media (max-width: 640px) {
   .anutech-site[data-site-theme="warm"] .hc :is(.hc-hero-text, .hc-proof > div:first-child) { align-items: center; text-align: center; }

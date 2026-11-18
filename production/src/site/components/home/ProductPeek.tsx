@@ -1,5 +1,8 @@
 /**
- * ProductPeek — the home hero's picture (R-1454, Pawan: "page too text-heavy, needs visuals").
+ * ProductPeek — a picture of ResellerOS (R-1454, Pawan: "page too text-heavy, needs visuals").
+ * It sat in the home hero until 18 Nov 2026; it now illustrates the home's "Proof, not promises"
+ * section, beside the words about ResellerOS (owner: "this section only has this single image which
+ * does nothing" — on Warm the hero has its own photos, so the drawing was left on its own).
  *
  * A drawing of ResellerOS's real "Today" screen, built from HTML/CSS (no image file, so it costs
  * the LCP nothing). Honest by construction:
@@ -28,7 +31,7 @@ export const PEEK_CAPTION = "ResellerOS — the software Anutech Digital runs on
 
 export function ProductPeek() {
   return (
-    <figure className="pk" data-hero-visual="">
+    <figure className="pk" data-product-peek="">
       <style>{CSS}</style>
       <div className="pk-win" aria-hidden="true">
         <div className="pk-bar">

@@ -110,9 +110,6 @@ export function HomeCompany({ emailFrom, domainTeaser }: { emailFrom?: number; d
         <div className="hc-hero-form" data-avoid-floating="">
           <StartForm />
         </div>
-        <div className="hc-hero-visual">
-          <ProductPeek />
-        </div>
       </section>
 
       {/* ── WHAT WE AUTOMATE ─────────────────────────────────────────────────── */}
@@ -153,6 +150,10 @@ export function HomeCompany({ emailFrom, domainTeaser }: { emailFrom?: number; d
             <li key={t}><span aria-hidden>✓</span>{t}</li>
           ))}
         </ul>
+        {/* The ResellerOS drawing (was the hero's picture until 18 Nov 2026), beside the words about it. */}
+        <div className="hc-proof-visual">
+          <ProductPeek />
+        </div>
       </section>
 
       {/* ── HOW A PROJECT WORKS ──────────────────────────────────────────────── */}
@@ -364,10 +365,9 @@ const CSS = `
 .hc .hc-btn-light{background:#fff;color:${C.blueDk}}
 .hc-btn:focus-visible,.hc-card:focus-visible,.hc-faq-row button:focus-visible{outline:3px solid ${C.blueDk};outline-offset:2px}
 
-.hc-hero{display:grid;grid-template-columns:1.25fr 1fr;grid-template-areas:"text form" "visual form";gap:28px 48px;align-items:start;padding-block:48px 64px}
-.hc-hero-text{grid-area:text}
+.hc-hero{display:grid;grid-template-columns:1.25fr 1fr;grid-template-areas:"text form";gap:28px 48px;align-items:start;padding-block:48px 64px}
+.hc-hero-text{grid-area:text;align-self:center}
 .hc-hero-form{grid-area:form;align-self:center}
-.hc-hero-visual{grid-area:visual;padding-right:14px}
 .hc-form{display:flex;flex-direction:column;gap:6px;background:${C.surfT};border:1px solid ${C.borderL};border-radius:16px;padding:24px;box-shadow:0 24px 50px -36px rgba(12,17,22,.45);scroll-margin-top:96px}
 .hc-form-title{font-size:19px;color:${C.ink}}
 .hc-form-sub{font-size:13px;color:${C.sec};margin-bottom:8px}
@@ -390,7 +390,10 @@ const CSS = `
 .hc-ico{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:10px;background:var(--hv-blue-tint,#E8F0FD);color:${C.blue};margin-bottom:6px}
 .hc-grid3 li:nth-child(even) .hc-ico{background:${C.greenT2};color:${C.green}}
 
-.hc-proof{display:grid;grid-template-columns:1.2fr 1fr;gap:40px;align-items:center;padding-block:56px}
+.hc-proof{display:grid;grid-template-columns:1fr 1.15fr;grid-template-areas:"text visual" "list visual";gap:24px 48px;align-items:center;padding-block:56px}
+.hc-proof>div:first-child{grid-area:text}
+.hc-proof-list{grid-area:list}
+.hc-proof-visual{grid-area:visual;padding-right:14px}
 .hc-proof-list{list-style:none;margin:0;padding:22px 24px;display:grid;gap:12px;background:${C.greenT};border:1px solid #CFE7D8;border-radius:14px}
 .hc-proof-list li{display:flex;gap:10px;font-size:15.5px;font-weight:600;color:${C.ink}}
 .hc-proof-list li span{color:${C.green}}
@@ -451,8 +454,9 @@ const CSS = `
 @media (max-width:980px){
   .hc-wrap{padding-inline:20px}
   .hc-hero,.hc-proof{grid-template-columns:1fr;gap:28px}
-  .hc-hero{grid-template-areas:"text" "form" "visual"}
-  .hc-hero-visual{padding-right:0;max-width:640px}
+  .hc-hero{grid-template-areas:"text" "form"}
+  .hc-proof{grid-template-areas:"text" "list" "visual"}
+  .hc-proof-visual{padding-right:0;max-width:640px}
   .hc-hero{padding-block:32px 40px}
   .hc-h1{font-size:32px}
   .hc-h2{font-size:25px}

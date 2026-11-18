@@ -60,18 +60,23 @@ afterEach(() => {
   Element.prototype.getBoundingClientRect = origRect;
 });
 
-describe("home hero visual (R-1454)", () => {
+describe("home ResellerOS drawing (R-1454)", () => {
   it("renders the ResellerOS drawing with a visible, honest caption", () => {
     const { container } = render(<HomeCompany />);
-    const fig = container.querySelector("figure[data-hero-visual]");
-    expect(fig).not.toBeNull();
+    const figs = container.querySelectorAll("figure[data-product-peek]");
+    expect(figs.length).toBe(1);
+    const fig = figs[0];
     expect(screen.getByText(PEEK_CAPTION)).toBeTruthy();
     expect(PEEK_CAPTION).toMatch(/illustration/i);
     // The drawing is decorative; the caption is its text alternative.
-    expect(fig!.querySelector(".pk-win")!.getAttribute("aria-hidden")).toBe("true");
-    // It sits in the hero, next to the call-back form.
-    expect(fig!.closest(".hc-hero")).not.toBeNull();
-    expect(fig!.querySelector("img")).toBeNull();
+    expect(fig.querySelector(".pk-win")!.getAttribute("aria-hidden")).toBe("true");
+    // Since 18 Nov 2026 it illustrates the "Proof, not promises" section, beside the words about
+    // ResellerOS and its "See ResellerOS" link — no longer the hero (owner: on Warm it sat alone).
+    const proof = fig.closest(".hc-proof");
+    expect(proof).not.toBeNull();
+    expect(proof!.querySelector('a[href="/reselleros"]')).not.toBeNull();
+    expect(fig.closest(".hc-hero")).toBeNull();
+    expect(fig.querySelector("img")).toBeNull();
   });
 
   it("shows no invented numbers, amounts or names — only real screen labels", () => {
