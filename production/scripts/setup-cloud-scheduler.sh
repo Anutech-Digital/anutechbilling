@@ -300,6 +300,8 @@ JOBS=(
   # Every minute: the inbound sales mailbox. Bounded by MAX_PER_RUN inside the route.
   "resellersos-gmail-inbox|* * * * *|/api/cron/gmail-inbox|Read the sales Gmail inbox into enquiries"
   "resellersos-attendance-reminders|*/30 9-20 * * *|/api/cron/attendance-reminders|Punch-in / punch-out nudges, working hours only"
+  # 09:30 IST, with the compliance mail: the day's task list is read when the day starts.
+  "resellersos-task-digest|30 9 * * *|/api/cron/task-digest|Morning task list: each person's overdue + today's tasks, owner team summary"
   # Hosting & domain workers. All four are gated INSIDE the route by env flags
   # (DOMAIN_REGISTRATION_LIVE etc.) and by a per-row, per-day command id, so scheduling
   # them is safe: with the flag off they list what they would do and touch nothing.

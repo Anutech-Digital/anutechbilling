@@ -44,6 +44,7 @@ const INTERNAL_SENDERS: Record<string, string> = {
   "app/api/cron/ai-reflection/route.ts": "daily ops note to the platform owner",
   "app/api/cron/ai-support-sla/route.ts": "alert to the company that a ticket is unowned",
   "app/api/cron/compliance-reminders/route.ts": "statutory due dates to the company's owner/accountant",
+  "app/api/cron/task-digest/route.ts": "each team member's own task list + the owner's team summary",
   "app/api/cron/health-digest/route.ts": "error digest to the platform owner",
   "app/api/cron/invoice-dunning/route.ts": "escalation to the company (customer mail goes through sendCustomerEmail)",
   "app/api/cron/provision-hosting/route.ts": "owner alert",

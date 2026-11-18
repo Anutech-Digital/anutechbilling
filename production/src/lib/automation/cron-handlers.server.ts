@@ -35,6 +35,7 @@ export const CRON_ROUTES: Record<AutomationJob, Loader> = {
   "renew-domains":        () => import("@/app/api/cron/renew-domains/route"),
   "renew-hosting":        () => import("@/app/api/cron/renew-hosting/route"),
   "attendance-reminders": () => import("@/app/api/cron/attendance-reminders/route"),
+  "task-digest":          () => import("@/app/api/cron/task-digest/route"),
   "attendance-retention": () => import("@/app/api/cron/attendance-retention/route"),
   "chat-files-cleanup":   () => import("@/app/api/cron/chat-files-cleanup/route"),
   "gmail-inbox":          () => import("@/app/api/cron/gmail-inbox/route"),

@@ -28,6 +28,7 @@ export const JOB_CRON: Record<AutomationJob, string> = {
   "renew-domains":        "0 7 * * *",
   "renew-hosting":        "0 7 * * *",
   "attendance-reminders": "*/30 9-20 * * *",
+  "task-digest":          "30 9 * * *",
   "attendance-retention": "0 2 * * *",
   "chat-files-cleanup":   "15 3 * * *",
   "gmail-inbox":          "* * * * *",
