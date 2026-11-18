@@ -78,7 +78,7 @@ export async function GET(req: Request) {
     const aiReady = Boolean((await resolveGeminiConfig(createClient(), session.tenantId)).apiKey);
     const common = {
       pages: allPages.map(pageView), view: all ? "all" : pageId, ai_paused: Boolean(paused[0]?.ai_paused), todo, aiReady,
-      canReview: canReviewSocial(role), canManage: role === "owner",
+      canReview: canReviewSocial(role), canManage: canReviewSocial(role), /* 18 Nov 2026: marketing runs the AI settings too */
       linkedin: linkedin?.organizationUrn ? { name: linkedin.organizationName ?? "LinkedIn Page" } : null,
     };
     const commentsSql = (forPage: string | null) => withTenant(session, tx => tx.$queryRaw<CommentRow[]>`

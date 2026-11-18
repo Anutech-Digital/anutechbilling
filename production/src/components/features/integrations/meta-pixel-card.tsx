@@ -146,7 +146,7 @@ export function MetaPixelDialog({ open, onOpenChange }: { open: boolean; onOpenC
               <p className="text-3xs text-ink-3 mt-1">While set, purchases show under Test events. Clear it after testing.</p>
             </div>
             {error && <p role="alert" className="text-xs text-danger">{error}</p>}
-            {!canManage && <p className="text-xs text-ink-3">Only the workspace owner can change this.</p>}
+            {!canManage && <p className="text-xs text-ink-3">Only the owner or marketing can change this.</p>}
             <DialogFooter>
               {status?.pixel_id && canManage && (
                 <Button type="button" variant="ghost" onClick={() => remove.mutate()} aria-busy={remove.isPending}>Remove</Button>

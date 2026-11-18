@@ -2,7 +2,8 @@
  * Social content → AI posts settings — R-2729: per Facebook Page (each Page its own brief and mode);
  * "Stop all AI" stays one switch for the company.
  * PUT  — save one Page's weekly AI posts on/off, what to write about, ask-first or autopilot (R-2672),
- *        posts per week, picture links (Instagram needs a picture). Owner only.
+ *        posts per week, picture links (Instagram needs a picture). Owner, manager or marketing (18 Nov 2026,
+ *        Abhishek: the marketing person runs every Marketing Hub setting, incl. the weekly AI job — R-2917).
  * POST — "Plan this week now": the AI plans the week straight away (marketing team, owner or manager — R-2709).
  */
 import { NextResponse } from "next/server";
@@ -38,7 +39,8 @@ async function pageFor(session: NonNullable<Awaited<ReturnType<typeof getTenantS
 export async function PUT(req: Request) {
   const session = await getTenantSession();
   if (!session) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
-  if (await socialRole(session) !== "owner") return NextResponse.json({ error: "Only the owner can change AI posts.", description: "Ask the owner to save these settings." }, { status: 403 });
+  const role = await socialRole(session);
+  if (!canReviewSocial(role)) return NextResponse.json({ error: "Only the owner, a manager or marketing can change AI posts.", description: "Ask the owner to give you marketing access." }, { status: 403 });
   const parsed = body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid settings." }, { status: 400 });
   const { autoDrafts, brief, autopilot, postsPerWeek, pictures } = parsed.data;
@@ -58,7 +60,8 @@ export async function PUT(req: Request) {
     /* The Monday job runs while any Page wants weekly AI posts. */
     const anyOn = await withTenant(session, tx => tx.$queryRaw<{ n: bigint }[]>`
       select count(*) as n from public.social_pages where tenant_id = ${session.tenantId}::uuid and active and auto_drafts`);
-    const { error } = await rpc.call(client, "set_automation_job", { p_job: "social-drafts", p_enabled: Number(anyOn[0]?.n ?? 0) > 0, p_dry_run: false });
+    /* R-2917: owner, manager or marketing switch the Monday AI job (set_social_automation). */
+    const { error } = await rpc.call(client, "set_social_automation", { p_job: "social-drafts", p_enabled: Number(anyOn[0]?.n ?? 0) > 0 });
     if (error) return NextResponse.json({ error: "Saved, but the weekly AI job could not be switched.", description: "Try saving again in a minute." }, { status: 500 });
     await logPersonActivity(session, { pageId: page.page_id, action: "Changed AI settings", detail: !autoDrafts ? "AI posts: off" : autopilot ? `AI posts: autopilot, ${postsPerWeek} a week` : `AI posts: ask me first, ${postsPerWeek} a week` });
     return NextResponse.json({ ok: true, pictures: links.urls.length });
@@ -86,7 +89,7 @@ export async function POST(req: Request) {
 
 /**
  * R-2687: "Stop all AI" / "Resume AI". Stopping is allowed to the owner and managers (safety
- * first); resuming only to the owner. While stopped nothing the AI planned is published.
+ * first). Resuming: owner, manager or marketing (18 Nov 2026, Abhishek). While stopped nothing the AI planned is published.
  */
 export async function PATCH(req: Request) {
   const session = await getTenantSession();
@@ -112,7 +115,6 @@ export async function PATCH(req: Request) {
   }
   const aiPaused = parsed.data.aiPaused!;
   if (!canReviewSocial(role)) return NextResponse.json({ error: "Only the marketing team can stop the AI." }, { status: 403 });
-  if (!aiPaused && role !== "owner") return NextResponse.json({ error: "Only the owner can resume the AI.", description: "Ask the owner to press Resume AI." }, { status: 403 });
   try {
     await withTenant(session, tx => tx.$executeRaw`
       insert into public.social_content_settings (tenant_id, ai_paused, updated_by)

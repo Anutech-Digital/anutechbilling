@@ -169,11 +169,10 @@ select set_config('request.jwt.claims',
   '{"sub":"aaaaaaaa-0000-0000-0000-000000269201","role":"authenticated"}', true);
 do $$
 begin
-  begin
-    perform public.ensure_social_automation_on('social-publish');
-    raise exception 'FAIL D2: marketing reached the switch';
-  exception when insufficient_privilege then null;
-  end;
+  /* R-2917 (18 Nov 2026): marketing now turns the Social growth jobs on too. */
+  if not public.ensure_social_automation_on('social-publish') then
+    raise exception 'FAIL D2: marketing could not turn social-publish on (R-2917)';
+  end if;
 end $$;
 
 select set_config('request.jwt.claims',
@@ -185,8 +184,9 @@ begin
     raise exception 'FAIL D3: another job through this function';
   exception when invalid_parameter_value then null;
   end;
-  if public.ensure_social_automation_on('social-publish') then
-    raise exception 'FAIL D4: a manager turned social-publish on (owner-only, R-897)';
+  /* R-2917: a manager may switch it too; marketing (D2) already turned it on for this company. */
+  if not public.ensure_social_automation_on('social-publish') then
+    raise exception 'FAIL D4: social-publish is not on for the manager after marketing turned it on';
   end if;
 end $$;
 
@@ -203,7 +203,7 @@ begin
   if not public.ensure_social_automation_on('social-publish') then
     raise exception 'FAIL D7: a second call turned it off';
   end if;
-  raise notice 'PASS D: owner turns the two jobs on; manager changes nothing; owner''s OFF stays; others refused';
+  raise notice 'PASS D: owner, manager and marketing turn the jobs on (R-2917); an owner''s OFF stays; other jobs refused';
 end $$;
 reset role;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
@@ -211,8 +211,12 @@ do $$
 begin
   if (select count(*) from public.automation_jobs
        where tenant_id = 'dddddddd-0000-0000-0000-000000269201' and job in ('social-publish','meta-leads-pull')
-         and enabled and changed_by = 'aaaaaaaa-0000-0000-0000-000000269204') <> 2 then
-    raise exception 'FAIL D8: the switched-on rows do not name the owner who did it';
+         and enabled and changed_by is not null) <> 2
+     or (select changed_by from public.automation_jobs where tenant_id = 'dddddddd-0000-0000-0000-000000269201' and job = 'social-publish')
+        is distinct from 'aaaaaaaa-0000-0000-0000-000000269201'::uuid
+     or (select changed_by from public.automation_jobs where tenant_id = 'dddddddd-0000-0000-0000-000000269201' and job = 'meta-leads-pull')
+        is distinct from 'aaaaaaaa-0000-0000-0000-000000269204'::uuid then
+    raise exception 'FAIL D8: the switched-on rows do not name who did it (marketing: social-publish, owner: meta-leads-pull — R-2917)';
   end if;
   if (select automation_state('social-publish', 'dddddddd-0000-0000-0000-000000269201')) <> 'on' then
     raise exception 'FAIL D9: automation_state does not read on';

@@ -41,9 +41,9 @@ export async function DELETE(_req: Request, props: { params: Promise<{ id: strin
   const ctx = await coldCallContext();
   if (ctx instanceof NextResponse) return ctx;
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "No such campaign." }, { status: 404 });
-  if (ctx.role !== "owner" && ctx.role !== "manager") {
+  if (ctx.role !== "owner" && ctx.role !== "manager" && ctx.role !== "marketing") { // 18 Nov 2026: marketing runs every Marketing Hub tab
     return NextResponse.json(
-      { error: "Only the owner or a manager can delete a campaign.", detail: "You can press Pause instead, or ask your manager." },
+      { error: "Only the owner, a manager or marketing can delete a campaign.", detail: "You can press Pause instead, or ask your manager." },
       { status: 403 },
     );
   }

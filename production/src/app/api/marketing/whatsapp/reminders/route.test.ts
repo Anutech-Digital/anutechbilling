@@ -77,9 +77,14 @@ describe("role gate — the switch messages customers", () => {
     for (const [fn, m, body] of [[GET, "GET"], [PATCH, "PATCH", { enabled: true }], [PUT, "PUT", { kind: "invoice_due", template_name: "x", param_map: [] }], [DELETE, "DELETE", { kind: "invoice_due" }]] as const) {
       const res = await fn(req(m, body));
       expect(res.status, m).toBe(403);
-      expect((await res.json()).error).toMatch(/owner or a manager/);
+      expect((await res.json()).error).toMatch(/owner, a manager or marketing/);
     }
     expect(state.calls).toEqual([]);
+  });
+
+  it("marketing is allowed (18 Nov 2026: marketing runs every Marketing Hub tab)", async () => {
+    state.role = "marketing";
+    expect((await GET(req("GET"))).status).toBe(200);
   });
 
   it("manager is allowed", async () => {

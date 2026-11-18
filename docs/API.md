@@ -33,8 +33,8 @@ The real guards are the ratchet tests `src/app/api/admin-client-ratchet.test.ts`
 | inbound secret | 4 |
 | platform admin | 9 |
 | public | 25 |
-| session | 55 |
-| session + role | 130 |
+| session | 56 |
+| session + role | 129 |
 | sign-in flow | 11 |
 | signed token | 15 |
 | webhook signature | 6 |
@@ -382,7 +382,7 @@ The real guards are the ratchet tests `src/app/api/admin-client-ratchet.test.ts`
 | `/api/integrations/meta-ads/callback` | GET | session | [api/integrations/meta-ads/callback/route.ts](../production/src/app/api/integrations/meta-ads/callback/route.ts) |
 | `/api/integrations/meta-ads/connect` | GET | session + role | [api/integrations/meta-ads/connect/route.ts](../production/src/app/api/integrations/meta-ads/connect/route.ts) |
 | `/api/integrations/meta-lead-forms` | GET, PUT | ? | [api/integrations/meta-lead-forms/route.ts](../production/src/app/api/integrations/meta-lead-forms/route.ts) |
-| `/api/integrations/meta-pixel` | GET, POST, DELETE | session + role | [api/integrations/meta-pixel/route.ts](../production/src/app/api/integrations/meta-pixel/route.ts) |
+| `/api/integrations/meta-pixel` | GET, POST, DELETE | session | [api/integrations/meta-pixel/route.ts](../production/src/app/api/integrations/meta-pixel/route.ts) |
 | `/api/integrations/razorpay` | GET, POST, DELETE | webhook signature, session + role | [api/integrations/razorpay/route.ts](../production/src/app/api/integrations/razorpay/route.ts) |
 | `/api/integrations/razorpay/test` | POST | session + role | [api/integrations/razorpay/test/route.ts](../production/src/app/api/integrations/razorpay/test/route.ts) |
 | `/api/integrations/sandbox` | GET, POST, DELETE | session + role | [api/integrations/sandbox/route.ts](../production/src/app/api/integrations/sandbox/route.ts) |

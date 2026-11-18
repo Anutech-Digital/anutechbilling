@@ -461,10 +461,10 @@ export default function SocialContentPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h2 className="text-lg font-semibold">All Pages</h2><p className="mt-0.5 text-xs text-ink-3">Every Page at a glance. Open one to change its AI, strategy and brief.</p></div>
           {state.canReview && (state.ai_paused
-            ? <Button variant="primary" disabled={busy || !state.canManage} title={state.canManage ? undefined : "Only the owner can resume the AI"} onClick={() => void setAiPaused(false)}>Resume AI</Button>
+            ? <Button variant="primary" disabled={busy || !state.canManage} title={state.canManage ? undefined : "Only the owner, a manager or marketing can resume the AI"} onClick={() => void setAiPaused(false)}>Resume AI</Button>
             : <Button variant="danger" disabled={busy} onClick={() => void setAiPaused(true)}>Stop all AI</Button>)}
         </div>
-        {state.ai_paused && <p className="rounded-lg bg-rose-soft px-3 py-2 text-sm text-rose-ink">The AI is stopped on every Page until the owner presses Resume AI.</p>}
+        {state.ai_paused && <p className="rounded-lg bg-rose-soft px-3 py-2 text-sm text-rose-ink">The AI is stopped on every Page until someone in marketing presses Resume AI.</p>}
         <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm">
           <thead><tr className="border-b border-hairline text-left text-xs text-ink-3"><th className="py-2 pr-3 font-medium">Page</th><th className="py-2 pr-3 font-medium">Facebook followers</th><th className="py-2 pr-3 font-medium">Instagram followers</th><th className="py-2 pr-3 font-medium">Waiting approval</th><th className="py-2 pr-3 font-medium">Comments to answer</th><th className="py-2 pr-3 font-medium">AI posts</th><th className="py-2 font-medium"><span className="sr-only">Open</span></th></tr></thead>
           <tbody>{state.overview.map((o) => <tr key={o.page_id} className="border-b border-hairline last:border-0">
@@ -545,10 +545,10 @@ export default function SocialContentPage() {
             <p className="mt-1 text-sm text-ink-3">Choose what the AI does for each action. Everything it does shows in Activity, where you can stop it.</p>
           </div></div>
           {state.canReview && (state.settings.ai_paused
-            ? <Button variant="primary" disabled={busy || !state.canManage} title={state.canManage ? undefined : "Only the owner can resume the AI"} onClick={() => void setAiPaused(false)}>Resume AI</Button>
+            ? <Button variant="primary" disabled={busy || !state.canManage} title={state.canManage ? undefined : "Only the owner, a manager or marketing can resume the AI"} onClick={() => void setAiPaused(false)}>Resume AI</Button>
             : <Button variant="danger" disabled={busy} onClick={() => void setAiPaused(true)}>Stop all AI</Button>)}
         </div>
-        {state.settings.ai_paused && <p className="rounded-lg bg-rose-soft px-3 py-2 text-sm text-rose-ink">The AI is stopped. Nothing it planned will be posted, and it plans nothing new, until the owner presses Resume AI. Posts people wrote still go out.</p>}
+        {state.settings.ai_paused && <p className="rounded-lg bg-rose-soft px-3 py-2 text-sm text-rose-ink">The AI is stopped. Nothing it planned will be posted, and it plans nothing new, until someone in marketing presses Resume AI. Posts people wrote still go out.</p>}
         {!state.aiReady && <p className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">AI is not set up yet. <a className="font-medium underline" href="/settings?tab=integrations">Add a Gemini key in Settings → Integrations (AI assistant → Setup)</a>, then come back.</p>}
 
         <div className="divide-y divide-hairline rounded-xl border border-hairline">
@@ -591,7 +591,7 @@ export default function SocialContentPage() {
           {settingsDirty && <span className="text-xs text-amber-ink">Not saved yet</span>}
           <Button disabled={busy || !settingsDirty} onClick={() => void saveSettings()}>Save AI settings</Button>
         </div>}
-        {!state.canManage && <p className="text-xs text-ink-3">Only the owner can change these settings.</p>}
+        {!state.canManage && <p className="text-xs text-ink-3">Only the owner, a manager or marketing can change these settings.</p>}
         {planNote && <p role="status" className={planNote.warn ? "rounded-lg bg-amber-soft px-3 py-2 text-sm text-amber-ink" : "rounded-lg bg-paper-2 px-3 py-2 text-sm text-ink-2"}>{planNote.text}</p>}
       </div></Card>}
 

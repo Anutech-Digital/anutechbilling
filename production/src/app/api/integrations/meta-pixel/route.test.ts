@@ -64,7 +64,12 @@ describe("R-1979 Meta integration route", () => {
     expect(db.writes).toHaveLength(0);
   });
 
-  it("only the owner may save or clear", async () => {
+  it("marketing may save (18 Nov 2026)", async () => {
+    db.me = { tenant_id: "T1", role: "marketing" };
+    expect((await post({ pixel_id: "1234567890123456" })).status).toBe(200);
+  });
+
+  it("only the owner or marketing may save or clear", async () => {
     db.me = { tenant_id: "T1", role: "manager" };
     expect((await post({ pixel_id: "1234567890123456" })).status).toBe(403);
     expect((await DELETE()).status).toBe(403);
