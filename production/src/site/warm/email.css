@@ -243,22 +243,77 @@
 .anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > p:nth-of-type(2) { font-size: 12px !important; }
 
 /* The popular edition: a dark forest card (its inline colours are --hv-* variables, re-set here). */
-.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="background:#EEF7F0"] {
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] {
   --hv-ink: #FFFFFF; --hv-ink2: #D5E3DD; --hv-body: #D5E3DD; --hv-sec: #B4C8C0; --hv-blue: #F4B740; --hv-hair: rgba(255,255,255,0.14);
   background: var(--w-forest) !important; border: 2px solid var(--w-marigold) !important; box-shadow: 0 30px 60px -24px rgba(18,49,42,0.55) !important;
 }
-.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="background:#EEF7F0"] > a[style*="--hv-btn-primary"] {
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] > a[style*="--hv-btn-primary"] {
   background: var(--w-marigold) !important; color: var(--w-on-marigold) !important; border-color: var(--w-marigold) !important;
 }
-.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="background:#EEF7F0"] > div[style*="padding:7px 10px"] {
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] > div[style*="padding:7px 10px"] {
   background: rgba(255,255,255,0.08) !important; border: 1px solid rgba(255,255,255,0.16);
 }
-.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="background:#EEF7F0"] > div[style*="margin-bottom:8px"] { color: var(--w-marigold) !important; }
-.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="background:#EEF7F0"] > span:first-child {
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] > div[style*="margin-bottom:8px"] { color: var(--w-marigold) !important; }
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] > span:first-child {
   left: 50% !important; top: -13px !important; transform: translateX(-50%); white-space: nowrap;
   font-family: var(--font-site-body), "Inter", sans-serif !important; font-size: 12px !important; font-weight: 700 !important; letter-spacing: 0 !important;
   text-transform: none !important; background: var(--w-marigold) !important; color: var(--w-on-marigold) !important; padding: 4px 12px !important;
 }
+
+/* Edition cards, polish (owner, 18 Nov 2026: "Improve this section design"). The popular card is
+   matched by its tint (#EEF7F0) wherever it sits in the inline style — the markup now writes
+   background:var(--hv-green-t, #EEF7F0), which the old "background:#EEF7F0" match missed, so the
+   forest card had fallen back to plain white. Same words, same order. */
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child { align-items: stretch !important; }
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div {
+  padding: 26px 24px 22px !important;
+  transition: transform .25s cubic-bezier(.22,.61,.36,1), box-shadow .25s ease, border-color .2s ease;
+}
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div:hover {
+  transform: translateY(-4px); border-color: var(--w-line-strong) !important; box-shadow: 0 26px 50px -28px rgba(18,49,42,0.4) !important;
+}
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"]:hover { border-color: var(--w-marigold) !important; box-shadow: 0 34px 64px -26px rgba(18,49,42,0.6) !important; }
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div:hover { transform: none; }
+}
+/* On desktop the popular card stands a little taller than its neighbours. */
+@media (min-width: 980px) {
+  /* room for the taller popular card and its "Most teams pick this" tag under the users strip */
+  .anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child { padding-top: 34px; }
+  .anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] { margin-block: -14px 0; padding-top: 34px !important; padding-bottom: 30px !important; }
+}
+/* Edition name a touch larger; the "who it is for" line under it in the muted colour. */
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > div:first-of-type { font-size: 21px !important; font-weight: 800 !important; letter-spacing: -0.02em !important; }
+/* "Contact us for pricing" (Business Plus) — the same weight as a price heading, not a sub-line. */
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > div[style*="font-size:22px"] {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 24px !important; font-weight: 800 !important; letter-spacing: -0.02em !important;
+}
+/* Business Plus' "Get a quote" is its one action, so it is the solid teal button; "Ask on WhatsApp" stays a link. */
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div:not([style*="#EEF7F0"]) > a[href^="/quote"][style*="--hv-btn-primary"] {
+  background: var(--w-teal) !important; color: var(--w-on-teal) !important; border-color: var(--w-teal) !important;
+}
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > a[style*="--hv-btn-primary"]:hover { filter: brightness(0.96); }
+/* Feature ticks: a small check in a soft circle (teal on white cards, marigold on the forest card). */
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > div[style*="flex:1"] { gap: 10px !important; }
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > div[style*="flex:1"] > span { align-items: flex-start; line-height: 1.45 !important; }
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > div[style*="flex:1"] > span > svg {
+  box-sizing: content-box; width: 12px !important; height: 12px !important; padding: 3px; margin-top: 1px !important; border-radius: 50%;
+  background: var(--w-mint); stroke: var(--w-teal) !important; stroke-width: 2.6;
+}
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] > div[style*="flex:1"] > span > svg {
+  background: rgba(244,183,64,0.18); stroke: var(--w-marigold) !important;
+}
+/* "Try free → · Get a written quote →": a footer row under a hairline, plain teal links (no underline). */
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > div:last-child:has(a) {
+  margin-top: 18px !important; padding-top: 14px !important; border-top: 1px solid var(--w-line);
+  justify-content: space-between !important; gap: 12px !important; font-size: 14px !important;
+}
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > div:last-child:has(a) a {
+  text-decoration: none !important; color: var(--w-teal) !important; font-weight: 700;
+}
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div > div:last-child:has(a) a:hover { text-decoration: underline !important; text-underline-offset: 3px; }
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] > div:last-child:has(a) { border-top-color: rgba(255,255,255,0.14); }
+.anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] > div:last-child:has(a) a { color: var(--w-marigold) !important; }
 
 /* ── Feature list and suite compare: white rounded cards ──────────────────────────────────── */
 .anutech-site[data-site-theme="warm"] main > div:has(> section#products) > section#features { background: transparent !important; border: 0 !important; }
@@ -378,7 +433,7 @@
   .anutech-site[data-site-theme="warm"] section#products > div:first-child { position: static !important; padding: 16px !important; }
   .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:nth-child(2) { justify-content: flex-start !important; }
   .anutech-site[data-site-theme="warm"] section#products > div:first-child > div:last-child { justify-content: space-between !important; }
-  .anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="background:#EEF7F0"] { margin-top: 8px; }
+  .anutech-site[data-site-theme="warm"] section#products > div:nth-child(3) > div:last-child > div[style*="#EEF7F0"] { margin-top: 8px; }
   .anutech-site[data-site-theme="warm"] section#anutech-mail > div { padding: 32px 24px !important; }
 }
 @media (max-width: 639px) {
