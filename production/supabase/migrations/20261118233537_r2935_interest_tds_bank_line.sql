@@ -146,8 +146,8 @@ declare
   v_tds     integer;
   v_tds_row text;
 begin
-  v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+  v_trusted := coalesce(public.current_request_role(), '') = 'service_role'
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_caller := public.current_tenant_id();
   if v_caller is null and not v_trusted then
