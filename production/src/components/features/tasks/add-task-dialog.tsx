@@ -35,12 +35,14 @@ import { Button } from "@/components/ui/button";
 import { TaskChatLink } from "@/components/features/tasks/task-notes";
 import { useCreateTask, useUpdateTask } from "@/lib/queries/tasks";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { toast } from "sonner";
+import { ASSIGN_ME, NOT_TOLD_MESSAGE, assigneeToTell, meNotKnownYet, ownerPatch, tellAssignee } from "./assign";
 import {
   TaskRelatedPicker, relatedToLinkColumns, type RelatedValue,
 } from "@/components/features/tasks/task-related-picker";
 import type { TaskKind, Task } from "@/lib/supabase/database.types";
 
-const ASSIGN_ME = "__me__";
 
 const KINDS: { value: TaskKind; label: string; icon: string }[] = [
   { value: "call",     label: "Call",        icon: "📞" },
@@ -147,6 +149,7 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
   const { data: members = [] } = useTeamMembers();
+  const { data: me } = useCurrentUser();
   const isEdit = Boolean(task);
 
   // Default due: in 1 hour. Computed once per mount — defaultValues is read
@@ -192,9 +195,20 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
   const onSubmit = async (data: FormData) => {
     // Local datetime → ISO UTC
     const dueISO = new Date(data.due_at).toISOString();
-    // "Me" (create) leaves owner_id to the RPC default (creator). A real member
-    // id assigns/reassigns to that teammate.
-    const chosenOwner = data.assignee && data.assignee !== ASSIGN_ME ? data.assignee : null;
+    // R-2925: "Me" on a new task leaves owner_id to the default (creator); on an edit of
+    // someone else's task it takes the task. A member id assigns / reassigns to that teammate.
+    const meId = me?.userId ?? null;
+    const who = { assignee: data.assignee, isEdit: Boolean(task), meId, currentOwnerId: task?.owner_id };
+    if (meNotKnownYet(who)) {
+      toast.warning("Still loading your profile — please press Save again in a moment.");
+      return;
+    }
+    const owner = ownerPatch(who);
+    // The new owner is told (bell + email) — never me, never the person who already had it.
+    const tell = (taskId: string, previousOwnerId: string | null | undefined) => {
+      if (!assigneeToTell({ newOwnerId: owner.owner_id, previousOwnerId, meId })) return;
+      void tellAssignee(taskId).then((ok) => { if (!ok) toast.warning(NOT_TOLD_MESSAGE); });
+    };
 
     if (task) {
       // Edit — editable fields + the entity link (which the user can now change).
@@ -205,22 +219,24 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
           kind:   data.kind,
           due_at: dueISO,
           notes:  data.notes?.trim() || null,
-          ...(chosenOwner ? { owner_id: chosenOwner } : {}),
+          ...owner,
           ...relatedToLinkColumns(related),
         },
       });
+      tell(task.id, task.owner_id);
       onOpenChange(false);
       return;
     }
 
-    await createTask.mutateAsync({
+    const created = await createTask.mutateAsync({
       title:  data.title.trim(),
       kind:   data.kind,
       due_at: dueISO,
       notes:  data.notes?.trim() || null,
-      ...(chosenOwner ? { owner_id: chosenOwner } : {}),
+      ...owner,
       ...relatedToLinkColumns(related),
     });
+    if (created?.id) tell(created.id, null);
     onOpenChange(false);
   };
 

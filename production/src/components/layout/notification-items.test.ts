@@ -211,6 +211,19 @@ describe("R-2327 bell order: a new chat item is on top", () => {
   });
 });
 
+describe("R-2925 a task given to me", () => {
+  it("shows with the task icon (not the plain bell), unread, and opens that task", () => {
+    const row = {
+      id: "n9", kind: "task.assigned", title: "New task from Pardeep: Call Acme", body: "Due 19 Nov 2026, 3:30 pm",
+      href: "/tasks?tab=all&task=T1", entity_id: "T1", read_at: null, created_at: new Date(NOW - 60_000).toISOString(),
+    } as unknown as NotificationRow;
+    const [item] = buildNotifications({ dbNotifs: [row], readIds: new Set(), now: NOW });
+    expect(item).toMatchObject({ icon: "clock", tone: "indigo", unread: true, link: "/tasks?tab=all&task=T1" });
+    expect(item.title).toBe("New task from Pardeep: Call Acme");
+    expect(item.meta).toContain("Due 19 Nov 2026");
+  });
+});
+
 describe("R-2924 bell shows only MY tasks; owner/manager may switch to the team's", () => {
   const ME = "u-me", OTHER = "u-other";
   const owned = (id: string, owner: string | null, dueMs = NOW - DAY) =>

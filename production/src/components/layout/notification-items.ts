@@ -88,6 +88,8 @@ const KIND_META: Record<string, { icon: string; tone: NotifTone }> = {
   // R-2303: team chat — the href (/team-chat?c=<channel>&m=<message>) opens that exact message.
   "chat.mention":     { icon: "chat",   tone: "amber"   },
   "chat.dm":          { icon: "chat",   tone: "indigo"  },
+  // R-2925: a task given to me (Add / Edit task, or made from a team chat post — R-2304).
+  "task.assigned":    { icon: "clock",  tone: "indigo"  },
 };
 
 /** End-of-today and start-of-today as UTC ms, computed in IST (matches the
