@@ -766,6 +766,7 @@ export const APP_NAV: NavSection[] = [
           { id: "profit-by-product",   href: "/reports/profit",           label: "Profit by Product",   icon: "chart", roles: OM, group: "Business" },
           { id: "saas-metrics",        href: "/accounting/saas-metrics",  label: "SaaS Metrics (MRR)",  icon: "refresh", roles: OM, group: "Business", sellModes: SUBSCRIPTION_SELL_MODES },
           { id: "purchases-report",    href: "/reports/purchases",        label: "Purchases Report",    icon: "cart", roles: BOOKS, group: "Business" },
+          { id: "team-tasks-report",   href: "/reports/team-tasks",       label: "Team tasks",          icon: "users", roles: OM, group: "Business" }, // R-2932
           { id: "gst-owner",           href: "/accounting/gst",           label: "GST Reports",         icon: "file", roles: BOOKS, group: "Tax" },
           { id: "tds-owner",           href: "/accounting/tds-receivable",label: "TDS Receivable",      icon: "rupee", roles: BOOKS, group: "Tax" },
           { id: "tds-year-end",        href: "/accounting/tds-receivable/year-end", label: "TDS Year-end", icon: "file", roles: BOOKS, group: "Tax" },
