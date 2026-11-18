@@ -740,79 +740,158 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════════════════════════════
-   STATUS (/status — artboard Status; page app/(marketing)/status renders its own markup).
-   Title and lead first, then the overall state as a wide rounded banner with a dot, the "last
-   checked" line, and the services as one white rounded list: name, what it covers and what it is
-   doing on the left, the state as a tinted pill on the right. Every colour that means a state
-   stays the page's own (inline), so "Down" still reads red and "Operational" green.
+   STATUS (/status; page app/(marketing)/status renders its own markup).
+   Owner, 18 Nov 2026: "Improve this page design. Current one looks way to basic". Now:
+   - a dark forest hero band across the page (like the home, /email and /ssl heroes): the title in
+     white, the lead, the overall state as a big light card with a live pulsing dot, the
+     "last checked" line;
+   - the services as a grid of white cards: an icon tile per service, the state pill top right,
+     a coloured top edge for the state (green / marigold / red; grey for "Not configured", which is
+     not a fault), the name, what it covers, and what it is doing under a hairline.
+   Same words, same order. Every colour that means a state is picked from the page's own inline
+   state colour, so "Down" still reads red and "Operational" green.
    ════════════════════════════════════════════════════════════════════════════════════════════ */
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section:first-child { padding: clamp(22px, 2.88vw, 40px) 0 clamp(25px, 3.2vw, 45px); }
-/* Content box = the navbar's (site-warm.css --w-row / --w-gutter), so the title, banner and service
-   list line up with the header, CTA band and footer — it was a 948px column (owner, 16 Nov 2026). */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section:first-child {
+  padding: 0 0 clamp(36px, 4.6vw, 64px); overflow-x: clip;
+}
+/* The wrap is a one-column grid: rows 1–4 are the hero (the band is a pseudo element behind them),
+   the service cards follow in their own grid (row 5, see below). Content box = the navbar's. */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap {
-  max-width: var(--w-row) !important; padding-left: var(--w-gutter); padding-right: var(--w-gutter); display: flex; flex-direction: column;
+  max-width: var(--w-row) !important; padding-left: var(--w-gutter); padding-right: var(--w-gutter);
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); column-gap: 20px; row-gap: 0; align-items: stretch;
+  position: relative; isolation: isolate;
 }
+/* Five services, no empty slot: the two core ones (website, database) side by side, the three
+   connected ones (payments, domains, email) in a row of three under them. */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) { grid-column: span 2; }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:is(:nth-child(5), :nth-child(6)) { grid-column: span 3; }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap::before {
+  content: ""; grid-column: 1 / -1; grid-row: 1 / 5; z-index: -1; pointer-events: none;
+  margin: 0 calc(50% - 50vw);
+  background:
+    radial-gradient(circle at 88% 18%, rgba(63, 181, 158, 0.28) 0, rgba(63, 181, 158, 0) 38%),
+    radial-gradient(circle at 8% 110%, rgba(244, 185, 66, 0.16) 0, rgba(244, 185, 66, 0) 34%),
+    linear-gradient(135deg, #12312A 0%, #174238 55%, #0E2A24 100%);
+}
+/* Hero: title, lead, the overall state, the last-checked line. */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > h1 {
-  order: 1; margin: 0 0 14px !important; font-size: clamp(2.4rem, 5vw, 3.06rem); line-height: 1.06; color: var(--w-ink);
+  grid-column: 1 / -1; grid-row: 1; margin: 0 !important; padding-top: clamp(44px, 6vw, 84px);
+  font-size: clamp(2.4rem, 5vw, 3.3rem); line-height: 1.05; letter-spacing: -0.03em; color: #FFFFFF;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.25);
 }
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .body-lg { order: 2; margin: 0 !important; font-size: 16.5px; color: var(--w-muted); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .body-lg {
+  grid-column: 1 / -1; grid-row: 2; margin: 12px 0 0 !important; max-width: 640px; font-size: 17px; color: var(--w-on-forest);
+}
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"] {
-  order: 3; display: flex !important; align-items: center; gap: 14px; margin: 24px 0 14px !important; padding: 16px 20px !important; border-radius: 16px !important;
-  border-width: 1.5px !important; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 18px; font-weight: 800; letter-spacing: 0.02em;
+  grid-column: 1 / -1; grid-row: 3; display: flex !important; align-items: center; gap: 16px; margin: 28px 0 0 !important;
+  padding: 20px 24px !important; border-radius: 20px !important; border-width: 1.5px !important;
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: clamp(17px, 1.9vw, 21px); font-weight: 800; letter-spacing: 0.02em;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
 }
+/* The dot, with a soft ring that pulses (a still ring for reduced motion). */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"]::before {
   content: ""; flex: none; width: 14px; height: 14px; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 18%, transparent);
+  animation: w-status-pulse 2.4s ease-out infinite;
 }
-/* The banner in the design's colours for each overall state (picked from the page's own inline
-   state colour): a tinted ground, a mid-tint border, a strong dot and dark text. */
+@keyframes w-status-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 40%, transparent); }
+  70%  { box-shadow: 0 0 0 12px color-mix(in srgb, currentColor 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"]::before { animation: none; }
+}
+/* The banner's colours per overall state (from the page's own inline state colour). */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"][style*="--success"] { background: #EEF7F2 !important; border-color: #9ED3C3 !important; color: #0A4F44 !important; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"][style*="--success"]::before { background: #0E6B5C; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"][style*="--warning"] { background: #FDF1D6 !important; border-color: #F4D27A !important; color: #7A4B00 !important; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"][style*="--warning"]::before { background: #D99A1E; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"][style*="--danger"] { background: #FDE8E4 !important; border-color: #E9A89B !important; color: #7A1F10 !important; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"][style*="--danger"]::before { background: #B3321D; }
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > p.meta { order: 4; margin: 0 0 34px !important; font-size: 14px; color: var(--w-muted-2); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > p.meta {
+  grid-column: 1 / -1; grid-row: 4; margin: 14px 0 0 !important; padding-bottom: clamp(40px, 5vw, 72px);
+  font-size: 14px; color: rgba(225, 238, 232, 0.78);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > p.meta time { color: #FFFFFF; font-weight: 600; }
 
-/* The service list. */
+/* ── The service cards ───────────────────────────────────────────────────────────────────────── */
+/* Card grid inside each card: icon tile + state pill on the first line; then the name, what it
+   covers, and (under a hairline) what it is doing. The header row is display: contents so its
+   children join this grid. */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) {
-  order: 5; position: relative; padding: 22px 24px !important; background: var(--w-surface);
-  border: 1px solid var(--w-line); border-top: 1px solid #EEF2EE !important; border-bottom: 0;
+  position: relative; margin-top: 28px; padding: 24px !important; overflow: hidden;
+  display: grid; grid-template-columns: 48px minmax(0, 1fr) auto auto; grid-template-rows: auto auto auto 1fr; column-gap: 0; row-gap: 0; align-items: center;
+  background: var(--w-surface); border: 1px solid var(--w-line) !important; border-radius: 22px;
+  box-shadow: 0 18px 40px -24px rgba(18, 49, 42, 0.22);
+  transition: transform .25s cubic-bezier(.22,.61,.36,1), box-shadow .25s ease, border-color .2s ease;
 }
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > p.meta + div {
-  border-top-color: var(--w-line) !important; border-radius: 22px 22px 0 0;
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label):hover {
+  transform: translateY(-3px); border-color: var(--w-line-strong) !important; box-shadow: 0 26px 50px -26px rgba(18, 49, 42, 0.32);
 }
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:last-child {
-  /* The list's shadow sits on its last row; a negative spread keeps it below the list — a plain
-     60px blur climbed over the row above as a grey haze. */
-  border-bottom: 1px solid var(--w-line); border-radius: 0 0 22px 22px; box-shadow: 0 30px 60px -30px rgba(18, 49, 42, 0.12);
+@media (prefers-reduced-motion: reduce) {
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label):hover { transform: none; }
 }
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > p.meta + div:last-child { border-radius: 22px; }
-/* One grid per service, the explanation line included (it is a sibling of the header row in the
-   markup): name / what it covers / what it is doing on the left, the state pill on the right,
-   centred on the whole block — before, the pill centred on the first two lines only and sat high.
-   The header row itself is display: contents so its children join this grid. */
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 0; row-gap: 2px; align-items: center;
+/* The state's top edge (a 4px bar, drawn by the card's ::after). */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label)::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: #C9D3CD;
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label):has(.mono[style*="--success"])::after { background: linear-gradient(90deg, #0E6B5C, #3FB59E); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label):has(.mono[style*="--warning"])::after { background: linear-gradient(90deg, #D99A1E, #F4C460); }
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label):has(.mono[style*="--danger"])::after { background: linear-gradient(90deg, #B3321D, #E2664F); }
+/* Icon tile (the card's ::before): a mint square with the service's icon drawn as its background. */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label)::before {
+  content: ""; grid-column: 1; grid-row: 1; width: 48px; height: 48px; border-radius: 14px;
+  background: var(--w-mint) center / 24px 24px no-repeat;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E");
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label):has(.mono[style*="--text-secondary"])::before { background-color: #EEF2EE; }
+/* Website & client area — a browser window */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:nth-child(5)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='15' rx='2.5'/%3E%3Cpath d='M3 9h18M6.5 6.8h.01M9 6.8h.01'/%3E%3C/svg%3E");
+}
+/* Database — a cylinder */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:nth-child(6)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cellipse cx='12' cy='5.5' rx='7.5' ry='2.8'/%3E%3Cpath d='M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8'/%3E%3C/svg%3E");
+}
+/* Payment gateway — a card */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:nth-child(7)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='5' width='19' height='14' rx='2.5'/%3E%3Cpath d='M2.5 10h19M6.5 15h4'/%3E%3C/svg%3E");
+}
+/* Domain registry API — a globe */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:nth-child(8)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9S9.4 5.6 12 3z'/%3E%3C/svg%3E");
+}
+/* Email sending — an envelope */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:nth-child(9)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B5C' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2.5'/%3E%3Cpath d='M3.5 7l8.5 6 8.5-6'/%3E%3C/svg%3E");
 }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div { display: contents !important; }
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span:nth-child(2) {
-  grid-column: 1; grid-row: 1; padding-right: 20px; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif; font-size: 18px !important; font-weight: 700 !important; color: var(--w-ink);
-}
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .meta { grid-column: 1; grid-row: 2; padding-right: 20px; font-size: 14px; color: var(--w-muted-2); }
+/* The flex spacer from the markup sits harmlessly in the icon's cell. */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span:nth-child(4) { grid-column: 1; grid-row: 1; }
-.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > p.meta {
-  grid-column: 1; grid-row: 3; padding-right: 20px; margin: 4px 0 0 !important; font-size: 14px; color: var(--w-muted);
+/* Name, what it covers, what it is doing. */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span:nth-child(2) {
+  grid-column: 1 / -1; grid-row: 2; margin-top: 18px; font-family: var(--font-site-heading), "Plus Jakarta Sans", sans-serif;
+  font-size: 19px !important; font-weight: 800 !important; letter-spacing: -0.01em; color: var(--w-ink);
 }
-/* State pill: the dot sits inside the pill (same cell, drawn on top), both centred on the block. */
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .meta {
+  grid-column: 1 / -1; grid-row: 3; margin-top: 4px; font-size: 14px; color: var(--w-muted-2);
+}
+.anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > p.meta {
+  grid-column: 1 / -1; grid-row: 4; align-self: end; margin: 16px 0 0 !important; padding-top: 14px; border-top: 1px solid #EEF2EE;
+  font-size: 14.5px; line-height: 1.5; color: var(--w-ink-2);
+}
+/* State pill, top right; the dot sits inside it (same cell, drawn on top). */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .mono {
-  grid-column: 3; grid-row: 1 / span 3; justify-self: end; align-self: center; display: inline-flex; align-items: center; gap: 0; min-height: 0; padding: 6px 14px 6px 31px;
-  border-radius: 999px; font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 14px !important; font-weight: 700 !important; line-height: 1.6; white-space: nowrap;
+  grid-column: 4; grid-row: 1; justify-self: end; align-self: center; display: inline-flex; align-items: center; min-height: 0; padding: 6px 14px 6px 30px;
+  border-radius: 999px; font-family: var(--font-site-body), "Inter", system-ui, sans-serif; font-size: 13.5px !important; font-weight: 700 !important; line-height: 1.6; white-space: nowrap;
 }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span[aria-hidden] {
-  grid-column: 2; grid-row: 1 / span 3; align-self: center; z-index: 1; margin-left: 14px; margin-right: -23px; position: relative; box-sizing: border-box;
+  /* Its own column of zero width (14px + 9px dot − 23px), so it is drawn 14px into the pill's left padding. */
+  grid-column: 3; grid-row: 1; align-self: center; z-index: 1; position: relative; box-sizing: border-box;
+  margin-left: 14px; margin-right: -23px;
 }
-/* The design's colours per state (from the page's own inline state colour). "Not configured" is
-   not a fault — a hollow grey ring, not a solid dot. */
+/* The design's colours per state (from the page's own inline state colour). */
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .mono[style*="--success"] { color: #0A4F44 !important; background: #DCEFE8; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .mono[style*="--warning"] { color: #7A4B00 !important; background: #FDF1D6; }
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .mono[style*="--danger"] { color: #7A1F10 !important; background: #FDE8E4; }
@@ -823,13 +902,16 @@
 .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span[aria-hidden][style*="--text-secondary"] {
   background: transparent !important; border: 2px solid #8A9690; width: 10px !important; height: 10px !important;
 }
-@media (max-width: 640px) {
-  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > :is(h1, .body-lg, p.meta) { text-align: center; }
-  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"] { font-size: 16px; padding: 14px 16px !important; }
-  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) { padding: 18px 16px !important; grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
-  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span:not([aria-hidden], .mono),
-  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > p.meta { grid-column: 1 / -1; padding-right: 0; }
-  /* Phone: the pill goes under the text, left-aligned, the dot inside it. */
-  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > span[aria-hidden] { grid-column: 1 / -1; grid-row: 4; justify-self: start; margin: 8px 0 0 14px; }
-  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) > div > .mono { grid-column: 1 / -1; grid-row: 4; justify-self: start; margin-top: 8px; }
+/* Two cards a row on tablets, one on phones. */
+@media (max-width: 1099px) {
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) { grid-column: span 1; }
+  /* An odd last card takes the whole row. */
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label):last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
+@media (max-width: 680px) {
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap { grid-template-columns: minmax(0, 1fr); }
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) { margin-top: 16px; padding: 20px !important; }
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:nth-child(5) { margin-top: 24px; }
+  .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > .mono-label[role="status"] { padding: 16px 18px !important; gap: 14px; }
 }
