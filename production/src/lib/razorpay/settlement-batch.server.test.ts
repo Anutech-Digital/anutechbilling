@@ -290,3 +290,58 @@ describe("R-2745 runMonthBatch — the fee expense day comes back with each book
     expect(r2.result.booked[0]).toMatchObject({ txnId: "L2", feeDate: "2025-10-04", feeDateWhy: null });
   });
 });
+
+/* R-2918 — the owner's case: a settlement line blocked only by a payment that is in no app payment. */
+describe("R-2918 month batch — Book as Other income", () => {
+  it("the table lists the not-in-the-app payment of the blocked line (amount, suggested only when ₹200 or less) — nothing booked", async () => {
+    const r = await loadMonthBatch(args());
+    if (r.state !== "batch") throw new Error(JSON.stringify(r));
+    expect(r.batch.rows[2]).toMatchObject({ txnId: "L3", ready: false, unmatched: [{ rzpId: "pay_UNKNOWN", amount: 5900, suggest: false }] });
+    expect(r.batch.rows[2].unmatched?.[0].problem).toBe(r.batch.rows[2].blockers[0]);
+    expect(r.batch.rows[0].unmatched).toBeUndefined();
+    expect(db.rpc).toEqual([]);
+  });
+
+  it("without the pick the blocked line is refused and nothing goes to the database as Other income", async () => {
+    const r = await runMonthBatch(args({ txnIds: ["L1", "L3"] }));
+    if (r.state !== "done") throw new Error("not done");
+    expect(r.result.booked.map((b) => b.txnId)).toEqual(["L1"]);
+    expect(r.result.refused).toEqual([{ txnId: "L3", message: expect.stringMatching(/pay_UNKNOWN .* is not in the app/) }]);
+    for (const c of db.rpc.filter((x) => x.fn === "reconcile_razorpay_settlement_in_run")) {
+      expect((c.args.p_settlement as { other_income?: unknown }).other_income).toBeUndefined();
+    }
+  });
+
+  it("with the pick the line is planned Ready on the server and booked with other_income from Razorpay's own amount; the result carries what was booked", async () => {
+    db.rpcExtra = { other_income: 5900 };
+    const r = await runMonthBatch(args({ txnIds: ["L3"], otherIncome: { L3: ["pay_UNKNOWN"] } }));
+    if (r.state !== "done") throw new Error("not done");
+    expect(r.result.refused).toEqual([]);
+    expect(r.result.booked).toMatchObject([{ txnId: "L3", settlementId: "setl_C", fee: 118, otherIncome: 5900 }]);
+    const arg = db.rpc.find((c) => c.fn === "reconcile_razorpay_settlement_in_run")?.args.p_settlement;
+    expect(arg).toMatchObject({ id: "setl_C", fee_paise: 11800, payments: [], other_income: [{ rzp_id: "pay_UNKNOWN", amount_paise: 590000 }] });
+  });
+
+  it("review: a not-in-the-app payment that a same-amount unbanked app receipt could be is NOT listed for the tick, and a pick sent for it is not honoured", async () => {
+    db.tables.payments.push({ ...pay("hand1", "", 5900), reference: null, received_at: "2025-10-07T10:00:00Z" });
+    const t = await loadMonthBatch(args());
+    if (t.state !== "batch") throw new Error(JSON.stringify(t));
+    expect(t.batch.rows[2]).toMatchObject({ txnId: "L3", ready: false });
+    expect(t.batch.rows[2].unmatched).toBeUndefined();
+    const r = await runMonthBatch(args({ txnIds: ["L3"], otherIncome: { L3: ["pay_UNKNOWN"] } }));
+    if (r.state !== "done") throw new Error("not done");
+    expect(r.result.booked).toEqual([]);
+    expect(r.result.refused.map((x) => x.txnId)).toEqual(["L3"]);
+    expect(db.rpc).toEqual([]);
+  });
+
+  it("a pick sent for another line, or for a payment the app has, changes nothing", async () => {
+    const r = await runMonthBatch(args({ txnIds: ["L1", "L3"], otherIncome: { L1: ["pay_A1", "pay_UNKNOWN"] } }));
+    if (r.state !== "done") throw new Error("not done");
+    expect(r.result.booked.map((b) => b.txnId)).toEqual(["L1"]);
+    expect(r.result.refused.map((x) => x.txnId)).toEqual(["L3"]);
+    const arg = db.rpc.find((c) => c.fn === "reconcile_razorpay_settlement_in_run")?.args.p_settlement as { payments: unknown[]; other_income?: unknown };
+    expect(arg.other_income).toBeUndefined();
+    expect(arg.payments).toHaveLength(1);
+  });
+});

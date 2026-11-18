@@ -26,6 +26,9 @@ export interface SettlementReconciled {
   fee_expense_date: string | null;
   /** R-2745: why that day is not the bank line's day (R-2621 gst_filed_why); null when it did not move */
   fee_date_why: string | null;
+  /** R-2918: rupees of the settlement booked as Other income (payments that are in no app payment); 0 / absent when none */
+  other_income?: number;
+  other_income_payments?: number;
 }
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
@@ -50,8 +53,9 @@ export function useRazorpaySettlement(txnId: string | null, settlementId: string
     queryFn: async () => {
       const qs = new URLSearchParams({ txnId: txnId as string });
       if (settlementId) qs.set("settlementId", settlementId);
-      const body = await call<{ result: SettlementLookup }>(`/api/banking/razorpay-settlement?${qs.toString()}`);
-      return body.result;
+      const body = await call<{ result: SettlementLookup; canBookOtherIncome?: boolean }>(`/api/banking/razorpay-settlement?${qs.toString()}`);
+      /* R-2918: whether this user may pick "Book as Other income" travels with the plan. */
+      return body.result.state === "plan" ? { ...body.result, canBookOtherIncome: body.canBookOtherIncome === true } : body.result;
     },
   });
 }
@@ -59,7 +63,7 @@ export function useRazorpaySettlement(txnId: string | null, settlementId: string
 export function useReconcileRazorpaySettlement() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { txnId: string; settlementId: string | null; picks: Record<string, string> }) => {
+    mutationFn: async (input: { txnId: string; settlementId: string | null; picks: Record<string, string>; /** R-2918 */ otherIncome?: string[] }) => {
       const body = await call<{ reconciled: SettlementReconciled }>("/api/banking/razorpay-settlement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -67,6 +71,7 @@ export function useReconcileRazorpaySettlement() {
           txnId: input.txnId,
           ...(input.settlementId ? { settlementId: input.settlementId } : {}),
           picks: input.picks,
+          ...(input.otherIncome?.length ? { otherIncome: input.otherIncome } : {}),
         }),
       });
       return body.reconciled;
@@ -86,7 +91,7 @@ export type { MonthBatchLookup, MonthBatch, BatchRow };
 
 export interface MonthRunResult {
   runId: string | null;
-  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number; feeNow?: number; feeDate?: string | null; feeDateWhy?: string | null }>;
+  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number; feeNow?: number; feeDate?: string | null; feeDateWhy?: string | null; /** R-2918 */ otherIncome?: number }>;
   refused: Array<{ txnId: string; message: string }>;
 }
 export interface MonthUndoResult {
@@ -122,11 +127,14 @@ export function invalidateBank(qc: ReturnType<typeof useQueryClient>) {
  *  sends the chunks one after another and refreshes the bank page once at the end (invalidateBank). */
 export function useRunRazorpayMonth() {
   return useMutation({
-    mutationFn: async (input: { accountId: string; month: string; txnIds: string[]; runId?: string | null }) =>
+    mutationFn: async (input: { accountId: string; month: string; txnIds: string[]; runId?: string | null; /** R-2918: line id → Razorpay payment ids picked "Book as Other income" */ otherIncome?: Record<string, string[]> }) =>
       (await call<{ run: MonthRunResult }>(MONTH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "run", accountId: input.accountId, month: input.month, txnIds: input.txnIds, ...(input.runId ? { runId: input.runId } : {}) }),
+        body: JSON.stringify({
+          action: "run", accountId: input.accountId, month: input.month, txnIds: input.txnIds, ...(input.runId ? { runId: input.runId } : {}),
+          ...(input.otherIncome && Object.keys(input.otherIncome).length ? { otherIncome: input.otherIncome } : {}),
+        }),
       })).run,
   });
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { monthWindow, pairMonth, summarise, inLineWindow, type BatchRow } from "./settlement-batch";
+import { monthWindow, pairMonth, summarise, inLineWindow, readyWithPicks, type BatchRow } from "./settlement-batch";
 import type { BankLine, RzpSettlement } from "./settlement-match";
 
 const at = (day: string, hour = 10) => Date.parse(`${day}T${String(hour).padStart(2, "0")}:00:00+05:30`) / 1000;
@@ -86,5 +86,35 @@ describe("R-2654 monthWindow + summarise", () => {
   it("counts ready / blocked and the ready money", () => {
     const row = (ready: boolean, amount: number): BatchRow => ({ txnId: String(amount), txnDate: "2025-10-01", amount, narration: "", settlementId: null, utr: null, pairedBy: null, ready, blockers: [], payments: 0, gross: 0, fee: 0, feeGst: 0 });
     expect(summarise("2025-10", [row(true, 100), row(false, 50), row(true, 25)])).toMatchObject({ ready: 2, blocked: 1, readyAmount: 125 });
+  });
+});
+
+describe("R-2918 readyWithPicks — a line blocked only by not-in-the-app payments is Ready once each is picked", () => {
+  const P1 = "Razorpay payment pay_T1 (₹1) is not in the app.";
+  const P2 = "Razorpay payment pay_T2 (₹100) is not in the app.";
+  const row = (extra: Partial<BatchRow> = {}): BatchRow => ({
+    txnId: "L1", txnDate: "2025-07-09", amount: 63545, narration: "", settlementId: "setl_A", utr: null, pairedBy: "amount",
+    ready: false, blockers: [P1], payments: 3, gross: 64900, fee: 1355, feeGst: 207,
+    unmatched: [{ rzpId: "pay_T1", amount: 1, problem: P1, suggest: true }], ...extra,
+  });
+
+  it("never Ready without the pick — also when the payment is ₹200 or less (suggested only)", () => {
+    expect(readyWithPicks(row())).toBe(false);
+    expect(readyWithPicks(row(), [])).toBe(false);
+    expect(readyWithPicks(row(), ["pay_OTHER"])).toBe(false);
+  });
+  it("Ready once every not-in-the-app payment is picked", () => {
+    expect(readyWithPicks(row(), ["pay_T1"])).toBe(true);
+    const two = row({ blockers: [P1, P2], unmatched: [{ rzpId: "pay_T1", amount: 1, problem: P1, suggest: true }, { rzpId: "pay_T2", amount: 100, problem: P2, suggest: true }] });
+    expect(readyWithPicks(two, ["pay_T1"])).toBe(false);
+    expect(readyWithPicks(two, ["pay_T1", "pay_T2"])).toBe(true);
+  });
+  it("another blocker (a refund, an adjustment, the wrong amount) keeps it Blocked; an unpaired line too", () => {
+    expect(readyWithPicks(row({ blockers: [P1, "This settlement also has 1 Razorpay adjustment(s)"] }), ["pay_T1"])).toBe(false);
+    expect(readyWithPicks(row({ settlementId: null }), ["pay_T1"])).toBe(false);
+    expect(readyWithPicks(row({ unmatched: undefined, blockers: ["No Razorpay settlement"] }), ["pay_T1"])).toBe(false);
+  });
+  it("a line Ready by itself stays Ready", () => {
+    expect(readyWithPicks(row({ ready: true, blockers: [], unmatched: undefined }))).toBe(true);
   });
 });

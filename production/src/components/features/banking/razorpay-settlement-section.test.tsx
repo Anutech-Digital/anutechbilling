@@ -107,3 +107,67 @@ describe("RazorpaySettlementSection", () => {
     expect(call[1].description).toMatch(/The bank line keeps its own date/);
   });
 });
+
+/* R-2918 — a Razorpay payment that is in no app payment may be booked as Other income (the owner's pick). */
+describe("R-2918 RazorpaySettlementSection — Book as Other income", () => {
+  const testProblem = "Razorpay payment pay_T1 (₹1) is not in the app.";
+  const planT: SettlementPlan = {
+    ...plan,
+    payments: [
+      plan.payments[0],
+      { rzpId: "pay_T1", amount: 1, fee: 0, tax: 0, orderId: null, createdAt: null, paymentIds: [], matchedBy: null, customer: null, quoteId: null, candidates: [], problem: testProblem, suggestOtherIncome: true, canOtherIncome: true },
+    ],
+    totals: { gross: 1181, refunds: 0, fee: 24, feeGst: 4, other: 0, net: 1157, bank: 1157 },
+    blockers: [testProblem],
+  };
+
+  it("review: a manager / billing user (canBookOtherIncome not set) is never offered the pick or the suggestion", () => {
+    state.data = { state: "plan", plan: planT };
+    render(<RazorpaySettlementSection line={{ id: "L1", credit: 1157 }} onDone={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Fetch settlement/ }));
+    expect(screen.queryByLabelText("App payment for pay_T1")).toBeNull();
+    expect(screen.queryByText(/Book as Other income/)).toBeNull();
+    expect(screen.getByText(/Not in the app — record it on its quote with reference pay_T1/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Reconcile settlement/ })).toBeNull();
+  });
+
+  it("review: a payment that cannot be Other income (paid on a quote's order, or under ₹1) has no such option even for the owner", () => {
+    state.data = { state: "plan", canBookOtherIncome: true, plan: { ...planT, payments: [planT.payments[0], { ...planT.payments[1], canOtherIncome: false, suggestOtherIncome: false }] } };
+    render(<RazorpaySettlementSection line={{ id: "L1", credit: 1157 }} onDone={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Fetch settlement/ }));
+    expect(screen.queryByText(/Book as Other income/)).toBeNull();
+  });
+
+  it("never picked by itself: suggested only, no Reconcile button; the pick makes it ready and sends the payment id (no app-payment pick)", async () => {
+    state.data = { state: "plan", plan: planT, canBookOtherIncome: true };
+    rec.mutateAsync.mockReset();
+    rec.mutateAsync.mockResolvedValue({ settlement_id: "setl_A", payments: 1, gross: 1181, refunds: 0, fee: 24, fee_booked_now: 24, fee_gst_now: 4, fee_expense_id: "EXP-RZPFEE-STL-setl_A", fee_expense_date: "2026-10-20", fee_date_why: null, other_income: 1, other_income_payments: 1 });
+    toastMock.success.mockReset();
+    render(<RazorpaySettlementSection line={{ id: "L1", credit: 1157 }} onDone={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Fetch settlement/ }));
+    const select = screen.getByLabelText("App payment for pay_T1") as HTMLSelectElement;
+    expect(select.value).toBe("");
+    expect(screen.getByText(/Suggested: Book as Other income/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Reconcile settlement/ })).toBeNull();
+    expect(rec.mutateAsync).not.toHaveBeenCalled();
+
+    fireEvent.change(select, { target: { value: "other_income" } });
+    expect(screen.getByText(/of which booked as Other income/)).toBeTruthy();
+    expect(screen.getByText(/Links 1 payment to this line .* ₹1 goes to Other income\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Reconcile settlement/ }));
+    await vi.waitFor(() => expect(rec.mutateAsync).toHaveBeenCalledWith({ txnId: "L1", settlementId: "setl_A", picks: {}, otherIncome: ["pay_T1"] }));
+    await vi.waitFor(() => expect(toastMock.success).toHaveBeenCalled());
+    expect(toastMock.success.mock.calls[0][0]).toContain("₹1 booked as Other income");
+  });
+
+  it("an app-payment pick is still sent as a pick, never as Other income", async () => {
+    state.data = { state: "plan", plan };
+    rec.mutateAsync.mockReset();
+    rec.mutateAsync.mockResolvedValue({ settlement_id: "setl_A", payments: 2, gross: 3540, refunds: 0, fee: 71, fee_booked_now: 71, fee_gst_now: 11, fee_expense_id: null, fee_expense_date: null, fee_date_why: null });
+    render(<RazorpaySettlementSection line={{ id: "L1", credit: 3469 }} onDone={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Fetch settlement/ }));
+    fireEvent.change(screen.getByLabelText("App payment for pay_2"), { target: { value: "p9" } });
+    fireEvent.click(screen.getByRole("button", { name: /Reconcile settlement/ }));
+    await vi.waitFor(() => expect(rec.mutateAsync).toHaveBeenCalledWith({ txnId: "L1", settlementId: "setl_A", picks: { pay_2: "p9" } }));
+  });
+});

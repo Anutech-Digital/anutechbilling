@@ -105,3 +105,43 @@ describe("POST /api/banking/razorpay-settlement", () => {
     expect((await res.json()).error).toMatch(/already reconciled/);
   });
 });
+
+/* R-2918 — "Book as Other income" for a Razorpay payment that is in no app payment. */
+describe("POST /api/banking/razorpay-settlement — R-2918 otherIncome", () => {
+  it("owner: the picked Razorpay payment ids (ids only) reach the plan; none sent → an empty list", async () => {
+    await post({ txnId: TXN, otherIncome: ["pay_TEST1"], other_income: [{ rzp_id: "pay_X", amount_paise: 999900 }] });
+    expect(state.loadArgs[0]).toMatchObject({ otherIncome: ["pay_TEST1"] });
+    await post({ txnId: TXN });
+    expect(state.loadArgs[1]).toMatchObject({ otherIncome: [] });
+  });
+
+  it("accountant may; manager and billing are refused before anything is read or written", async () => {
+    state.role = "accountant";
+    expect((await post({ txnId: TXN, otherIncome: ["pay_TEST1"] })).status).toBe(200);
+    for (const role of ["manager", "billing"]) {
+      state.role = role;
+      state.loadArgs = [];
+      state.rpcCalls = [];
+      const res = await post({ txnId: TXN, otherIncome: ["pay_TEST1"] });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toMatch(/Only the Owner or Accountant can book a Razorpay payment as Other income/);
+      expect(state.loadArgs).toEqual([]);
+      expect(state.rpcCalls).toEqual([]);
+      /* the same roles still reconcile a settlement without the pick */
+      expect((await post({ txnId: TXN })).status).toBe(200);
+    }
+  });
+
+  it("review: the GET says whether this user may pick Other income — owner / accountant yes, manager / billing no", async () => {
+    for (const [role, may] of [["owner", true], ["accountant", true], ["manager", false], ["billing", false]] as const) {
+      state.role = role;
+      const res = await GET(new Request(`http://localhost/api/banking/razorpay-settlement?txnId=${TXN}`) as unknown as NextRequest);
+      expect((await res.json()).canBookOtherIncome).toBe(may);
+    }
+  });
+
+  it("an id that is not a Razorpay payment id is refused", async () => {
+    expect((await post({ txnId: TXN, otherIncome: ["setl_A"] })).status).toBe(400);
+    expect((await post({ txnId: TXN, otherIncome: "pay_1" })).status).toBe(400);
+  });
+});

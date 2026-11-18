@@ -8,6 +8,9 @@
  *                                                             the first, reconcile_razorpay_settlement_in_run per line)
  *   POST {action: "undo", runId}                              "Undo this run" (undo_bank_recon_run)
  *
+ * R-2918: a run may carry otherIncome {line id: [pay_… ids]} — the owner's "Book as Other income" picks for
+ * payments that are in no app payment. Ids only; the server plans those lines again with them.
+ *
  * Owner / accountant only — a run books fee expenses for many lines at once and its Undo removes them
  * (the same gate as Reconcile from Zoho's run, R-2535). The browser sends no amount: every number comes
  * from Razorpay and the app's own rows, and the database re-checks each line (R-2099).
@@ -33,7 +36,10 @@ const runId = z.string().uuid("Run id is not valid — refresh the page.");
 const getSchema = z.object({ accountId: uuid, month });
 
 const postSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("run"), accountId: uuid, month, txnIds: z.array(z.string().uuid()).min(1).max(RUN_CHUNK), runId: runId.optional() }),
+  z.object({
+    action: z.literal("run"), accountId: uuid, month, txnIds: z.array(z.string().uuid()).min(1).max(RUN_CHUNK), runId: runId.optional(),
+    otherIncome: z.record(z.string().uuid(), z.array(z.string().regex(/^pay_[A-Za-z0-9]+$/)).max(200)).optional(),
+  }),
   z.object({ action: z.literal("undo"), runId }),
 ]);
 
@@ -60,6 +66,7 @@ export const POST = withRoute(
     const out = await runMonthBatch({
       db: supabase, admin: createAdminClientFor(user.id), tenantId,
       accountId: input.accountId, month: input.month, txnIds: input.txnIds, runId: input.runId ?? null,
+      otherIncome: input.otherIncome ?? {},
     });
     if (out.state !== "done") throw new RouteError(409, out.message);
     return { run: out.result };
