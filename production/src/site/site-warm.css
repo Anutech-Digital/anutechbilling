@@ -240,7 +240,6 @@
 .anutech-site[data-site-theme="warm"] .hc .pk-float-ico {
   width: auto; height: auto; border-radius: 0; background: none; color: var(--w-on-marigold); font-size: 14px; font-weight: 700;
 }
-.anutech-site[data-site-theme="warm"] .hc .pk-cap { margin-top: 28px; text-align: center; font-size: 14px; color: var(--w-muted-2); }
 /* Phone (design ≤640px): the sidebar becomes one scrolling strip with every entry. */
 @media (max-width: 640px) {
   .anutech-site[data-site-theme="warm"] .hc .pk-body { grid-template-columns: minmax(0, 1fr); }
@@ -252,7 +251,6 @@
   .anutech-site[data-site-theme="warm"] .hc .pk-main { padding: 20px 16px 28px; }
   .anutech-site[data-site-theme="warm"] .hc .pk-rows li { grid-template-columns: auto minmax(0, 1fr); }
   .anutech-site[data-site-theme="warm"] .hc .pk-float { position: absolute; right: 16px; bottom: -18px; margin: 0; }
-  .anutech-site[data-site-theme="warm"] .hc .pk-cap { margin-top: 30px; }
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-text { padding-top: 16px; padding-bottom: calc(54px * var(--w-space, 1)); display: flex; flex-direction: column; gap: 22px; }
 .anutech-site[data-site-theme="warm"] .hc .hc-hero-text > * { margin: 0; }
@@ -369,7 +367,6 @@
   .anutech-site[data-site-theme="warm"] .hc .hc-proof-visual .pk-body { grid-template-columns: 180px minmax(0, 1fr); }
 }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof-visual .pk-win { box-shadow: 0 30px 70px rgba(18, 49, 42, 0.16); }
-.anutech-site[data-site-theme="warm"] .hc .hc-proof-visual .pk-cap { color: var(--w-ink-2); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-eyebrow { color: var(--w-teal-dark); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-sub { font-size: 17px; color: var(--w-ink-2); }
 .anutech-site[data-site-theme="warm"] .hc .hc-proof .hc-btn-ghost { background: var(--w-teal); color: var(--w-on-teal); border-color: var(--w-teal); }

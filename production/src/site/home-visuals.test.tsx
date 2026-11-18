@@ -61,14 +61,18 @@ afterEach(() => {
 });
 
 describe("home ResellerOS drawing (R-1454)", () => {
-  it("renders the ResellerOS drawing with a visible, honest caption", () => {
+  it("renders the ResellerOS drawing with an honest text alternative", () => {
     const { container } = render(<HomeCompany />);
     const figs = container.querySelectorAll("figure[data-product-peek]");
     expect(figs.length).toBe(1);
     const fig = figs[0];
-    expect(screen.getByText(PEEK_CAPTION)).toBeTruthy();
+    // The visible caption was removed (owner, 18 Nov 2026: "Remove this text"); the figure keeps it
+    // as its accessible name, and that name still says it is an illustration.
+    expect(screen.getByRole("img", { name: PEEK_CAPTION })).toBe(fig);
     expect(PEEK_CAPTION).toMatch(/illustration/i);
-    // The drawing is decorative; the caption is its text alternative.
+    expect(fig.querySelector("figcaption")).toBeNull();
+    expect(screen.queryByText(PEEK_CAPTION)).toBeNull();
+    // The drawing inside is decorative (aria-hidden); the label is the text alternative.
     expect(fig.querySelector(".pk-win")!.getAttribute("aria-hidden")).toBe("true");
     // Since 18 Nov 2026 it illustrates the "Proof, not promises" section, beside the words about
     // ResellerOS and its "See ResellerOS" link — no longer the hero (owner: on Warm it sat alone).

@@ -10,8 +10,10 @@
  *    home page already says it does — no invented features;
  *  - there are NO customer names, amounts, counts or percentages: where the real screen shows a
  *    name or a number, the drawing shows a grey bar;
- *  - the visible caption says it is an illustration of the software we run on.
- * The drawing itself is aria-hidden; the caption is the text alternative.
+ *  - its label says it is an illustration of the software we run on.
+ * The drawing itself is aria-hidden; the figure's aria-label is the text alternative. The visible
+ * caption under it was removed on 18 Nov 2026 (owner: "Remove this text") — the section's own
+ * heading and text already say what ResellerOS is; screen readers still hear the label.
  */
 import { C, MONO } from "@/site/components/home/HomeV2";
 
@@ -31,7 +33,7 @@ export const PEEK_CAPTION = "ResellerOS — the software Anutech Digital runs on
 
 export function ProductPeek() {
   return (
-    <figure className="pk" data-product-peek="">
+    <figure className="pk" data-product-peek="" role="img" aria-label={PEEK_CAPTION}>
       <style>{CSS}</style>
       <div className="pk-win" aria-hidden="true">
         <div className="pk-bar">
@@ -65,13 +67,12 @@ export function ProductPeek() {
           <span><b>Quote → GST invoice</b><span className="pk-skel pk-skel-s" /></span>
         </div>
       </div>
-      <figcaption className="pk-cap">{PEEK_CAPTION}</figcaption>
     </figure>
   );
 }
 
 const CSS = `
-.pk{margin:0;position:relative}
+.pk{margin:0 0 20px;position:relative}
 .pk-win{position:relative;background:#fff;border:1px solid ${C.borderL};border-radius:14px;box-shadow:0 30px 60px -40px rgba(12,17,22,.5);overflow:visible}
 .pk-bar{display:flex;align-items:center;gap:6px;padding:9px 12px;background:${C.strip};border-bottom:1px solid ${C.stripBd};border-radius:14px 14px 0 0}
 .pk-bar i{width:9px;height:9px;border-radius:50%;background:${C.strong}}
@@ -96,7 +97,6 @@ const CSS = `
 .pk-float{position:absolute;right:-14px;bottom:-18px;display:flex;align-items:center;gap:10px;background:#fff;border:1px solid ${C.borderL};border-radius:11px;padding:10px 14px;box-shadow:0 18px 36px -22px rgba(12,17,22,.45)}
 .pk-float b{display:block;font-size:12.5px;color:${C.ink}}
 .pk-float-ico{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:${C.greenT2};color:${C.green};font-weight:700;font-size:13px}
-.pk-cap{margin-top:26px;font-size:12.5px;line-height:1.5;color:${C.sec}}
 
 @media (prefers-reduced-motion: no-preference){
   .pk-rows li{animation:pkRise .5s ease both}
@@ -114,6 +114,5 @@ const CSS = `
   .pk-rows li{grid-template-columns:58px minmax(0,1fr)}
   .pk-rows li .pk-skel{display:none}
   .pk-float{position:relative;right:auto;bottom:auto;width:max-content;max-width:calc(100% - 20px);box-sizing:border-box;margin:0 10px 10px auto}
-  .pk-cap{margin-top:12px}
 }
 `;
