@@ -143,7 +143,7 @@ export default function FacebookPage() {
               <div className="flex gap-3"><span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-paper-2 text-xs font-semibold text-ink">2</span><p className="text-sm text-ink-2">Choose which Page to connect to ResellerOS.</p></div>
             </div>
             {!status.configured && <p className="text-sm text-amber-ink">Meta app keys are not set on this server.</p>}
-            {status.configured && status.canManage ? <Button asChild variant="primary"><a href="/api/integrations/facebook-page/connect"><Link2 size={16} aria-hidden="true" /> Connect Facebook Page</a></Button> : <Button variant="primary" disabled>{status.canManage ? "Connect Facebook Page" : "Owner or manager required"}</Button>}
+            {status.configured && status.canManage ? <Button asChild variant="primary"><a href="/api/integrations/facebook-page/connect"><Link2 size={16} aria-hidden="true" /> Connect Facebook Page</a></Button> : <Button variant="primary" disabled>{status.canManage ? "Connect Facebook Page" : "Owner, manager or marketing required"}</Button>}
             <details className="border-t border-hairline pt-4 text-xs text-ink-3"><summary className="cursor-pointer font-medium text-ink-2">Developer setup</summary><p className="mt-2">Add this URL to Valid OAuth Redirect URIs in Meta Developers:</p><code className="mt-1 block break-all rounded-md bg-paper-2 p-2">{redirectUrl}</code></details>
           </div>
         </Card>

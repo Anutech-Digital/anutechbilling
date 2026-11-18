@@ -27,8 +27,8 @@ import { kindReadiness, mappingProblem, REMINDER_KIND_ORDER, type KnownTemplate 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const OM = ["owner", "manager"] as const;
-const ROLE_HINT = "Only the owner or a manager can change WhatsApp reminders — ask them.";
+const OM = ["owner", "manager", "marketing"] as const; // 18 Nov 2026: marketing runs every Marketing Hub tab
+const ROLE_HINT = "Only the owner, a manager or marketing can change WhatsApp reminders — ask them.";
 const LOG_LIMIT = 20;
 
 export const GET = withRoute({ route: "api/marketing/whatsapp/reminders", roles: OM, roleHint: ROLE_HINT }, async ({ tenantId, user }) => {

@@ -12,9 +12,9 @@ const body = z.object({ ids: z.array(z.string().uuid()).min(1).max(200) });
 export async function POST(req: Request) {
   const ctx = await coldCallContext();
   if (ctx instanceof NextResponse) return ctx;
-  if (ctx.role !== "owner" && ctx.role !== "manager") {
+  if (ctx.role !== "owner" && ctx.role !== "manager" && ctx.role !== "marketing") { // 18 Nov 2026: marketing runs every Marketing Hub tab
     return NextResponse.json(
-      { error: "Only the owner or a manager can delete campaigns.", detail: "You can press Pause on a campaign instead, or ask your manager." },
+      { error: "Only the owner, a manager or marketing can delete campaigns.", detail: "You can press Pause on a campaign instead, or ask your manager." },
       { status: 403 },
     );
   }

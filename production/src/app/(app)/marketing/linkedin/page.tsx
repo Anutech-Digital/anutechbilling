@@ -85,7 +85,7 @@ export default function LinkedInMarketingPage() {
           <p className="text-sm text-ink-2">Use a LinkedIn account that is an administrator or content admin of the Company Page.</p>
           {status.message && <p className="text-sm text-amber-ink">{status.message}</p>}
           <p className="text-xs text-ink-3">The LinkedIn app needs approved Community Management access with the <code>w_organization_social</code> permission.</p>
-          {status.configured && status.canManage ? <Button asChild variant="primary"><a href="/api/integrations/linkedin/connect">Connect LinkedIn</a></Button> : <Button variant="primary" disabled>{status.canManage ? "Connect LinkedIn" : "Owner or manager required"}</Button>}
+          {status.configured && status.canManage ? <Button asChild variant="primary"><a href="/api/integrations/linkedin/connect">Connect LinkedIn</a></Button> : <Button variant="primary" disabled>{status.canManage ? "Connect LinkedIn" : "Owner, manager or marketing required"}</Button>}
         </Card>
       ) : (
         <Card className="p-5 space-y-4">
