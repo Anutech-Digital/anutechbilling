@@ -23,7 +23,8 @@ vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => me }));
 vi.mock("@/lib/queries/feedback", () => ({ useSubmitFeedback: () => ({ mutateAsync, isPending: false }) }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("./help-report-matches", () => ({ HelpReportMatches: () => null }));
-vi.mock("@/lib/queries/tasks", () => ({ useTasks: () => ({ data: [], isLoading: false }) }));
+vi.mock("@/lib/queries/tasks", () => ({ useBellTasks: () => ({ data: [], isLoading: false }) }));
+vi.mock("@/lib/queries/team", () => ({ useTeamMembers: () => ({ data: [] }), memberLabel: () => "" }));
 vi.mock("@/lib/queries/leads", () => ({ useRecentLeads: () => ({ data: [], isLoading: false }) }));
 vi.mock("@/lib/queries/contacts", () => ({ useCelebrations: () => ({ data: [], isLoading: false }) }));
 vi.mock("@/lib/queries/notifications", () => ({

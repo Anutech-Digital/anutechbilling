@@ -65,7 +65,7 @@ function todayBoundariesIST(): { startISO: string; endISO: string } {
 // ────────────────────────────────────────────────────────────────
 
 /** All tasks in the tenant. Used by the /tasks list page. */
-/** `enabled` (R-2175): the TopBar bell passes false for a personal session (no tasks there). */
+/** `enabled`: lets a caller skip the read (the bell has its own read — useBellTasks, R-2924). */
 export function useTasks(bucket: TaskBucket = "all", opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["tasks", bucket],
@@ -116,6 +116,40 @@ export const DONE_TASKS_SHOWN = 100;
 /** Open = still to do. The /tasks read and nav_badges().tasks (R-1541, the Overdue count) use
  *  this list; nav-badge-parity.test.ts holds the SQL to it. */
 export const TASK_OPEN_STATUSES = ["pending", "snoozed"] as const;
+
+/**
+ * R-2924 — the bell's tasks: open, due today or earlier, and only the member's own unless an
+ * owner / manager switched the bell to everyone's (for them a task with no owner is theirs too). The bell used to read every task in the
+ * company (useTasks("all")) for every member. Under ["tasks"], so every task mutation's
+ * invalidation reaches it. No user id yet = no read.
+ */
+export const BELL_TASK_LIMIT = 30;
+
+export function useBellTasks(
+  scope: { userId: string | null; team: boolean; unassigned?: boolean },
+  opts: { enabled?: boolean } = {},
+) {
+  /* The IST day is in the key: a tab left open past midnight reads the new day's tasks. */
+  const { endISO } = todayBoundariesIST();
+  return useQuery({
+    queryKey: ["tasks", "bell", scope.team ? "team" : scope.userId, !!scope.unassigned, endISO],
+    enabled: (opts.enabled ?? true) && !!scope.userId,
+    placeholderData: keepPreviousData,
+    queryFn: async (): Promise<TaskWithLink[]> => {
+      const supabase = createClient();
+      let q = supabase.from("tasks").select(TASK_SELECT).in("status", [...TASK_OPEN_STATUSES]).lt("due_at", endISO);
+      if (!scope.team && scope.userId) {
+        q = scope.unassigned
+          ? q.or(`owner_id.eq.${scope.userId},owner_id.is.null`)
+          : q.eq("owner_id", scope.userId);
+      }
+      /* The bell lists the newest-due first and at most BELL_TASK_LIMIT — read just those. */
+      const { data, error } = await q.order("due_at", { ascending: false }).limit(BELL_TASK_LIMIT);
+      if (error) throw error;
+      return (data ?? []) as unknown as TaskWithLink[];
+    },
+  });
+}
 
 export function useTaskList(tenantId: string | null | undefined) {
   return useQuery({
