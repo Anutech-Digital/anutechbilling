@@ -37,6 +37,7 @@ import { useCreateTask, useUpdateTask } from "@/lib/queries/tasks";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { toast } from "sonner";
+import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, TASK_PRIORITY_META, priorityForCreate, priorityOf, type TaskPriority } from "./task-priority";
 import { ASSIGN_ME, NOT_TOLD_MESSAGE, assigneeToTell, meNotKnownYet, ownerPatch, tellAssignee } from "./assign";
 import {
   TaskRelatedPicker, relatedToLinkColumns, type RelatedValue,
@@ -102,6 +103,7 @@ const schema = z.object({
   due_at: z.string().min(1, "When is it due?"),
   notes:  z.string().max(500).optional(),
   assignee: z.string().optional(),
+  priority: z.enum(TASK_PRIORITIES),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -120,7 +122,7 @@ export interface AddTaskDialogProps {
   /** When set, the dialog edits this task instead of creating a new one. */
   task?: Pick<
     Task,
-    "id" | "title" | "kind" | "due_at" | "notes" | "owner_id"
+    "id" | "title" | "kind" | "due_at" | "notes" | "owner_id" | "priority"
     | "lead_id" | "quote_id" | "customer_id" | "subscription_id"
   > | null;
 }
@@ -161,7 +163,7 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { title: "", kind: "followup", due_at: defaultDue, notes: "", assignee: ASSIGN_ME },
+    defaultValues: { title: "", kind: "followup", due_at: defaultDue, notes: "", assignee: ASSIGN_ME, priority: DEFAULT_TASK_PRIORITY },
   });
 
   // Which customer / lead / deal this task is attached to (editable in the form).
@@ -177,16 +179,18 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
         due_at: toLocalInputValue(new Date(task.due_at)),
         notes:  task.notes ?? "",
         assignee: task.owner_id ?? ASSIGN_ME,
+        priority: priorityOf(task),
       });
       setRelated(relatedFromTask(task));
     } else {
-      reset({ title: "", kind: "followup", due_at: defaultDue, notes: "", assignee: ASSIGN_ME });
+      reset({ title: "", kind: "followup", due_at: defaultDue, notes: "", assignee: ASSIGN_ME, priority: DEFAULT_TASK_PRIORITY });
       setRelated(relatedFromLinkTo(linkTo));
     }
   }, [open, task, linkTo, defaultDue, reset]);
 
   const watchedKind = watch("kind");
   const watchedAssignee = watch("assignee");
+  const watchedPriority = watch("priority");
   /* R-471: a past due time used to save silently and land straight in Overdue. Say so
      (it is allowed — logging a missed call is real), and offer "in 1 hour". */
   const watchedDue = watch("due_at");
@@ -219,6 +223,7 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
           kind:   data.kind,
           due_at: dueISO,
           notes:  data.notes?.trim() || null,
+          priority: data.priority,
           ...owner,
           ...relatedToLinkColumns(related),
         },
@@ -233,6 +238,7 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
       kind:   data.kind,
       due_at: dueISO,
       notes:  data.notes?.trim() || null,
+      ...priorityForCreate(data.priority),
       ...owner,
       ...relatedToLinkColumns(related),
     });
@@ -336,6 +342,24 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
               </button>
             ))}
           </div>
+
+          {/* R-2926: Low / Medium / High — High sorts first inside its group of the Tasks list. */}
+          <FormField label="Priority" htmlFor="priority">
+            <Select
+              value={watchedPriority}
+              onValueChange={(v) => setValue("priority", v as TaskPriority, { shouldValidate: true })}
+            >
+              <SelectTrigger id="priority">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[...TASK_PRIORITIES].reverse().map((p) => (
+                  <SelectItem key={p} value={p}>{TASK_PRIORITY_META[p].label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <input type="hidden" {...register("priority")} />
+          </FormField>
 
           <FormField label="Assign to" htmlFor="assignee">
             <Select

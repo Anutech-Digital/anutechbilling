@@ -28,6 +28,7 @@ import type { TaskKind } from "@/lib/supabase/database.types";
 import { leadTitle } from "@/lib/leads/display-name";
 import { taskContact } from "./task-contact";
 import { TaskNotes } from "./task-notes";
+import { TASK_PRIORITY_META, priorityOf, showsPriorityBadge } from "./task-priority";
 
 /** R-279: the linked lead's company, else its contact/email/phone; null when it has no name at all. */
 export function taskLeadName(task: TaskWithLink): string | null {
@@ -58,6 +59,7 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
   const isDone    = task.status === "done";
   const isOverdue = !isDone && due.getTime() < Date.now();
   const kindMeta  = KIND_META[task.kind];
+  const priority  = priorityOf(task);
   const contact   = taskContact(task);
 
   // Linked entity — for the "open" link. At most one of these is set.
@@ -129,6 +131,12 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
           <span className="text-base leading-none" aria-hidden="true">{kindMeta.icon}</span>
           <p className={cn("font-medium text-ink break-words min-w-0", isDone && "line-through")}>{task.title}</p>
           <Badge kind="muted">{kindMeta.label}</Badge>
+          {/* R-2926: priority — colour AND word, for High and Low (Medium is the default: no badge). Hidden once done. */}
+          {!isDone && showsPriorityBadge(priority) && (
+            <Badge kind={TASK_PRIORITY_META[priority].badge} title={`Priority: ${TASK_PRIORITY_META[priority].label}`}>
+              {TASK_PRIORITY_META[priority].label}
+            </Badge>
+          )}
           {assignee && (
             <span className="inline-flex items-center gap-1 rounded-full bg-indigo-soft/60 text-indigo px-2 py-0.5 text-2xs font-medium" title={`Assigned to ${memberLabel(assignee)}`}>
               <Icon name="user" size={10} /> {memberLabel(assignee)}

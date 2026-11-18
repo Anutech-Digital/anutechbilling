@@ -6,6 +6,7 @@
  */
 import { toIstDate } from "@/lib/dates/ist";
 import type { Task } from "@/lib/supabase/database.types";
+import { priorityOf, priorityRank } from "./task-priority";
 
 export type TaskGroupId = "overdue" | "today" | "upcoming" | "nodate" | "done";
 
@@ -19,7 +20,7 @@ export const TASK_GROUP_LABEL: Record<TaskGroupId, string> = {
   done: "Done",
 };
 
-type Groupable = Pick<Task, "status"> & { due_at: string | null; completed_at?: string | null };
+type Groupable = Pick<Task, "status"> & { due_at: string | null; completed_at?: string | null; priority?: string | null };
 
 /** The group a task falls in; null for cancelled tasks (not shown). */
 export function taskGroupOf(task: Groupable, now: Date = new Date()): TaskGroupId | null {
@@ -61,7 +62,8 @@ export function taskTabCounts<T>(groups: readonly TaskGroup<T>[]): Record<TaskTa
 
 /**
  * Every group in TASK_GROUP_ORDER (empty ones included — the page decides what to hide).
- * Open groups run soonest-due first; Done runs most recently completed first.
+ * Open groups run High priority first (R-2926), then soonest-due; Done runs most recently
+ * completed first. Priority never moves a task between groups.
  */
 export function groupTasks<T extends Groupable>(tasks: readonly T[], now: Date = new Date()): TaskGroup<T>[] {
   const by = new Map<TaskGroupId, T[]>(TASK_GROUP_ORDER.map((id) => [id, []]));
@@ -71,9 +73,10 @@ export function groupTasks<T extends Groupable>(tasks: readonly T[], now: Date =
   }
   const due = (t: T) => (t.due_at ? Date.parse(t.due_at) : 0);
   const doneAt = (t: T) => Date.parse(t.completed_at ?? t.due_at ?? "") || 0;
+  const rank = (t: T) => priorityRank(priorityOf(t));
   return TASK_GROUP_ORDER.map((id) => {
     const list = by.get(id)!;
-    list.sort(id === "done" ? (a, b) => doneAt(b) - doneAt(a) : (a, b) => due(a) - due(b));
+    list.sort(id === "done" ? (a, b) => doneAt(b) - doneAt(a) : (a, b) => rank(a) - rank(b) || due(a) - due(b));
     return { id, label: TASK_GROUP_LABEL[id], tasks: list };
   });
 }
