@@ -277,6 +277,19 @@ export function partLabelOf(lineName: string | null | undefined): string | null 
   return n ? n[1] : null;
 }
 
+/**
+ * R-2922: the product text of the OLDEST part lines. Before R-2423 a part request's line was named by its
+ * short label ("Payment for month 1 · 1 Oct–31 Oct 2026" / "Advance payment for …") and its product sat in the
+ * description ("Google Workspace Business Starter · 473 seats"). A screen that lists a quote's products shows
+ * that product. Null = the line is already named by its product (R-2423 and later), or no product text is
+ * stored — the caller keeps the line's own name.
+ */
+export function partLineProductName(line: { name?: string | null; description?: string | null } | null | undefined): string | null {
+  const desc = (line?.description ?? "").trim();
+  if (!desc || !isPartShortLabel(line?.name) || isPartShortLabel(desc)) return null;
+  return desc;
+}
+
 /** R-2846: what a part request's payment is FOR — read by the Record payment sheet. (R-2865: it is the
  *  payment for that service period, never called an advance; the type keeps its name.) */
 export interface PartAdvance {
