@@ -81,7 +81,7 @@ export function dayRange(from: string, toInclusive: string): string {
 }
 
 /** A day range written in a name: "1 Oct–31 Oct 2026" / "1 Nov 2026–31 Oct 2027" (en dash or hyphen). */
-const RANGE_IN_NAME = /d{1,2} [A-Z][a-z]{2}(?: d{4})?s*[–-]s*d{1,2} [A-Z][a-z]{2} d{4}/;
+const RANGE_IN_NAME = /\b\d{1,2} [A-Z][a-z]{2}(?: \d{4})?\s*[–-]\s*\d{1,2} [A-Z][a-z]{2} \d{4}\b/;
 
 type RawLine = LinePeriodLine & { qty?: unknown; rate?: unknown; billing_id?: unknown; per_seat?: unknown };
 

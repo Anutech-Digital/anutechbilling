@@ -67,6 +67,7 @@ import {
   PLAN_CHANGE_REFUSED_RE, settleRefusedPlanChange,
 } from "./late-payment.server";
 import { domainItemIdsForQuote, vendorForQuote } from "./quote-vendor.server";
+import { finishPartRequestPayment, paidPartRequest } from "./part-request-paid.server";
 import { captureMismatch, flagPaymentForReview, flagUnderpaid } from "./review.server";
 import { quoteDueNow } from "@/lib/payments/quote-due-now";
 import { splitOrderParts } from "@/lib/checkout/split-order";
@@ -580,6 +581,21 @@ export async function settleCapturedPayment(
       body: `${quote.customer_name ?? "Customer"} paid ${rupee(paymentAmount)} through Razorpay (${paymentRef}); the quote already had money on it, so ${rupee(overpaidCredit)} became customer credit. Refund it or apply it to the next bill.`,
       href: `/quotes/${quote.id}`,
       entityId: paymentRef,
+    });
+  }
+
+  /* R-2923: a part (month / quarter / half-year) payment request pays for a period of a subscription that is
+     already running — the money and that part's tax invoice (above) are all there is, as Record payment on
+     the request. Nothing of a sale below runs: no provisioning by the plan's wording, no domain subscription,
+     no panel login, no set-up mails (part-request-paid.server.ts sends the receipt and the owner's alert). */
+  const partRequest = await paidPartRequest(admin, quote);
+  if (partRequest) {
+    return finishPartRequestPayment(admin, {
+      quote, paid: paymentAmount, paymentRef, paymentMethod, invoice, termsChanged: partRequest.termsChanged,
+      customerEmail: payment?.email ?? notes.email ?? "",
+      customerName: notes.contact ?? notes.customerName ?? "",
+      publicBase: trustedOrigin(request.headers),
+      fromEmail: FROM_EMAIL,
     });
   }
 
