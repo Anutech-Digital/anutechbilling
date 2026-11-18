@@ -187,6 +187,7 @@ export function matchGroupOf(type: string | null): MatchGroup | null {
     case "salary": case "split":                    return "salary";
     case "expense": case "prepaid":                 return "expense";
     case "statutory":                               return "tax";
+    case "tds_receivable":                          return "tax";        // R-2935: TDS a bank cut on interest (its own line)
     case "owner_equity":                            return "owner";
     case "transfer":                                return "transfer";
     case "loan_given":                              return "loan";       // R-2346 (R-2340's type)
@@ -209,6 +210,7 @@ export function lineStatusLabel(type: string | null): string {
   if (type === "loan_repayment") return "Loan repayment";
   if (type === "other_income") return "Other income";   // R-2378: was the bare "Reconciled"
   if (type === "referral_commission") return "Commission";   // R-2378: was the bare "Reconciled"
+  if (type === "tds_receivable") return "TDS receivable";   // R-2935: not a challan paid — tax to claim back
   if (type === "bs_item") return "Balance sheet entry";   // R-2570: book_bank_advance / book_bank_credit (the booking names the kind)
   if (type === "employee_loan") return "Staff loan";   // R-2570
   if (type === "reimbursement") return "Reimbursement";   // R-2570: owed back to / paid to an employee

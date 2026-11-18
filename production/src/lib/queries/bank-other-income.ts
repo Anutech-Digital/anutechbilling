@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toast } from "sonner";
 
@@ -25,6 +25,7 @@ function invalidate(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["bank_transactions"] });
   qc.invalidateQueries({ queryKey: ["balance-sheet"] });
   qc.invalidateQueries({ queryKey: queryKeys.pnl() });
+  qc.invalidateQueries({ queryKey: ["interest_without_tds"] });   // R-2935: a booked interest can now take its TDS line
 }
 
 export function useBookOtherIncome() {
@@ -96,5 +97,47 @@ export function useReconcileAsTransfer() {
         : `Transfer matched with ${r?.other_account ?? "the other account"}'s own line`);
     },
     onError: (err) => toastError(err, { fallback: "Couldn't post the transfer" }),
+  });
+}
+
+/** R-2935: the booked bank interest (no TDS on it yet) a money-out TDS line can belong to —
+ *  bank_interest_without_tds (migration 20261118192755), nearest date first. */
+export type InterestWithoutTds = {
+  id: string; income_date: string; amount: number; description: string | null; source: string | null; fd_name: string | null;
+};
+
+export function useInterestWithoutTds(transactionId: string | null) {
+  return useQuery({
+    queryKey: ["interest_without_tds", transactionId],
+    enabled: !!transactionId,
+    /* Interest is booked / un-reconciled from other screens too — always ask again when the sheet opens. */
+    staleTime: 0,
+    refetchOnMount: "always",
+    queryFn: async (): Promise<InterestWithoutTds[]> => {
+      const { data, error } = await untyped().rpc("bank_interest_without_tds", { p_txn_id: transactionId });
+      if (error) throw new Error(error.message);
+      return ((data ?? []) as InterestWithoutTds[]).map((r) => ({ ...r, amount: Number(r.amount) }));
+    },
+  });
+}
+
+/** R-2935: a money-out line that is the TDS the bank cut on that interest → TDS receivable (194A).
+ *  book_bank_debit_as_interest_tds: Dr TDS receivable, Cr Bank — the income is not touched. */
+export function useBookInterestTds() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { transactionId: string; otherIncomeId: string }) => {
+      const { data, error } = await untyped().rpc("book_bank_debit_as_interest_tds", {
+        p_txn_id: input.transactionId, p_other_income_id: input.otherIncomeId,
+      });
+      if (error) throw new Error(error.message);
+      return data as { tds: number; interest: number; net: number; rate_pct: number };
+    },
+    onSuccess: () => {
+      invalidate(qc);
+      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
+      toast.success("Booked as TDS receivable (Sec 194A) & reconciled");
+    },
+    onError: (err) => toastError(err, { fallback: "Couldn't book this line as TDS on interest" }),
   });
 }
