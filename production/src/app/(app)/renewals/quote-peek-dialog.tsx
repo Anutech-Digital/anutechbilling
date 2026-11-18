@@ -172,7 +172,8 @@ export function QuotePeekDialog({ quoteId, onClose, lines, linesFailed = false, 
                 {lines.map((l, n) => (
                   <li key={n} className="py-1.5" data-testid="quote-peek-line">
                     <p className="break-words text-ink">{l.name}</p>
-                    {peekLineDetail(l) && <p className="break-words text-xs text-ink-3 tabular-nums">{peekLineDetail(l)}</p>}
+                    {/* R-2922: seats × the rate a seat in the quote's own currency, like a renewal quotation's line */}
+                    {peekLineDetail(l, money) && <p className="break-words text-xs text-ink-3 tabular-nums" data-testid="quote-peek-line-detail">{peekLineDetail(l, money)}</p>}
                     <span className="sr-only">{peekLineText(l)}</span>
                   </li>
                 ))}

@@ -67,7 +67,8 @@ describe("R-2866 — a quote's product lines with their periods (quote-peek.ts)"
     const q = pq({ subscription_billing_id: "B1", line_items: [{ name: named, qty: 473, rate: 5, per_seat: true, one_time: true, period_start: "2026-10-01", period_end: "2026-10-31", billing_id: "B1" }] });
     const lines = peekLines(q, new Map([["B1", billing("B1", "S1", "2026-10-01", "2026-11-01")]]), new Map<string, PeekSub>([["S1", { id: "S1", domain: "ravi.in" }]]));
     expect(lines.map(peekLineText)).toEqual([named]);
-    expect(peekLineDetail(lines[0])).toBeNull();                       // the domain, seats and period are all in the name
+    expect(peekLineDetail(lines[0])).toBe("₹5 a seat");                // the domain, seats and period are all in the name; R-2922 adds only the rate a seat
+    expect(peekLineDetail({ ...lines[0], seatRate: null })).toBeNull();   // no rate stored → nothing is added after the name
     expect(peekPeriod(lines)).toBe("1 Oct–31 Oct 2026");               // the pop-up's overall period still knows it
     /* an older part request (short name): per_seat's qty IS the seats, the part's period is added */
     const old = pq({ subscription_billing_id: "B1", line_items: [{ name: STARTER, qty: 473, per_seat: true, one_time: true }] });
