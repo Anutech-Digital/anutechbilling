@@ -9,8 +9,9 @@
 --      a split line gave one row per receipt and `distinct on (txn_id)` kept any one of them, so the
 --      Banking list could show ₹1,000 for a ₹3,50,000 line. A line with one receipt reads as before.
 --   2. tg_loan_given_line_unmatched — its latest body (R-2920, 20261118102112): the refusal while a
---      later receipt is on the books now NAMES the borrower whose loan blocks the undo (a split line
---      can sit on several loans). The words "later receipt(s) of this loan are on the books" stay.
+--      later receipt is on the books now NAMES the loan that blocks the undo — borrower, amount lent,
+--      day given (a split line can sit on several loans, two of them of one borrower). The words
+--      "later receipt(s) of this loan are on the books" stay.
 --   3. Same trigger: the loans of the line's receipts are locked (in id order, as
 --      reconcile_bank_credit_to_loans_given locks them) BEFORE the later-receipt check, so a receipt
 --      saved on one of those loans at the same moment cannot slip in between the check and the undo.
@@ -60,9 +61,14 @@ as $function$
     select g.bank_txn_id, 3, 'loan_given', g.borrower_type, g.borrower_name, g.principal::numeric
       from public.loans_given g join lines l on l.id = g.bank_txn_id
     union all
-    /* R-2921: ONE row per bank line — the sum of its receipts and the distinct borrower name(s). */
+    /* R-2921: ONE row per bank line — the sum of its receipts and the distinct borrower name(s), A–Z;
+       more than three borrowers → the first two + "+N more" (the row badge stays short). */
     select r.bank_txn_id, 4, 'loan_given_repayment', min(r.mode),
-           string_agg(distinct g.borrower_name, ', ' order by g.borrower_name), sum(r.amount)::numeric
+           case when count(distinct g.borrower_name) > 3
+                then array_to_string((array_agg(distinct g.borrower_name order by g.borrower_name))[1:2], ', ')
+                     || ' +' || (count(distinct g.borrower_name) - 2) || ' more'
+                else string_agg(distinct g.borrower_name, ', ' order by g.borrower_name) end,
+           sum(r.amount)::numeric
       from public.loan_repayments r join lines l on l.id = r.bank_txn_id
       join public.loans_given g on g.id = r.loan_id
      group by r.bank_txn_id
@@ -167,8 +173,10 @@ begin
        where r.loan_id = v_rep.loan_id and r.id <> v_rep.id
          and (r.repaid_on > v_rep.repaid_on or (r.repaid_on = v_rep.repaid_on and r.created_at > v_rep.created_at));
       if v_n > 0 then
-        -- R-2921: say WHOSE loan blocks the undo (a split line sits on several loans).
-        select g.borrower_name into v_who from public.loans_given g where g.id = v_rep.loan_id;
+        -- R-2921: say WHICH loan blocks the undo (a split line sits on several loans, and one
+        -- borrower can have two) — borrower, amount lent and the day it was given.
+        select g.borrower_name || ' (₹' || g.principal || ', given ' || to_char(g.given_on, 'DD Mon YYYY') || ')'
+          into v_who from public.loans_given g where g.id = v_rep.loan_id;
         raise exception 'Loan to %: % later receipt(s) of this loan are on the books — undo the latest receipt first, then this one',
           coalesce(v_who, 'this borrower'), v_n;
       end if;

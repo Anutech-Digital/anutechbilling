@@ -11,9 +11,11 @@
 --      borrower — never ₹1,000 or ₹3,49,000 (was: one of the two receipts, whichever came first).
 --   B. A line split across loans of TWO borrowers names both (A–Z), with the whole amount.
 --   C. A line on one loan (the one-loan RPC) reads as before: its amount, its borrower.
---   D. Undo refused while a later receipt is on the books: the message NAMES the borrower whose loan
---      blocks it (not the other borrower on the line) and keeps the words
+--   B2. More than three borrowers on one line → the first two (A–Z) + "+N more".
+--   D. Undo refused while a later receipt is on the books: the message NAMES the loan that blocks it
+--      (borrower, amount lent, day given — not the other borrower on the line) and keeps the words
 --      "later receipt(s) of this loan are on the books"; nothing is removed.
+--   D2. Two loans of the SAME borrower on the line: the message tells them apart (₹1,000, 05 Jan 2026).
 --   E. The undo trigger locks the line's loans (for update, in id order) BEFORE the later-receipt check.
 --   F. After the later receipt is undone, the split line un-reconciles fully (R-2920 behaviour kept).
 
@@ -43,13 +45,18 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('22222222-0000-0000-0000-000000292101','dddddddd-0000-0000-0000-000000292101','bbbbbbbb-0000-0000-0000-000000292101','2026-02-21','NEFT CR KAPIL DEV',0,350000,'K1','csv_upload'),
   ('22222222-0000-0000-0000-000000292102','dddddddd-0000-0000-0000-000000292101','bbbbbbbb-0000-0000-0000-000000292101','2026-02-13','NEFT CR RAHUL AND ASHA',0,16000,'R1','csv_upload'),
   ('22222222-0000-0000-0000-000000292103','dddddddd-0000-0000-0000-000000292101','bbbbbbbb-0000-0000-0000-000000292101','2026-02-15','NEFT CR SUMAN RANI',0,2500,'S1','csv_upload'),
-  ('22222222-0000-0000-0000-000000292104','dddddddd-0000-0000-0000-000000292101','bbbbbbbb-0000-0000-0000-000000292101','2026-03-13','NEFT CR RAHUL CHAWLA',0,5000,'R2','csv_upload');
+  ('22222222-0000-0000-0000-000000292104','dddddddd-0000-0000-0000-000000292101','bbbbbbbb-0000-0000-0000-000000292101','2026-03-13','NEFT CR RAHUL CHAWLA',0,5000,'R2','csv_upload'),
+  ('22222222-0000-0000-0000-000000292105','dddddddd-0000-0000-0000-000000292101','bbbbbbbb-0000-0000-0000-000000292101','2026-02-20','CASH DEPOSIT FOUR PEOPLE',0,4000,'F1','csv_upload');
 insert into public.loans_given (id, tenant_id, borrower_name, borrower_type, principal, given_on, interest_rate, repayment_plan, due_on, instalments, emi_amount, status, closed_on) values
   ('11111111-0000-0000-0000-000000292101','dddddddd-0000-0000-0000-000000292101','Kapil Dev','person',349000,'2025-12-15',0,'one_shot',null,null,null,'open',null),
   ('11111111-0000-0000-0000-000000292102','dddddddd-0000-0000-0000-000000292101','Kapil Dev','person',1000,'2026-01-05',0,'one_shot',null,null,null,'open',null),
   ('11111111-0000-0000-0000-000000292103','dddddddd-0000-0000-0000-000000292101','Rahul Chawla','person',100000,'2026-01-13',0,'one_shot',null,null,null,'open',null),
   ('11111111-0000-0000-0000-000000292104','dddddddd-0000-0000-0000-000000292101','Asha Verma','person',50000,'2026-01-01',0,'one_shot',null,null,null,'open',null),
-  ('11111111-0000-0000-0000-000000292105','dddddddd-0000-0000-0000-000000292101','Suman Rani','person',20000,'2026-01-01',0,'one_shot',null,null,null,'open',null);
+  ('11111111-0000-0000-0000-000000292105','dddddddd-0000-0000-0000-000000292101','Suman Rani','person',20000,'2026-01-01',0,'one_shot',null,null,null,'open',null),
+  ('11111111-0000-0000-0000-000000292106','dddddddd-0000-0000-0000-000000292101','Zoya Khan','person',9000,'2026-01-02',0,'one_shot',null,null,null,'open',null),
+  ('11111111-0000-0000-0000-000000292107','dddddddd-0000-0000-0000-000000292101','Bina Das','person',9000,'2026-01-02',0,'one_shot',null,null,null,'open',null),
+  ('11111111-0000-0000-0000-000000292108','dddddddd-0000-0000-0000-000000292101','Mohan Lal','person',9000,'2026-01-02',0,'one_shot',null,null,null,'open',null),
+  ('11111111-0000-0000-0000-000000292109','dddddddd-0000-0000-0000-000000292101','Charu Jain','person',9000,'2026-01-02',0,'one_shot',null,null,null,'open',null);
 
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000292101","role":"authenticated"}', true);
 
@@ -59,6 +66,8 @@ select public.reconcile_bank_credit_to_loans_given('22222222-0000-0000-0000-0000
 select public.reconcile_bank_credit_to_loans_given('22222222-0000-0000-0000-000000292102',
   '[{"loan_id":"11111111-0000-0000-0000-000000292103","amount":10000},{"loan_id":"11111111-0000-0000-0000-000000292104","amount":6000}]');
 select public.reconcile_bank_credit_to_loan_given('22222222-0000-0000-0000-000000292103', '11111111-0000-0000-0000-000000292105', 0);
+select public.reconcile_bank_credit_to_loans_given('22222222-0000-0000-0000-000000292105',
+  '[{"loan_id":"11111111-0000-0000-0000-000000292106","amount":1000},{"loan_id":"11111111-0000-0000-0000-000000292107","amount":1000},{"loan_id":"11111111-0000-0000-0000-000000292108","amount":1000},{"loan_id":"11111111-0000-0000-0000-000000292109","amount":1000}]');
 
 -- ── A, B, C. What the Banking list reads ─────────────────────────────────────────────────
 do $$
@@ -66,8 +75,13 @@ declare
   r record;
   v_acct constant uuid := 'bbbbbbbb-0000-0000-0000-000000292101';
 begin
-  if (select count(*) from public.bank_line_bookings(v_acct)) <> 3 then
-    raise exception 'FAIL A: % rows for 3 booked lines', (select count(*) from public.bank_line_bookings(v_acct));
+  if (select count(*) from public.bank_line_bookings(v_acct)) <> 4 then
+    raise exception 'FAIL A: % rows for 4 booked lines', (select count(*) from public.bank_line_bookings(v_acct));
+  end if;
+
+  select * into r from public.bank_line_bookings(v_acct) b where b.txn_id = '22222222-0000-0000-0000-000000292105';
+  if r.amount is distinct from 4000 or r.party is distinct from 'Bina Das, Charu Jain +2 more' then
+    raise exception 'FAIL B2: the four-borrower line reads %', row_to_json(r);
   end if;
 
   select * into r from public.bank_line_bookings(v_acct) b where b.txn_id = '22222222-0000-0000-0000-000000292101';
@@ -98,7 +112,7 @@ begin
     raise exception 'FAIL D: split line undone under a later receipt';
   exception when others then
     if sqlerrm like 'FAIL%' then raise; end if;
-    if sqlerrm not like '%Rahul Chawla%1 later receipt(s) of this loan are on the books%undo the latest receipt first%' then
+    if sqlerrm not like 'Loan to Rahul Chawla (₹100000, given 13 Jan 2026): 1 later receipt(s) of this loan are on the books%undo the latest receipt first%' then
       raise exception 'FAIL D: the refusal does not name the borrower: %', sqlerrm;
     end if;
     if sqlerrm like '%Asha Verma%' then raise exception 'FAIL D: the refusal names the wrong borrower: %', sqlerrm; end if;
@@ -107,6 +121,24 @@ begin
      or (select matched_to_type from public.bank_transactions where id = '22222222-0000-0000-0000-000000292102') is distinct from 'loan_given' then
     raise exception 'FAIL D: a refused undo removed something';
   end if;
+end $$;
+
+-- ── D2. Two loans of one borrower: the message says which ───────────────────────────────
+do $$
+begin
+  -- a later receipt (13 Mar) on Kapil Dev's ₹1,000 loan (planted: the loan is closed, so no RPC takes it)
+  insert into public.loan_repayments (tenant_id, loan_id, repaid_on, amount, principal_part, interest_part, mode)
+  values ('dddddddd-0000-0000-0000-000000292101', '11111111-0000-0000-0000-000000292102', '2026-03-13', 1, 0, 1, 'cash');
+  begin
+    perform public.unreconcile_bank_receipt('22222222-0000-0000-0000-000000292101', false);
+    raise exception 'FAIL D2: split line undone under a later receipt';
+  exception when others then
+    if sqlerrm like 'FAIL%' then raise; end if;
+    if sqlerrm not like 'Loan to Kapil Dev (₹1000, given 05 Jan 2026): 1 later receipt(s) of this loan are on the books%' then
+      raise exception 'FAIL D2: the refusal does not say which Kapil Dev loan: %', sqlerrm;
+    end if;
+  end;
+  delete from public.loan_repayments where loan_id = '11111111-0000-0000-0000-000000292102' and repaid_on = '2026-03-13';
 end $$;
 
 -- ── E. The loans are locked before the later-receipt check ───────────────────────────────

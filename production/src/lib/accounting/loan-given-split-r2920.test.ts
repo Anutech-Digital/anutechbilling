@@ -146,8 +146,14 @@ describe("R-2921 paise are refused, never rounded", () => {
     expect(typedRupees("100.5")).toBeNull();
     expect(typedRupees("349000.49")).toBeNull();
     expect(typedRupees("0.4")).toBeNull();
-    expect(typedRupees("1e3")).toBe(1000);
-    expect(typedRupees("1000.0")).toBe(1000);
+    expect(typedRupees("999.99999999999999999")).toBeNull();   // Number() would call this 1000
+    expect(typedRupees("1000.0")).toBeNull();
+  });
+  it("only plain digits are an amount (what the RPC accepts)", () => {
+    expect(typedRupees("1e3")).toBeNull();
+    expect(typedRupees("0x10")).toBeNull();
+    expect(typedRupees("1234567890")).toBeNull();   // 10 digits — over the RPC's 9
     expect(typedRupees(" 250 ")).toBe(250);
+    expect(typedRupees("349000")).toBe(349000);
   });
 });
