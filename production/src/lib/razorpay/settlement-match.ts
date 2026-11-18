@@ -14,6 +14,12 @@
  *
  * Pure: no I/O. Amounts from Razorpay are PAISE; the app stores whole RUPEES (CLAUDE.md §13).
  * Each Razorpay figure is rounded to rupees once, here, and the database re-checks everything.
+ *
+ * R-2918 — a Razorpay payment that is in NO app payment (a ₹1 / ₹100 test payment that was never a
+ * sale) used to block the whole settlement. The owner / accountant may now pick "Book as Other income"
+ * for that one payment: its gross goes to Other income (P&L), its fee stays in the settlement's fee,
+ * the customer payments are booked as before. It is never applied without the pick (a payment of
+ * ₹200 or less only gets the pick SUGGESTED), and never to a payment the app does have.
  */
 
 import { rupee } from "@/lib/utils";
@@ -120,6 +126,11 @@ export function pickSettlement(
 
 export type MatchedBy = "reference" | "order" | "picked";
 
+/** R-2918: an unmatched payment of at most this many rupees gets "Book as Other income" SUGGESTED (never applied by itself). */
+export const OTHER_INCOME_SUGGEST_MAX = 200;
+/** R-2918: the pick's value on the screens (in place of an app payment id). */
+export const OTHER_INCOME_PICK = "other_income";
+
 export interface PlanPayment {
   rzpId: string;
   /** rupees */
@@ -136,6 +147,12 @@ export interface PlanPayment {
   /** when unmatched: app payments of the same amount, not in any bank line yet */
   candidates: Array<{ id: string; amount: number; received_at: string; customer_name: string | null; quote_id: string | null; reference: string | null }>;
   problem: string | null;
+  /** R-2918: not in the app and the owner picked "Book as Other income" — no app payment, no problem */
+  otherIncome?: boolean;
+  /** R-2918: not in the app, ₹200 or less and nothing in the app could be it — the screen suggests the pick (it is still the owner's click) */
+  suggestOtherIncome?: boolean;
+  /** R-2918: not in the app and may be picked as Other income (₹1 or more, not paid on a quote's Razorpay order) */
+  canOtherIncome?: boolean;
 }
 
 export interface PlanRefund {
@@ -160,6 +177,8 @@ export interface SettlementPlan {
     feeGst: number;
     /** other Razorpay items (adjustments …), signed: + adds to the bank amount */
     other: number;
+    /** R-2918: the part of `gross` the owner picked to book as Other income (absent when none) */
+    otherIncome?: number;
     /** what the items add up to (gross − refunds − fee + other) */
     net: number;
     /** the bank line */
@@ -179,6 +198,8 @@ export interface SettlementRpcArg {
   tax_paise: number;
   payments: Array<{ rzp_id: string; amount_paise: number; payment_ids: string[] }>;
   refunds: Array<{ rzp_id: string; amount_paise: number; payment_ids: string[] }>;
+  /** R-2918: Razorpay payments with no app payment that the owner picked to book as Other income (only when any) */
+  other_income?: Array<{ rzp_id: string; amount_paise: number; order_id: string | null }>;
 }
 
 export interface PlanInput {
@@ -194,6 +215,10 @@ export interface PlanInput {
   pool: AppPayment[];
   /** owner's picks: Razorpay payment id → app payment id */
   picks?: Record<string, string>;
+  /** R-2918: Razorpay payment ids the owner picked "Book as Other income" for — counted only for a payment that is NOT in the app */
+  otherIncome?: readonly string[];
+  /** R-2918 (month batch): honour the pick only when no app payment of that amount could be this payment — such a line is opened one by one */
+  otherIncomeOnlyWithoutCandidates?: boolean;
 }
 
 const rs = (n: number) => rupee(n, { decimals: Number.isInteger(n) ? 0 : 2 });
@@ -202,6 +227,7 @@ const DAY = 86_400;
 export function buildSettlementPlan(input: PlanInput): SettlementPlan {
   const { line, settlement } = input;
   const picks = input.picks ?? {};
+  const asOtherIncome = new Set(input.otherIncome ?? []);
   const items = input.items.filter((i) => i.settlement_id === settlement.id);
   const blockers: string[] = [];
   const used = new Set<string>();
@@ -246,11 +272,26 @@ export function buildSettlementPlan(input: PlanInput): SettlementPlan {
       found.forEach((p) => used.add(p.id));
     } else {
       const at = it.created_at ?? settlement.created_at;
-      row.candidates = input.pool
+      const candidates = input.pool
         .filter((p) => !p.banked && p.status === "received" && cash(p) === amount && !used.has(p.id))
         .filter((p) => Math.abs(Date.parse(p.received_at) / 1000 - at) <= 10 * DAY)
         .map((p) => ({ id: p.id, amount: cash(p), received_at: p.received_at, customer_name: p.customer_name, quote_id: p.quote_id, reference: p.reference }));
-      row.problem = `Razorpay payment ${it.entity_id} (${rs(amount)}) is not in the app. Pick the app payment it is, or record it first on its quote with reference ${it.entity_id}, then fetch again.`;
+      /* R-2918: a payment made on a quote's Razorpay order in the app is that customer's money — never Other
+         income; and under ₹1 (rounds to ₹0) there is nothing to book. */
+      const onAQuote = Boolean(it.order_id && Object.prototype.hasOwnProperty.call(input.byOrder, it.order_id));
+      const mayBeIncome = amount > 0 && !onAQuote;
+      if (mayBeIncome && asOtherIncome.has(it.entity_id) && !(input.otherIncomeOnlyWithoutCandidates && candidates.length > 0)) {
+        /* The owner's pick — no customer is guessed; the gross is Other income, the fee stays a fee. */
+        row.otherIncome = true;
+      } else {
+        row.candidates = candidates;
+        row.canOtherIncome = mayBeIncome;
+        /* suggested only when the app has nothing that could be this payment */
+        row.suggestOtherIncome = mayBeIncome && amount <= OTHER_INCOME_SUGGEST_MAX && candidates.length === 0;
+        row.problem = onAQuote
+          ? `Razorpay payment ${it.entity_id} (${rs(amount)}) is not in the app, but it was paid on a quote's payment link (order ${it.order_id}). Record it on that quote with reference ${it.entity_id}, then fetch again.`
+          : `Razorpay payment ${it.entity_id} (${rs(amount)}) is not in the app. Pick the app payment it is, or record it first on its quote with reference ${it.entity_id}, then fetch again${mayBeIncome ? ` — or, if it was never a sale (a test payment), pick "Book as Other income"` : ""}.`;
+      }
     }
     payments.push(row);
   }
@@ -298,6 +339,8 @@ export function buildSettlementPlan(input: PlanInput): SettlementPlan {
   const gross = payments.reduce((s, p) => s + p.amount, 0);
   const refundTotal = refunds.reduce((s, r) => s + r.amount, 0);
   const ready = blockers.length === 0 && payments.length > 0;
+  const otherIncomeRows = payments.filter((p) => p.otherIncome);
+  const paiseOf = (rzpId: string, rupees: number): number => items.find((i) => i.entity_id === rzpId)?.amount ?? rupees * 100;
 
   return {
     settlement: { id: settlement.id, utr: settlement.utr, amount: paiseToRupees(settlement.amount), createdAt: settlement.created_at },
@@ -311,6 +354,7 @@ export function buildSettlementPlan(input: PlanInput): SettlementPlan {
       other: paiseToRupees(otherPaise),
       net: paiseToRupees(netPaise),
       bank: Number(line.credit) || 0,
+      ...(otherIncomeRows.length ? { otherIncome: otherIncomeRows.reduce((s, p) => s + p.amount, 0) } : {}),
     },
     blockers,
     ready,
@@ -320,9 +364,9 @@ export function buildSettlementPlan(input: PlanInput): SettlementPlan {
           utr: settlement.utr,
           fee_paise: feePaise,
           tax_paise: taxPaise,
-          payments: payments.map((p) => ({
+          payments: payments.filter((p) => !p.otherIncome).map((p) => ({
             rzp_id: p.rzpId,
-            amount_paise: items.find((i) => i.entity_id === p.rzpId)?.amount ?? p.amount * 100,
+            amount_paise: paiseOf(p.rzpId, p.amount),
             payment_ids: p.paymentIds,
           })),
           refunds: refunds.map((r) => ({
@@ -330,6 +374,9 @@ export function buildSettlementPlan(input: PlanInput): SettlementPlan {
             amount_paise: (() => { const i = items.find((x) => x.entity_id === r.rzpId); return i ? (i.amount || i.debit) : r.amount * 100; })(),
             payment_ids: r.paymentIds,
           })),
+          ...(otherIncomeRows.length
+            ? { other_income: otherIncomeRows.map((p) => ({ rzp_id: p.rzpId, amount_paise: paiseOf(p.rzpId, p.amount), order_id: p.orderId })) }
+            : {}),
         }
       : null,
   };
@@ -341,4 +388,4 @@ export type SettlementLookup =
   | { state: "error"; message: string }
   | { state: "not_found"; message: string }
   | { state: "many"; message: string; options: Array<{ id: string; amount: number; utr: string | null; createdAt: number }> }
-  | { state: "plan"; plan: SettlementPlan };
+  | { state: "plan"; plan: SettlementPlan; /** R-2918: may this user pick "Book as Other income" (owner / accountant) */ canBookOtherIncome?: boolean };

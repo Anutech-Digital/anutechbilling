@@ -111,3 +111,19 @@ describe("POST /api/banking/razorpay-settlement/month", () => {
     expect(state.undoArgs).toEqual([]);
   });
 });
+
+/* R-2918 — the run may carry the owner's "Book as Other income" picks: line id → Razorpay payment ids. */
+describe("POST /api/banking/razorpay-settlement/month — R-2918 otherIncome", () => {
+  it("passes the picks (ids only) to the run; none → an empty map", async () => {
+    await post({ action: "run", accountId: ACC, month: "2025-07", txnIds: [RUN], otherIncome: { [RUN]: ["pay_Qq4aD1VWkbUlGk"] } });
+    expect(state.runArgs[0]).toMatchObject({ txnIds: [RUN], otherIncome: { [RUN]: ["pay_Qq4aD1VWkbUlGk"] } });
+    await post({ action: "run", accountId: ACC, month: "2025-07", txnIds: [RUN] });
+    expect(state.runArgs[1]).toMatchObject({ otherIncome: {} });
+  });
+  it("a pick that is not a line id → Razorpay payment ids is refused before anything runs", async () => {
+    expect((await post({ action: "run", accountId: ACC, month: "2025-07", txnIds: [RUN], otherIncome: { [RUN]: ["setl_A"] } })).status).toBe(400);
+    expect((await post({ action: "run", accountId: ACC, month: "2025-07", txnIds: [RUN], otherIncome: { "not-a-line": ["pay_1"] } })).status).toBe(400);
+    expect((await post({ action: "run", accountId: ACC, month: "2025-07", txnIds: [RUN], otherIncome: { [RUN]: [{ rzp_id: "pay_1", amount_paise: 100 }] } })).status).toBe(400);
+    expect(state.runArgs).toEqual([]);
+  });
+});

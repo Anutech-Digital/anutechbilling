@@ -93,6 +93,8 @@ export async function loadSettlementPlan(args: {
   txnId: string;
   settlementId?: string | null;
   picks?: Record<string, string>;
+  /** R-2918: Razorpay payment ids the owner picked "Book as Other income" for */
+  otherIncome?: readonly string[];
   fetchImpl?: typeof fetch;
   env?: Record<string, string | undefined>;
 }): Promise<SettlementLookup> {
@@ -147,7 +149,7 @@ export async function loadSettlementPlan(args: {
     throw e;
   }
 
-  const plan = await planForSettlement({ db, tenantId, line, settlement, items, picks: args.picks });
+  const plan = await planForSettlement({ db, tenantId, line, settlement, items, picks: args.picks, otherIncome: args.otherIncome });
   return { state: "plan", plan };
 }
 
@@ -162,6 +164,10 @@ export async function planForSettlement(args: {
   settlement: RzpSettlement;
   items: RzpReconItem[];
   picks?: Record<string, string>;
+  /** R-2918: only counted for a payment that is in no app payment (buildSettlementPlan) */
+  otherIncome?: readonly string[];
+  /** R-2918 (month batch): see PlanInput.otherIncomeOnlyWithoutCandidates */
+  otherIncomeOnlyWithoutCandidates?: boolean;
 }): Promise<SettlementPlan> {
   const { db, tenantId, line, settlement, items } = args;
   /* The app's side: by Razorpay payment id (the webhook's reference), by order id, and a pool
@@ -211,5 +217,7 @@ export async function planForSettlement(args: {
     byOrder,
     pool: await toAppPayments(db, tenantId, (poolRows ?? []) as unknown as PayRow[]),
     picks: args.picks,
+    otherIncome: args.otherIncome,
+    otherIncomeOnlyWithoutCandidates: args.otherIncomeOnlyWithoutCandidates,
   });
 }

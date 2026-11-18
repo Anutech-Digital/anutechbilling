@@ -13,6 +13,11 @@
  *                     back with the database's own message; the other lines still book.
  *   undoMonthRun    — undo_bank_recon_run: every line of the run back through the plain un-reconcile.
  *
+ * R-2918: a line blocked only by Razorpay payments that are in no app payment can be made Ready by the
+ * owner's "Book as Other income" pick per payment. The table lists those payments (BatchRow.unmatched);
+ * the run takes the picks per line (otherIncome: line id → Razorpay payment ids) and plans those lines
+ * again WITH them on the server — the amounts still come from Razorpay, never from the browser.
+ *
  * Razorpay is read only (GET). App reads and every booking run on the signed-in user's own client
  * (RLS + the functions' owner/accountant gate); the service role only reads the sealed keys.
  */
@@ -77,7 +82,11 @@ export async function loadMonthBatch(args: MonthArgs): Promise<MonthBatchLookup>
  * The table plus each ready line's booking argument (kept on the server — the run books from these).
  * `only` = plan just these lines (a run's chunk); pairing still sees every line.
  */
-async function buildMonth(args: MonthArgs, only?: ReadonlySet<string>): Promise<{ lookup: MonthBatchLookup; plans: Map<string, SettlementPlan> }> {
+async function buildMonth(
+  args: MonthArgs,
+  only?: ReadonlySet<string>,
+  otherIncome: Readonly<Record<string, readonly string[]>> = {},
+): Promise<{ lookup: MonthBatchLookup; plans: Map<string, SettlementPlan> }> {
   const plans = new Map<string, SettlementPlan>();
   const done = (lookup: MonthBatchLookup) => ({ lookup, plans });
   const { db, tenantId, accountId, month } = args;
@@ -147,11 +156,12 @@ async function buildMonth(args: MonthArgs, only?: ReadonlySet<string>): Promise<
     if (razorpayDown) { out.push({ ...base, blockers: [razorpayDown] }); continue; }
     try {
       const items = await settlementItems(get, p.settlement);
-      const plan = await planForSettlement({ db, tenantId, line: p.line, settlement: p.settlement, items });
+      const plan = await planForSettlement({ db, tenantId, line: p.line, settlement: p.settlement, items, otherIncome: otherIncome[p.line.id], otherIncomeOnlyWithoutCandidates: true });
       if (plan.ready && plan.rpcArg) plans.set(p.line.id, plan);
       out.push({
         ...base, ready: plan.ready, blockers: plan.blockers,
         payments: plan.payments.length, gross: plan.totals.gross, fee: plan.totals.fee, feeGst: plan.totals.feeGst,
+        ...unmatchedOf(plan),
       });
     } catch (e) {
       if (e instanceof RazorpayApiError) {
@@ -165,6 +175,16 @@ async function buildMonth(args: MonthArgs, only?: ReadonlySet<string>): Promise<
   return done({ state: "batch", batch: summarise(month, out) });
 }
 
+/** R-2918: the payments that are in no app payment (the owner may pick "Book as Other income") and what is already picked. */
+function unmatchedOf(plan: SettlementPlan): Pick<BatchRow, "unmatched"> {
+  /* Review: only a payment nothing in the app could be — one with a same-amount app payment to pick from,
+     or paid on a quote's Razorpay order, is settled by opening the line (never a blind tick here). */
+  const unmatched = plan.payments
+    .filter((p) => p.paymentIds.length === 0 && !p.otherIncome && p.problem && p.canOtherIncome && p.candidates.length === 0)
+    .map((p) => ({ rzpId: p.rzpId, amount: p.amount, problem: p.problem as string, suggest: Boolean(p.suggestOtherIncome) }));
+  return unmatched.length ? { unmatched } : {};
+}
+
 /* razorpay_settlement_recons (R-2099) is not in the generated table types yet. */
 interface ReconsQuery { eq(c: string, v: string): ReconsQuery; in(c: string, v: string[]): PromiseLike<{ data: unknown[] | null; error: { message: string } | null }> }
 interface ReconsDb { from(t: "razorpay_settlement_recons"): { select(cols: string): ReconsQuery } }
@@ -176,7 +196,7 @@ export interface RunResult {
   /** the run these lines were booked on — null when a new run booked nothing */
   runId: string | null;
   /** R-2745: feeDate / feeDateWhy — the fee expense's day when it moved to the first open (not GST-filed) day */
-  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number; feeNow?: number; feeDate?: string | null; feeDateWhy?: string | null }>;
+  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number; feeNow?: number; feeDate?: string | null; feeDateWhy?: string | null; /** R-2918: rupees of this line booked as Other income */ otherIncome?: number }>;
   refused: Array<{ txnId: string; message: string }>;
 }
 
@@ -185,10 +205,13 @@ export async function runMonthBatch(args: MonthArgs & {
   txnIds: string[];
   /** continue this run (the press's earlier chunks) — else a new run starts */
   runId?: string | null;
+  /** R-2918: the owner's "Book as Other income" picks — line id → Razorpay payment ids (ids only, no amounts) */
+  otherIncome?: Readonly<Record<string, readonly string[]>>;
 }): Promise<{ state: "done"; result: RunResult } | { state: "no_keys" | "error"; message: string }> {
-  /* Re-planned here from Razorpay and the app's rows — the browser sends only the account, month and line ids. */
+  /* Re-planned here from Razorpay and the app's rows — the browser sends only the account, month, line ids
+     and (R-2918) which not-in-the-app payments to book as Other income. */
   const want = new Set(args.txnIds.slice(0, RUN_CHUNK));
-  const { lookup, plans } = await buildMonth(args, want);
+  const { lookup, plans } = await buildMonth(args, want, args.otherIncome ?? {});
   if (lookup.state !== "batch") return lookup;
   const result: RunResult = { runId: args.runId ?? null, booked: [], refused: [] };
   const rows = lookup.batch.rows;
@@ -216,12 +239,13 @@ export async function runMonthBatch(args: MonthArgs & {
       result.refused.push({ txnId: r.txnId, message: userMessage(error, "Could not reconcile this line — nothing was saved for it. Try again.") });
       continue;
     }
-    const d = (data ?? {}) as { settlement_id?: string; fee?: number; fee_booked_now?: number; fee_expense_date?: string | null; fee_date_why?: string | null };
+    const d = (data ?? {}) as { settlement_id?: string; fee?: number; fee_booked_now?: number; fee_expense_date?: string | null; fee_date_why?: string | null; other_income?: number };
     result.booked.push({
       txnId: r.txnId, settlementId: d.settlement_id ?? plan.settlement.id, amount: r.amount, fee: Number(d.fee) || 0,
       /* feeNow = the part booked on this run's expense (the rest sits on earlier per-payment expenses, R-2565) */
       ...(d.fee_booked_now == null ? {} : { feeNow: Number(d.fee_booked_now) || 0 }),
       feeDate: d.fee_expense_date ?? null, feeDateWhy: d.fee_date_why ?? null,
+      ...(Number(d.other_income) > 0 ? { otherIncome: Number(d.other_income) } : {}),
     });
   }
   /* Review: a new run that booked nothing is not offered for Undo. */

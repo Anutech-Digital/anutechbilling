@@ -128,6 +128,26 @@ export interface BatchRow {
   gross: number;
   fee: number;
   feeGst: number;
+  /** R-2918: Razorpay payments of this settlement that nothing in the app could be — the owner may pick "Book as Other income" per payment (absent when none) */
+  unmatched?: Array<{ rzpId: string; amount: number; problem: string; suggest: boolean }>;
+}
+
+/** R-2918: what still blocks the line once the picked not-in-the-app payments are counted (the one rule for the sheet). */
+export function blockersWithPicks(row: BatchRow, picked: readonly string[] = []): string[] {
+  const ticked = new Set((row.unmatched ?? []).filter((u) => picked.includes(u.rzpId)).map((u) => u.problem));
+  return row.blockers.filter((b) => !ticked.has(b));
+}
+
+/**
+ * R-2918: is this line Ready once the owner's "Book as Other income" picks are counted? Ready as it is;
+ * or paired, every not-in-the-app payment picked, and nothing else blocking. The server plans the line
+ * again with the picks before it books — this only decides what the table shows and sends.
+ */
+export function readyWithPicks(row: BatchRow, picked: readonly string[] = []): boolean {
+  if (row.ready) return true;
+  const unmatched = row.unmatched ?? [];
+  if (!row.settlementId || !unmatched.length) return false;
+  return unmatched.every((u) => picked.includes(u.rzpId)) && blockersWithPicks(row, picked).length === 0;
 }
 
 export interface MonthBatch {

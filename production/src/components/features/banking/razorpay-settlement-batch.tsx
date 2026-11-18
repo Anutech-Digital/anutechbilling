@@ -8,6 +8,11 @@
  * ready" books every ready line in one run (sent in chunks of RUN_CHUNK, the server plans each chunk
  * again — the browser sends no amounts); "Undo this run" takes the whole run back. The run id is kept
  * in this browser tab (per account) so Undo survives closing the sheet. Owner / accountant only.
+ *
+ * R-2918: a line blocked only by a Razorpay payment that is in no app payment (a ₹1 / ₹100 test payment)
+ * shows a "Book as Other income" tick per such payment. Ticked → the line counts as Ready and the run
+ * books that payment's amount as Other income (P&L), the customer payments and the fee as before; "Undo
+ * this run" takes it back too. Never ticked by itself — ₹200 or less only says "Suggested".
  */
 "use client";
 
@@ -25,6 +30,7 @@ import {
   type BatchRow, type MonthRunResult, type MonthUndoResult,
 } from "@/lib/queries/razorpay-settlement";
 import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
+import { blockersWithPicks, readyWithPicks } from "@/lib/razorpay/settlement-batch";
 
 /** Lines per request — the server's RUN_CHUNK (settlement-batch.server.ts). */
 export const RUN_CHUNK = 15;
@@ -60,14 +66,44 @@ function saveRun(accountId: string, run: SavedRun | null): void {
   } catch { /* storage blocked — Undo still works while the sheet stays open */ }
 }
 
-function StatusCell({ row }: { row: BatchRow }) {
+function StatusCell({ row, picked, onToggle, busy }: {
+  row: BatchRow;
+  /** R-2918: Razorpay payment ids of this line ticked "Book as Other income" */
+  picked: readonly string[];
+  onToggle: (txnId: string, rzpId: string) => void;
+  busy: boolean;
+}) {
   if (row.ready) return <span className="text-success font-medium">Ready</span>;
+  const unmatched = row.settlementId ? row.unmatched ?? [] : [];
+  const ready = readyWithPicks(row, picked);
+  /* a ticked payment no longer blocks — what is left is what still stops the line */
+  const blockers = blockersWithPicks(row, picked);
+  const otherIncome = unmatched.filter((u) => picked.includes(u.rzpId)).reduce((s, u) => s + u.amount, 0);
   return (
-    <span className="text-warning-ink">
-      <span className="font-medium">Blocked</span>
-      <span className="block text-xs text-ink-2 whitespace-normal">{row.blockers[0] ?? "Not ready."}</span>
-      {row.blockers.length > 1 && <span className="block text-xs text-ink-3">{`+${row.blockers.length - 1} more — open the line to see all`}</span>}
-    </span>
+    <div>
+      {ready ? (
+        <span>
+          <span className="text-success font-medium">Ready</span>
+          <span className="block text-xs text-ink-2 whitespace-normal">{`${rupee(otherIncome)} will be booked as Other income, the rest as customer payments.`}</span>
+        </span>
+      ) : (
+        <span className="text-warning-ink">
+          <span className="font-medium">Blocked</span>
+          <span className="block text-xs text-ink-2 whitespace-normal">{blockers[0] ?? "Not ready."}</span>
+          {blockers.length > 1 && <span className="block text-xs text-ink-3">{`+${blockers.length - 1} more — open the line to see all`}</span>}
+        </span>
+      )}
+      {unmatched.map((u) => (
+        <label key={u.rzpId} className="mt-1 flex items-start gap-2 text-xs text-ink whitespace-normal">
+          <input type="checkbox" className="mt-0.5" checked={picked.includes(u.rzpId)} disabled={busy}
+            onChange={() => onToggle(row.txnId, u.rzpId)} />
+          <span>
+            {`Book as Other income — ${u.rzpId} (${rupee(u.amount)})`}
+            {u.suggest && <span className="block text-ink-3">Suggested: a payment this small that is in no quote is usually a test payment.</span>}
+          </span>
+        </label>
+      ))}
+    </div>
   );
 }
 
@@ -79,6 +115,12 @@ export function feeDatedLaterText(booked: MonthRunResult["booked"]): string {
   const days = [...new Set(moved.map((b) => b.feeDate as string))].sort();
   const fees = moved.reduce((s, b) => s + (b.feeNow ?? b.fee), 0);   // only the part booked on that day
   return `Razorpay fees of ${plural(moved.length)} (${rupee(fees)}) are dated ${days.map((d) => formatDate(d)).join(", ")} — the first open day: ${moved[0].feeDateWhy}. The bank lines keep their own dates.`;
+}
+
+/* R-2918: what the run booked as Other income (payments that are in no app payment) — nothing when none. */
+export function otherIncomeText(booked: MonthRunResult["booked"]): string {
+  const total = booked.reduce((s, b) => s + (b.otherIncome ?? 0), 0);
+  return total > 0 ? `, Other income ${rupee(total)}` : "";
 }
 
 export function RazorpaySettlementBatch({ accountId, accountName, months, open, onOpenChange }: {
@@ -98,9 +140,16 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
   const [saved, setSaved] = React.useState<SavedRun | null>(() => loadRun(accountId));
   const [undone, setUndone] = React.useState<MonthUndoResult | null>(null);
 
+  /* R-2918: the owner's "Book as Other income" ticks — line id → Razorpay payment ids. Only ids are sent. */
+  const [otherPicks, setOtherPicks] = React.useState<Record<string, string[]>>({});
+  const togglePick = (txnId: string, rzpId: string) => setOtherPicks((cur) => {
+    const now = cur[txnId] ?? [];
+    return { ...cur, [txnId]: now.includes(rzpId) ? now.filter((x) => x !== rzpId) : [...now, rzpId] };
+  });
+
   const lookup = batch.data;
   const rows = lookup?.state === "batch" ? lookup.batch.rows : [];
-  const readyRows = rows.filter((r) => r.ready);
+  const readyRows = rows.filter((r) => readyWithPicks(r, otherPicks[r.txnId]));
 
   const doRun = async () => {
     if (!month || !readyRows.length || running) return;
@@ -111,7 +160,13 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
     setRunning({ done: 0, of: todo.length });
     try {
       for (let i = 0; i < todo.length; i += RUN_CHUNK) {
-        const r = await run.mutateAsync({ accountId, month, txnIds: todo.slice(i, i + RUN_CHUNK), runId: total.runId });
+        const chunk = todo.slice(i, i + RUN_CHUNK);
+        /* R-2918: the ticks of this chunk's lines that need them (a line Ready by itself sends none). */
+        const otherIncome = Object.fromEntries(
+          readyRows.filter((x) => chunk.includes(x.txnId) && !x.ready && (otherPicks[x.txnId] ?? []).length)
+            .map((x) => [x.txnId, (x.unmatched ?? []).map((u) => u.rzpId).filter((id) => otherPicks[x.txnId].includes(id))]),
+        );
+        const r = await run.mutateAsync({ accountId, month, txnIds: chunk, runId: total.runId, ...(Object.keys(otherIncome).length ? { otherIncome } : {}) });
         total.runId = total.runId ?? r.runId;
         total.booked.push(...r.booked);
         total.refused.push(...r.refused);
@@ -127,6 +182,8 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
     } catch (e) {
       toastError(e, { fallback: total.booked.length ? `Stopped after ${plural(total.booked.length)} — "Undo this run" can still take them back.` : "Could not reconcile the settlements — nothing was booked." });
     } finally {
+      /* Review: a tick is used once — after a run (and after Undo) each payment is picked afresh. */
+      setOtherPicks({});
       setLastRun({ ...total, dates });
       setRunning(null);
       invalidateBank(qc);
@@ -137,6 +194,7 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
     undo.mutate(saved.runId, {
       onSuccess: (u) => {
         setUndone(u);
+        setOtherPicks({});
         if (!u.left.length) { saveRun(accountId, null); setSaved(null); setLastRun(null); }
         const msg = `Undone: ${plural(u.undone)} un-reconciled${u.left.length ? `, ${u.left.length} left (see why below)` : ""}`;
         if (u.left.length) toast.warning(msg); else toast.success(msg);
@@ -157,7 +215,7 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
         </SheetHeader>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Select value={month ?? undefined} onValueChange={(v) => { setMonth(v); setLastRun(null); setUndone(null); }}>
+          <Select value={month ?? undefined} onValueChange={(v) => { setMonth(v); setLastRun(null); setUndone(null); setOtherPicks({}); }}>
             <SelectTrigger className="w-56" aria-label="Month">
               <SelectValue placeholder="Pick a month" />
             </SelectTrigger>
@@ -169,13 +227,13 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
           </Select>
           {lookup?.state === "batch" && (
             <span className="text-sm text-ink-2">
-              {`${lookup.batch.ready} ready (${rupee(lookup.batch.readyAmount)}) · ${lookup.batch.blocked} blocked`}
+              {`${readyRows.length} ready (${rupee(readyRows.reduce((s, r) => s + r.amount, 0))}) · ${rows.length - readyRows.length} blocked`}
             </span>
           )}
           <div className="ml-auto flex gap-2">
             {saved && (
               <Button variant="default" icon="refresh" loading={undo.isPending} disabled={Boolean(running)} onClick={doUndo}
-                title={`Un-reconcile the ${plural(saved.booked)} the last run booked (${monthLabel(saved.month)}) — the fee expenses go, the receipts wait for their bank line again`}>
+                title={`Un-reconcile the ${plural(saved.booked)} the last run booked (${monthLabel(saved.month)}) — the fee expenses and any Other income it booked go, the receipts wait for their bank line again`}>
                 Undo this run
               </Button>
             )}
@@ -199,7 +257,7 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
         )}
         {lastRun && (
           <div className="mt-4 rounded-md border border-hairline px-3 py-2 text-sm" role="status">
-            <p>{`This run reconciled ${plural(lastRun.booked.length)}${lastRun.booked.length ? ` (${rupee(lastRun.booked.reduce((s, b) => s + b.amount, 0))}, fees ${rupee(lastRun.booked.reduce((s, b) => s + b.fee, 0))})` : ""}.`}</p>
+            <p>{`This run reconciled ${plural(lastRun.booked.length)}${lastRun.booked.length ? ` (${rupee(lastRun.booked.reduce((s, b) => s + b.amount, 0))}, fees ${rupee(lastRun.booked.reduce((s, b) => s + b.fee, 0))}${otherIncomeText(lastRun.booked)})` : ""}.`}</p>
             {lastRun.booked.some((b) => b.feeDateWhy) && <p className="text-ink-2">{feeDatedLaterText(lastRun.booked)}</p>}
             {lastRun.refused.map((r) => <p key={r.txnId} className="text-warning-ink">{`${dateOf(r.txnId)}${r.message}`}</p>)}
           </div>
@@ -236,7 +294,7 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
                       </td>
                       <td className="py-2 text-right tabular-nums">{r.settlementId ? r.payments : "—"}</td>
                       <td className="py-2 text-right tabular-nums">{r.settlementId ? `${rupee(r.fee)} (${rupee(r.feeGst)})` : "—"}</td>
-                      <td className="py-2 pl-4"><StatusCell row={r} /></td>
+                      <td className="py-2 pl-4"><StatusCell row={r} picked={otherPicks[r.txnId] ?? []} onToggle={togglePick} busy={Boolean(running)} /></td>
                     </tr>
                   ))}
                 </tbody>

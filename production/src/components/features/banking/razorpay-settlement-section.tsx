@@ -8,6 +8,10 @@
  * the payments are banked on this line and the fee is booked as Bank Charges (its GST as input
  * credit). A payment Razorpay settled that the app does not have is picked from the app's
  * payments of the same amount, or recorded first — the screen says which.
+ *
+ * R-2918: or, when it was never a sale (a ₹1 / ₹100 test payment), the owner / accountant picks "Book as
+ * Other income" for that payment — its amount goes to Other income (P&L), the rest is booked as before.
+ * Never picked by itself: ₹200 or less only says "Suggested".
  */
 "use client";
 
@@ -18,7 +22,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
-import type { SettlementPlan } from "@/lib/razorpay/settlement-match";
+import { OTHER_INCOME_PICK, type SettlementPlan } from "@/lib/razorpay/settlement-match";
 import { useRazorpaySettlement, useReconcileRazorpaySettlement } from "@/lib/queries/razorpay-settlement";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { settlementFeeSplit } from "@/lib/razorpay/fee-report";
@@ -58,16 +62,27 @@ export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
 
   const r = open ? q.data : undefined;
   const plan = r?.state === "plan" ? r.plan : null;
+  /* R-2918: the pick is the owner's / accountant's — other roles never see it (the server refuses them too). */
+  const canIncome = r?.state === "plan" && r.canBookOtherIncome === true;
   const blockers = plan ? remainingBlockers(plan, picks) : [];
   /* R-2418: of Razorpay's fee on this payout, how much its matched payments recovered from customers. */
-  const matchedIds = plan ? [...plan.payments.flatMap((p) => p.paymentIds), ...Object.values(picks).filter(Boolean)] : [];
+  const matchedIds = plan ? [...plan.payments.flatMap((p) => p.paymentIds), ...Object.values(picks).filter((v) => Boolean(v) && v !== OTHER_INCOME_PICK)] : [];
+  /* R-2918: the not-in-the-app payments picked "Book as Other income" (ids only go to the server). */
+  const otherIncomeIds = plan ? plan.payments.filter((p) => p.paymentIds.length === 0 && picks[p.rzpId] === OTHER_INCOME_PICK).map((p) => p.rzpId) : [];
+  const otherIncomeTotal = plan ? plan.payments.filter((p) => otherIncomeIds.includes(p.rzpId)).reduce((s, p) => s + p.amount, 0) : 0;
+  const linked = plan ? plan.payments.length - otherIncomeIds.length : 0;
   const charged = useSettlementFeeCharged(matchedIds, !!plan);
   const feeSplit = plan ? settlementFeeSplit(plan.totals.fee, charged.data ?? []) : null;
 
   async function reconcile() {
     try {
-      const done = await rec.mutateAsync({ txnId: line.id, settlementId: plan?.settlement.id ?? settlementId, picks });
-      toast.success(`Settlement reconciled: ${done.payments} payment${done.payments === 1 ? "" : "s"}, Razorpay fee ${rupee(done.fee)} booked`, {
+      const appPicks = Object.fromEntries(Object.entries(picks).filter(([, v]) => Boolean(v) && v !== OTHER_INCOME_PICK));
+      const done = await rec.mutateAsync({
+        txnId: line.id, settlementId: plan?.settlement.id ?? settlementId, picks: appPicks,
+        ...(otherIncomeIds.length ? { otherIncome: otherIncomeIds } : {}),
+      });
+      const asIncome = Number(done.other_income) > 0 ? `, ${rupee(Number(done.other_income))} booked as Other income` : "";
+      toast.success(`Settlement reconciled: ${done.payments} payment${done.payments === 1 ? "" : "s"}, Razorpay fee ${rupee(done.fee)} booked${asIncome}`, {
         description: done.fee_date_why && done.fee_expense_date
           /* R-2745: the fee expense went on the first open day (the line's month is GST-filed) — say so. */
           ? `${done.fee_booked_now < done.fee ? `${rupee(done.fee_booked_now)} of the fee` : "The fee"} is in Bank Charges dated ${formatDate(done.fee_expense_date)} — the first open day: ${done.fee_date_why}. The bank line keeps its own date.${done.fee_booked_now < done.fee ? ` ${rupee(done.fee - done.fee_booked_now)} was already booked on single payments.` : ""}`
@@ -172,22 +187,32 @@ export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
                           {p.matchedBy === "order" && <span className="text-ink-3"> (by order)</span>}
                           {p.matchedBy === "picked" && <span className="text-ink-3"> (picked)</span>}
                         </span>
-                      ) : p.candidates.length > 0 ? (
-                        <select
-                          aria-label={`App payment for ${p.rzpId}`}
-                          value={picks[p.rzpId] ?? ""}
-                          onChange={(e) => setPicks((cur) => ({ ...cur, [p.rzpId]: e.target.value }))}
-                          className="w-full rounded-md border border-amber/60 bg-paper px-2 py-1 text-xs text-ink"
-                        >
-                          <option value="">Not in the app — pick the payment…</option>
-                          {p.candidates.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.customer_name ?? "Payment"} · {rupee(c.amount)} · {formatDate(c.received_at)}{c.quote_id ? ` · ${c.quote_id}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
+                      ) : p.candidates.length === 0 && !(canIncome && p.canOtherIncome) ? (
                         <span className="text-amber-ink">Not in the app — record it on its quote with reference {p.rzpId}</span>
+                      ) : (
+                        <>
+                          <select
+                            aria-label={`App payment for ${p.rzpId}`}
+                            value={picks[p.rzpId] ?? ""}
+                            onChange={(e) => setPicks((cur) => ({ ...cur, [p.rzpId]: e.target.value }))}
+                            className="w-full rounded-md border border-amber/60 bg-paper px-2 py-1 text-xs text-ink"
+                          >
+                            <option value="">{p.candidates.length > 0 ? "Not in the app — pick the payment…" : "Not in the app — pick what it is…"}</option>
+                            {p.candidates.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.customer_name ?? "Payment"} · {rupee(c.amount)} · {formatDate(c.received_at)}{c.quote_id ? ` · ${c.quote_id}` : ""}
+                              </option>
+                            ))}
+                            {/* R-2918: never a sale (a test payment) → Other income; the owner's pick, never preselected */}
+                            {canIncome && p.canOtherIncome && <option value={OTHER_INCOME_PICK}>Book as Other income (not a customer payment)</option>}
+                          </select>
+                          {!picks[p.rzpId] && canIncome && p.suggestOtherIncome && (
+                            <span className="block mt-0.5 text-ink-3">Suggested: Book as Other income — a payment this small that is in no quote is usually a test payment.</span>
+                          )}
+                          {!picks[p.rzpId] && p.candidates.length === 0 && (
+                            <span className="block mt-0.5 text-amber-ink">Not in the app — record it on its quote with reference {p.rzpId}</span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="py-1.5 pr-2 text-right tabular-nums">{rupee(p.amount)}</td>
@@ -208,6 +233,7 @@ export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
 
           <dl className="text-xs grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5 tabular-nums">
             <dt className="text-ink-3">{plan.payments.length} payment{plan.payments.length === 1 ? "" : "s"}</dt><dd className="text-right">{rupee(plan.totals.gross)}</dd>
+            {otherIncomeTotal > 0 && <><dt className="text-ink-3 pl-3">of which booked as Other income</dt><dd className="text-right text-ink-3">{rupee(otherIncomeTotal)}</dd></>}
             {plan.totals.refunds > 0 && <><dt className="text-ink-3">Refunds</dt><dd className="text-right">−{rupee(plan.totals.refunds)}</dd></>}
             <dt className="text-ink-3">Razorpay fee (incl. GST {rupee(plan.totals.feeGst)})</dt><dd className="text-right">−{rupee(plan.totals.fee)}</dd>
             {feeSplit && feeSplit.fee > 0 && (
@@ -238,7 +264,8 @@ export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
               <Button size="sm" variant="default" onClick={() => { void q.refetch(); }}>Fetch again</Button>
             )}
             <span className="text-xs text-ink-3">
-              Links {plan.payments.length} payment{plan.payments.length === 1 ? "" : "s"} to this line and books the fee as Bank Charges (GST as input credit).
+              Links {linked} payment{linked === 1 ? "" : "s"} to this line and books the fee as Bank Charges (GST as input credit).
+              {otherIncomeTotal > 0 && ` ${rupee(otherIncomeTotal)} goes to Other income.`}
             </span>
           </div>
         </>

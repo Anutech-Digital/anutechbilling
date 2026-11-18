@@ -105,6 +105,124 @@ describe("buildSettlementPlan", () => {
     expect(picked.payments[1]).toMatchObject({ paymentIds: ["p9"], matchedBy: "picked" });
   });
 
+  /* R-2918 — the owner's case (18 Nov, HDFC 4523): a settlement blocked only by a ₹1 test payment. */
+  describe("R-2918 Book as Other income", () => {
+    const test1 = pay("pay_TEST1", 100, 2, 0);                 // ₹1, fee 2 paise
+    const withTest = [...items, test1];
+    const setlT: RzpSettlement = { ...setl, amount: 925100 + 98, fees: 18902 };
+    const lineT: BankLine = { ...line, credit: 9252 };
+    const base = { line: lineT, settlement: setlT, items: withTest, byReference: appPays, byOrder: {}, pool: [] as AppPayment[] };
+
+    it("without the pick the line stays blocked — nothing is Other income; ₹200 or less is only SUGGESTED", () => {
+      const plan = buildSettlementPlan(base);
+      expect(plan.ready).toBe(false);
+      expect(plan.rpcArg).toBeNull();
+      expect(plan.totals.otherIncome).toBeUndefined();
+      expect(plan.blockers).toEqual([expect.stringContaining("pay_TEST1 (₹1) is not in the app")]);
+      expect(plan.blockers[0]).toContain(`pick "Book as Other income"`);
+      const row = plan.payments.find((p) => p.rzpId === "pay_TEST1")!;
+      expect(row).toMatchObject({ paymentIds: [], suggestOtherIncome: true });
+      expect(row.otherIncome).toBeFalsy();
+    });
+
+    it("with the pick the line is Ready: customer payments as before, the ₹1 goes as other_income, the fee is untouched", () => {
+      const plan = buildSettlementPlan({ ...base, otherIncome: ["pay_TEST1"] });
+      expect(plan.blockers).toEqual([]);
+      expect(plan.ready).toBe(true);
+      expect(plan.totals).toMatchObject({ gross: 9441, otherIncome: 1, fee: 189, bank: 9252 });
+      expect(plan.payments.find((p) => p.rzpId === "pay_TEST1")).toMatchObject({ otherIncome: true, paymentIds: [], customer: null, problem: null });
+      expect(plan.rpcArg).toMatchObject({
+        fee_paise: 18902,
+        payments: [
+          { rzp_id: "pay_1", amount_paise: 118000, payment_ids: ["a1"] },
+          { rzp_id: "pay_2", amount_paise: 236000, payment_ids: ["a2"] },
+          { rzp_id: "pay_3", amount_paise: 590000, payment_ids: ["a3"] },
+        ],
+        other_income: [{ rzp_id: "pay_TEST1", amount_paise: 100 }],
+      });
+    });
+
+    it("a bigger payment (above ₹200) is not suggested and needs the explicit pick too", () => {
+      const big = [...items, pay("pay_BIG", 50000, 1000, 100)];
+      const s: RzpSettlement = { ...setl, amount: 925100 + 49000 };
+      const l: BankLine = { ...line, credit: 9741 };
+      const none = buildSettlementPlan({ line: l, settlement: s, items: big, byReference: appPays, byOrder: {}, pool: [] });
+      expect(none.ready).toBe(false);
+      expect(none.payments.find((p) => p.rzpId === "pay_BIG")).toMatchObject({ suggestOtherIncome: false });
+      const picked = buildSettlementPlan({ line: l, settlement: s, items: big, byReference: appPays, byOrder: {}, pool: [], otherIncome: ["pay_BIG"] });
+      expect(picked.ready).toBe(true);
+      expect(picked.rpcArg?.other_income).toEqual([{ rzp_id: "pay_BIG", amount_paise: 50000, order_id: null }]);
+    });
+
+    it("review: a small payment the app MAY have (a same-amount unbanked receipt) is not suggested; the month batch never takes the pick for it", () => {
+      const pool = [app("p9", null, 1)];                                    // a ₹1 receipt recorded by hand, no pay_ reference
+      const plan = buildSettlementPlan({ ...base, pool });
+      const row = plan.payments.find((p) => p.rzpId === "pay_TEST1")!;
+      expect(row.candidates.map((c) => c.id)).toEqual(["p9"]);
+      expect(row).toMatchObject({ canOtherIncome: true, suggestOtherIncome: false });
+      /* one line at a time the owner sees the receipt in the same list and may still choose Other income */
+      expect(buildSettlementPlan({ ...base, pool, otherIncome: ["pay_TEST1"] }).ready).toBe(true);
+      /* the month batch (no list to choose from) leaves it blocked */
+      const batch = buildSettlementPlan({ ...base, pool, otherIncome: ["pay_TEST1"], otherIncomeOnlyWithoutCandidates: true });
+      expect(batch.ready).toBe(false);
+      expect(batch.rpcArg).toBeNull();
+    });
+
+    it("review: a payment made on a quote's Razorpay order in the app is the customer's money — the pick is ignored and not offered", () => {
+      const onOrder = [...items, pay("pay_TEST1", 100, 2, 0, { order_id: "order_Q7" })];
+      const plan = buildSettlementPlan({ ...base, items: onOrder, byOrder: { order_Q7: [] }, otherIncome: ["pay_TEST1"] });
+      expect(plan.ready).toBe(false);
+      expect(plan.totals.otherIncome).toBeUndefined();
+      const row = plan.payments.find((p) => p.rzpId === "pay_TEST1")!;
+      expect(row).toMatchObject({ canOtherIncome: false, suggestOtherIncome: false });
+      expect(row.problem).toContain("paid on a quote's payment link (order order_Q7)");
+      expect(row.problem).not.toContain("Other income");
+      /* an order the app does not know is passed on for the database's own check */
+      const unknown = buildSettlementPlan({ ...base, items: onOrder, otherIncome: ["pay_TEST1"] });
+      expect(unknown.rpcArg?.other_income).toEqual([{ rzp_id: "pay_TEST1", amount_paise: 100, order_id: "order_Q7" }]);
+    });
+
+    it("review: a payment under 50 paise (₹0 in whole rupees) cannot be picked and is not offered", () => {
+      const tiny = [...items, pay("pay_TINY", 40, 1, 0)];
+      const s: RzpSettlement = { ...setl, amount: 925100 + 39 };
+      const plan = buildSettlementPlan({ line, settlement: s, items: tiny, byReference: appPays, byOrder: {}, pool: [], otherIncome: ["pay_TINY"] });
+      expect(plan.ready).toBe(false);
+      const row = plan.payments.find((p) => p.rzpId === "pay_TINY")!;
+      expect(row).toMatchObject({ canOtherIncome: false, suggestOtherIncome: false });
+      expect(row.problem).not.toContain("Other income");
+    });
+
+    it("the pick never overrides a payment the app HAS (reference, or the owner's app-payment pick) — no customer money becomes income", () => {
+      const plan = buildSettlementPlan({ line, settlement: setl, items, byReference: appPays, byOrder: {}, pool: [], otherIncome: ["pay_1", "pay_2", "pay_3"] });
+      expect(plan.ready).toBe(true);
+      expect(plan.totals.otherIncome).toBeUndefined();
+      expect(plan.rpcArg?.other_income).toBeUndefined();
+      expect(plan.rpcArg?.payments).toHaveLength(3);
+      const pool = [app("p9", null, 1)];
+      const both = buildSettlementPlan({ ...base, pool, picks: { pay_TEST1: "p9" }, otherIncome: ["pay_TEST1"] });
+      expect(both.payments.find((p) => p.rzpId === "pay_TEST1")).toMatchObject({ paymentIds: ["p9"], matchedBy: "picked" });
+      expect(both.rpcArg?.other_income).toBeUndefined();
+    });
+
+    it("other blockers stay: a pick does not make a wrong-amount settlement Ready", () => {
+      const plan = buildSettlementPlan({ ...base, line: { ...lineT, credit: 9000 }, otherIncome: ["pay_TEST1"] });
+      expect(plan.ready).toBe(false);
+      expect(plan.rpcArg).toBeNull();
+    });
+
+    it("a settlement of only not-in-the-app payments is Ready once every one is picked (no app payment at all)", () => {
+      const only = [pay("pay_T1", 10000, 236, 36), pay("pay_T2", 12500, 295, 45)];
+      const s: RzpSettlement = { ...setl, amount: 22500 - 531, fees: 531, tax: 81 };
+      const l: BankLine = { ...line, credit: 220 };
+      const one = buildSettlementPlan({ line: l, settlement: s, items: only, byReference: [], byOrder: {}, pool: [], otherIncome: ["pay_T1"] });
+      expect(one.ready).toBe(false);
+      const all = buildSettlementPlan({ line: l, settlement: s, items: only, byReference: [], byOrder: {}, pool: [], otherIncome: ["pay_T1", "pay_T2"] });
+      expect(all.ready).toBe(true);
+      expect(all.rpcArg).toMatchObject({ payments: [], other_income: [{ rzp_id: "pay_T1", amount_paise: 10000 }, { rzp_id: "pay_T2", amount_paise: 12500 }] });
+      expect(all.totals).toMatchObject({ gross: 225, otherIncome: 225, fee: 5 });
+    });
+  });
+
   it("matched by Razorpay order id when the reference is missing", () => {
     const plan = buildSettlementPlan({
       line, settlement: setl,

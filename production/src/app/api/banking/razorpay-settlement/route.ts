@@ -3,10 +3,15 @@
  *
  *   GET  ?txnId=<uuid>[&settlementId=setl_…]   find the settlement in Razorpay and show what it
  *                                              carried, matched to the app's payments (nothing saved)
- *   POST {txnId, settlementId?, picks?}        rebuild that plan from Razorpay (never trusting the
+ *   POST {txnId, settlementId?, picks?, otherIncome?}
+ *                                              rebuild that plan from Razorpay (never trusting the
  *                                              browser's numbers) and, when nothing blocks it,
  *                                              reconcile in ONE database call
  *                                              (reconcile_razorpay_settlement)
+ *
+ * R-2918: otherIncome = Razorpay payment ids (ids only) the owner picked "Book as Other income" for —
+ * payments of the settlement that are in no app payment. Owner / Accountant only (the database checks
+ * it again); the amounts come from Razorpay.
  *
  * Owner / manager / accountant / billing — the roles that reconcile bank receipts. App reads and
  * the reconcile run on the signed-in user's own client (RLS + the RPC's own role check); the
@@ -37,11 +42,16 @@ const postSchema = z.object({
   txnId: z.string().uuid("Bank line id is not valid — refresh the page."),
   settlementId,
   picks: z.record(z.string().regex(/^pay_[A-Za-z0-9]+$/), z.string().uuid()).optional(),
+  otherIncome: z.array(z.string().regex(/^pay_[A-Za-z0-9]+$/)).max(200).optional(),
 });
+
+/** R-2918: booking a payment as Other income is the owner's / accountant's call. */
+const OTHER_INCOME_ROLES: readonly string[] = ["owner", "accountant"];
+const OTHER_INCOME_HINT = "Only the Owner or Accountant can book a Razorpay payment as Other income. Ask one of them.";
 
 export const GET = withRoute(
   { route: "api/banking/razorpay-settlement", roles: ROLES, roleHint: ROLE_HINT, input: getSchema },
-  async ({ supabase, tenantId, user, input }) => {
+  async ({ supabase, tenantId, user, role, input }) => {
     const result = await loadSettlementPlan({
       db: supabase,
       admin: createAdminClientFor(user.id),
@@ -49,13 +59,16 @@ export const GET = withRoute(
       txnId: input.txnId,
       settlementId: input.settlementId ?? null,
     });
-    return { result };
+    /* R-2918: the screen offers "Book as Other income" only to the roles that may book it. */
+    return { result, canBookOtherIncome: OTHER_INCOME_ROLES.includes(role) };
   },
 );
 
 export const POST = withRoute(
   { route: "api/banking/razorpay-settlement", roles: ROLES, roleHint: ROLE_HINT, input: postSchema },
-  async ({ supabase, tenantId, user, input }) => {
+  async ({ supabase, tenantId, user, role, input }) => {
+    const otherIncome = input.otherIncome ?? [];
+    if (otherIncome.length && !OTHER_INCOME_ROLES.includes(role)) throw new RouteError(403, OTHER_INCOME_HINT);
     const result = await loadSettlementPlan({
       db: supabase,
       admin: createAdminClientFor(user.id),
@@ -63,6 +76,7 @@ export const POST = withRoute(
       txnId: input.txnId,
       settlementId: input.settlementId ?? null,
       picks: input.picks ?? {},
+      otherIncome,
     });
     if (result.state !== "plan") throw new RouteError(409, result.message);
     if (!result.plan.ready || !result.plan.rpcArg) {
