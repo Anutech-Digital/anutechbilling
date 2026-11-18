@@ -1,5 +1,5 @@
 -- R-2921 (18 Nov 2026): three follow-ups from the review of R-2920 (one bank line → receipts on two
--- or more loans given). Migration 20261118165842_r2921_loan_split_followups (on R-2570's
+-- or more loans given). Migration 20261118191950_r2921_loan_split_followups (on R-2570's
 -- bank_line_bookings and R-2920's tg_loan_given_line_unmatched).
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only:
 --   begin; <migration without begin/commit>; <this file without begin/rollback>; rollback;
