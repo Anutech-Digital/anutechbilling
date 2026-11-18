@@ -91,7 +91,16 @@ describe("R-2920 — one bank receipt across two loans given", () => {
   it("an emptied amount counts as ₹0 — the row asks for an amount and Save stays off", () => {
     render(<LoanGivenReceiptSection transaction={kapilLine} onDone={vi.fn()} />);
     fireEvent.change(amountOf(/Amount for Kapil Dev, receipt 1/), { target: { value: "" } });
-    expect(screen.getByText(/Enter an amount, or untick this loan/)).toBeTruthy();
+    expect(screen.getByText(/Enter a whole-rupee amount, or untick this loan/)).toBeTruthy();
+    expect(screen.getByTestId("loan-given-tally").textContent).toBe("Bank ₹3,50,000 ≠ ₹3,49,000 — ₹1,000 still to place");
+    expect(saveBtn(/Reconcile to 2 loans/).disabled).toBe(true);
+  });
+
+  it("R-2921: the amount box steps in whole rupees, and paise (999.5) are refused — never rounded to ₹1,000", () => {
+    render(<LoanGivenReceiptSection transaction={kapilLine} onDone={vi.fn()} />);
+    expect(amountOf(/Amount for Kapil Dev, receipt 1/).step).toBe("1");
+    fireEvent.change(amountOf(/Amount for Kapil Dev, receipt 1/), { target: { value: "999.5" } });
+    expect(screen.getByText(/Enter a whole-rupee amount, or untick this loan/)).toBeTruthy();
     expect(screen.getByTestId("loan-given-tally").textContent).toBe("Bank ₹3,50,000 ≠ ₹3,49,000 — ₹1,000 still to place");
     expect(saveBtn(/Reconcile to 2 loans/).disabled).toBe(true);
   });

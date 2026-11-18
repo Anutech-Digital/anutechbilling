@@ -52,7 +52,7 @@ export function LoanGivenChoiceList({ choices, amount, owed, plan, typed, onTogg
                   <div className="flex items-center gap-2">
                     <label htmlFor={`loan-given-part-${x.loanId}`} className="text-xs text-ink-2 shrink-0">Amount on this loan (₹)</label>
                     <Input
-                      id={`loan-given-part-${x.loanId}`} type="number" min={1} inputMode="numeric" className="w-36"
+                      id={`loan-given-part-${x.loanId}`} type="number" min={1} step={1} inputMode="numeric" className="w-36"
                       aria-label={`Amount for ${x.borrowerName}, receipt ${x.seq}`}
                       value={typed[x.loanId] ?? String(part.amount)}
                       onChange={(e) => onType(x.loanId, e.target.value)}
@@ -63,7 +63,7 @@ export function LoanGivenChoiceList({ choices, amount, owed, plan, typed, onTogg
                     {part.closes && <span className="text-emerald"> · clears the loan</span>}
                   </p>
                   {part.tooMuch && <p className="text-xs text-rose-ink">More than is owed — at most {rupee(part.maxAmount)} can come in on this loan.</p>}
-                  {part.amount <= 0 && <p className="text-xs text-rose-ink">Enter an amount, or untick this loan.</p>}
+                  {part.amount <= 0 && <p className="text-xs text-rose-ink">Enter a whole-rupee amount, or untick this loan.</p>}
                 </div>
               )}
             </li>

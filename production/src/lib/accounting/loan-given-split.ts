@@ -94,11 +94,11 @@ export function defaultTicked(choices: readonly LoanChoice[], loans: readonly Sp
   return out;
 }
 
-/** A whole-rupee amount typed in a field; "" / junk / negative → null. */
+/** A whole-rupee amount typed in a field; "" / junk / negative / paise ("100.5", R-2921 — never rounded) → null. */
 export function typedRupees(s: string | undefined): number | null {
   if (s === undefined || s.trim() === "") return null;
   const n = Number(s);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 export interface ReceiptPart {
