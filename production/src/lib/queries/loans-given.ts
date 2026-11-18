@@ -237,7 +237,8 @@ export function useDeleteLoanGiven() {
 /* ══ R-2340: Banking → Reconcile → Loan / EMI on a money-in line ═══════════════════════════════
  * record_loan_given_from_bank / reconcile_bank_credit_to_loan_given (migration
  * 20261101100517_r2340_loan_given_from_bank_line.sql) are newer than the generated types, so they go
- * through an untyped client. Undo = Un-reconcile the line (tg_loan_given_line_unmatched). */
+ * through an untyped client. Undo = Un-reconcile the line (tg_loan_given_line_unmatched) — R-2920:
+ * every receipt on the line goes together. */
 
 export type LoanGivenReceiptResult = { repayment_id: string; seq: number; principal: number; interest: number; left: number; closes: boolean };
 
@@ -247,20 +248,53 @@ function invalidateReceipt(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: queryKeys.pnl() });
 }
 
+/** R-2920: one line across several loans — reconcile_bank_credit_to_loans_given (migration
+ *  20261118102112_r2920_loan_receipt_split.sql). `interestPart` null = an EMI loan (the server works it out). */
+export interface LoanGivenReceiptPartInput { loanId: string; amount: number; interestPart: number | null }
+export type LoanGivenSplitResult = {
+  receipts: (LoanGivenReceiptResult & { loan_id: string; borrower: string; amount: number })[];
+  loans: number; principal: number; interest: number;
+};
+export type ReconcileCreditToLoanGivenInput =
+  | { txnId: string; loanId: string; interestPart: number | null }
+  | { txnId: string; parts: LoanGivenReceiptPartInput[] };
+
+/** The RPC call for a receipt: one loan → R-2340's RPC, unchanged; `parts` (two or more loans,
+ *  R-2920) → ONE call that books a receipt on every loan and reconciles the line once. */
+export function loanGivenReceiptRpc(input: ReconcileCreditToLoanGivenInput): { fn: string; args: Record<string, unknown> } {
+  if ("parts" in input) {
+    return {
+      fn: "reconcile_bank_credit_to_loans_given",
+      args: {
+        p_txn_id: input.txnId,
+        p_parts: input.parts.map((p) => ({ loan_id: p.loanId, amount: Math.round(p.amount), interest_part: p.interestPart })),
+      },
+    };
+  }
+  return {
+    fn: "reconcile_bank_credit_to_loan_given",
+    args: { p_txn_id: input.txnId, p_loan_id: input.loanId, p_interest_part: input.interestPart },
+  };
+}
+
 export function useReconcileCreditToLoanGiven() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { txnId: string; loanId: string; interestPart: number | null }): Promise<LoanGivenReceiptResult> => {
+    mutationFn: async (input: ReconcileCreditToLoanGivenInput): Promise<LoanGivenReceiptResult | LoanGivenSplitResult> => {
       const supabase = createClient() as unknown as SupabaseClient;
-      const { data, error } = await supabase.rpc("reconcile_bank_credit_to_loan_given", {
-        p_txn_id: input.txnId, p_loan_id: input.loanId, p_interest_part: input.interestPart,
-      });
+      const call = loanGivenReceiptRpc(input);
+      const { data, error } = await supabase.rpc(call.fn, call.args);
       if (error) throw new Error(error.message);
       if (!data) throw new Error("The receipt was not confirmed — refresh Banking to see whether it was saved.");
-      return data as LoanGivenReceiptResult;
+      return data as LoanGivenReceiptResult | LoanGivenSplitResult;
     },
     onSuccess: (r) => {
       invalidateReceipt(qc);
+      if ("receipts" in r) {
+        const closed = r.receipts.filter((x) => x.closes).length;
+        toast.success(`Reconciled to ${r.loans} loans — ${rupee(r.principal)} principal back, ${rupee(r.interest)} interest income${closed > 0 ? ` · ${closed} ${closed === 1 ? "loan" : "loans"} fully repaid` : ""}`);
+        return;
+      }
       toast.success(`Receipt ${r.seq} reconciled — ${rupee(r.principal)} principal back, ${rupee(r.interest)} interest income${r.closes ? " · loan fully repaid" : ""}`);
     },
     onError: (err) => toastError(err, { fallback: "Couldn't reconcile the receipt", description: "Nothing was saved." }),
