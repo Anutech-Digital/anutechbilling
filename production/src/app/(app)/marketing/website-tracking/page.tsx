@@ -1,3 +1,4 @@
+import { MetaPixelIntegrationCard } from "@/components/features/integrations/meta-pixel-card";
 import { MarketingActionLinks, MarketingPageHeader, MarketingToolCard, MarketingWorkspaceCard } from "@/components/features/marketing-hub/workspace-links";
 
 export default function WebsiteTrackingPage() {
@@ -10,6 +11,8 @@ export default function WebsiteTrackingPage() {
         <MarketingToolCard toolKey="search-console" />
         <MarketingToolCard toolKey="ga4" />
       </section>
+      {/* 18 Nov 2026 (Abhishek): Meta Pixel set from the Marketing Hub — marketing has no Settings page. */}
+      <section aria-label="Meta Pixel" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"><MetaPixelIntegrationCard /></section>
       <MarketingActionLinks title="Review leads" links={[{ label: "Lead sources", href: "/lead-gen" }]} />
     </div>
   );

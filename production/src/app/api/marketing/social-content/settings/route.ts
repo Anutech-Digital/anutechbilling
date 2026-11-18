@@ -3,8 +3,7 @@
  * "Stop all AI" stays one switch for the company.
  * PUT  — save one Page's weekly AI posts on/off, what to write about, ask-first or autopilot (R-2672),
  *        posts per week, picture links (Instagram needs a picture). Owner, manager or marketing (18 Nov 2026,
- *        Abhishek: the marketing person runs every Marketing Hub setting). Turning the weekly
- *        automation job on stays the owner's act (R-897); for others it is only read.
+ *        Abhishek: the marketing person runs every Marketing Hub setting, incl. the weekly AI job — R-2917).
  * POST — "Plan this week now": the AI plans the week straight away (marketing team, owner or manager — R-2709).
  */
 import { NextResponse } from "next/server";
@@ -61,18 +60,11 @@ export async function PUT(req: Request) {
     /* The Monday job runs while any Page wants weekly AI posts. */
     const anyOn = await withTenant(session, tx => tx.$queryRaw<{ n: bigint }[]>`
       select count(*) as n from public.social_pages where tenant_id = ${session.tenantId}::uuid and active and auto_drafts`);
-    const wantOn = Number(anyOn[0]?.n ?? 0) > 0;
-    let weeklyJobOff = false;
-    if (role === "owner") {
-      const { error } = await rpc.call(client, "set_automation_job", { p_job: "social-drafts", p_enabled: wantOn, p_dry_run: false });
-      if (error) return NextResponse.json({ error: "Saved, but the weekly AI job could not be switched.", description: "Try saving again in a minute." }, { status: 500 });
-    } else if (wantOn) {
-      /* R-897: only the owner turns an automation on. Read (tenant-scoped) whether it already is. */
-      const { data } = await (createAdminClientFor(session.userId) as unknown as SupabaseClient).from("automation_jobs").select("enabled").eq("tenant_id", session.tenantId).eq("job", "social-drafts").maybeSingle();
-      weeklyJobOff = !(data as { enabled?: boolean } | null)?.enabled;
-    }
+    /* R-2917: owner, manager or marketing switch the Monday AI job (set_social_automation). */
+    const { error } = await rpc.call(client, "set_social_automation", { p_job: "social-drafts", p_enabled: Number(anyOn[0]?.n ?? 0) > 0 });
+    if (error) return NextResponse.json({ error: "Saved, but the weekly AI job could not be switched.", description: "Try saving again in a minute." }, { status: 500 });
     await logPersonActivity(session, { pageId: page.page_id, action: "Changed AI settings", detail: !autoDrafts ? "AI posts: off" : autopilot ? `AI posts: autopilot, ${postsPerWeek} a week` : `AI posts: ask me first, ${postsPerWeek} a week` });
-    return NextResponse.json({ ok: true, pictures: links.urls.length, weeklyJobOff });
+    return NextResponse.json({ ok: true, pictures: links.urls.length });
   } catch {
     return NextResponse.json({ error: "Could not save AI posts settings.", description: "Nothing was saved. Try again." }, { status: 500 });
   }

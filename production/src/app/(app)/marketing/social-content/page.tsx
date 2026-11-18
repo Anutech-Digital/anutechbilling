@@ -374,9 +374,9 @@ export default function SocialContentPage() {
     try {
       const response = await fetch("/api/marketing/social-content/settings", { method: "PUT", headers: { "content-type": "application/json" },
         body: JSON.stringify(pg({ autoDrafts, brief, autopilot, postsPerWeek, pictures })) });
-      const data = await response.json() as { error?: string; description?: string; weeklyJobOff?: boolean };
+      const data = await response.json() as { error?: string; description?: string };
       if (!response.ok) { setPlanNote({ text: [data.error ?? "Could not save.", data.description].filter(Boolean).join(" "), warn: true }); return; }
-      setPlanNote({ text: autoDrafts && data.weeklyJobOff ? "Saved. The automatic Monday plan is off for this company until the owner turns on Weekly AI posts in Automation. Plan this week now works anyway." : autoDrafts ? `Saved. Every Monday the AI plans ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"}${autopilot ? ` and posts ${postsPerWeek === 1 ? "it" : "them"} by itself` : " for you to approve"}.` : "Saved. The Monday plan is off — press Plan this week now whenever you want posts.", warn: false });
+      setPlanNote({ text: autoDrafts ? `Saved. Every Monday the AI plans ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"}${autopilot ? ` and posts ${postsPerWeek === 1 ? "it" : "them"} by itself` : " for you to approve"}.` : "Saved. The Monday plan is off — press Plan this week now whenever you want posts.", warn: false });
       toast.success("AI posts settings saved."); await load();
     } catch (e) { toastError(e, { fallback: "Could not save settings.", description: "Nothing was saved. Try again." }); }
     finally { setBusy(false); }

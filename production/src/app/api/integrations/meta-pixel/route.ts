@@ -28,7 +28,9 @@ const saveSchema = z.object({
   clear_capi_token: z.boolean().optional(),
 });
 
-const READ_ROLES = new Set(["owner", "manager", "billing"]);
+const READ_ROLES = new Set(["owner", "manager", "billing", "marketing"]);
+/* 18 Nov 2026 (Abhishek): the marketing person sets the Pixel too (Marketing Hub → Website & tracking). */
+const MANAGE_ROLES = new Set(["owner", "marketing"]);
 
 async function resolveTenant(access: "read" | "manage") {
   const supabase = createClient();
@@ -36,9 +38,9 @@ async function resolveTenant(access: "read" | "manage") {
   if (!authData?.user) return { error: "Not authenticated" as const };
   const { data: me, error } = await supabase.from("users").select("tenant_id, role").eq("id", authData.user.id).single();
   if (error || !me) return { error: "User not linked to a tenant" as const };
-  if (access === "manage" && me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
+  if (access === "manage" && !["owner", "marketing"].includes(me.role)) return { error: "Only the owner or marketing can change the Meta Pixel" as const };
   if (access === "read" && !READ_ROLES.has(me.role)) return { error: "Your role cannot see integration settings" as const };
-  return { tenantId: me.tenant_id as string, isOwner: me.role === "owner", admin: createAdminClientFor(authData.user.id) };
+  return { tenantId: me.tenant_id as string, isOwner: MANAGE_ROLES.has(me.role), admin: createAdminClientFor(authData.user.id) };
 }
 
 /* The Meta columns are newer than the generated DB types (R-1979 migration) — read loosely. */
