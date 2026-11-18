@@ -22,7 +22,8 @@ const preview = {
     accounts: [{ zohoName: "Director - Rakesh", count: 2, amount: 900, appAccountId: null, suggested: false }],
     skipReasons: [{ reason: "Void in Zoho — not a purchase, not in the P&L or ITC.", count: 1 }],
     tdsBySection: [{ section: "194J", amount: 100, count: 1 }],
-    unmapped: [{ accountId: "A9", accountName: "Misc Expenses", count: 2, taxable: 2000 }],
+    unmapped: [{ accountId: "A9", accountName: "Misc Expenses", count: 2, taxable: 2000, type: "expense", notExpense: false },
+      { accountId: "A-FD", accountName: "Fixed Deposit HDFC", count: 1, taxable: 8500000, type: "other_current_asset", notExpense: true }],
     skipped: [],
   },
   payments: null,
@@ -58,6 +59,14 @@ describe("ZohoPurchaseImportDialog", () => {
     expect((await screen.findByTestId("fy-purchases-summary")).textContent).toMatch(/3 Zoho bills \+ expenses · 2 to import/);
     expect(screen.getByText(/194J/)).toBeTruthy();
     expect(screen.getByLabelText("Category for Misc Expenses")).toBeTruthy();
+  });
+
+  it("R-2681: an account Zoho types as not an expense gets no category — it says it needs another path", async () => {
+    renderIt();
+    await screen.findByLabelText("Category for Misc Expenses");
+    expect(screen.queryByLabelText("Category for Fixed Deposit HDFC")).toBeNull();
+    expect(screen.getByText("Not an expense — needs another path")).toBeTruthy();
+    expect(screen.getByText(/2 not mapped — their bills and expenses stay out/)).toBeTruthy();
   });
 
   it("saves a mapping through the route", async () => {

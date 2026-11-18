@@ -10,6 +10,8 @@ import { must, type FyImportDb } from "../fy-import/store";
 import type { MonthTotals, PaymentPlanContext, PurchasePlanContext } from "./plan";
 import type { AppBankAccount } from "../receipts-import/plan";
 import type { PurchaseFacts } from "./normalise";
+import type { ZohoAccount } from "../fy-fetch";
+import { accountTypeRows, type PayrollFacts } from "./account-types";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string } | null }>;
 type Range = { dateStart: string; dateEnd: string };
@@ -26,6 +28,56 @@ export async function readCategoryMap(db: FyImportDb, tenantId: string): Promise
   const rows = await fetchAllRows<{ zoho_account_id: string; category: string }>((from, to) => db.from("zoho_account_category_map")
     .select("zoho_account_id, category").eq("tenant_id", tenantId).order("zoho_account_id", { ascending: true }).range(from, to));
   return Object.fromEntries(rows.map((r) => [r.zoho_account_id, r.category]));
+}
+
+/**
+ * R-2911: this company's employees and the payslips (salary_payments) that can cover a Zoho salary of
+ * the FY — period from the month before the FY to its last month (payslipCovers) — so a Zoho salary
+ * Payroll already books for that employee stays out of the import (as SQL import_zoho_fy_purchases).
+ */
+export async function readPayroll(db: FyImportDb, tenantId: string, range: Range): Promise<PayrollFacts> {
+  const y = Number(range.dateStart.slice(0, 4)); const m = Number(range.dateStart.slice(5, 7));
+  const fromPeriod = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+  const toPeriod = range.dateEnd.slice(0, 7);
+  const [employees, payslips] = await Promise.all([
+    fetchAllRows<{ id: string; name: string }>((from, to) => db.from("employees").select("id, name")
+      .eq("tenant_id", tenantId).order("id", { ascending: true }).range(from, to)),
+    fetchAllRows<{ employee_id: string; period: string; pay_date: string }>((from, to) => db.from("salary_payments")
+      .select("employee_id, period, pay_date").eq("tenant_id", tenantId).gte("period", fromPeriod).lte("period", toPeriod)
+      .order("id", { ascending: true }).range(from, to)),
+  ]);
+  return {
+    employees: employees.map((e) => ({ id: e.id, name: e.name ?? "" })),
+    payslips: payslips.map((p) => ({ employeeId: p.employee_id, period: p.period ?? "", payDate: p.pay_date ?? "" })),
+  };
+}
+
+/** R-2681: this company's Zoho account types (account id → type). Empty = never read. */
+export async function readAccountTypes(db: FyImportDb, tenantId: string): Promise<{ types: Record<string, string> }> {
+  const rows = await fetchAllRows<{ zoho_account_id: string; account_type: string }>((from, to) => db.from("zoho_account_types")
+    .select("zoho_account_id, account_type").eq("tenant_id", tenantId).order("zoho_account_id", { ascending: true }).range(from, to));
+  return { types: Object.fromEntries(rows.map((r) => [r.zoho_account_id, r.account_type])) };
+}
+
+/** R-2681: when this company's Zoho account types were last read (null = never) — one row, not the chart. */
+export async function readAccountTypesNewest(db: FyImportDb, tenantId: string): Promise<string | null> {
+  const r = await (db.from("zoho_account_types").select("read_at").eq("tenant_id", tenantId)
+    .order("read_at", { ascending: false }).limit(1) as Res<Array<{ read_at: string }>>);
+  return must(r, "Zoho's account types")[0]?.read_at ?? null;
+}
+
+/** The server's admin client, for the one service-role function below. */
+export interface AdminRpc { rpc(fn: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message?: string } | null }> }
+
+/**
+ * R-2681: store Zoho's chart of accounts for this company in ONE statement (save_zoho_account_types —
+ * service role only, atomic: never a part-written chart marked fresh). The tenant is the caller's own.
+ */
+export async function saveAccountTypes(admin: AdminRpc, tenantId: string, accounts: readonly ZohoAccount[]): Promise<number> {
+  const rows = accountTypeRows(accounts);
+  const { data, error } = await admin.rpc("save_zoho_account_types", { p_tenant: tenantId, p_rows: rows });
+  if (error) throw new Error("Could not save Zoho's account types.");
+  return typeof data === "number" ? data : rows.length;
 }
 
 /** Zoho doc keys ("bills:<id>" / "expenses:<id>") already in the app. */
@@ -62,16 +114,18 @@ export function parseAccountMap(v: unknown): Record<string, string> {
 }
 
 export async function readPurchaseContext(db: FyImportDb, tenantId: string, range: Range, accountMap: Record<string, string> = {}): Promise<PurchasePlanContext> {
-  const [lock, vendors, categoryMap, keys, bankAccounts] = await Promise.all([
+  const [lock, vendors, categoryMap, keys, bankAccounts, types, payroll] = await Promise.all([
     booksAndLock(db, tenantId),
     fetchAllRows<{ id: string; name: string; gstin: string | null; zoho_contact_id: string | null }>((from, to) => db.from("vendors")
       .select("id, name, gstin, zoho_contact_id").eq("tenant_id", tenantId).order("id", { ascending: true }).range(from, to)),
     readCategoryMap(db, tenantId),
     importedKeys(db, tenantId),
     readBankAccounts(db, tenantId),
+    readAccountTypes(db, tenantId),
+    readPayroll(db, tenantId, range),
   ]);
   return {
-    fyStart: range.dateStart, fyEnd: range.dateEnd, ...lock, bankAccounts, accountMap,
+    fyStart: range.dateStart, fyEnd: range.dateEnd, ...lock, bankAccounts, accountMap, accountTypes: types.types, payroll,
     vendors: vendors.map((v) => ({ id: v.id, name: v.name, gstin: v.gstin, zohoContactId: v.zoho_contact_id })),
     categoryMap,
     imported: new Set(keys.map((k) => k.key)),

@@ -33,7 +33,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { NOT_CONFIGURED_MESSAGE, FY_CALLS_PER_REQUEST, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
 import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
 import { isZohoDayLimit, ZohoApiError } from "@/lib/integrations/zoho-books/api";
-import { fyDateRange, type ZohoFyDocDetail } from "@/lib/integrations/zoho-books/fy-fetch";
+import { fyDateRange, readChartAccount, readChartOfAccounts, type ZohoAccount, type ZohoFyDocDetail } from "@/lib/integrations/zoho-books/fy-fetch";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { asZohoReader } from "@/lib/integrations/zoho-books/day-calls-store";
 import { zohoFyReaderName } from "@/lib/integrations/zoho-books/zoho-day-budget";
@@ -46,9 +46,11 @@ import {
   CATEGORY_CHOICES, PURCHASE_IMPORT_ROLES, buildPaymentPlan, buildPurchasePlan, toPaymentPick, toPurchasePick,
 } from "@/lib/integrations/zoho-books/purchase-import/plan";
 import {
-  parseAccountMap, readAppPurchasesByMonth, readBankAccounts, readOtherPurchasesByMonth, readPaymentContext, readPurchaseContext,
+  parseAccountMap, readAccountTypes, readAppPurchasesByMonth, readBankAccounts, readOtherPurchasesByMonth, readPaymentContext, readPurchaseContext,
+  readAccountTypesNewest, saveAccountTypes, type AdminRpc,
 } from "@/lib/integrations/zoho-books/purchase-import/store";
 import { parseSaveChoice, readAccountChoices, withSavedChoices } from "@/lib/integrations/zoho-books/fy-import/account-choices";
+import { MISSING_ACCOUNTS_PER_READ, isExpenseType, missingAccountIds, typeLabel, typesStale } from "@/lib/integrations/zoho-books/purchase-import/account-types";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -63,6 +65,77 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function fail(status: number, error: string) {
   return NextResponse.json({ ok: false, error }, { status });
 }
+/**
+ * R-2681: read Zoho's chart of accounts into zoho_account_types when this company has none stored, the
+ * newest is older than TYPES_MAX_AGE_MS, or older than this list read's start ("Read from Zoho again"
+ * starts a new one). Its calls go into the pace history (they are on the R-2661 day budget anyway). The
+ * day limit and a stale token (401) go up to the caller. With NO types stored any other failure goes up
+ * too (the owner sees the real error, not a silent "not read yet" loop); with older types stored it is
+ * logged and the read goes on — the import refuses what those types cannot check.
+ *
+ * R-2915: every Zoho call is counted as it is made (pages of both lists + the by-id reads below; at
+ * least one even when the first failed). After the chart is saved, an account a scanned bill / expense
+ * line of this FY uses that is STILL not stored is read from Zoho by its id and saved.
+ */
+async function refreshAccountTypes(admin: AdminRpc, db: FyImportDb, tenantId: string, orgId: string, token: string,
+  fy: string, readStartedAt: string | null, history: PaceEntry[]): Promise<void> {
+  const newestReadAt = await readAccountTypesNewest(db, tenantId);
+  if (!typesStale(newestReadAt, Date.now(), readStartedAt)) return;
+  let calls = 0;
+  const count = () => { calls += 1; };
+  try {
+    try {
+      await saveAccountTypes(admin, tenantId, await readChartOfAccounts(orgId, token, fetch, count));
+    } catch (e) {
+      if (isZohoDayLimit(e) || (e instanceof ZohoApiError && e.status === 401) || !newestReadAt) throw e;
+      console.error("[R-2681] Zoho chart of accounts not read — older types kept:", e instanceof Error ? e.message : e);
+      return;
+    }
+    await readMissingAccountTypes(admin, db, tenantId, orgId, token, fy, count);
+  } finally { history.push({ at: Date.now(), calls: Math.max(1, calls) }); }
+}
+
+/**
+ * R-2915: the accounts the chart lists did not bring. Every account id on a scanned bill / expense line
+ * of this FY with no stored type is read from Zoho by its id (at most MISSING_ACCOUNTS_PER_READ a read;
+ * the rest with the next "Read from Zoho again") and saved. An account Zoho does not know stores
+ * nothing — its documents stay refused ("not read yet", fail closed). What was found is saved even when
+ * a later read fails; the day limit and a stale token (401) go up, any other failure only stops these reads.
+ * They also stop after MISSING_ACCOUNTS_MS.
+ */
+const MISSING_ACCOUNTS_MS = 20_000;
+async function readMissingAccountTypes(admin: AdminRpc, db: FyImportDb, tenantId: string, orgId: string, token: string,
+  fy: string, count: () => void): Promise<void> {
+  let ids: string[];
+  try {
+    const [bills, exps, stored] = await Promise.all([
+      readScannedFacts<PurchaseFacts>(db, tenantId, "bills", fy),
+      readScannedFacts<PurchaseFacts>(db, tenantId, "expenses", fy),
+      readAccountTypes(db, tenantId),
+    ]);
+    ids = missingAccountIds([...bills, ...exps], stored.types).slice(0, MISSING_ACCOUNTS_PER_READ);
+  } catch (e) {
+    console.error("[R-2915] accounts missing from Zoho's chart not looked for:", e instanceof Error ? e.message : e);
+    return;
+  }
+  const found: ZohoAccount[] = [];
+  let stop: unknown = null;
+  /* A slow Zoho must not run the request out (maxDuration) before what was found is saved. */
+  const until = Date.now() + MISSING_ACCOUNTS_MS;
+  for (const id of ids) {
+    if (Date.now() > until) break;
+    count();
+    try {
+      const a = await readChartAccount(orgId, token, id);
+      if (a) found.push(a);
+    } catch (e) { stop = e; break; }
+  }
+  if (found.length) await saveAccountTypes(admin, tenantId, found);
+  if (stop === null) return;
+  if (isZohoDayLimit(stop) || (stop instanceof ZohoApiError && stop.status === 401)) throw stop;
+  console.error("[R-2915] reading Zoho accounts by id stopped:", stop instanceof Error ? stop.message : stop);
+}
+
 const isKind = (k: unknown): k is Kind => typeof k === "string" && (KINDS as readonly string[]).includes(k);
 const toFacts = (kind: Kind) => (d: ZohoFyDocDetail): ScanFacts => (kind === "vendorpayments" ? zohoVendorPaymentFacts(d) : zohoPurchaseFacts(d));
 
@@ -110,8 +183,14 @@ export async function POST(req: NextRequest) {
     const ran = await asZohoReader(caller.admin, caller.tenantId, zohoFyReaderName("purchase", fy), async () => {
       let keep = false;
       const value = await (async () => { try {
-      const run = async () => scanStep(storeOf(kind), kind, toFacts(kind), conn.orgId!, await zohoAccessToken(caller, conn.refreshToken!, creds), fy,
-        { history, maxCalls: Math.max(1, FY_CALLS_PER_REQUEST - used()) });
+      const run = async () => {
+        const token = await zohoAccessToken(caller, conn.refreshToken!, creds);
+        /* R-2681: Zoho's account types first, when stale (refreshAccountTypes says when and how it fails). */
+        await refreshAccountTypes(caller.admin as unknown as AdminRpc, db, caller.tenantId, conn.orgId!, token, fy,
+          (await storeOf(kind).readRun(fy))?.listStartedAt ?? null, history);
+        return scanStep(storeOf(kind), kind, toFacts(kind), conn.orgId!, token, fy,
+          { history, maxCalls: Math.max(1, FY_CALLS_PER_REQUEST - used()) });
+      };
       let result;
       try { result = await run(); } catch (e) {
         if (!(e instanceof ZohoApiError && e.status === 401)) throw e;
@@ -147,11 +226,20 @@ export async function POST(req: NextRequest) {
     const rows = Array.isArray(body.rows) ? (body.rows as Array<Record<string, unknown>>) : null;
     if (!rows || rows.length === 0 || rows.length > 500) return fail(400, "Send the accounts to map.");
     const out = [];
+    /* R-2681: an account Zoho itself types as not an expense (fixed deposit, loan, GST, asset …) never
+       gets an expense category; clearing one ("") stays allowed. The import refuses it anyway. */
+    let types: Record<string, string>;
+    try { types = (await readAccountTypes(db, caller.tenantId)).types; }
+    catch { return fail(500, "Could not read Zoho's account types. Try again."); }
     for (const r of rows) {
       const id = typeof r.zohoAccountId === "string" ? r.zohoAccountId.trim() : "";
       const category = typeof r.category === "string" ? r.category.trim() : "";
       if (!id || id.length > 40) return fail(400, "A Zoho account is missing.");
       if (category && !CATEGORY_CHOICES.includes(category)) return fail(400, `"${category}" is not a category you can map to.`);
+      if (category && types[id] !== undefined && !isExpenseType(types[id])) {
+        const name = typeof r.zohoAccountName === "string" && r.zohoAccountName.trim() ? r.zohoAccountName.trim() : id;
+        return fail(400, `In Zoho, "${name}" is an account of type "${typeLabel(types[id])}" — not an expense, it cannot get an expense category.`);
+      }
       out.push({ zoho_account_id: id, zoho_account_name: typeof r.zohoAccountName === "string" ? r.zohoAccountName.slice(0, 200) : "", category });
     }
     const { data, error } = await rpc("save_zoho_account_categories", { p_rows: out });

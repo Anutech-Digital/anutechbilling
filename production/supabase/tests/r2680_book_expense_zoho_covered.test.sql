@@ -10,7 +10,8 @@
 --   B. A two-row Zoho document is covered by ONE debit of its TOTAL (after TDS); a debit of one row's
 --      amount books.
 --   C. Not covered → books as before: another account's document, a document paid 8 days away, a USD
---      row, a Salaries row, a non-Zoho paid expense. An UNPAID Zoho bill (expense rows) and an unpaid Zoho
+--      row, a non-Zoho paid expense. R-2913: a Zoho-imported Salaries row IS covered (it used to be
+--      skipped as Payroll's; Payroll's own rows: r2913 test). An UNPAID Zoho bill (expense rows) and an unpaid Zoho
 --      COGS bill (less its Zoho TDS) ARE covered, up to 120 days after the bill date, no vendor typed —
 --      with the BILL sentence (pay it with "Record payment": matching a line does not pay a bill). With
 --      the vendor typed, R-1917's own open-bill sentence still answers first.
@@ -28,6 +29,21 @@
 --      amount books; refusing it would send the user to match the wrong line and free the real debit).
 
 begin;
+
+-- R-2681: the import now needs Zoho's account types (fail closed). Every account this test's Zoho
+-- documents use is an expense / COGS account in Zoho, so each scan row seeds its accounts as 'expense'
+-- (rolled back with the file).
+create function public._r2681_test_seed_types() returns trigger language plpgsql security definer set search_path to 'public' as $f$
+begin
+  if to_regclass('public.zoho_account_types') is null then return new; end if;
+  insert into public.zoho_account_types (tenant_id, zoho_account_id, account_type)
+  select distinct new.tenant_id, l->>'accountId', 'expense'
+    from jsonb_array_elements(case when jsonb_typeof(new.payload->'lines') = 'array' then new.payload->'lines' else '[]'::jsonb end) l
+   where coalesce(l->>'accountId', '') <> ''
+  on conflict do nothing;
+  return new;
+end $f$;
+create trigger r2681_test_seed_types after insert or update on public.zoho_fy_scan for each row execute function public._r2681_test_seed_types();
 
 create function pg_temp.r2680_fill_supplier() returns trigger language plpgsql as $f$
 begin
@@ -187,7 +203,9 @@ begin
   -- ── C ──
   r := pg_temp.book('cccccccc-0000-0000-0000-000000268006'); if r not like 'ok:%' then raise exception 'C FAIL: another account''s document blocked: %', r; end if;
   r := pg_temp.book('cccccccc-0000-0000-0000-000000268007'); if r not like 'ok:%' then raise exception 'C FAIL: a USD row blocked: %', r; end if;
-  r := pg_temp.book('cccccccc-0000-0000-0000-000000268008'); if r not like 'ok:%' then raise exception 'C FAIL: a Salaries row blocked: %', r; end if;
+  -- R-2913: a salary imported from Zoho covers its debit like any imported expense
+  r := pg_temp.book('cccccccc-0000-0000-0000-000000268008');
+  if r not like 'P0001:This debit looks like a purchase already imported from Zoho (Salaries, paid 14 Oct 2026, ₹2,300)%' then raise exception 'C FAIL: the debit of a Zoho-imported Salaries row was booked again: %', r; end if;
   r := pg_temp.book('cccccccc-0000-0000-0000-000000268009');
   if r not like 'P0001:This debit looks like the payment of a bill already imported from Zoho (R2680 Unpaid Vendor, bill dated 14 Oct 2026, ₹2,400). Pay that bill with "Record payment" on this line instead of booking a new expense, or the cost is counted twice.' then
     raise exception 'C FAIL: the debit of an unpaid Zoho bill was booked, or got the wrong way out: %', r; end if;

@@ -28,6 +28,7 @@ const ctx = (over: Partial<PurchasePlanContext> = {}): PurchasePlanContext => ({
   imported: new Set<string>(),
   bankAccounts: ACCOUNTS,
   accountMap: {},
+  accountTypes: { A1: "expense", A2: "expense", AC: "cost_of_goods_sold", ZZ: "expense" },
   ...over,
 });
 
@@ -116,10 +117,10 @@ describe("buildPurchasePlan — verdicts", () => {
     expect(p.rows[0].vendorId).toBe("vz");
   });
 
-  it("unmapped Zoho accounts are listed (with amount), and the doc still imports", () => {
+  it("unmapped Zoho accounts are listed (with amount, Zoho type) and the doc is left out (R-2681, owner 17 Nov)", () => {
     const p = buildPurchasePlan([bill({ lines: [line({ accountId: "ZZ", accountName: "Misc Exp" })] })], ctx());
-    expect(p.rows[0].verdict).toBe("import");
-    expect(p.unmapped).toEqual([{ accountId: "ZZ", accountName: "Misc Exp", count: 1, taxable: 1000 }]);
+    expect(p.rows[0]).toMatchObject({ verdict: "skip", reason: 'Zoho account "Misc Exp" is not mapped — left out for now (owner, 17 Nov). Map it only if it is an expense.' });
+    expect(p.unmapped).toEqual([{ accountId: "ZZ", accountName: "Misc Exp", count: 1, taxable: 1000, type: "expense", notExpense: false }]);
   });
 
   it("a problem from the normaliser leaves it out with that reason", () => {
