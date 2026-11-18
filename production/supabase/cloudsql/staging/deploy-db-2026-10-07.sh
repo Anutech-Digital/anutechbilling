@@ -575,6 +575,7 @@ MIGS=(
   "r2929taskdigestlog|20261118165943_r2929_task_digest_log.sql|resellersos_migration|to_regclass('public.task_digest_log') is not null"
   "r2923partinvoicecost|20261118182808_r2923_part_invoice_cost.sql|resellersos_migration|to_regprocedure('public.r2101_part_line(text,text,integer,integer,date,date,integer)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2923%')"
   "r2921loansplitfollowups|20261118191950_r2921_loan_split_followups.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_line_bookings(uuid)') and prosrc like '%R-2921%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_loan_given_line_unmatched()') and prosrc like '%R-2921%')"
+  "r2925taskdelegatedby|20261118225924_r2925_task_delegated_by.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'delegated_at')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

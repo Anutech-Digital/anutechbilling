@@ -547,4 +547,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2929taskdigestlog", peek: "to_regclass('public.task_digest_log') is not null" },
   { key: "r2923partinvoicecost", peek: "to_regprocedure('public.r2101_part_line(text,text,integer,integer,date,date,integer)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2923%')" },
   { key: "r2921loansplitfollowups", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_line_bookings(uuid)') and prosrc like '%R-2921%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_loan_given_line_unmatched()') and prosrc like '%R-2921%')" },
+  { key: "r2925taskdelegatedby", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'delegated_at')" },
 ];
