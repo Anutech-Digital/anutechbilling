@@ -1,7 +1,7 @@
 -- R-2935 (staging 18 Nov 2026, Excel HDFC 4523): HDFC pays a closed FD on three bank lines —
 --   "FD REDEEM PRINCIPAL" +₹10,00,000 (own transfer), "FD REDEEM INTEREST" +₹8,014 (gross interest)
 --   and "FD REDEEM TAX" −₹801 (TDS the bank cut). The tax line had no way to be booked.
---   Migration 20261118192755_r2935_interest_tds_bank_line. Self-asserting, ONE transaction, rolled back.
+--   Migration 20261118233537_r2935_interest_tds_bank_line. Self-asserting, ONE transaction, rolled back.
 --
 --   A. Owner's lines: principal = own transfer from the FD (FD balance 0); the interest line books
 --      as plain interest ₹8,014 with the FD named and principal 0 (no "FD closed") — P&L ₹8,014,

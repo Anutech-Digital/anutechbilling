@@ -1,6 +1,6 @@
 -- deploy-peek: to_regprocedure('public.book_bank_debit_as_interest_tds(uuid,uuid)') is not null and to_regprocedure('public.bank_interest_without_tds(uuid)') is not null and to_regprocedure('public.tg_bank_txn_tds_line_r2935()') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_other_income_deleted_r2366()') and prosrc like '%R-2935%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_match_target_tenant(text,text)') and prosrc like '%R-2935%') and exists(select 1 from pg_constraint where conname = 'bank_transactions_matched_to_type_check' and pg_get_constraintdef(oid) like '%tds_receivable%')
 -- deploy-key: r2935interesttdsbankline
--- 20261118192755_r2935_interest_tds_bank_line.sql
+-- 20261118233537_r2935_interest_tds_bank_line.sql
 --
 -- R-2935 (staging 18 Nov 2026, Excel HDFC 4523 reconcile), P1.
 -- HDFC pays a closed FD on THREE bank lines: "FD REDEEM PRINCIPAL" (+₹10,00,000, an own transfer),

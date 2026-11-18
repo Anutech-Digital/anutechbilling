@@ -3,7 +3,7 @@
  * (a bank that pays a closed FD on three lines: principal, interest, and the TDS it cut).
  *
  * One test per howToCheck step, on the LOCAL app (E2E Test Co) through the Local test login.
- * Run: `node scripts/ops/card-tests.mjs R-2935` (needs migration 20261118192755 on the local DB).
+ * Run: `node scripts/ops/card-tests.mjs R-2935` (needs migration 20261118233537 on the local DB).
  *
  * The card's case is a real company's HDFC statement (staging); here the same three lines are made on
  * the local test company, fresh on every run and removed again after it (fixed ids, local docker DB only):

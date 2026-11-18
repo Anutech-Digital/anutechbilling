@@ -101,7 +101,7 @@ export function useReconcileAsTransfer() {
 }
 
 /** R-2935: the booked bank interest (no TDS on it yet) a money-out TDS line can belong to —
- *  bank_interest_without_tds (migration 20261118192755), nearest date first. */
+ *  bank_interest_without_tds (migration 20261118233537), nearest date first. */
 export type InterestWithoutTds = {
   id: string; income_date: string; amount: number; description: string | null; source: string | null; fd_name: string | null;
 };
