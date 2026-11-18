@@ -6,8 +6,9 @@
  *
  * The Owner login adds a task "CT R2925 call the customer" assigned to the Sales login through
  * Tasks > Add task. Then: the Sales login's bell shows "New task from …", and the local email
- * log has the mail to the Sales login (the local server does not really send mail — the log row
- * is what proves the app handed it to the mail sender). The task and its notice are removed after.
+ * log has the mail to the Sales login. Localhost has no mail provider, so the row reads
+ * "failed — No email provider is configured"; the row itself (right person, right subject) is what
+ * proves the app handed the mail to the sender. A real inbox is checked on staging. The task and its notice are removed after.
  */
 import { expect, test } from "@playwright/test";
 import { CARD_TESTS_ON, E2E_TENANT_SQL, fillKept, localDb, onlyInCardTests, onlyOne, openAppPage, pageAs } from "./card-steps";
@@ -69,11 +70,15 @@ test.describe("R-2925 assignee is told (bell + email)", () => {
   test("Step 3: the email to the Sales member was handed to the mail sender (local email log)", async () => {
     const db = localDb("R-2925");
     const row = db.one(`
-      select recipient || '|' || subject || '|' || status from public.email_log
+      select recipient || '|' || subject || '|' || status || '|' || coalesce(error_message, '') from public.email_log
        where tenant_id = ${E2E_TENANT_SQL} and kind = 'task_assigned' and subject = 'New task: ${TITLE}'
        order by created_at desc limit 1;`);
     expect(row.split("|").slice(0, 2)).toEqual([SALES_EMAIL, `New task: ${TITLE}`]);
-    expect(["sent", "stubbed"]).toContain(row.split("|")[2]);
+    // Localhost has no mail provider (dev:local blanks the keys): the app still hands the mail to the sender,
+    // which logs it as failed with exactly that reason. Any OTHER failure is a real one.
+    const [, , status, why] = row.split("|");
+    if (status === "failed") expect(why).toBe("No email provider is configured, so this message cannot be sent.");
+    else expect(["sent", "stubbed"]).toContain(status);
     // Who handed it over is recorded on the task.
     const stamped = db.one(`
       select (t.delegated_by = (select u.id from public.users u where u.email = 'e2e-owner@example.test' and u.tenant_id = t.tenant_id))::text
