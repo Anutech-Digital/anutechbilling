@@ -6,7 +6,8 @@
  *
  * Planted fresh on every run and removed after it (fixed ids, local docker DB only): three open
  * tasks of E2E Test Co — one overdue since yesterday, one High-priority task due in 20 minutes
- * (the soonest task ahead, so it is in "Upcoming") and one Low-priority task with no date.
+ * (the soonest task ahead, so it is in "Upcoming") and one Low-priority task due in 40 days
+ * (tasks.due_at is NOT NULL — a task always has a due time).
  */
 import { expect, test, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, E2E_TENANT_SQL, localDb, onlyInCardTests, onlyOne, openAppPage, pageAs } from "./card-steps";
@@ -14,13 +15,13 @@ import { CARD_TESTS_ON, E2E_TENANT_SQL, localDb, onlyInCardTests, onlyOne, openA
 const CARD = "R-2936";
 const TASK_OVERDUE = "c2936000-0000-4000-8000-000000000001";
 const TASK_SOON = "c2936000-0000-4000-8000-000000000002";
-const TASK_NODATE = "c2936000-0000-4000-8000-000000000003";
+const TASK_LATER = "c2936000-0000-4000-8000-000000000003";
 const TITLE_OVERDUE = "CT R2936 Chase the overdue payment";
 const TITLE_SOON = "CT R2936 Call the overview customer";
-const TITLE_NODATE = "CT R2936 Tidy the price list";
+const TITLE_LATER = "CT R2936 Tidy the price list";
 const T = E2E_TENANT_SQL;
 
-const CLEAN = `delete from public.tasks where tenant_id = ${T} and id in ('${TASK_OVERDUE}', '${TASK_SOON}', '${TASK_NODATE}');`;
+const CLEAN = `delete from public.tasks where tenant_id = ${T} and id in ('${TASK_OVERDUE}', '${TASK_SOON}', '${TASK_LATER}');`;
 
 function seed(): void {
   localDb(CARD).psql(`
@@ -29,12 +30,13 @@ function seed(): void {
     insert into public.tasks (id, tenant_id, title, kind, status, priority, due_at) values
       ('${TASK_OVERDUE}', ${T}, '${TITLE_OVERDUE}', 'followup', 'pending', 'medium', now() - interval '1 day'),
       ('${TASK_SOON}', ${T}, '${TITLE_SOON}', 'call', 'pending', 'high', now() + interval '20 minutes'),
-      ('${TASK_NODATE}', ${T}, '${TITLE_NODATE}', 'custom', 'pending', 'low', null);
+      ('${TASK_LATER}', ${T}, '${TITLE_LATER}', 'custom', 'pending', 'low', now() + interval '40 days');
     commit;`);
 }
 
-/** The whole number a card / tile / donut line shows. */
+/** The whole number a card shows — waits for it (a card shows a shimmer while loading). */
 async function numberIn(scope: ReturnType<Page["locator"]>): Promise<number> {
+  await expect(scope).toHaveText(/\d/, { timeout: 60_000 });
   const text = (await scope.innerText()).replace(/,/g, "");
   const m = /\d+/.exec(text);
   if (!m) throw new Error(`no number in "${text}"`);
@@ -102,7 +104,7 @@ test.describe("R-2936 — Tasks Overview page", () => {
     expect(await upcoming.locator("li").count()).toBeLessThanOrEqual(5);
 
     const newest = page.getByTestId("overview-new");
-    for (const title of [TITLE_OVERDUE, TITLE_SOON, TITLE_NODATE]) await onlyOne(newest.getByText(title), `${title} in Newly added`);
+    for (const title of [TITLE_OVERDUE, TITLE_SOON, TITLE_LATER]) await onlyOne(newest.getByText(title), `${title} in Newly added`);
     expect(await newest.locator("li").count()).toBeLessThanOrEqual(5);
   });
 
