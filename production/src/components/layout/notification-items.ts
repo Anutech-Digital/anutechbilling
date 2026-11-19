@@ -44,6 +44,42 @@ export interface RecentLead {
 
 export const NOTIFICATION_LIMIT = 30;
 
+/**
+ * R-2924: whose due tasks the bell lists. The bell used to list every due task in the
+ * company to every member. Now: only the tasks this member owns; an owner / manager may
+ * switch to the whole team's (`team`), where each colleague's task says whose it is.
+ */
+export interface BellTaskScope {
+  userId: string | null;
+  team: boolean;
+  /** Owner / manager: a task with NO owner (trial set-up, inbound email follow-up) counts as
+   *  theirs — otherwise it would be in nobody's bell. */
+  unassigned?: boolean;
+  /** user id → short name, for "· Hitesh" on a colleague's task in the team view. */
+  names?: Readonly<Record<string, string>>;
+}
+
+/** Only an owner or manager gets the "Team tasks" switch. */
+export function canSeeTeamTasks(role: string | null | undefined): boolean {
+  return role === "owner" || role === "manager";
+}
+
+/** The scope the bell really uses: the stored switch counts only for a role that may use it. */
+export function bellTaskScope(input: {
+  userId: string | null; role: string | null | undefined; teamWanted: boolean;
+}): { userId: string | null; team: boolean; unassigned: boolean } {
+  const lead = canSeeTeamTasks(input.role);
+  return { userId: input.userId, team: input.teamWanted && lead, unassigned: lead };
+}
+
+/** Is this task in the bell for that scope? (The query filters the same way; this also holds
+ *  while the other view's rows are still on screen during a switch.) */
+export function inBellScope(ownerId: string | null | undefined, scope: BellTaskScope): boolean {
+  if (scope.team) return true;
+  if (!scope.userId) return false; // who "me" is not known yet: none — never everybody's
+  return ownerId === scope.userId || (!ownerId && !!scope.unassigned);
+}
+
 const KIND_META: Record<string, { icon: string; tone: NotifTone }> = {
   "payment.received": { icon: "rupee",  tone: "emerald" },
   "quote.accepted":   { icon: "check",  tone: "emerald" },
@@ -52,6 +88,8 @@ const KIND_META: Record<string, { icon: string; tone: NotifTone }> = {
   // R-2303: team chat — the href (/team-chat?c=<channel>&m=<message>) opens that exact message.
   "chat.mention":     { icon: "chat",   tone: "amber"   },
   "chat.dm":          { icon: "chat",   tone: "indigo"  },
+  // R-2925: a task given to me (Add / Edit task, or made from a team chat post — R-2304).
+  "task.assigned":    { icon: "clock",  tone: "indigo"  },
 };
 
 /** End-of-today and start-of-today as UTC ms, computed in IST (matches the
@@ -73,6 +111,8 @@ export function buildNotifications(input: {
   tasks?: TaskWithLink[] | null;
   leads?: RecentLead[] | null;
   celebrations?: Celebration[] | null;
+  /** R-2924: whose tasks. Left out = every task passed in (a caller that already filtered). */
+  taskScope?: BellTaskScope;
   readIds: ReadonlySet<string>;
   now?: number;
 }): NotificationItem[] {
@@ -99,8 +139,14 @@ export function buildNotifications(input: {
   }
 
   // 1. Actionable: tasks due today or overdue (pending / snoozed only).
+  const scope = input.taskScope;
   for (const t of input.tasks ?? []) {
     if (t.status !== "pending" && t.status !== "snoozed") continue;
+    // R-2924: mine only, unless an owner / manager switched to everyone's.
+    if (scope && !inBellScope(t.owner_id, scope)) continue;
+    const ownerName = !scope || t.owner_id === scope.userId ? undefined
+      : !t.owner_id ? "Unassigned"
+      : scope.team ? scope.names?.[t.owner_id] : undefined;
     const due = new Date(t.due_at).getTime();
     if (due >= end) continue; // future tasks aren't "notifications" yet
     const overdue = due < start;
@@ -108,7 +154,7 @@ export function buildNotifications(input: {
     out.push({
       id: `task-${t.id}`,
       title: t.title,
-      meta: `${overdue ? "Overdue" : "Due today"}${who ? ` · ${who}` : ""} · ${formatDate(t.due_at)}`,
+      meta: `${overdue ? "Overdue" : "Due today"}${who ? ` · ${who}` : ""} · ${formatDate(t.due_at)}${ownerName ? ` · ${ownerName}` : ""}`,
       icon: overdue ? "alert" : "clock",
       tone: overdue ? "rose" : "amber",
       unread: !input.readIds.has(`task-${t.id}`),
@@ -234,3 +280,38 @@ function createReadStore() {
 }
 
 export const notifReadStore = createReadStore();
+
+/**
+ * R-2924: the owner / manager "Team tasks" switch. One shared store (remembered in this
+ * browser) so the bell badge in the top bar and the open panel always use the same scope.
+ */
+const TEAM_KEY = "ros_notif_team_tasks";
+
+function createTeamStore() {
+  let snap: boolean | null = null;
+  const listeners = new Set<() => void>();
+  const getSnapshot = (): boolean => {
+    if (snap === null) {
+      try {
+        snap = typeof localStorage !== "undefined" && localStorage.getItem(TEAM_KEY) === "1";
+      } catch {
+        snap = false;
+      }
+    }
+    return snap;
+  };
+  const getServerSnapshot = (): boolean => false;
+  const subscribe = (fn: () => void): (() => void) => {
+    listeners.add(fn);
+    return () => { listeners.delete(fn); };
+  };
+  const set = (team: boolean): void => {
+    if (getSnapshot() === team) return;
+    snap = team;
+    try { localStorage.setItem(TEAM_KEY, team ? "1" : "0"); } catch { /* private window */ }
+    listeners.forEach((l) => l());
+  };
+  return { getSnapshot, getServerSnapshot, subscribe, set };
+}
+
+export const notifTeamStore = createTeamStore();

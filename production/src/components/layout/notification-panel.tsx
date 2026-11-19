@@ -20,8 +20,12 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { buildNotifications, countUnread, notifReadStore, type NotificationItem } from "./notification-items";
-import { useTasks } from "@/lib/queries/tasks";
+import {
+  bellTaskScope, buildNotifications, canSeeTeamTasks, countUnread, notifReadStore, notifTeamStore,
+  type NotificationItem,
+} from "./notification-items";
+import { useBellTasks } from "@/lib/queries/tasks";
+import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { useRecentLeads } from "@/lib/queries/leads";
 import { useCelebrations } from "@/lib/queries/contacts";
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from "@/lib/queries/notifications";
@@ -45,7 +49,21 @@ export function useNotificationFeed() {
   /* R-2175: tasks, leads and contacts are business records — a personal session has none and
      the data gateway refuses them (R-2125). Its bell shows only its own notifications. */
   const business = useBusinessShell();
-  const { data: tasks, isLoading: tasksLoading } = useTasks("all", { enabled: business });
+  /* R-2924: only this member's due tasks; an owner / manager may switch to the team's. */
+  const { data: me } = useCurrentUser();
+  const teamWanted = React.useSyncExternalStore(
+    notifTeamStore.subscribe, notifTeamStore.getSnapshot, notifTeamStore.getServerSnapshot,
+  );
+  const canTeam = canSeeTeamTasks(me?.role);
+  const myId = me?.userId ?? null;
+  const myRole = me?.role;
+  const scope = React.useMemo(() => bellTaskScope({ userId: myId, role: myRole, teamWanted }), [myId, myRole, teamWanted]);
+  const { data: tasks, isLoading: tasksLoading } = useBellTasks(scope, { enabled: business });
+  const { data: members } = useTeamMembers({ enabled: business && scope.team });
+  const names = React.useMemo(
+    () => Object.fromEntries((members ?? []).map((m) => [m.id, memberLabel(m)])),
+    [members],
+  );
   /* Only the leads it shows: created in the last 7 days, 30 at most, five columns (S40).
      This panel is mounted on every page and used to load every lead with select("*"). */
   const { data: leads, isLoading: leadsLoading } = useRecentLeads(business);
@@ -61,12 +79,15 @@ export function useNotificationFeed() {
   );
 
   const items = React.useMemo(
-    () => buildNotifications({ dbNotifs, tasks, leads, celebrations, readIds }),
-    [tasks, leads, celebrations, readIds, dbNotifs],
+    () => buildNotifications({
+      dbNotifs, tasks, leads, celebrations, readIds,
+      taskScope: { ...scope, names },
+    }),
+    [tasks, leads, celebrations, readIds, dbNotifs, scope, names],
   );
   /* Pehli load par "You're all caught up" jhooth tha (R-247) — data aane tak skeleton. */
   const loading = items.length === 0 && (tasksLoading || leadsLoading || notifsLoading || celebrationsLoading);
-  return { items, unreadCount: countUnread(items), loading };
+  return { items, unreadCount: countUnread(items), loading, canTeam: business && canTeam, team: scope.team };
 }
 
 export function NotificationPanel({
@@ -77,7 +98,7 @@ export function NotificationPanel({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const { items, unreadCount, loading } = useNotificationFeed();
+  const { items, unreadCount, loading, canTeam, team } = useNotificationFeed();
   const { data: me } = useCurrentUser();
   /* R-2176: /tasks is a business page — a personal session's bell has no "All tasks" footer. */
   const personal = isPersonalSession(me ? { role: me.role } : null);
@@ -137,6 +158,29 @@ export function NotificationPanel({
             </button>
           </div>
         </SheetHeader>
+
+        {/* R-2924: owner / manager only — whose due tasks the bell lists (and counts). Same words as /tasks. */}
+        {canTeam && (
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-hairline" role="group" aria-label="Whose tasks">
+            <span className="text-2xs text-ink-3">Tasks</span>
+            {([[false, "Mine"], [true, "Everyone"]] as const).map(([value, label]) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={team === value}
+                onClick={() => notifTeamStore.set(value)}
+                className={cn(
+                  "text-xs font-medium px-2.5 py-1 rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo",
+                  team === value
+                    ? "bg-indigo-soft text-indigo border-indigo/30"
+                    : "text-ink-2 border-hairline hover:bg-paper-2",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Items */}
         <div className="flex-1 overflow-y-auto">

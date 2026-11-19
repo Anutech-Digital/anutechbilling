@@ -13109,6 +13109,8 @@ export type Database = {
           lead_id: string | null
           notes: string | null
           owner_id: string | null
+          priority: string
+          progress: string
           quote_id: string | null
           reminder_minutes_before: number
           snooze_count: number
@@ -13130,6 +13132,8 @@ export type Database = {
           lead_id?: string | null
           notes?: string | null
           owner_id?: string | null
+          priority?: string
+          progress?: string
           quote_id?: string | null
           reminder_minutes_before?: number
           snooze_count?: number
@@ -13151,6 +13155,8 @@ export type Database = {
           lead_id?: string | null
           notes?: string | null
           owner_id?: string | null
+          priority?: string
+          progress?: string
           quote_id?: string | null
           reminder_minutes_before?: number
           snooze_count?: number

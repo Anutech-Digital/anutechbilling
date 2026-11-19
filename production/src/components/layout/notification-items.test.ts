@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildNotifications, countUnread, newLeadTitle, notifReadStore, NOTIFICATION_LIMIT, todayBoundsIST } from "./notification-items";
+import {
+  bellTaskScope, buildNotifications, canSeeTeamTasks, countUnread, newLeadTitle, notifReadStore, notifTeamStore,
+  NOTIFICATION_LIMIT, todayBoundsIST,
+} from "./notification-items";
 import type { NotificationRow } from "@/lib/supabase/database.types";
-import type { TaskWithLink } from "@/lib/queries/tasks";
+import { BELL_TASK_LIMIT, type TaskWithLink } from "@/lib/queries/tasks";
 
 const NOW = Date.parse("2026-10-06T06:30:00Z"); // 12:00 IST
 const DAY = 24 * 3600 * 1000;
@@ -205,5 +208,96 @@ describe("R-2327 bell order: a new chat item is on top", () => {
     expect(items).toHaveLength(NOTIFICATION_LIMIT);
     expect(items.map((i) => i.id)).toContain("task-old");
     expect(items[0].id).toBe("db-c0");
+  });
+});
+
+describe("R-2925 a task given to me", () => {
+  it("shows with the task icon (not the plain bell), unread, and opens that task", () => {
+    const row = {
+      id: "n9", kind: "task.assigned", title: "New task from Pardeep: Call Acme", body: "Due 19 Nov 2026, 3:30 pm",
+      href: "/tasks?tab=all&task=T1", entity_id: "T1", read_at: null, created_at: new Date(NOW - 60_000).toISOString(),
+    } as unknown as NotificationRow;
+    const [item] = buildNotifications({ dbNotifs: [row], readIds: new Set(), now: NOW });
+    expect(item).toMatchObject({ icon: "clock", tone: "indigo", unread: true, link: "/tasks?tab=all&task=T1" });
+    expect(item.title).toBe("New task from Pardeep: Call Acme");
+    expect(item.meta).toContain("Due 19 Nov 2026");
+  });
+});
+
+describe("R-2924 bell shows only MY tasks; owner/manager may switch to the team's", () => {
+  const ME = "u-me", OTHER = "u-other";
+  const owned = (id: string, owner: string | null, dueMs = NOW - DAY) =>
+    ({ ...task(id, dueMs), owner_id: owner }) as unknown as TaskWithLink;
+  const tasks = [owned("mine", ME), owned("theirs", OTHER), owned("nobody", null), owned("mine-today", ME, NOW)];
+  const ids = (scope: Parameters<typeof buildNotifications>[0]["taskScope"]) =>
+    buildNotifications({ tasks, taskScope: scope, readIds: new Set(), now: NOW }).map((n) => n.id).sort();
+
+  it("a staff member's bell lists only the tasks owned by them", () => {
+    expect(ids({ userId: ME, team: false })).toEqual(["task-mine", "task-mine-today"]);
+  });
+
+  it("the unread count follows the same scope (the badge never counts a colleague's task)", () => {
+    const items = buildNotifications({ tasks, taskScope: { userId: ME, team: false }, readIds: new Set(), now: NOW });
+    expect(countUnread(items)).toBe(2);
+  });
+
+  it("who I am is not known yet: no task is shown (never everybody's)", () => {
+    expect(ids({ userId: null, team: false })).toEqual([]);
+  });
+
+  it("Team tasks on: every due task in the company, and each says whose it is", () => {
+    const items = buildNotifications({
+      tasks, taskScope: { userId: ME, team: true, names: { [OTHER]: "Hitesh" } }, readIds: new Set(), now: NOW,
+    });
+    expect(items.map((n) => n.id).sort()).toEqual(["task-mine", "task-mine-today", "task-nobody", "task-theirs"]);
+    expect(items.find((n) => n.id === "task-theirs")!.meta).toContain("Hitesh");
+    expect(items.find((n) => n.id === "task-mine")!.meta).not.toContain("Hitesh");
+  });
+
+  it("only owner and manager get the Team tasks switch", () => {
+    expect(canSeeTeamTasks("owner")).toBe(true);
+    expect(canSeeTeamTasks("manager")).toBe(true);
+    for (const r of ["sales", "accountant", "billing", "support", "personal", null, undefined]) {
+      expect(canSeeTeamTasks(r)).toBe(false);
+    }
+  });
+
+  it("a staff member with a stale 'team' switch in the browser still sees only their own", () => {
+    expect(bellTaskScope({ userId: ME, role: "sales", teamWanted: true })).toEqual({ userId: ME, team: false, unassigned: false });
+    expect(bellTaskScope({ userId: ME, role: "owner", teamWanted: true }).team).toBe(true);
+    expect(bellTaskScope({ userId: ME, role: "owner", teamWanted: false }).team).toBe(false);
+  });
+
+  it("the feed asks the server only for the tasks it shows (not every task in the company)", () => {
+    const panel = readFileSync(join(__dirname, "notification-panel.tsx"), "utf8");
+    expect(panel).not.toMatch(/useTasks\("all"/);
+    expect(panel).toMatch(/useBellTasks\(/);
+    const q = readFileSync(join(__dirname, "../../lib/queries/tasks.ts"), "utf8");
+    const hook = q.slice(q.indexOf("export function useBellTasks"));
+    expect(hook).toMatch(/\.eq\("owner_id", scope\.userId\)/);
+    expect(hook).toMatch(/\.lt\("due_at", endISO\)/);
+    expect(hook).toMatch(/\.limit\(BELL_TASK_LIMIT\)/);
+    expect(BELL_TASK_LIMIT).toBe(NOTIFICATION_LIMIT);
+  });
+
+  it("a task with no owner (trial set-up, inbound email) is in the owner's / manager's bell, not a staff member's", () => {
+    const lead = bellTaskScope({ userId: ME, role: "owner", teamWanted: false });
+    const items = buildNotifications({ tasks, taskScope: lead, readIds: new Set(), now: NOW });
+    expect(items.map((n) => n.id).sort()).toEqual(["task-mine", "task-mine-today", "task-nobody"]);
+    expect(items.find((n) => n.id === "task-nobody")!.meta).toContain("Unassigned");
+    expect(ids(bellTaskScope({ userId: ME, role: "sales", teamWanted: false }))).toEqual(["task-mine", "task-mine-today"]);
+    const q = readFileSync(join(__dirname, "../../lib/queries/tasks.ts"), "utf8");
+    expect(q).toContain("owner_id.eq.${scope.userId},owner_id.is.null");
+  });
+
+  it("the team switch is one shared store, so the badge and the panel agree", () => {
+    const seen: boolean[] = [];
+    const off = notifTeamStore.subscribe(() => seen.push(notifTeamStore.getSnapshot()));
+    expect(notifTeamStore.getSnapshot()).toBe(false);
+    notifTeamStore.set(true);
+    notifTeamStore.set(true);
+    expect(seen).toEqual([true]);
+    notifTeamStore.set(false);
+    off();
   });
 });

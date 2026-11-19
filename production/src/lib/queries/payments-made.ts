@@ -109,6 +109,7 @@ export async function fetchMoneyOut(supabase: Client): Promise<PaidOutLine[]> {
       case "loan_given": what = "Loan given"; break;
       case "business_loan": case "loan_drawdown": case "loan_repayment": what = "Loan / EMI"; break;
       case "emi": what = "EMI"; break;
+      case "tds_receivable": what = "TDS cut by bank (receivable)"; break;   // R-2935
       case "project": what = "Project payment"; break;
       case "payment": what = "Customer refund"; break;
       default: what = t.matched_to_type ?? "Not reconciled";

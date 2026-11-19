@@ -131,12 +131,29 @@ describe("R-2920 amounts of the ticked loans", () => {
 });
 
 describe("R-2920 typed rupees", () => {
-  it("blank / junk / negative = not typed; decimals round", () => {
+  it("blank / junk / negative = not typed", () => {
     expect(typedRupees("")).toBeNull();
     expect(typedRupees(undefined)).toBeNull();
     expect(typedRupees("abc")).toBeNull();
     expect(typedRupees("-5")).toBeNull();
     expect(typedRupees("349000")).toBe(349000);
     expect(typedRupees("0")).toBe(0);
+  });
+});
+
+describe("R-2921 paise are refused, never rounded", () => {
+  it("a decimal amount is not a whole-rupee amount", () => {
+    expect(typedRupees("100.5")).toBeNull();
+    expect(typedRupees("349000.49")).toBeNull();
+    expect(typedRupees("0.4")).toBeNull();
+    expect(typedRupees("999.99999999999999999")).toBeNull();   // Number() would call this 1000
+    expect(typedRupees("1000.0")).toBeNull();
+  });
+  it("only plain digits are an amount (what the RPC accepts)", () => {
+    expect(typedRupees("1e3")).toBeNull();
+    expect(typedRupees("0x10")).toBeNull();
+    expect(typedRupees("1234567890")).toBeNull();   // 10 digits — over the RPC's 9
+    expect(typedRupees(" 250 ")).toBe(250);
+    expect(typedRupees("349000")).toBe(349000);
   });
 });

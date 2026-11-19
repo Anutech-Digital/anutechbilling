@@ -22,9 +22,11 @@ export interface TeamMember {
   access_ends_on?: string | null;
 }
 
-export function useTeamMembers() {
+/** `enabled` (R-2924): the bell reads the team only in its "Team tasks" view. */
+export function useTeamMembers(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["team", "members"],
+    enabled: opts.enabled ?? true,
     queryFn: async (): Promise<TeamMember[]> => {
       const supabase = createClient();
       const { data, error } = await supabase

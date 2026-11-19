@@ -9,6 +9,14 @@
  *
  * The tab (R-118) narrows the list to one group; "All" shows every group. Tab and person
  * filter live in the URL (R-286), and `?task=<id>` opens that task (R-341).
+ *
+ * R-2930: a Summary strip on top — the app's one collapsible KPI strip (R-2266): the closed
+ * line carries Open / Overdue / Today / Done this week, opened it shows them as four cards and
+ * a click on a card goes to its tab (Open → All, Done this week → Done). A search box (name,
+ * notes, the lead / customer / deal it is about; `?q=`). Upcoming is split into "This week"
+ * (due by Sunday, IST) and "Later". Cards, tabs and list count the same tasks (person filter +
+ * search); "Done this week" is counted on the server when no search is typed, because the page
+ * holds only the 100 most recently completed tasks.
  */
 "use client";
 
@@ -23,7 +31,12 @@ import { useTaskList, TASK_SELECT, type TaskBucket, type TaskWithLink } from "@/
 import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { TaskRow, taskLeadName } from "@/components/features/tasks/task-row";
 import { TaskQuickAdd } from "@/components/features/tasks/task-quick-add";
-import { groupTasks, taskTabCounts, type TaskGroup, type TaskGroupId } from "@/components/features/tasks/task-groups";
+import { groupTasks, taskTabCounts, type TaskGroupId } from "@/components/features/tasks/task-groups";
+import { istWeekBounds, matchesTaskSearch, taskSections, taskSummary, type TaskSection } from "@/components/features/tasks/task-overview";
+import { KPI } from "@/components/shared/kpi";
+import { CollapsibleKpiStrip, StripFact } from "@/components/shared/collapsible-kpi-strip";
+import { istDayStartUtc, addDaysISO } from "@/lib/dates/ist";
+import { Input } from "@/components/ui/input";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { Card } from "@/components/ui/card";
@@ -95,6 +108,7 @@ export default function TasksPage() {
   const { data: members = [] } = useTeamMembers();
   const memberById = React.useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   const [assignee, setAssignee] = useUrlState("assignee", "all"); // R-286: survives Back
+  const [query, setQuery] = useUrlState("q", ""); // R-2930: search, survives Back / reload
 
   const tasks = React.useMemo(() => list.data ?? [], [list.data]);
 
@@ -124,7 +138,34 @@ export default function TasksPage() {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(id);
   }, []);
-  const groups = React.useMemo(() => groupTasks(mineOrTheirs, now), [mineOrTheirs, now]);
+  /* R-2930: search narrows the same set the cards, tabs and list all read. The list follows
+     the typing a beat behind (deferred), so a long list never makes the box lag. */
+  const search = React.useDeferredValue(query).trim();
+  const visible = React.useMemo(
+    () => (search ? mineOrTheirs.filter((t) => matchesTaskSearch(t, search)) : mineOrTheirs),
+    [mineOrTheirs, search],
+  );
+  const groups = React.useMemo(() => groupTasks(visible, now), [visible, now]);
+  const summary = React.useMemo(() => taskSummary(visible, now), [visible, now]);
+  /* "Done this week" — the page holds only the 100 newest completed tasks, so without a search
+     the number is counted on the server (same person filter, IST week Monday–Sunday). */
+  const week = istWeekBounds(now);
+  const doneOwner = assignee === "all" ? null : assignee === "mine" ? me?.userId ?? null : assignee;
+  const doneWeek = useQuery({
+    queryKey: ["tasks", "done-this-week", me?.tenantId, week.start, assignee === "all" ? "all" : doneOwner],
+    enabled: !!me?.tenantId && (assignee === "all" || !!doneOwner),
+    queryFn: async (): Promise<number> => {
+      let q = createClient().from("tasks").select("id", { count: "exact", head: true })
+        .eq("tenant_id", me!.tenantId).eq("status", "done")
+        .gte("completed_at", istDayStartUtc(week.start).toISOString())
+        .lt("completed_at", istDayStartUtc(addDaysISO(week.end, 1)).toISOString());
+      if (doneOwner) q = q.eq("owner_id", doneOwner);
+      const { count, error } = await q;
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
+  const doneThisWeek = search ? summary.doneThisWeek : doneWeek.data ?? summary.doneThisWeek;
   // R-1416: "All" counts what the All list shows — Done included.
   const counts = taskTabCounts(groups);
 
@@ -136,8 +177,10 @@ export default function TasksPage() {
     { id: "done",     label: "Done",     count: counts.done,     dot: "emerald" },
   ];
 
-  const shown: TaskGroup<TaskWithLink>[] = groups.filter(
-    (g) => g.tasks.length > 0 && (tab === "all" || g.id === tab),
+  /* R-2930: Upcoming renders as "This week" + "Later"; both belong to the Upcoming tab. */
+  const shown: TaskSection<TaskWithLink>[] = React.useMemo(
+    () => taskSections(groups, now).filter((s) => s.tasks.length > 0 && (tab === "all" || s.group === tab)),
+    [groups, now, tab],
   );
   const [doneOpen, setDoneOpen] = React.useState(false);
 
@@ -160,6 +203,44 @@ export default function TasksPage() {
       </div>
 
       <TaskQuickAdd />
+
+      {/* R-2930: summary — the app's one KPI strip (closed: numbers on the line; open: cards).
+          A failed read shows no numbers: "0 overdue" above an error would be a false all-clear. */}
+      {!list.error && (
+        <CollapsibleKpiStrip
+          stripId="tasks"
+          userId={me?.userId}
+          title="Summary"
+          summary={isLoading ? null : (
+            <>
+              <StripFact label="Open" value={summary.open} />
+              <StripFact label="Overdue" value={summary.overdue} tone={summary.overdue > 0 ? "rose" : "default"} />
+              <StripFact label="Today" value={summary.today} tone={summary.today > 0 ? "amber" : "default"} />
+              <StripFact label="Done this week" value={doneThisWeek} tone="emerald" />
+            </>
+          )}
+        >
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="task-summary">
+            <KPI label="Open" value={summary.open} loading={isLoading} icon="clock" onClick={() => setTab("all")} />
+            <KPI label="Overdue" value={summary.overdue} loading={isLoading} icon="alert" accent={summary.overdue > 0 ? "rose" : "ink"} onClick={() => setTab("overdue")} />
+            <KPI label="Today" value={summary.today} loading={isLoading} icon="calendar" accent={summary.today > 0 ? "amber" : "ink"} onClick={() => setTab("today")} />
+            <KPI label="Done this week" value={doneThisWeek} loading={isLoading} icon="check" accent="emerald" onClick={() => setTab("done")} />
+          </div>
+        </CollapsibleKpiStrip>
+      )}
+
+      {/* R-2930: search — name, notes, or who the task is about. */}
+      <div className="mb-3 max-w-md">
+        <Input
+          type="search"
+          aria-label="Search tasks"
+          placeholder="Search tasks — name, notes, customer or lead"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          prefix={<Icon name="search" size={14} />}
+          autoComplete="off"
+        />
+      </div>
 
       {/* Tabs */}
       <div className="mb-3">
@@ -198,6 +279,23 @@ export default function TasksPage() {
           action={<Button variant="primary" icon="refresh" onClick={() => void list.refetch()}>Retry</Button>}
           compact
         />
+      ) : shown.length === 0 && search && counts.all > 0 ? (
+        /* The search found tasks — just not in this tab. Say so, and take the person there. */
+        <EmptyState
+          icon="search"
+          title={`Nothing in this tab matches “${search}”`}
+          body={`${counts.all} matching ${counts.all === 1 ? "task is" : "tasks are"} in other tabs.`}
+          action={<Button variant="primary" icon="search" onClick={() => setTab("all")}>Show all matches</Button>}
+          compact
+        />
+      ) : shown.length === 0 && search ? (
+        <EmptyState
+          icon="search"
+          title={`No tasks match “${search}”`}
+          body="Check the spelling, or clear the search to see every task."
+          action={<Button variant="default" icon="x" onClick={() => setQuery("")}>Clear search</Button>}
+          compact
+        />
       ) : shown.length === 0 ? (
         <EmptyState
           icon={tab === "done" ? "check_circle" : "clock"}
@@ -218,7 +316,7 @@ export default function TasksPage() {
       ) : (
         <div className="space-y-4">
           {shown.map((g) => {
-            const foldable = g.id === "done" && tab === "all";
+            const foldable = g.id === "done" && tab === "all" && !search; // a search shows its Done matches
             return (
               <section key={g.id} aria-labelledby={`task-group-${g.id}`}>
                 <h2 id={`task-group-${g.id}`} className="mb-1.5 px-1">
@@ -231,12 +329,12 @@ export default function TasksPage() {
                     >
                       <Icon name={doneOpen ? "chevron_down" : "chevron_right"} size={14} />
                       {g.label}
-                      <GroupCount id={g.id} n={g.tasks.length} />
+                      <GroupCount id={g.group} n={g.tasks.length} />
                     </button>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider font-semibold text-ink-3">
                       {g.label}
-                      <GroupCount id={g.id} n={g.tasks.length} />
+                      <GroupCount id={g.group} n={g.tasks.length} />
                     </span>
                   )}
                 </h2>

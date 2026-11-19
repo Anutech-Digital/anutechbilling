@@ -44,6 +44,7 @@ const INTERNAL_SENDERS: Record<string, string> = {
   "app/api/cron/ai-reflection/route.ts": "daily ops note to the platform owner",
   "app/api/cron/ai-support-sla/route.ts": "alert to the company that a ticket is unowned",
   "app/api/cron/compliance-reminders/route.ts": "statutory due dates to the company's owner/accountant",
+  "app/api/cron/task-digest/route.ts": "each team member's own task list + the owner's team summary",
   "app/api/cron/health-digest/route.ts": "error digest to the platform owner",
   "app/api/cron/invoice-dunning/route.ts": "escalation to the company (customer mail goes through sendCustomerEmail)",
   "app/api/cron/provision-hosting/route.ts": "owner alert",
@@ -59,6 +60,7 @@ const INTERNAL_SENDERS: Record<string, string> = {
   "app/api/public/quote/[id]/accept/route.ts": "quote-accepted alert to the company",
   "app/api/public/quote/[id]/upi-notify/route.ts": "UPI-paid alert to the company",
   "app/api/team/invite/route.ts": "invite to a new team member",
+  "app/api/webhooks/razorpay/part-request-paid.server.ts": "R-2923 payment alert to the owner for a paid part request (customer receipt gated) — listed by R-2925, CI was red without it",
   "app/api/webhooks/razorpay/webhook.server.ts": "payment alerts to owner / lead owner (customer mail gated)",
   "lib/ai/actions/support-dispatcher.ts": "escalation alert to the company (customer reply gated)",
   "lib/auth/email-verification.ts": "sign-up email verification",
@@ -67,6 +69,7 @@ const INTERNAL_SENDERS: Record<string, string> = {
   "lib/collections/overdue-suspension.server.ts": "pause notice to the company (customer notice gated)",
   "lib/inbound/ingest.ts": "new-enquiry alert to the owner",
   "lib/quotes/quote-views.server.ts": "hot-lead alert to the company",
+  "lib/tasks/assign-notice.server.ts": "R-2925 a task was given to this team member (their own work email, never a customer)",
   "server/auth/recovery.ts": "password reset",
 };
 

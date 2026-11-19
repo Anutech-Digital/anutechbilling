@@ -23,7 +23,9 @@ export interface NotifyInput {
     // R-2456: an auto-quote the customer-copy gate held back (no state / needs approval).
     | "quote.not_sent"
     // R-2709: the AI's social posts wait for the marketing person's approval.
-    | "social.review";
+    | "social.review"
+    // R-2925: a task was given to this person (Add / Edit task; team chat writes its own row).
+    | "task.assigned";
   title: string;
   body?: string;
   href?: string;

@@ -584,7 +584,7 @@ export const APP_NAV: NavSection[] = [
          online order is a sale's journey (cart, trial, DMS) — many have no money yet, and a
          paid order's money already reaches Payments Received on its own. Same href, roles, hint. */
       { id: "online-orders",   href: "/online-orders",    label: "Orders (website)", icon: "cart", roles: OMB, hint: "All website orders — cart, checkout, trial" },
-      { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"] },
+      { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"], children: [{ id: "tasks-calendar", href: "/tasks/calendar", label: "Calendar", icon: "calendar", roles: ["owner", "manager", "sales"], hint: "Tasks on their due date, month view" }] }, // R-2931
       /* Contacts was here 7–9 Oct 2026 (R-382). R-497 moved it under Customers (Bill). */
       {
         /* Marketing answers "where do leads come from and what does each cost" — owner/
@@ -766,6 +766,7 @@ export const APP_NAV: NavSection[] = [
           { id: "profit-by-product",   href: "/reports/profit",           label: "Profit by Product",   icon: "chart", roles: OM, group: "Business" },
           { id: "saas-metrics",        href: "/accounting/saas-metrics",  label: "SaaS Metrics (MRR)",  icon: "refresh", roles: OM, group: "Business", sellModes: SUBSCRIPTION_SELL_MODES },
           { id: "purchases-report",    href: "/reports/purchases",        label: "Purchases Report",    icon: "cart", roles: BOOKS, group: "Business" },
+          { id: "team-tasks-report",   href: "/reports/team-tasks",       label: "Team tasks",          icon: "users", roles: OM, group: "Business" }, // R-2932
           { id: "gst-owner",           href: "/accounting/gst",           label: "GST Reports",         icon: "file", roles: BOOKS, group: "Tax" },
           { id: "tds-owner",           href: "/accounting/tds-receivable",label: "TDS Receivable",      icon: "rupee", roles: BOOKS, group: "Tax" },
           { id: "tds-year-end",        href: "/accounting/tds-receivable/year-end", label: "TDS Year-end", icon: "file", roles: BOOKS, group: "Tax" },

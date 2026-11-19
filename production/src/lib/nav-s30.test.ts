@@ -181,7 +181,13 @@ const ADDED_3NOV_PRIVATE_PEOPLE = ["/vault/personal/people"];
  *  accountant too — inbound_purchases RLS is tenant-wide and network_inbox admits the accountant. */
 const ADDED_4NOV_ACCOUNTANT_PURCHASE_INBOX = ["/purchases/inbox"];
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
+/** R-2931 (18 Nov 2026): Tasks → Calendar — a child row for everyone who has Tasks (same tasks RLS). */
+const ADDED_18NOV_TASK_CALENDAR = ["/tasks/calendar"];
+/** R-2932 (18 Nov 2026): Reports → Team tasks — owner / manager only (the owner's view of who is behind). */
+const ADDED_18NOV_TEAM_TASKS_REPORT = ["/reports/team-tasks"];
 const addedFor = (role: string) => [
+  ...(["owner", "manager", "sales", "sales_senior"].includes(role) ? ADDED_18NOV_TASK_CALENDAR : []),
+  ...(role === "owner" || role === "manager" ? ADDED_18NOV_TEAM_TASKS_REPORT : []),
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
   ...(role === "owner" || role === "manager" ? ADDED_4OCT_OM : []),
   ...(role === "owner" || role === "manager" || role === "billing" ? ADDED_5OCT_OMB : []),

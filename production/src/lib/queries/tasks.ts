@@ -14,6 +14,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Task } from "@/lib/supabase/database.types";
 import { snoozeByMinutes, snoozedMessage } from "@/lib/tasks/snooze";
+import type { TaskProgress } from "@/components/features/tasks/task-progress";
 
 type TaskInsert = Database["public"]["Tables"]["tasks"]["Insert"];
 type TaskUpdate = Database["public"]["Tables"]["tasks"]["Update"];
@@ -65,7 +66,7 @@ function todayBoundariesIST(): { startISO: string; endISO: string } {
 // ────────────────────────────────────────────────────────────────
 
 /** All tasks in the tenant. Used by the /tasks list page. */
-/** `enabled` (R-2175): the TopBar bell passes false for a personal session (no tasks there). */
+/** `enabled`: lets a caller skip the read (the bell has its own read — useBellTasks, R-2924). */
 export function useTasks(bucket: TaskBucket = "all", opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["tasks", bucket],
@@ -114,8 +115,43 @@ export function useTasks(bucket: TaskBucket = "all", opts: { enabled?: boolean }
  */
 export const DONE_TASKS_SHOWN = 100;
 /** Open = still to do. The /tasks read and nav_badges().tasks (R-1541, the Overdue count) use
- *  this list; nav-badge-parity.test.ts holds the SQL to it. */
+ *  this list; nav-badge-parity.test.ts holds the SQL to it. R-2927: "In progress" / "On hold"
+ *  are tasks.progress on a 'pending' task — NOT new statuses — so this list does not change. */
 export const TASK_OPEN_STATUSES = ["pending", "snoozed"] as const;
+
+/**
+ * R-2924 — the bell's tasks: open, due today or earlier, and only the member's own unless an
+ * owner / manager switched the bell to everyone's (for them a task with no owner is theirs too). The bell used to read every task in the
+ * company (useTasks("all")) for every member. Under ["tasks"], so every task mutation's
+ * invalidation reaches it. No user id yet = no read.
+ */
+export const BELL_TASK_LIMIT = 30;
+
+export function useBellTasks(
+  scope: { userId: string | null; team: boolean; unassigned?: boolean },
+  opts: { enabled?: boolean } = {},
+) {
+  /* The IST day is in the key: a tab left open past midnight reads the new day's tasks. */
+  const { endISO } = todayBoundariesIST();
+  return useQuery({
+    queryKey: ["tasks", "bell", scope.team ? "team" : scope.userId, !!scope.unassigned, endISO],
+    enabled: (opts.enabled ?? true) && !!scope.userId,
+    placeholderData: keepPreviousData,
+    queryFn: async (): Promise<TaskWithLink[]> => {
+      const supabase = createClient();
+      let q = supabase.from("tasks").select(TASK_SELECT).in("status", [...TASK_OPEN_STATUSES]).lt("due_at", endISO);
+      if (!scope.team && scope.userId) {
+        q = scope.unassigned
+          ? q.or(`owner_id.eq.${scope.userId},owner_id.is.null`)
+          : q.eq("owner_id", scope.userId);
+      }
+      /* The bell lists the newest-due first and at most BELL_TASK_LIMIT — read just those. */
+      const { data, error } = await q.order("due_at", { ascending: false }).limit(BELL_TASK_LIMIT);
+      if (error) throw error;
+      return (data ?? []) as unknown as TaskWithLink[];
+    },
+  });
+}
 
 export function useTaskList(tenantId: string | null | undefined) {
   return useQuery({
@@ -263,7 +299,7 @@ export function useUpdateTask() {
   });
 }
 
-type TaskPatch = Partial<Pick<Task, "status" | "completed_at" | "completed_by">>;
+type TaskPatch = Partial<Pick<Task, "status" | "completed_at" | "completed_by" | "progress">>;
 
 /**
  * R-354 — `patch` applied to task `id` inside one ["tasks", …] cache entry (a list, or the
@@ -294,7 +330,11 @@ function restoreSnapshot(qc: QC, snapshot: CacheSnapshot | undefined) {
 
 export const UNDO_TOAST_MS = 5_000;
 
-/** Put a completed task back to pending — the Undo on the "Marked done" toast. */
+/** What "not done any more" means on the row — one place (Undo, the circle, the status menu). */
+const REOPEN_PATCH = { status: "pending", completed_at: null, completed_by: null } as const;
+
+/** Put a completed task back to pending — the Undo on the "Marked done" toast. The step
+ *  (tasks.progress) is kept, so Undo gives back exactly what was there. */
 export function useReopenTask() {
   const qc = useQueryClient();
   return useMutation({
@@ -302,18 +342,49 @@ export function useReopenTask() {
       const supabase = createClient();
       const { error } = await supabase
         .from("tasks")
-        .update({ status: "pending", completed_at: null, completed_by: null })
+        .update(REOPEN_PATCH)
         .eq("id", id);
       if (error) throw error;
       return id;
     },
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: ["tasks"] });
-      return { snapshot: optimisticPatch(qc, id, { status: "pending", completed_at: null, completed_by: null }) };
+      return { snapshot: optimisticPatch(qc, id, REOPEN_PATCH) };
     },
     onError: (err, _id, ctx) => {
       restoreSnapshot(qc, ctx?.snapshot);
       toastError(err, { fallback: "Couldn't undo — the task is still marked done." });
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+  });
+}
+
+/**
+ * R-2927 — set an open task's step (Not started / In progress / On hold) from its row. Only
+ * tasks.progress changes; status stays 'pending', so every open-task count is untouched.
+ * `reopen`: the task was Done and the person picked a step — put it back to pending in the
+ * same save. Optimistic, rolled back with toastError when the save fails.
+ */
+export function progressPatch(progress: TaskProgress, reopen?: boolean): TaskPatch {
+  return reopen ? { ...REOPEN_PATCH, progress } : { progress };
+}
+
+export function useSetTaskProgress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, progress, reopen }: { id: string; progress: TaskProgress; reopen?: boolean }) => {
+      const supabase = createClient();
+      const { error } = await supabase.from("tasks").update(progressPatch(progress, reopen)).eq("id", id);
+      if (error) throw error;
+      return id;
+    },
+    onMutate: async ({ id, progress, reopen }) => {
+      await qc.cancelQueries({ queryKey: ["tasks"] });
+      return { snapshot: optimisticPatch(qc, id, progressPatch(progress, reopen)) };
+    },
+    onError: (err, _vars, ctx) => {
+      restoreSnapshot(qc, ctx?.snapshot);
+      toastError(err, { fallback: "Couldn't change the task's status." });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   });

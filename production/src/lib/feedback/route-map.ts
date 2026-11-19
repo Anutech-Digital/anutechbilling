@@ -204,6 +204,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { route: "/reports", file: "src/app/(app)/reports/page.tsx" },
   { route: "/reports/profit", file: "src/app/(app)/reports/profit/page.tsx" },
   { route: "/reports/purchases", file: "src/app/(app)/reports/purchases/page.tsx" },
+  { route: "/reports/team-tasks", file: "src/app/(app)/reports/team-tasks/page.tsx" },
   { route: "/reselleros", file: "src/app/(product)/reselleros/page.tsx" }, // R-520: the ResellerOS homepage ("/" on reselleros.anutech.in)
   { route: "/reset-password", file: "src/app/(auth)/reset-password/page.tsx" },
   { route: "/scorecard", file: "src/app/(app)/scorecard/page.tsx" },
@@ -218,6 +219,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { route: "/support", file: "src/app/(app)/support/page.tsx" },
   { route: "/support/my", file: "src/app/(app)/support/my/page.tsx" },
   { route: "/tasks", file: "src/app/(app)/tasks/page.tsx" },
+  { route: "/tasks/calendar", file: "src/app/(app)/tasks/calendar/page.tsx" },
   { route: "/team", file: "src/app/(app)/team/page.tsx" },
   { route: "/team-chat", file: "src/app/(app)/team-chat/page.tsx" },
   { route: "/terms", file: "src/app/(public)/terms/page.tsx" },

@@ -4,17 +4,21 @@
  * Understands: today / aaj, tomorrow / kal, day after tomorrow / parso, weekday names
  * (full names anywhere; short ones like "fri" only after "on" / "next"), and a time
  * as "3 PM", "3:30pm", "at 11 am" or 24-hour "15:00". Whatever is not understood stays
- * in the title. Nothing understood → today 6 PM (tomorrow 6 PM once 6 PM has passed),
+ * in the title. R-2926: a "!high" / "!medium" / "!low" tag, or the word "urgent", sets the
+ * priority (default Medium). Nothing understood → today 6 PM (tomorrow 6 PM once 6 PM has passed),
  * and `understood` says so, so the bar can show the operator what will be saved.
  *
  * Pure: `now` is passed in; every calendar step goes through lib/dates/ist.
  */
 import { addDaysISO, istDayStartUtc, istParts, istToday } from "@/lib/dates/ist";
 import type { TaskKind } from "@/lib/supabase/database.types";
+import { DEFAULT_TASK_PRIORITY, type TaskPriority } from "./task-priority";
 
 export interface QuickAddParse {
   title: string;
   kind: TaskKind;
+  /** R-2926: from "!high" / "!low" / "!medium" / "urgent"; Medium when none is typed. */
+  priority: TaskPriority;
   dueAt: Date;
   /** Which parts came from the text — false parts were filled with the default. */
   understood: { date: boolean; time: boolean };
@@ -48,8 +52,25 @@ export function parseQuickAdd(text: string, now: Date = new Date()): QuickAddPar
   let dateISO: string | null = null;
   let minutes: number | null = null;
 
-  // ── time ──
   let m: RegExpMatchArray | null;
+
+  // ── priority (R-2926) ── a "!high" / "!medium" / "!low" / "!urgent" tag anywhere is taken out of
+  // the title. The plain word "urgent" (not "urgently", not "not urgent") also means High, but it
+  // STAYS in the title — "Mark ticket as urgent" must not lose a word — except as a leading
+  // "Urgent:" label. "Discuss high value deal" is not a priority.
+  let priority: TaskPriority = DEFAULT_TASK_PRIORITY;
+  [rest, m] = take(rest, /\s!(high|medium|low|urgent)(?=[\s,.!?]|$)/i);
+  if (m) {
+    const word = m[1].toLowerCase();
+    priority = word === "urgent" ? "high" : (word as TaskPriority);
+  } else {
+    [rest, m] = take(rest, /^\s*urgent\s*[:\-–—]\s*/i);
+    if (m) priority = "high";
+    else if (/(^|\s)urgent(?=[\s,.!?]|$)/i.test(rest) && !/\b(not|non|isn'?t|no longer)[\s-]+urgent\b/i.test(rest)) priority = "high";
+  }
+  rest = ` ${rest.trim()} `;
+
+  // ── time ──
   [rest, m] = take(rest, /\s(?:at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)(?=[\s,.!?]|$)/i);
   if (m) {
     const h12 = Number(m[1]);
@@ -103,5 +124,5 @@ export function parseQuickAdd(text: string, now: Date = new Date()): QuickAddPar
     .trim();
   const kind = KIND_WORDS.find(([re]) => re.test(title))?.[1] ?? "followup";
 
-  return { title, kind, dueAt, understood };
+  return { title, kind, priority, dueAt, understood };
 }

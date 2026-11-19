@@ -23,6 +23,7 @@ import { parseQuickAdd } from "./quick-add-parse";
 import { quickAddNameGuess, quickAddSurnameGuess, quickAddLinkCandidates, type QuickAddLink } from "./quick-add-link";
 import { relatedToLinkColumns } from "./task-related-picker";
 import { KIND_META } from "./task-row";
+import { TASK_PRIORITY_META, priorityForCreate, showsPriorityBadge } from "./task-priority";
 
 export function TaskQuickAdd() {
   const createTask = useCreateTask();
@@ -53,7 +54,7 @@ export function TaskQuickAdd() {
     if (!parsed || !canSave) return;
     createTask.mutate(
       {
-        title: parsed.title, kind: parsed.kind, due_at: parsed.dueAt.toISOString(),
+        title: parsed.title, kind: parsed.kind, due_at: parsed.dueAt.toISOString(), ...priorityForCreate(parsed.priority),
         ...relatedToLinkColumns(link ? { kind: link.kind, id: link.id } : null),
       },
       { onSuccess: () => { setText(""); setPicked(undefined); } },
@@ -73,7 +74,7 @@ export function TaskQuickAdd() {
       >
         <Input
           aria-label="Quick add a task"
-          placeholder="Quick add: Call Amit tomorrow 3 PM"
+          placeholder="Quick add: Call Amit tomorrow 3 PM !high"
           value={text}
           onChange={(e) => setText(e.target.value)}
           prefix={<Icon name="plus" size={14} />}
@@ -92,6 +93,9 @@ export function TaskQuickAdd() {
               Will save: <span aria-hidden="true">{KIND_META[parsed.kind].icon}</span>{" "}
               <span className="font-medium text-ink-2">{parsed.title}</span> ·{" "}
               <span className={cn("tabular-nums", guessed ? "text-amber-ink" : "text-ink-2")}>{when}</span>
+              {showsPriorityBadge(parsed.priority) && (
+                <> · <span className="text-ink-2">{TASK_PRIORITY_META[parsed.priority].label} priority</span></>
+              )}
               {guessed && (
                 <span className="text-amber-ink">
                   {!parsed.understood.date && !parsed.understood.time

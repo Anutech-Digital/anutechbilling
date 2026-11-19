@@ -56,6 +56,8 @@ import { useUnreconciledSalaries, useEmployees } from "@/lib/queries/payroll";
 import { useCustomers } from "@/lib/queries/customers";
 import { rupee, formatDate } from "@/lib/utils";
 import { useBookBankTxnAsTax } from "@/lib/queries/tax-payments";
+import { looksLikeInterestTds } from "@/lib/banking/interest-income";
+import { InterestTdsSection } from "./interest-tds-section";
 import { fyLabel, fyStartYearOf } from "@/lib/accounting/tax-payments";
 import { previousPeriod, titleCaseName, parseSalaryNarration, matchEmployee } from "@/lib/banking/salary-lines";
 import { useBookSalaryLines } from "@/lib/queries/salary-from-bank";
@@ -448,7 +450,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   // payment against THIS imported line (settles the payable) — no phantom line.
   // GST and income tax go to tax_payments instead (migration 20260925140000), so
   // they never mix into the TDS/PF/ESI "dues payable" total.
-  const [statutoryKind, setStatutoryKind] = React.useState<"esi" | "pf" | "tds" | "mixed" | "gst" | "income_tax">("esi");
+  const [statutoryKind, setStatutoryKind] = React.useState<"esi" | "pf" | "tds" | "mixed" | "gst" | "income_tax" | "interest_tds">("esi");
+  /* R-2935: "TDS cut by bank" (TDS receivable on interest) hands its own save to the footer. */
+  const [interestTdsSave, setInterestTdsSave] = React.useState<FooterSave | null>(null);
   const bookTax = useBookBankTxnAsTax();
   const [gstPeriod, setGstPeriod] = React.useState("");
   const [duesPeriod, setDuesPeriod] = React.useState("");
@@ -509,15 +513,21 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     () => (transaction && transaction.debit > 0 ? detectGovtPayment(transaction.description) : null),
     [transaction],
   );
+  /* R-2935: the bank's own TDS line on interest ("FD REDEEM TAX", "TDS ON FD INT") — the Tax tile
+     opens on "TDS cut by bank" (TDS receivable), never on the TDS challan. */
+  const bankTdsHint = React.useMemo(
+    () => Boolean(transaction && transaction.debit > 0 && looksLikeInterestTds(transaction.description)),
+    [transaction],
+  );
   React.useEffect(() => {
-    setStatutoryKind(govtHint?.kind ?? "esi");
+    setStatutoryKind(bankTdsHint ? "interest_tds" : govtHint?.kind ?? "esi");
     /* GST is normally paid by the 20th for the month before; advance tax is paid
        during the year it is for. Both are only defaults — the operator can change them. */
     setGstPeriod(transaction ? previousPeriod(transaction.txn_date) : "");
     setTaxInterest(""); setTaxLateFee("");
     setItKind("advance_tax");
     setItFy(transaction ? fyLabel(fyStartYearOf(transaction.txn_date)) : "");
-  }, [transaction?.id, transaction, govtHint]);
+  }, [transaction?.id, transaction, govtHint, bankTdsHint]);
   /* Self-assessment tax is paid AFTER the year closes, for the year before. */
   const pickItKind = (k: "advance_tax" | "self_assessment_tax") => {
     setItKind(k);
@@ -527,7 +537,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const lateFeeNum  = Math.max(0, Math.round(Number(taxLateFee) || 0));
   const taxPortion  = (transaction?.debit ?? 0) - interestNum - lateFeeNum;
   const handleBookStatutory = async () => {
-    if (!transaction) return;
+    if (!transaction || statutoryKind === "interest_tds") return;   // R-2935: that form saves itself
     try {
       if (statutoryKind === "gst" || statutoryKind === "income_tax") {
         await bookTax.mutateAsync({
@@ -595,7 +605,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      (money out); a known customer (money in). Only until the operator picks a tile. */
   const autoTile: WhoTile | null = !transaction ? null
     : isCredit ? (customerGuessed ? "customer" : null)
-    : govtHint ? "tax" : vendorFocus ? "vendor" : salaryHint ? "employee" : null;
+    : govtHint || bankTdsHint ? "tax" : vendorFocus ? "vendor" : salaryHint ? "employee" : null;
   React.useEffect(() => { if (!tileTouched) setTile(autoTile); }, [autoTile, tileTouched]);
   React.useEffect(() => { setFooterPick(null); }, [tile]);
 
@@ -697,7 +707,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   /* R-2354: on Own transfer and money-in Other, the section's save is the footer's one primary;
      "Mark reconciled manually" moves into its box as a secondary button. */
   const tileSave: FooterSave | null = !tile ? null
-    : tile === "tax" ? statutorySave
+    : tile === "tax" ? (statutoryKind === "interest_tds" ? interestTdsSave : statutorySave)
     : tile === "other" ? (isCredit ? otherIncomeSave ?? manualSave : expenseSplitSave ?? expenseSave)
     : tile === "transfer" ? transferSave ?? manualSave
     : tile === "tax_refund" ? manualSave
@@ -728,12 +738,14 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     <div className="rounded-md border border-hairline p-3 space-y-2">
       <p className="text-xs font-semibold text-ink-2">Statutory / tax payment (ESI / PF / TDS / GST / Income tax)</p>
       <p className="text-xs text-ink-3">
-        Records this {rupee(amount)} as a payment to the government. Pick what it is:
+        {statutoryKind === "interest_tds"
+          ? <>This {rupee(amount)} is tax — pick what it is:</>
+          : <>Records this {rupee(amount)} as a payment to the government. Pick what it is:</>}
       </p>
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
         {([
           ["esi", "ESI"], ["pf", "PF"], ["tds", "TDS"], ["mixed", "Mixed"],
-          ["gst", "GST"], ["income_tax", "Income tax"],
+          ["gst", "GST"], ["income_tax", "Income tax"], ["interest_tds", "TDS cut by bank"],
         ] as const).map(([k, label]) => (
           <button
             key={k}
@@ -748,7 +760,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       </div>
 
       {/* What each choice does to the books — said before the click. */}
-      {statutoryKind === "gst" ? (
+      {statutoryKind === "interest_tds" && transaction ? (
+        <InterestTdsSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setInterestTdsSave} />
+      ) : statutoryKind === "gst" ? (
         <div className="space-y-2">
           <p className="text-xs text-ink-3">
             Reduces GST payable for the return month. Interest and late fee paid with it are booked as a
@@ -1256,7 +1270,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       case "tax":
         return (
           <>
-            {govtHint && (
+            {govtHint && !bankTdsHint && (
               <p className="text-xs text-indigo-ink bg-indigo-soft/40 border border-indigo/20 rounded-md px-3 py-2">
                 Looks like a <b>{govtHint.label}</b> — a payment to the government, not an expense.
               </p>

@@ -62,6 +62,7 @@ export const AUTOMATION_JOBS = {
   "renew-domains":        { label: "Renew paid domains", what: "Renews a domain once the renewal is paid for.", customerFacing: true, scope: "tenant", dryRun: false },
   "renew-hosting":        { label: "Renew paid hosting", what: "Extends a hosting account once the renewal is paid for.", customerFacing: true, scope: "tenant", dryRun: false },
   "attendance-reminders": { label: "Attendance reminders", what: "Sends the attendance nudge to your team's phones.", customerFacing: false, scope: "tenant", dryRun: true },
+  "task-digest":          { label: "Morning task list", what: "Each morning, sends every team member their overdue tasks and the ones due today, and the owner a team summary. By email; on WhatsApp too once a task_daily_digest template is approved.", customerFacing: false, scope: "tenant", dryRun: true },
   "attendance-retention": { label: "Old attendance photo clean-up", what: "Deletes attendance selfies older than the keep period.", customerFacing: false, scope: "tenant", dryRun: false },
   "chat-files-cleanup":   { label: "Team chat file clean-up", what: "Deletes team chat files that were uploaded but are on no message (removed before sending, or left behind by a deleted message) once they are a day old.", customerFacing: false, scope: "platform", dryRun: true },
   "gmail-inbox":          { label: "Read the sales mailbox", what: "Reads new emails in the connected mailbox and adds them as enquiries.", customerFacing: false, scope: "tenant", dryRun: false },
