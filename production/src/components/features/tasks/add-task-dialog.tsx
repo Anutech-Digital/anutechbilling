@@ -214,6 +214,8 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
   const watchedKind = watch("kind");
   const watchedAssignee = watch("assignee");
   const watchedPriority = watch("priority");
+  // R-2933: who will own the task — never offered (or counted) under "Working with".
+  const ownerInForm = ownerAfterSave({ assignee: watchedAssignee, isEdit, meId: me?.userId, currentOwnerId: task?.owner_id });
   /* R-471: a past due time used to save silently and land straight in Overdue. Say so
      (it is allowed — logging a missed call is real), and offer "in 1 hour". */
   const watchedDue = watch("due_at");
@@ -429,8 +431,8 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
             <FormField label="Working with (optional)">
               <TaskCollaboratorsField
                 members={members}
-                ownerId={ownerAfterSave({ assignee: watchedAssignee, isEdit, meId: me?.userId, currentOwnerId: task?.owner_id })}
-                value={workingWith}
+                ownerId={ownerInForm}
+                value={workingWith.filter((u) => u !== ownerInForm)}
                 onChange={(next) => { withTouched.current = true; setWorkingWith(next); }}
               />
             </FormField>
