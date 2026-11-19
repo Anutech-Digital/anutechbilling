@@ -584,7 +584,7 @@ export const APP_NAV: NavSection[] = [
          online order is a sale's journey (cart, trial, DMS) — many have no money yet, and a
          paid order's money already reaches Payments Received on its own. Same href, roles, hint. */
       { id: "online-orders",   href: "/online-orders",    label: "Orders (website)", icon: "cart", roles: OMB, hint: "All website orders — cart, checkout, trial" },
-      { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"], children: [{ id: "tasks-calendar", href: "/tasks/calendar", label: "Calendar", icon: "calendar", roles: ["owner", "manager", "sales"], hint: "Tasks on their due date, month view" }] }, // R-2931
+      { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"], children: [{ id: "tasks-overview", href: "/tasks/overview", label: "Overview", icon: "chart", roles: ["owner", "manager", "sales"], hint: "Open, overdue and upcoming tasks at a glance" }, { id: "tasks-calendar", href: "/tasks/calendar", label: "Calendar", icon: "calendar", roles: ["owner", "manager", "sales"], hint: "Tasks on their due date, month view" }] }, // R-2931, R-2936
       /* Contacts was here 7–9 Oct 2026 (R-382). R-497 moved it under Customers (Bill). */
       {
         /* Marketing answers "where do leads come from and what does each cost" — owner/
