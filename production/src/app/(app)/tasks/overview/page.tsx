@@ -106,9 +106,6 @@ export default function TasksOverviewPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button asChild icon="list">
-            <Link href="/tasks">List view</Link>
-          </Button>
           <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
             Add task
           </Button>

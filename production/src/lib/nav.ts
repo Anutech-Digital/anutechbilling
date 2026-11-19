@@ -550,6 +550,19 @@ export const APP_NAV: NavSection[] = [
          it changes no other role's allowed routes. Opening it to more roles is a product
          call — today_inbox() already filters decisions by role, and RLS does the rest. */
       { id: "today", href: "/today", label: "Today", icon: "inbox", roles: OM, hint: "Today's work from every queue, in one list" },
+      /* R-2939 (20 Nov 2026): Tasks moved here from Sell — every seller's daily list sat fifth in
+         the Sales app. Pinned next to Today (nav-apps.ts), same roles. A pinned row is one link,
+         so the Overdue count shows again; Overview / Calendar are tabs on the page
+         (tasks-tabs.tsx) and stay children here for the route guard, Ctrl+K and breadcrumbs.
+         No menu row draws these two labels any more, so they carry the full name: "Tasks
+         overview" is what Ctrl+K finds and the crumb shows (was "Overview"). R-2931, R-2936. */
+      {
+        id: "tasks", href: "/tasks", label: "Tasks", icon: "clock", roles: ["owner", "manager", "sales"],
+        children: [
+          { id: "tasks-overview", href: "/tasks/overview", label: "Tasks overview", icon: "chart", roles: ["owner", "manager", "sales"], hint: "Open, overdue and upcoming tasks at a glance" },
+          { id: "tasks-calendar", href: "/tasks/calendar", label: "Tasks calendar", icon: "calendar", roles: ["owner", "manager", "sales"], hint: "Tasks on their due date, month view" },
+        ],
+      },
       { id: "dashboard", href: "/dashboard", label: "Dashboard", icon: "home", roles: OMB },
       /* 2 Oct 2026 — paste / photograph anything, review, save. Pardeep (3 Oct): no hidden
          links — every page is in this menu or in NOT_IN_NAV with its reason (nav.test.ts). */
@@ -584,7 +597,7 @@ export const APP_NAV: NavSection[] = [
          online order is a sale's journey (cart, trial, DMS) — many have no money yet, and a
          paid order's money already reaches Payments Received on its own. Same href, roles, hint. */
       { id: "online-orders",   href: "/online-orders",    label: "Orders (website)", icon: "cart", roles: OMB, hint: "All website orders — cart, checkout, trial" },
-      { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"], children: [{ id: "tasks-overview", href: "/tasks/overview", label: "Overview", icon: "chart", roles: ["owner", "manager", "sales"], hint: "Open, overdue and upcoming tasks at a glance" }, { id: "tasks-calendar", href: "/tasks/calendar", label: "Calendar", icon: "calendar", roles: ["owner", "manager", "sales"], hint: "Tasks on their due date, month view" }] }, // R-2931, R-2936
+      /* Tasks was here until R-2939 (20 Nov 2026) — now in Home, pinned next to Today. */
       /* Contacts was here 7–9 Oct 2026 (R-382). R-497 moved it under Customers (Bill). */
       {
         /* Marketing answers "where do leads come from and what does each cost" — owner/

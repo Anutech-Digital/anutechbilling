@@ -10,7 +10,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { toast } from "sonner";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -87,9 +86,6 @@ export default function TaskCalendarPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button asChild icon="list">
-            <Link href="/tasks">List view</Link>
-          </Button>
           <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
             Add task
           </Button>
