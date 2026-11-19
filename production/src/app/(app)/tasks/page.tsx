@@ -17,6 +17,13 @@
  * (due by Sunday, IST) and "Later". Cards, tabs and list count the same tasks (person filter +
  * search); "Done this week" is counted on the server when no search is typed, because the page
  * holds only the 100 most recently completed tasks.
+ *
+ * R-2937: a task is ONE line by default (name, whom it is about, people, priority, status, due
+ * in words, actions) so a 1280×800 screen shows 12+ of them; "Comfortable" brings back the
+ * roomy card and the choice is remembered on this browser (task-view-pref.ts). The group
+ * headings (Overdue / Today / This week / Later / Done) stay stuck under the top bar while
+ * their group scrolls. The title, quick-add and "Add task" share one line to leave the list
+ * the room, and the page uses the listing width (CLAUDE.md §20).
  */
 "use client";
 
@@ -31,6 +38,7 @@ import { useTaskList, TASK_SELECT, type TaskBucket, type TaskWithLink } from "@/
 import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { TaskRow, taskLeadName } from "@/components/features/tasks/task-row";
 import { TaskQuickAdd } from "@/components/features/tasks/task-quick-add";
+import { useTaskDensity } from "@/components/features/tasks/task-view-pref";
 import { groupTasks, taskTabCounts, type TaskGroupId } from "@/components/features/tasks/task-groups";
 import { istWeekBounds, matchesTaskSearch, taskSections, taskSummary, type TaskSection } from "@/components/features/tasks/task-overview";
 import { KPI } from "@/components/shared/kpi";
@@ -190,26 +198,21 @@ export default function TasksPage() {
     [groups, now, tab],
   );
   const [doneOpen, setDoneOpen] = React.useState(false);
+  const [density, setDensity] = useTaskDensity(me?.userId); // R-2937: one line (default) or Comfortable; remembered per user
+  const compact = density === "compact";
 
   const isLoading = meLoading || (!!me?.tenantId && list.isLoading);
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1100px] mx-auto">
-      {/* Header */}
-      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
-        <div>
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
-          <h1 className="font-serif text-3xl md:text-4xl leading-tight">Tasks</h1>
-          <p className="text-sm text-ink-3 mt-1">
-            Follow-ups, calls, emails, meetings — everything you owe future-you.
-          </p>
-        </div>
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
+      {/* Header — R-2937: title, quick-add and "Add task" on one line (the list needs the height). */}
+      <div className="flex items-start gap-3 flex-wrap mb-3">
+        <h1 className="font-serif text-2xl md:text-3xl leading-9">Tasks</h1>
+        <TaskQuickAdd className="flex-1 min-w-[16rem]" />
         <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
           Add task
         </Button>
       </div>
-
-      <TaskQuickAdd />
 
       {/* R-2930: summary — the app's one KPI strip (closed: numbers on the line; open: cards).
           A failed read shows no numbers: "0 overdue" above an error would be a false all-clear. */}
@@ -236,27 +239,43 @@ export default function TasksPage() {
         </CollapsibleKpiStrip>
       )}
 
-      {/* R-2930: search — name, notes, or who the task is about. */}
-      <div className="mb-3 max-w-md">
-        <Input
-          type="search"
-          aria-label="Search tasks"
-          placeholder="Search tasks — name, notes, customer or lead"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          prefix={<Icon name="search" size={14} />}
-          autoComplete="off"
-        />
+      {/* R-2930: search — name, notes, or who the task is about. R-2937: the view switch sits
+          at the end of the same line. */}
+      <div className="mb-2 flex items-center gap-3">
+        <div className="flex-1 max-w-md">
+          <Input
+            type="search"
+            aria-label="Search tasks"
+            placeholder="Search tasks — name, notes, customer or lead"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            prefix={<Icon name="search" size={14} />}
+            autoComplete="off"
+          />
+        </div>
+        {/* One switch, on = the roomy card. aria-pressed says which view is showing. */}
+        <Button
+          type="button"
+          size="sm"
+          variant="default"
+          icon="layout"
+          aria-pressed={!compact}
+          title={compact ? "Show each task as a roomy card" : "Show each task on one line"}
+          onClick={() => setDensity(compact ? "comfortable" : "compact")}
+          className={cn("ml-auto shrink-0", !compact && "border-amber bg-amber-soft text-amber-ink hover:bg-amber-soft")}
+        >
+          Comfortable
+        </Button>
       </div>
 
       {/* Tabs */}
-      <div className="mb-3">
+      <div className="mb-2">
         <TabBar items={tabs} value={tab} onChange={(v) => setTab(v as TaskBucket)} />
       </div>
 
       {/* Workload — per-person open-task counts + quick "Mine" toggle. Click to filter. */}
       {members.length > 1 && (
-        <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
           <WorkloadChip label="👥 Everyone" count={totalOpen} active={assignee === "all"} onClick={() => setAssignee("all")} />
           {me?.userId && (
             <WorkloadChip label="🙋 Mine" count={myOpen} active={assignee === "mine"} onClick={() => setAssignee("mine")} />
@@ -276,7 +295,7 @@ export default function TasksPage() {
       {/* List */}
       {isLoading ? (
         <div className="space-y-2">
-          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-20" />)}
+          {(compact ? [0, 1, 2, 3, 4, 5] : [0, 1, 2]).map((i) => <Skeleton key={i} className={compact ? "h-8" : "h-20"} />)}
         </div>
       ) : list.error ? (
         <EmptyState
@@ -321,12 +340,17 @@ export default function TasksPage() {
           compact
         />
       ) : (
-        <div className="space-y-4">
+        <div className={compact ? "space-y-2" : "space-y-4"} data-testid="task-list" data-density={density}>
           {shown.map((g) => {
             const foldable = g.id === "done" && tab === "all" && !search; // a search shows its Done matches
             return (
               <section key={g.id} aria-labelledby={`task-group-${g.id}`}>
-                <h2 id={`task-group-${g.id}`} className="mb-1.5 px-1">
+                {/* R-2937: the heading stays under the top bar (h-14) while its group scrolls. */}
+                <h2
+                  id={`task-group-${g.id}`}
+                  data-testid="task-group-heading"
+                  className="sticky top-14 z-10 -mx-1 mb-1 flex items-center rounded-sm bg-paper-2/95 px-2 py-1 backdrop-blur-sm"
+                >
                   {foldable ? (
                     <button
                       type="button"
@@ -346,10 +370,11 @@ export default function TasksPage() {
                   )}
                 </h2>
                 {(!foldable || doneOpen) && (
-                  <Card>
-                    <ul className="divide-y divide-hairline">
+                  /* One-line rows fill the card edge to edge (no inner padding) — the name gets the width. */
+                  <Card flush={compact ? "clip" : undefined}>
+                    <ul className={cn("divide-y divide-hairline", compact && "overflow-hidden rounded-lg")}>
                       {g.tasks.map((t) => (
-                        <TaskRow key={t.id} task={t} onEdit={setEditingTask} assignee={t.owner_id ? memberById.get(t.owner_id) : null} meId={me?.userId} collaborators={collaboratorsOf(t.id)} />
+                        <TaskRow key={t.id} task={t} onEdit={setEditingTask} assignee={t.owner_id ? memberById.get(t.owner_id) : null} meId={me?.userId} collaborators={collaboratorsOf(t.id)} density={density} now={now} />
                       ))}
                     </ul>
                   </Card>
@@ -385,7 +410,8 @@ function GroupCount({ id, n }: { id: TaskGroupId; n: number }) {
     <span
       className={cn(
         "rounded-full px-1.5 tabular-nums normal-case tracking-normal",
-        id === "overdue" ? "bg-rose text-white" : "bg-paper-2 text-ink-3",
+        /* R-2937: the heading band is paper-2, so the quiet pill is paper with a hairline. */
+        id === "overdue" ? "bg-rose text-white" : "border border-hairline bg-paper text-ink-2",
       )}
     >
       {n}
