@@ -47,7 +47,8 @@ test.describe("R-2925 assignee is told (bell + email)", () => {
       await dlg.getByRole("button", { name: "Schedule" }).click();
       const res = await notice;
       expect(res.status()).toBe(200);
-      expect(await res.json()).toMatchObject({ ok: true, notified: true });
+      const body: unknown = await res.json();
+      expect(body, `the notice call answered ${JSON.stringify(body)}`).toMatchObject({ ok: true, notified: true });
     } finally {
       await page.context().close();
     }

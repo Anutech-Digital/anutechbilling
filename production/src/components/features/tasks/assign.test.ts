@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ASSIGN_ME, assigneeToTell, meNotKnownYet, ownerPatch } from "./assign";
+import { ASSIGN_ME, assigneeToTell, meIdForSave, meNotKnownYet, ownerPatch } from "./assign";
 
 const ME = "u-me", HITESH = "u-hitesh";
 const NOW = new Date("2026-11-18T18:00:00Z");
@@ -73,6 +73,34 @@ describe("R-2925 the Add task dialog uses these rules", () => {
     expect(src).toMatch(/assigneeToTell\(/);
     expect(src).toMatch(/tellAssignee\(/);
     expect(src).toMatch(/meNotKnownYet\(/);
+    expect(src).toMatch(/meIdForSave\(me\?\.userId/); // 19 Nov: never the bare profile id (it loads late)
     expect(src).toMatch(/NOT_TOLD_MESSAGE/); // a notice that could not be sent is said to the assigner
+  });
+});
+
+/* R-2925 (19 Nov): the profile query waits on a slow call, so for the first seconds after the
+   page opens "me" is unknown. A task given to a teammate in that time was saved without
+   delegated_by, and the server then refused to tell them ("not your assignment") — silently. */
+describe("meIdForSave — who is saving, even before the profile has loaded", () => {
+  it("uses the loaded profile and does not ask the session", async () => {
+    const readSession = vi.fn(async () => "session-id");
+    expect(await meIdForSave("profile-id", readSession)).toBe("profile-id");
+    expect(readSession).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the signed-in session when the profile is not loaded yet", async () => {
+    expect(await meIdForSave(null, async () => "session-id")).toBe("session-id");
+    expect(await meIdForSave(undefined, async () => "session-id")).toBe("session-id");
+  });
+
+  it("answers null (never throws) when the session cannot be read", async () => {
+    expect(await meIdForSave(null, async () => null)).toBeNull();
+    expect(await meIdForSave(null, async () => { throw new Error("offline"); })).toBeNull();
+  });
+
+  it("a teammate's new task saved before the profile loaded still records who handed it over", async () => {
+    const meId = await meIdForSave(undefined, async () => "me");
+    const patch = ownerPatch({ assignee: "sales", isEdit: false, meId, currentOwnerId: null, now: new Date("2026-11-19T01:00:00Z") });
+    expect(patch).toEqual({ owner_id: "sales", delegated_by: "me", delegated_at: "2026-11-19T01:00:00.000Z" });
   });
 });

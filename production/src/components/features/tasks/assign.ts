@@ -42,6 +42,24 @@ export function ownerPatch(input: {
   };
 }
 
+/**
+ * Who is saving. The profile (useCurrentUser) waits on a slow call, so for the first seconds
+ * after the page opens it is not loaded; a task given to a teammate in that time was saved
+ * without delegated_by and the teammate was never told. The signed-in session answers at once
+ * (public.users.id is the session's user id). Never throws: null = really unknown.
+ */
+export async function meIdForSave(
+  profileId: string | null | undefined,
+  readSessionUserId: () => Promise<string | null | undefined>,
+): Promise<string | null> {
+  if (profileId) return profileId;
+  try {
+    return (await readSessionUserId()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** "Me (myself)" was picked on a teammate's task but we do not know who "me" is yet — the save must wait. */
 export function meNotKnownYet(input: {
   assignee: string | null | undefined; isEdit: boolean; meId: string | null | undefined; currentOwnerId: string | null | undefined;

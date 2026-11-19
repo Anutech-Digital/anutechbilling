@@ -38,7 +38,8 @@ import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { toast } from "sonner";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, TASK_PRIORITY_META, priorityForCreate, priorityOf, type TaskPriority } from "./task-priority";
-import { ASSIGN_ME, NOT_TOLD_MESSAGE, assigneeToTell, meNotKnownYet, ownerPatch, tellAssignee } from "./assign";
+import { createClient } from "@/lib/supabase/client";
+import { ASSIGN_ME, NOT_TOLD_MESSAGE, assigneeToTell, meIdForSave, meNotKnownYet, ownerPatch, tellAssignee } from "./assign";
 import {
   TaskRelatedPicker, relatedToLinkColumns, type RelatedValue,
 } from "@/components/features/tasks/task-related-picker";
@@ -201,7 +202,8 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
     const dueISO = new Date(data.due_at).toISOString();
     // R-2925: "Me" on a new task leaves owner_id to the default (creator); on an edit of
     // someone else's task it takes the task. A member id assigns / reassigns to that teammate.
-    const meId = me?.userId ?? null;
+    // The profile may still be loading right after the page opens — the session knows who is saving.
+    const meId = await meIdForSave(me?.userId, async () => (await createClient().auth.getUser()).data.user?.id);
     const who = { assignee: data.assignee, isEdit: Boolean(task), meId, currentOwnerId: task?.owner_id };
     if (meNotKnownYet(who)) {
       toast.warning("Still loading your profile — please press Save again in a moment.");
