@@ -14,7 +14,11 @@ export const ASSIGN_ME = "__me__";
  * A change of owner also says who handed it over (delegated_by / delegated_at): the server
  * tells the new owner only when the caller is the one who delegated (POST /api/tasks/assigned).
  */
-export interface OwnerPatch { owner_id?: string; delegated_by?: string | null; delegated_at?: string | null }
+export interface OwnerPatch {
+  owner_id?: string; delegated_by?: string | null; delegated_at?: string | null;
+  /** R-2927: a task that changes hands starts again as Not started (the new owner has not begun). */
+  progress?: "not_started";
+}
 
 export function ownerPatch(input: {
   assignee: string | null | undefined;
@@ -29,10 +33,12 @@ export function ownerPatch(input: {
   const next = picked ?? (input.isEdit && current && input.meId && current !== input.meId ? input.meId : null);
   if (!next) return {};
   if (input.isEdit && next === current) return {}; // same owner: nothing to say
-  if (next === input.meId) return { owner_id: next, ...(input.isEdit ? { delegated_by: null, delegated_at: null } : {}) };
+  const restart = input.isEdit ? { progress: "not_started" as const } : {};
+  if (next === input.meId) return { owner_id: next, ...(input.isEdit ? { delegated_by: null, delegated_at: null } : {}), ...restart };
   return {
     owner_id: next,
     ...(input.meId ? { delegated_by: input.meId, delegated_at: (input.now ?? new Date()).toISOString() } : {}),
+    ...restart,
   };
 }
 

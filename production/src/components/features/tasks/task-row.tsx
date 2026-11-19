@@ -9,7 +9,8 @@ import * as React from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { toast } from "sonner";
-import { useCompleteTask, useDeleteTask, useReopenTask, type TaskWithLink } from "@/lib/queries/tasks";
+import { useCompleteTask, useDeleteTask, useReopenTask, useSetTaskProgress, type TaskWithLink } from "@/lib/queries/tasks";
+import { rowStatusChange, type TaskRowStatus } from "./task-progress";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
@@ -28,6 +29,7 @@ import type { TaskKind } from "@/lib/supabase/database.types";
 import { leadTitle } from "@/lib/leads/display-name";
 import { taskContact } from "./task-contact";
 import { TaskNotes } from "./task-notes";
+import { TaskStatusMenu } from "./task-status-menu";
 import { TASK_PRIORITY_META, priorityOf, showsPriorityBadge } from "./task-priority";
 
 /** R-279: the linked lead's company, else its contact/email/phone; null when it has no name at all. */
@@ -51,6 +53,15 @@ const contactBtn =
 export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit: (t: TaskWithLink) => void; assignee?: TeamMember | null }) {
   const completeTask = useCompleteTask();
   const reopenTask   = useReopenTask();
+  const setProgress  = useSetTaskProgress();
+  /* One guard for the circle AND the status menu: a second status change waits for the first. */
+  const statusBusy   = completeTask.isPending || reopenTask.isPending || setProgress.isPending;
+  const pickStatus = (next: TaskRowStatus) => {
+    const change = rowStatusChange(task, next);
+    if (!change || statusBusy) return;
+    if (change.complete) completeTask.mutate(task.id);
+    else if (change.progress) setProgress.mutate({ id: task.id, progress: change.progress, reopen: !!change.reopen });
+  };
   const snoozeTask   = useSnoozeTaskTo();
   const deleteTask   = useDeleteTask();
   const [confirmOpen, setConfirmOpen] = React.useState(false);
@@ -105,7 +116,7 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
         role="checkbox"
         aria-checked={isDone}
         onClick={() => {
-          if (completeTask.isPending || reopenTask.isPending) return;
+          if (statusBusy) return;
           if (isDone) reopenTask.mutate(task.id);
           else completeTask.mutate(task.id);
         }}
@@ -131,6 +142,8 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
           <span className="text-base leading-none" aria-hidden="true">{kindMeta.icon}</span>
           <p className={cn("font-medium text-ink break-words min-w-0", isDone && "line-through")}>{task.title}</p>
           <Badge kind="muted">{kindMeta.label}</Badge>
+          {/* R-2927: Not started / In progress / On hold / Done — change it right here. */}
+          <TaskStatusMenu task={task} busy={statusBusy} onPick={pickStatus} />
           {/* R-2926: priority — colour AND word, for High and Low (Medium is the default: no badge). Hidden once done. */}
           {!isDone && showsPriorityBadge(priority) && (
             <Badge kind={TASK_PRIORITY_META[priority].badge} title={`Priority: ${TASK_PRIORITY_META[priority].label}`}>

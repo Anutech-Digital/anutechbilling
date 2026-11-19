@@ -14,6 +14,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Task } from "@/lib/supabase/database.types";
 import { snoozeByMinutes, snoozedMessage } from "@/lib/tasks/snooze";
+import type { TaskProgress } from "@/components/features/tasks/task-progress";
 
 type TaskInsert = Database["public"]["Tables"]["tasks"]["Insert"];
 type TaskUpdate = Database["public"]["Tables"]["tasks"]["Update"];
@@ -114,7 +115,8 @@ export function useTasks(bucket: TaskBucket = "all", opts: { enabled?: boolean }
  */
 export const DONE_TASKS_SHOWN = 100;
 /** Open = still to do. The /tasks read and nav_badges().tasks (R-1541, the Overdue count) use
- *  this list; nav-badge-parity.test.ts holds the SQL to it. */
+ *  this list; nav-badge-parity.test.ts holds the SQL to it. R-2927: "In progress" / "On hold"
+ *  are tasks.progress on a 'pending' task — NOT new statuses — so this list does not change. */
 export const TASK_OPEN_STATUSES = ["pending", "snoozed"] as const;
 
 /**
@@ -297,7 +299,7 @@ export function useUpdateTask() {
   });
 }
 
-type TaskPatch = Partial<Pick<Task, "status" | "completed_at" | "completed_by">>;
+type TaskPatch = Partial<Pick<Task, "status" | "completed_at" | "completed_by" | "progress">>;
 
 /**
  * R-354 — `patch` applied to task `id` inside one ["tasks", …] cache entry (a list, or the
@@ -328,7 +330,11 @@ function restoreSnapshot(qc: QC, snapshot: CacheSnapshot | undefined) {
 
 export const UNDO_TOAST_MS = 5_000;
 
-/** Put a completed task back to pending — the Undo on the "Marked done" toast. */
+/** What "not done any more" means on the row — one place (Undo, the circle, the status menu). */
+const REOPEN_PATCH = { status: "pending", completed_at: null, completed_by: null } as const;
+
+/** Put a completed task back to pending — the Undo on the "Marked done" toast. The step
+ *  (tasks.progress) is kept, so Undo gives back exactly what was there. */
 export function useReopenTask() {
   const qc = useQueryClient();
   return useMutation({
@@ -336,18 +342,49 @@ export function useReopenTask() {
       const supabase = createClient();
       const { error } = await supabase
         .from("tasks")
-        .update({ status: "pending", completed_at: null, completed_by: null })
+        .update(REOPEN_PATCH)
         .eq("id", id);
       if (error) throw error;
       return id;
     },
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: ["tasks"] });
-      return { snapshot: optimisticPatch(qc, id, { status: "pending", completed_at: null, completed_by: null }) };
+      return { snapshot: optimisticPatch(qc, id, REOPEN_PATCH) };
     },
     onError: (err, _id, ctx) => {
       restoreSnapshot(qc, ctx?.snapshot);
       toastError(err, { fallback: "Couldn't undo — the task is still marked done." });
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+  });
+}
+
+/**
+ * R-2927 — set an open task's step (Not started / In progress / On hold) from its row. Only
+ * tasks.progress changes; status stays 'pending', so every open-task count is untouched.
+ * `reopen`: the task was Done and the person picked a step — put it back to pending in the
+ * same save. Optimistic, rolled back with toastError when the save fails.
+ */
+export function progressPatch(progress: TaskProgress, reopen?: boolean): TaskPatch {
+  return reopen ? { ...REOPEN_PATCH, progress } : { progress };
+}
+
+export function useSetTaskProgress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, progress, reopen }: { id: string; progress: TaskProgress; reopen?: boolean }) => {
+      const supabase = createClient();
+      const { error } = await supabase.from("tasks").update(progressPatch(progress, reopen)).eq("id", id);
+      if (error) throw error;
+      return id;
+    },
+    onMutate: async ({ id, progress, reopen }) => {
+      await qc.cancelQueries({ queryKey: ["tasks"] });
+      return { snapshot: optimisticPatch(qc, id, progressPatch(progress, reopen)) };
+    },
+    onError: (err, _vars, ctx) => {
+      restoreSnapshot(qc, ctx?.snapshot);
+      toastError(err, { fallback: "Couldn't change the task's status." });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   });

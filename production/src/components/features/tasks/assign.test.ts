@@ -17,7 +17,8 @@ describe("R-2925 Assign to → owner_id", () => {
   });
 
   it("editing my task and picking a teammate: handed over by me, now", () => {
-    expect(ownerPatch({ assignee: HITESH, isEdit: true, meId: ME, currentOwnerId: ME, now: NOW })).toEqual({ owner_id: HITESH, ...STAMP });
+    expect(ownerPatch({ assignee: HITESH, isEdit: true, meId: ME, currentOwnerId: ME, now: NOW }))
+      .toEqual({ owner_id: HITESH, ...STAMP, progress: "not_started" }); // R-2927: the new owner has not started
   });
 
   it("editing a teammate's task without changing the person sends no owner change (and no new hand-over)", () => {
@@ -26,7 +27,7 @@ describe("R-2925 Assign to → owner_id", () => {
 
   it("editing a teammate's task and picking 'Me (myself)' takes the task (it used to change nothing)", () => {
     expect(ownerPatch({ assignee: ASSIGN_ME, isEdit: true, meId: ME, currentOwnerId: HITESH }))
-      .toEqual({ owner_id: ME, delegated_by: null, delegated_at: null });
+      .toEqual({ owner_id: ME, delegated_by: null, delegated_at: null, progress: "not_started" });
   });
 
   it("editing a task with NO owner (the form shows 'Me' by default) does not silently take it", () => {
