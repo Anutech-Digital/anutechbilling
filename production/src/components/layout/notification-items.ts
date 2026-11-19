@@ -90,6 +90,8 @@ const KIND_META: Record<string, { icon: string; tone: NotifTone }> = {
   "chat.dm":          { icon: "chat",   tone: "indigo"  },
   // R-2925: a task given to me (Add / Edit task, or made from a team chat post — R-2304).
   "task.assigned":    { icon: "clock",  tone: "indigo"  },
+  // R-2928: a teammate reminded me about my task ("Remind" on the task row).
+  "task.reminder":    { icon: "bell",   tone: "amber"   },
 };
 
 /** End-of-today and start-of-today as UTC ms, computed in IST (matches the

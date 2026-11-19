@@ -25,7 +25,9 @@ export interface NotifyInput {
     // R-2709: the AI's social posts wait for the marketing person's approval.
     | "social.review"
     // R-2925: a task was given to this person (Add / Edit task; team chat writes its own row).
-    | "task.assigned";
+    | "task.assigned"
+    // R-2928: a teammate pressed "Remind" on this person's task.
+    | "task.reminder";
   title: string;
   body?: string;
   href?: string;

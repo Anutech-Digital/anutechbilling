@@ -70,6 +70,7 @@ const INTERNAL_SENDERS: Record<string, string> = {
   "lib/inbound/ingest.ts": "new-enquiry alert to the owner",
   "lib/quotes/quote-views.server.ts": "hot-lead alert to the company",
   "lib/tasks/assign-notice.server.ts": "R-2925 a task was given to this team member (their own work email, never a customer)",
+  "lib/tasks/remind-notice.server.ts": "R-2928 a teammate's reminder about this team member's own task (their own work email, never a customer)",
   "server/auth/recovery.ts": "password reset",
 };
 

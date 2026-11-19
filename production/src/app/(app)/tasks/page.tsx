@@ -342,7 +342,7 @@ export default function TasksPage() {
                   <Card>
                     <ul className="divide-y divide-hairline">
                       {g.tasks.map((t) => (
-                        <TaskRow key={t.id} task={t} onEdit={setEditingTask} assignee={t.owner_id ? memberById.get(t.owner_id) : null} />
+                        <TaskRow key={t.id} task={t} onEdit={setEditingTask} assignee={t.owner_id ? memberById.get(t.owner_id) : null} meId={me?.userId} />
                       ))}
                     </ul>
                   </Card>

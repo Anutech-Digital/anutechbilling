@@ -31,6 +31,7 @@ import { taskContact } from "./task-contact";
 import { TaskNotes } from "./task-notes";
 import { TaskStatusMenu } from "./task-status-menu";
 import { TASK_PRIORITY_META, priorityOf, showsPriorityBadge } from "./task-priority";
+import { canRemind, lastRemindedLabel, useRemindTask } from "./task-remind";
 
 /** R-279: the linked lead's company, else its contact/email/phone; null when it has no name at all. */
 export function taskLeadName(task: TaskWithLink): string | null {
@@ -50,7 +51,11 @@ export const KIND_META: Record<TaskKind, { icon: string; label: string }> = {
 const contactBtn =
   "inline-flex items-center justify-center h-8 min-w-8 px-2 rounded-md border border-hairline text-ink-2 hover:bg-paper-2 hover:text-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber";
 
-export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit: (t: TaskWithLink) => void; assignee?: TeamMember | null }) {
+export function TaskRow({ task, onEdit, assignee, meId }: {
+  task: TaskWithLink; onEdit: (t: TaskWithLink) => void; assignee?: TeamMember | null;
+  /** R-2928: who is looking — "Remind" shows only on someone else's task. Not given = no button. */
+  meId?: string | null;
+}) {
   const completeTask = useCompleteTask();
   const reopenTask   = useReopenTask();
   const setProgress  = useSetTaskProgress();
@@ -64,6 +69,8 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
   };
   const snoozeTask   = useSnoozeTaskTo();
   const deleteTask   = useDeleteTask();
+  const remindTask   = useRemindTask();
+  const lastReminded = lastRemindedLabel(task.last_followup_at);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   const due = new Date(task.due_at);
@@ -169,6 +176,12 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
               hour: "2-digit", minute: "2-digit", timeZone: IST_TZ,
             })}
           </span>
+          {/* R-2928: when the owner of this task was last reminded. */}
+          {lastReminded && !isDone && (
+            <span className="text-ink-3 text-2xs inline-flex items-center gap-0.5" data-testid="task-last-reminded">
+              <Icon name="bell" size={10} /> {lastReminded}
+            </span>
+          )}
           {task.snooze_count > 0 && (
             <span className="text-ink-3 text-2xs">snoozed {task.snooze_count}×</span>
           )}
@@ -223,6 +236,16 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
       {/* Actions */}
       {!isDone && (
         <div className="flex gap-0.5 shrink-0">
+          {/* R-2928: nudge the teammate who has this task (bell + email; once an hour per task). */}
+          {canRemind(task, meId) && (
+            <IconButton
+              icon="bell" size="sm" variant="ghost"
+              aria-label={`Remind${assignee ? ` ${memberLabel(assignee)}` : ""}: ${task.title}`}
+              title={assignee ? `Remind ${memberLabel(assignee)}` : "Remind"}
+              disabled={remindTask.isPending}
+              onClick={() => remindTask.mutate(task.id)}
+            />
+          )}
           <IconButton icon="edit" size="sm" variant="ghost" aria-label="Edit task" title="Edit task" onClick={() => onEdit(task)} />
           {/* R-471: Snooze offers choices (was a blind +1 day from the old due time). */}
           <DropdownMenu modal={false}>
