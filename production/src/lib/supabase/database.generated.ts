@@ -13109,6 +13109,7 @@ export type Database = {
           kind: Database["public"]["Enums"]["task_kind"]
           last_followup_at: string | null
           lead_id: string | null
+          link_url: string | null
           notes: string | null
           owner_id: string | null
           priority: string
@@ -13134,6 +13135,7 @@ export type Database = {
           kind?: Database["public"]["Enums"]["task_kind"]
           last_followup_at?: string | null
           lead_id?: string | null
+          link_url?: string | null
           notes?: string | null
           owner_id?: string | null
           priority?: string
@@ -13159,6 +13161,7 @@ export type Database = {
           kind?: Database["public"]["Enums"]["task_kind"]
           last_followup_at?: string | null
           lead_id?: string | null
+          link_url?: string | null
           notes?: string | null
           owner_id?: string | null
           priority?: string

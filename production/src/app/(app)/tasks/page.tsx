@@ -39,6 +39,7 @@ import { istDayStartUtc, addDaysISO } from "@/lib/dates/ist";
 import { Input } from "@/components/ui/input";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useTaskCollaborators } from "@/lib/queries/task-collaborators";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { FAB } from "@/components/ui/fab";
@@ -107,6 +108,12 @@ export default function TasksPage() {
   const list = useTaskList(me?.tenantId);
   const { data: members = [] } = useTeamMembers();
   const memberById = React.useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
+  /* R-2933: who works with each task's owner. Its own read — if it fails the list still shows. */
+  const { data: collaborators } = useTaskCollaborators(me?.tenantId);
+  const collaboratorsOf = React.useCallback(
+    (taskId: string) => (collaborators?.get(taskId) ?? []).flatMap((id) => memberById.get(id) ?? []),
+    [collaborators, memberById],
+  );
   const [assignee, setAssignee] = useUrlState("assignee", "all"); // R-286: survives Back
   const [query, setQuery] = useUrlState("q", ""); // R-2930: search, survives Back / reload
 
@@ -342,7 +349,7 @@ export default function TasksPage() {
                   <Card>
                     <ul className="divide-y divide-hairline">
                       {g.tasks.map((t) => (
-                        <TaskRow key={t.id} task={t} onEdit={setEditingTask} assignee={t.owner_id ? memberById.get(t.owner_id) : null} meId={me?.userId} />
+                        <TaskRow key={t.id} task={t} onEdit={setEditingTask} assignee={t.owner_id ? memberById.get(t.owner_id) : null} meId={me?.userId} collaborators={collaboratorsOf(t.id)} />
                       ))}
                     </ul>
                   </Card>

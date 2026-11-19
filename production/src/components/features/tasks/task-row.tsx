@@ -32,6 +32,8 @@ import { TaskNotes } from "./task-notes";
 import { TaskStatusMenu } from "./task-status-menu";
 import { TASK_PRIORITY_META, priorityOf, showsPriorityBadge } from "./task-priority";
 import { canRemind, lastRemindedLabel, useRemindTask } from "./task-remind";
+import { Avatar } from "@/components/ui/avatar";
+import { safeTaskLink, taskLinkLabel } from "@/lib/tasks/collaborators";
 
 /** R-279: the linked lead's company, else its contact/email/phone; null when it has no name at all. */
 export function taskLeadName(task: TaskWithLink): string | null {
@@ -51,8 +53,10 @@ export const KIND_META: Record<TaskKind, { icon: string; label: string }> = {
 const contactBtn =
   "inline-flex items-center justify-center h-8 min-w-8 px-2 rounded-md border border-hairline text-ink-2 hover:bg-paper-2 hover:text-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber";
 
-export function TaskRow({ task, onEdit, assignee, meId }: {
+export function TaskRow({ task, onEdit, assignee, meId, collaborators }: {
   task: TaskWithLink; onEdit: (t: TaskWithLink) => void; assignee?: TeamMember | null;
+  /** R-2933: the teammates working on this task with its owner (up to 3). */
+  collaborators?: readonly TeamMember[];
   /** R-2928: who is looking — "Remind" shows only on someone else's task. Not given = no button. */
   meId?: string | null;
 }) {
@@ -71,6 +75,8 @@ export function TaskRow({ task, onEdit, assignee, meId }: {
   const deleteTask   = useDeleteTask();
   const remindTask   = useRemindTask();
   const lastReminded = lastRemindedLabel(task.last_followup_at);
+  const taskLink     = safeTaskLink(task.link_url);
+  const withNames    = (collaborators ?? []).map((m) => memberLabel(m));
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   const due = new Date(task.due_at);
@@ -162,6 +168,22 @@ export function TaskRow({ task, onEdit, assignee, meId }: {
               <Icon name="user" size={10} /> {memberLabel(assignee)}
             </span>
           )}
+          {/* R-2933: who works on it with the owner — small avatars, names on hover and for screen readers. */}
+          {withNames.length > 0 && (
+            <span
+              className="inline-flex items-center gap-1 text-2xs text-ink-3"
+              data-testid="task-collaborators"
+              title={`Working with ${withNames.join(", ")}`}
+            >
+              <span aria-hidden="true">with</span>
+              <span className="sr-only">Working with {withNames.join(", ")}</span>
+              <span className="inline-flex -space-x-1" aria-hidden="true">
+                {(collaborators ?? []).map((m) => (
+                  <Avatar key={m.id} size="xs" name={memberLabel(m)} initials={m.initials ?? undefined} className="ring-1 ring-paper" />
+                ))}
+              </span>
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-x-3 gap-y-1 mt-1 text-[12px] flex-wrap">
           <span className={cn(
@@ -181,6 +203,17 @@ export function TaskRow({ task, onEdit, assignee, meId }: {
             <span className="text-ink-3 text-2xs inline-flex items-center gap-0.5" data-testid="task-last-reminded">
               <Icon name="bell" size={10} /> {lastReminded}
             </span>
+          )}
+          {/* R-2933: the task's link (Drive file, doc, page) opens in a new tab. */}
+          {taskLink && (
+            <a
+              href={taskLink} target="_blank" rel="noopener noreferrer"
+              className="text-amber-ink hover:underline text-2xs inline-flex items-center gap-0.5 min-w-0"
+              aria-label={`Open link: ${taskLinkLabel(taskLink)}`}
+              data-testid="task-link"
+            >
+              <Icon name="link" size={10} /> <span className="truncate max-w-[12rem]">{taskLinkLabel(taskLink)}</span>
+            </a>
           )}
           {task.snooze_count > 0 && (
             <span className="text-ink-3 text-2xs">snoozed {task.snooze_count}×</span>

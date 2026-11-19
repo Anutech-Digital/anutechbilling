@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ASSIGN_ME, assigneeToTell, meIdForSave, meNotKnownYet, ownerPatch } from "./assign";
+import { ASSIGN_ME, assigneeToTell, meIdForSave, meNotKnownYet, ownerAfterSave, ownerPatch } from "./assign";
 
 const ME = "u-me", HITESH = "u-hitesh";
 const NOW = new Date("2026-11-18T18:00:00Z");
@@ -102,5 +102,19 @@ describe("meIdForSave — who is saving, even before the profile has loaded", ()
     const meId = await meIdForSave(undefined, async () => "me");
     const patch = ownerPatch({ assignee: "sales", isEdit: false, meId, currentOwnerId: null, now: new Date("2026-11-19T01:00:00Z") });
     expect(patch).toEqual({ owner_id: "sales", delegated_by: "me", delegated_at: "2026-11-19T01:00:00.000Z" });
+  });
+});
+
+describe("R-2933 ownerAfterSave — who has the task once the form is saved", () => {
+  it("a new task: the person picked, or me", () => {
+    expect(ownerAfterSave({ assignee: HITESH, isEdit: false, meId: ME, currentOwnerId: null })).toBe(HITESH);
+    expect(ownerAfterSave({ assignee: ASSIGN_ME, isEdit: false, meId: ME, currentOwnerId: null })).toBe(ME);
+    expect(ownerAfterSave({ assignee: undefined, isEdit: false, meId: null, currentOwnerId: null })).toBeNull();
+  });
+  it("an edit: the same owner, the new owner, me when I take it, nobody when it has no owner", () => {
+    expect(ownerAfterSave({ assignee: HITESH, isEdit: true, meId: ME, currentOwnerId: HITESH })).toBe(HITESH);
+    expect(ownerAfterSave({ assignee: HITESH, isEdit: true, meId: ME, currentOwnerId: ME })).toBe(HITESH);
+    expect(ownerAfterSave({ assignee: ASSIGN_ME, isEdit: true, meId: ME, currentOwnerId: HITESH })).toBe(ME);
+    expect(ownerAfterSave({ assignee: ASSIGN_ME, isEdit: true, meId: ME, currentOwnerId: null })).toBeNull();
   });
 });

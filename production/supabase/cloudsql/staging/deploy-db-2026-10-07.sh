@@ -580,6 +580,7 @@ MIGS=(
   "r2926taskpriority|20261119001455_r2926_task_priority.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'priority')"
   "r2927taskprogress|20261119002450_r2927_task_progress.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'progress')"
   "r2928taskfollowup|20261119201547_r2928_task_followup.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'last_followup_at')"
+  "r2933taskcollaboratorslink|20261119205800_r2933_task_collaborators_link.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'link_url') and to_regclass('public.task_collaborators') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'task_collaborators' and policyname = 'task_collaborators_insert')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

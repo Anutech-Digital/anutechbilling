@@ -552,4 +552,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2926taskpriority", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'priority')" },
   { key: "r2927taskprogress", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'progress')" },
   { key: "r2928taskfollowup", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'last_followup_at')" },
+  { key: "r2933taskcollaboratorslink", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'link_url') and to_regclass('public.task_collaborators') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'task_collaborators' and policyname = 'task_collaborators_insert')" },
 ];

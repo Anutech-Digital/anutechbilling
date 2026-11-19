@@ -60,6 +60,20 @@ export async function meIdForSave(
   }
 }
 
+/**
+ * R-2933: who owns the task once this form is saved — the person picked; "Me (myself)" = me,
+ * except on an edit of a task that has NO owner (it stays unassigned). The people "working with"
+ * the owner never include this person.
+ */
+export function ownerAfterSave(input: {
+  assignee: string | null | undefined; isEdit: boolean; meId: string | null | undefined; currentOwnerId: string | null | undefined;
+}): string | null {
+  const patch = ownerPatch(input);
+  if (patch.owner_id) return patch.owner_id;
+  if (input.isEdit) return input.currentOwnerId ?? null;
+  return input.meId ?? null; // a new task defaults to its creator
+}
+
 /** "Me (myself)" was picked on a teammate's task but we do not know who "me" is yet — the save must wait. */
 export function meNotKnownYet(input: {
   assignee: string | null | undefined; isEdit: boolean; meId: string | null | undefined; currentOwnerId: string | null | undefined;
