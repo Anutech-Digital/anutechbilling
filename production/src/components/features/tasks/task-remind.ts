@@ -8,6 +8,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { IST_TZ } from "@/lib/dates/ist";
+import { toastError } from "@/lib/errors/toast-error";
 
 /** Only someone else's open task can be reminded — never my own, an unassigned or a finished one. */
 export function canRemind(
@@ -50,6 +51,6 @@ export function useRemindTask() {
       else toast.warning(r.message ?? REMIND_FAILED);
       void qc.invalidateQueries({ queryKey: ["tasks"] });
     },
-    onError: () => { toast.error(REMIND_FAILED); },
+    onError: (err) => toastError(err, { fallback: REMIND_FAILED }),
   });
 }
