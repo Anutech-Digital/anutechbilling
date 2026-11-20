@@ -142,21 +142,41 @@ test.describe("R-2937 — Tasks list: one-line rows, Comfortable, sticky group h
   });
 
   test("Step 5: scrolling down, the 'Overdue' heading stays stuck at the top", async () => {
-    await page.setViewportSize({ width: 1280, height: 400 }); // short screen: the Overdue group is taller than it
+    /* The Overdue group also holds whatever else the company has overdue (older tasks sort
+       first), so where a planted row sits in it is not known. Scroll by the ROW: bring a
+       planted row well down the group to the middle of the screen — its heading's own place
+       is then far above the screen — and the heading must still be showing, stuck under the
+       top bar. */
     const heading = page.locator("#task-group-overdue");
     await expect(heading).toBeVisible({ timeout: 60_000 });
     await expect(heading).toContainText("Overdue");
+    const row = await onlyOne(rowOf(page, "CT R2937 overdue 08"), "a planted row well down the Overdue group");
     await page.evaluate(() => window.scrollTo(0, 0));
-    const before = (await heading.boundingBox())!;
-    // Scroll far enough that the heading's own place has left the screen, with its group still showing.
-    await page.evaluate((y) => window.scrollTo(0, y), Math.round(before.y) + 60);
-    await expect.poll(async () => Math.round((await heading.boundingBox())!.y), { timeout: 15_000 }).toBeGreaterThanOrEqual(0);
-    const after = (await heading.boundingBox())!;
-    expect(after.y, "the heading is still on screen").toBeGreaterThanOrEqual(0);
-    expect(after.y, "… near the top, under the top bar").toBeLessThanOrEqual(120);
+    const place = await page.evaluate(() => {
+      const top = (el: Element | null) => (el ? el.getBoundingClientRect().top + window.scrollY : NaN);
+      const lis = [...document.querySelectorAll("main li")];
+      return { heading: top(document.getElementById("task-group-overdue")), row: top(lis.find((li) => li.textContent?.includes("CT R2937 overdue 08")) ?? null) };
+    });
+    expect(place.row - place.heading, "the row is at least 7 rows below its heading").toBeGreaterThan(200);
+
+    // Row at 400 px from the top of an 800 px screen → the heading's own place is above the screen.
+    const y = Math.round(place.row - 400);
+    expect(y, "the page scrolls far enough for the heading's own place to leave the screen").toBeGreaterThan(Math.round(place.heading));
+    await page.evaluate((to) => window.scrollTo(0, to), y);
+    await expect(row).toBeInViewport();
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY)), { timeout: 15_000 }).toBeGreaterThan(Math.round(place.heading));
     await expect(heading).toBeInViewport();
-    // A row further down the same group is on screen under it.
-    await expect(rowOf(page, "CT R2937 overdue 08")).toBeInViewport();
-    await page.setViewportSize({ width: 1280, height: 800 });
+    const box = (await heading.boundingBox())!;
+    expect(box.y, "the heading is stuck near the top, under the top bar").toBeGreaterThanOrEqual(40);
+    expect(box.y).toBeLessThanOrEqual(120);
+    // …and it is on top of the rows, not under them: the point in its middle is the heading itself.
+    const onTop = await page.evaluate(() => {
+      const h = document.getElementById("task-group-overdue")!;
+      const r = h.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!hit && (hit === h || h.contains(hit));
+    });
+    expect(onTop, "the stuck heading covers the rows scrolling under it").toBe(true);
+    await page.evaluate(() => window.scrollTo(0, 0));
   });
 });

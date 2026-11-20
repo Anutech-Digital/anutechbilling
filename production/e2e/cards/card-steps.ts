@@ -56,10 +56,26 @@ export async function loginLocal(page: Page, role: LocalRole): Promise<void> {
   }
 }
 
+/**
+ * The attendance reminder ("You haven't checked in yet" / "… checked out yet") is a modal the
+ * shell opens by the clock for a login that is linked to an employee and has not punched today.
+ * While it is open the rest of the page is hidden from role queries (`getByRole("main")` finds
+ * nothing) and takes no clicks — so a spec passed at 4 am and failed at 6 am (R-2928 step 3a,
+ * 20 Nov: the Sales login's task row "0 on the page" while it was plainly there behind the
+ * modal). Whenever it shows, press its own "Not today" — what a person would do — and go on.
+ */
+export async function dismissAttendanceReminder(page: Page): Promise<void> {
+  const reminder = page.getByRole("dialog", { name: /^You haven't checked (in|out) yet$/ });
+  await page.addLocatorHandler(reminder, async () => {
+    await reminder.getByRole("button", { name: "Not today", exact: true }).click();
+  });
+}
+
 /** A fresh browser context signed in as `role`. Close it when done. */
 export async function pageAs(browser: Browser, baseURL: string | undefined, role: LocalRole): Promise<Page> {
   const context = await browser.newContext({ baseURL, viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
+  await dismissAttendanceReminder(page);
   await loginLocal(page, role);
   return page;
 }
