@@ -884,7 +884,11 @@ export function checkRedGate(card, { gh, fixesRed = false, ownerOverride = false
  * with our sha inside) — a newer green run on a descendant supersedes an older red one (a setup-cli 504
  * whose re-runs keep failing on the old workflow file). Red only when no later run is green and none is
  * still running; an older red with a newer run still going → pending.
- * Returns { state: green|red|pending|skipped|missing, run? , via? }.
+ * R-2943 (20 Nov 2026): every run of the workflow for the sha CANCELLED and no later run containing the
+ * sha (after the grace) → "cancelled" with that run, not "missing". On manager-pardeep a running run is
+ * never cancelled by a newer push (R-1989), so this is a job that hit its timeout-minutes (run
+ * 44650737207, typecheck at 20 min) or a manual cancel — nothing will ever decide it until someone re-runs it.
+ * Returns { state: green|red|pending|skipped|missing|cancelled, run? , via? }.
  */
 export function workflowVerdict(wf, shaRuns, later, { graceOver, ciDone }) {
   const mine = newestFirst(shaRuns.filter((r) => r.workflowName === wf));
@@ -901,7 +905,14 @@ export function workflowVerdict(wf, shaRuns, later, { graceOver, ciDone }) {
     if (wf === "SQL tests" && (ciDone || graceOver)) return { state: "skipped" };
     return graceOver ? { state: "missing" } : { state: "pending" };
   }
-  return graceOver ? { state: "missing", run: mine[0] } : { state: "pending", run: mine[0] }; // all cancelled, nothing later yet
+  if (!graceOver) return { state: "pending", run: mine[0] }; // all cancelled / skipped, nothing later yet
+  const cancelled = mine.find((r) => r.conclusion === "cancelled");
+  return cancelled ? { state: "cancelled", run: cancelled } : { state: "missing", run: mine[0] };
+}
+
+/** R-2943: the exact command that re-runs a cancelled run's cancelled / failed jobs (run = a `gh run list` row). */
+export function ciRerunCommand(run) {
+  return run?.databaseId ? `gh run rerun ${run.databaseId} --failed -R ${CI_REPO}` : null;
 }
 
 /** The last sha pushed for this card: the lock dir note `push` writes, else the newest "<CARD>:" commit on the branch. */
@@ -934,11 +945,13 @@ export function pushAgeMs(lock, now = Date.now()) {
  *   "green" | "red";
  *   "pending" — a run for the sha (or a later one containing it) is queued / running, OR no run is listed
  *               yet / gh did not answer while the push is under 15 min old (R-2561);
+ *   "cancelled" — R-2943: the sha's run was cancelled (job timeout / by hand) and no later run contains it;
+ *               `info.run` (when an `info` object is passed) is that run, for the re-run command;
  *   "unknown" — no run for the sha nor any later manager-pardeep run containing it, push 15+ min old;
  *   null      — not a ci-wait / ci-red lock / no sha, or gh did not answer (twice) for a push 15+ min old.
  * R-2612: a ci-red lock is looked at again too — a newer green run may have cleared it.
  */
-export function ciWaitVerdict(lock, { gh, isAncestor, now = Date.now() }) {
+export function ciWaitVerdict(lock, { gh, isAncestor, now = Date.now(), info = null }) {
   if (!lock || (lock.state !== LOCK_STATES.ciWait && lock.state !== LOCK_STATES.ciRed) || !lock.pushedSha) return null;
   const full = lock.pushedSha;
   const young = pushAgeMs(lock, now) < CI_NO_RUN_GRACE_MS;
@@ -959,6 +972,8 @@ export function ciWaitVerdict(lock, { gh, isAncestor, now = Date.now() }) {
   const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver: true, ciDone: ci.state === "green" || ci.state === "red" });
   if (ci.state === "red" || sql.state === "red") return "red";
   if (ci.state === "green" && (sql.state === "green" || sql.state === "skipped")) return "green";
+  const stopped = [ci, sql].find((v) => v.state === "cancelled");
+  if (stopped) { if (info) info.run = stopped.run; return "cancelled"; }
   if (ci.state === "missing" || sql.state === "missing") return young ? "pending" : "unknown";
   return "pending";
 }
@@ -988,11 +1003,12 @@ export function ciAllReport(locks, { verdict, settle, at = new Date().toISOStrin
   if (!waiting.length) return { lines: ["Koi card CI ke intezaar (ci-wait) mein nahi."], results: [] };
   const lines = [], results = [];
   for (const l of waiting) {
-    const v = verdict(l) ?? "unknown";
+    const info = {};
+    const v = verdict(l, info) ?? "unknown";
     const sha = String(l.pushedSha ?? "").slice(0, 9);
     if (v === "green") settle(l.card, CI_EXIT.green);
     if (v === "red" && l.state === LOCK_STATES.ciWait) settle(l.card, CI_EXIT.red);
-    lines.push(`${l.card}  ${sha || "(sha nahi)"}  ${v === "green" ? "CI green — lock hata" : v === "red" ? "CI LAAL — card wala worker theek kare (claim --fixes-red)" : v === "pending" ? "CI abhi chal raha / line mein (ya GitHub ne abhi run nahi dikhaya) — baad mein dobara ci-all" : "CI ka run nahi mila (push 15+ min purana) ya gh nahi chala — GitHub Actions par dekho"}`);
+    lines.push(`${l.card}  ${sha || "(sha nahi)"}  ${v === "green" ? "CI green — lock hata" : v === "red" ? "CI LAAL — card wala worker theek kare (claim --fixes-red)" : v === "pending" ? "CI abhi chal raha / line mein (ya GitHub ne abhi run nahi dikhaya) — baad mein dobara ci-all" : v === "cancelled" ? `CI run CANCEL hua (job apni samay-seema par ruka, ya kisi ne roka) aur baad ka koi run nahi — lock atka rahega. Dobara chalao: ${ciRerunCommand(info.run) ?? `gh run list -R ${CI_REPO} --commit ${l.pushedSha} (phir gh run rerun <id> --failed)`} — phir ci-all` : "CI ka run nahi mila (push 15+ min purana) ya gh nahi chala — GitHub Actions par dekho"}`);
     const r = { card: l.card, sha: l.pushedSha ?? null, ci: v, at };
     results.push(r);
     lines.push(JSON.stringify(r));
@@ -1039,14 +1055,18 @@ export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DE
         const check = { sha: full, ci: shown(ci.state), sql: shown(sql.state), at: new Date(now()).toISOString().replace(/\.\d{3}Z$/, "Z"), runUrls };
         if (ci.via || sql.via) check.via = (ci.via || sql.via);
         const lines = [];
-        const icon = (s) => (s === "green" ? "✓" : s === "skipped" ? "–" : s === "red" ? "✗" : "…");
+        const icon = (s) => (s === "green" ? "✓" : s === "skipped" ? "–" : s === "red" || s === "cancelled" ? "✗" : "…");
         lines.push(`${id} @ ${full.slice(0, 8)}: CI ${icon(ci.state)} ${check.ci} · SQL ${icon(sql.state)} ${check.sql}${check.via ? ` (apna run cancel hua; ${check.via.slice(0, 8)} wala run dekha jisme ye sha hai)` : ""}`);
         for (const [wf, v] of [["CI", ci], ["SQL tests", sql]]) {
           if (v.state === "red") { const names = failedTestsOf(gh, v.run); check[wf === "CI" ? "ciFailed" : "sqlFailed"] = names; lines.push(`  ✗ ${wf} laal: ${names.join(", ")}\n    ${v.run.url}`); }
         }
         const red = ci.state === "red" || sql.state === "red";
         const green = ci.state === "green" && (sql.state === "green" || sql.state === "skipped");
-        if (!red && !green) lines.push(`  ✗ ${timedOut ? `${timeoutMin} min me faisla nahi hua` : "run nahi mila"} — thodi der baad dobara: worker-lock ci ${id} --sha ${full.slice(0, 12)}`);
+        const stopped = [ci, sql].find((v) => v.state === "cancelled");
+        if (!red && !green && stopped) lines.push(`  ✗ ${stopped === ci ? "CI" : "SQL tests"} run CANCEL hua (job apni samay-seema par ruka, ya kisi ne roka) aur baad ka koi run nahi — intezaar se kuch nahi hoga.
+    Dobara chalao: ${ciRerunCommand(stopped.run) ?? `gh run list -R ${CI_REPO} --commit ${full}`}
+    phir: worker-lock ci ${id} --sha ${full.slice(0, 12)}`);
+        else if (!red && !green) lines.push(`  ✗ ${timedOut ? `${timeoutMin} min me faisla nahi hua` : "run nahi mila"} — thodi der baad dobara: worker-lock ci ${id} --sha ${full.slice(0, 12)}`);
         else if (red) lines.push(`  CI laal — fixing it comes first (card ${id} ke liveLog me likho; theek karne wala push --fixes-red ke saath).`);
         lines.push(`  Card par ciCheck likho: ${JSON.stringify(check)}`);
         return finish(red ? CI_EXIT.red : green ? CI_EXIT.green : CI_EXIT.timeout, check, lines);
@@ -1379,7 +1399,7 @@ function main(argv) {
     if (locks.some((l) => l.state === LOCK_STATES.ciWait || l.state === LOCK_STATES.ciRed)) { try { execFileSync("git", ["fetch", "-q", "anutech"], { stdio: "ignore", timeout: 60_000 }); } catch {} }
     const at = new Date().toISOString();
     const settle = (c, code) => { try { updateLock(c, (l) => lockAfterCiAll(l, code, { at })); } catch {} };
-    const r = ciAllReport(locks, { verdict: (l) => ciWaitVerdict(l, { gh: realGh, isAncestor }), settle, at });
+    const r = ciAllReport(locks, { verdict: (l, info) => ciWaitVerdict(l, { gh: realGh, isAncestor, info }), settle, at });
     for (const l of r.lines) console.log(l);
     return;
   }
