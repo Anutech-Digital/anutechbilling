@@ -306,16 +306,16 @@ describe("splitBillingCreditEligibility", () => {
 
 describe("R-2951 — no-invoice activations count, four tasks", () => {
   const q = (id: string, over: Partial<UninvoicedCreditQuote> = {}): UninvoicedCreditQuote => ({
-    id, invoice_id: null, credit_activated_at: "2026-10-07T05:30:00Z", subscription_billing_id: null, ...over,
+    id, invoice_id: null, credit_activated_at: "2026-10-07T05:30:00Z", subscription_billing_id: null,
+    amount: 5900, payment_status: "awaiting", cancelled_at: null, ...over,
   });
 
-  it("an activated quote without an invoice counts what its subscriptions still owe", () => {
+  it("an activated quote without an invoice counts quote amount − received payments", () => {
     const rows = uninvoicedCreditDues(
-      [q("Q-1"), q("Q-2")],
+      [q("Q-1"), q("Q-2", { payment_status: "partial" })],
       [
-        { quote_id: "Q-1", outstanding_amount: 5900 },
-        { quote_id: "Q-1", outstanding_amount: 0 },   // second line's row carries nothing
-        { quote_id: "Q-2", outstanding_amount: 3900 }, // part-paid: only the rest
+        { quote_id: "Q-2", amount: 1500 }, // part-paid: only the rest
+        { quote_id: "Q-2", amount: 500 },
       ],
     );
     expect(rows).toEqual([
@@ -325,27 +325,32 @@ describe("R-2951 — no-invoice activations count, four tasks", () => {
     expect(owedOnInvoices(rows)).toBe(9800);
   });
 
-  it("never counts a quote twice: with its invoice, not on credit, a part request, or fully paid", () => {
+  it("a bulk-first quote paid in full counts 0 (its subscriptions' outstanding is never lowered)", () => {
+    // Paid in full: status received → skipped; also the sum itself is 0.
+    expect(uninvoicedCreditDues([q("Q-B", { amount: 5664, payment_status: "received" })], [{ quote_id: "Q-B", amount: 5664 }])).toEqual([]);
+    expect(uninvoicedCreditDues([q("Q-B", { amount: 5664 })], [{ quote_id: "Q-B", amount: 5664 }])).toEqual([]);
+    // Part-paid bulk: only the rest.
+    expect(uninvoicedCreditDues([q("Q-B", { amount: 5664, payment_status: "partial" })], [{ quote_id: "Q-B", amount: 2000 }]))
+      .toEqual([{ id: "quote:Q-B", status: "pending", amount: 3664, net_payable: null, paid_amount: 0 }]);
+  });
+
+  it("never counts a quote twice or one that owes nothing: invoiced, not on credit, part request, cancelled, paid", () => {
     const rows = uninvoicedCreditDues(
       [
         q("Q-INV", { invoice_id: "INV-1" }),           // the invoice counts instead
         q("Q-NOT", { credit_activated_at: null }),     // not activated on credit
         q("Q-PART", { subscription_billing_id: "b1" }), // in open_part_requests already
-        q("Q-PAID"),
+        q("Q-CAN", { cancelled_at: "2026-10-08T05:30:00Z" }), // cancelled owes nothing
+        q("Q-PAID", { payment_status: "received" }),
+        q("Q-OVER"),                                    // overpaid → 0, never negative
       ],
-      [
-        { quote_id: "Q-INV", outstanding_amount: 5900 },
-        { quote_id: "Q-NOT", outstanding_amount: 5900 },
-        { quote_id: "Q-PART", outstanding_amount: 5900 },
-        { quote_id: "Q-PAID", outstanding_amount: 0 },
-        { quote_id: "Q-PAID", outstanding_amount: null },
-      ],
+      [{ quote_id: "Q-OVER", amount: 6000 }],
     );
     expect(rows).toEqual([]);
   });
 
   it("screen = database: second activation of Rs 5,900 after a first of Rs 5,900 on a Rs 10,000 limit", () => {
-    const openInvoices = uninvoicedCreditDues([q("Q-1")], [{ quote_id: "Q-1", outstanding_amount: 5900 }]);
+    const openInvoices = uninvoicedCreditDues([q("Q-1")], []);
     const e = creditExposure({ openInvoices, quoteAmount: 5900, quoteInvoiceId: null, creditLimit: 10_000 });
     expect(e).toEqual({ owed: 5900, thisInvoice: 5900, total: 11_800, limit: 10_000, over: true });
     expect(overLimitDecision(e, "owner", fmt)).toEqual({ kind: "owner-approve" });
@@ -403,20 +408,24 @@ describe("fetchUninvoicedCreditDues (R-2951)", () => {
     return { client: { from: (t: string) => make(t) } as never, calls };
   }
 
-  it("reads the customer's activated, uninvoiced, non-part-request quotes and their subscriptions", async () => {
+  it("reads the customer's activated, uninvoiced, open quotes and their received payments", async () => {
     const { client, calls } = fakeSupabase(
-      [{ id: "Q-1", invoice_id: null, credit_activated_at: "2026-10-07T05:30:00Z", subscription_billing_id: null }],
-      [{ quote_id: "Q-1", outstanding_amount: 5900 }],
+      [{ id: "Q-1", invoice_id: null, credit_activated_at: "2026-10-07T05:30:00Z", subscription_billing_id: null,
+         amount: 5900, payment_status: "partial", cancelled_at: null }],
+      [{ quote_id: "Q-1", amount: 2000 }],
     );
     const rows = await fetchUninvoicedCreditDues(client, "cust-1");
-    expect(rows).toEqual([{ id: "quote:Q-1", status: "pending", amount: 5900, net_payable: null, paid_amount: 0 }]);
+    expect(rows).toEqual([{ id: "quote:Q-1", status: "pending", amount: 3900, net_payable: null, paid_amount: 0 }]);
+    expect(calls[0].table).toBe("quotes");
     expect(calls[0].ops).toEqual(expect.arrayContaining([
       ["eq", ["customer_id", "cust-1"]],
       ["not", ["credit_activated_at", "is", null]],
       ["is", ["invoice_id", null]],
       ["is", ["subscription_billing_id", null]],
+      ["is", ["cancelled_at", null]],
     ]));
-    expect(calls[1].ops).toEqual(expect.arrayContaining([["in", ["quote_id", ["Q-1"]]]]));
+    expect(calls[1].table).toBe("payments");
+    expect(calls[1].ops).toEqual(expect.arrayContaining([["in", ["quote_id", ["Q-1"]]], ["eq", ["status", "received"]]]));
   });
 
   it("a database without the credit columns gives [] (the screen shows invoices only)", async () => {

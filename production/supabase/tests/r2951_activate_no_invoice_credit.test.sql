@@ -20,6 +20,8 @@
 --   H. invoice raised BEFORE any payment → the issue-invoice task is done, the two reminders stay; the
 --      full payment afterwards closes them (record_payment, as with an invoice from the start).
 --   I. the trigger function is not callable by anon / PUBLIC; it ignores a quote not on credit.
+--   K. a quote whose first line is bulk, paid in full, counts 0 (its subscriptions keep their
+--      outstanding amount; the rule is quote amount − received payments). L. part-paid: only the rest.
 begin;
 
 -- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address.
@@ -48,7 +50,23 @@ insert into public.users (id, tenant_id, email, full_name, role, created_at) val
 -- Customer X: Rs 10,000 limit (A–D). Customer Y: roomy (E–I).
 insert into public.customers (id, tenant_id, name, state_code, domain, credit_limit) values
   ('cccccccc-0000-0000-0000-000000295101','dddddddd-0000-0000-0000-000000295101','Small 2951','07','small2951.in', 10000),
-  ('cccccccc-0000-0000-0000-000000295102','dddddddd-0000-0000-0000-000000295101','Big 2951','07','big2951.in', 500000);
+  ('cccccccc-0000-0000-0000-000000295102','dddddddd-0000-0000-0000-000000295101','Big 2951','07','big2951.in', 500000),
+  ('cccccccc-0000-0000-0000-000000295103','dddddddd-0000-0000-0000-000000295101','Bulk Paid 2951','07','bulkpaid2951.in', 10000),
+  ('cccccccc-0000-0000-0000-000000295104','dddddddd-0000-0000-0000-000000295101','Bulk Part 2951','07','bulkpart2951.in', 10000);
+
+-- K / L: a no-invoice quote whose FIRST line is a bulk line (record_payment never lowers its
+-- subscriptions' outstanding amount, R-2954) — 2 domains x Rs 2,400 + GST = Rs 5,664.
+create function pg_temp.r2951_bulk(p_id text, p_customer uuid, p_tag text) returns void
+language sql as $f$
+  insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, discount_pct, tax_rate,
+                             status, payment_status, billing_cycle, line_items)
+  values (p_id, 'dddddddd-0000-0000-0000-000000295101', p_customer,
+          (select name from public.customers where id = p_customer), 5664, 4800, 0, 18,
+          'accepted', 'awaiting', 'yearly'::public.billing_cycle,
+          jsonb_build_array(jsonb_build_object('name', 'Domain .in', 'qty', 2, 'rate', 2400, 'commitment', 'annual_yearly', 'bulk', true,
+            'domains', jsonb_build_array(jsonb_build_object('domain', p_tag || '1-2951.in', 'seats', 1),
+                                         jsonb_build_object('domain', p_tag || '2-2951.in', 'seats', 1)))));
+$f$;
 
 create function pg_temp.r2951_q(p_id text, p_qty int, p_rate int, p_dom text,
                                 p_customer uuid default 'cccccccc-0000-0000-0000-000000295101') returns void
@@ -72,6 +90,10 @@ select pg_temp.r2951_q('Q-R2951-E29', 2, 500, 'e29.big2951.in', 'cccccccc-0000-0
 select pg_temp.r2951_q('Q-R2951-E30', 1, 500, 'e30.big2951.in', 'cccccccc-0000-0000-0000-000000295102');  -- Rs 590
 select pg_temp.r2951_q('Q-R2951-I',   1, 500, 'i.big2951.in',   'cccccccc-0000-0000-0000-000000295102');  -- Rs 590
 select pg_temp.r2951_q('Q-R2951-J',   1, 500, 'j.big2951.in',   'cccccccc-0000-0000-0000-000000295102');  -- Rs 590, never on credit
+select pg_temp.r2951_bulk('Q-R2951-K1', 'cccccccc-0000-0000-0000-000000295103', 'k');  -- Rs 5,664, bulk first line
+select pg_temp.r2951_q('Q-R2951-K2', 10, 500, 'k2.bulkpaid2951.in', 'cccccccc-0000-0000-0000-000000295103');  -- Rs 5,900
+select pg_temp.r2951_bulk('Q-R2951-L1', 'cccccccc-0000-0000-0000-000000295104', 'l');  -- Rs 5,664, bulk first line
+select pg_temp.r2951_q('Q-R2951-L2', 1, 500, 'l2.bulkpart2951.in', 'cccccccc-0000-0000-0000-000000295104');   -- Rs 590
 
 create function pg_temp.r2951_untouched(p_case text, p_quote text) returns void
 language plpgsql as $f$
@@ -266,6 +288,30 @@ begin
   if not exists (select 1 from pg_trigger where tgname = 'quotes_r2951_credit_closes_tasks' and tgrelid = 'public.quotes'::regclass) then
     raise exception 'FAIL I: trigger missing'; end if;
   raise notice 'PASS I: with-invoice path keeps 3 tasks and its close rule; non-credit quote untouched; trigger function closed';
+end $$;
+
+-- K / L. Bulk first line (owner activates, an annual line needs the reason), then a SALES user activates the next.
+do $$
+begin
+  perform public.activate_quote_on_credit('Q-R2951-K1', 15, false, 'Bulk domains, known customer', false);
+  perform public.record_payment('Q-R2951-K1', 5664, 'upi', 'r2951-pay-k1');            -- paid in full
+  perform public.activate_quote_on_credit('Q-R2951-L1', 15, false, 'Bulk domains, known customer', false);
+  perform public.record_payment('Q-R2951-L1', 2000, 'upi', 'r2951-part-l1');           -- part-paid
+end $$;
+select set_config('request.jwt.claims',
+  '{"sub":"aaaaaaaa-0000-0000-0000-000000295102","role":"authenticated"}', true);
+do $$
+declare r jsonb;
+begin
+  -- Paid in full: counts 0 → Rs 5,900 fits the Rs 10,000 limit and a non-owner may activate it.
+  r := public.activate_quote_on_credit('Q-R2951-K2', 15, false, null, false);
+  if (r->>'owed_before')::int <> 0 or (r->>'over_limit')::boolean then
+    raise exception 'FAIL K: a bulk-first quote paid in full still counts (owed_before %)', r->>'owed_before'; end if;
+  -- Part-paid: only the unpaid Rs 3,664 counts (not its subscriptions' Rs 5,664 outstanding).
+  r := public.activate_quote_on_credit('Q-R2951-L2', 15, false, null, false);
+  if (r->>'owed_before')::int <> 3664 then
+    raise exception 'FAIL L: part-paid bulk-first quote counts % (want 3664 = 5664 - 2000)', r->>'owed_before'; end if;
+  raise notice 'PASS K/L: bulk-first quote paid in full counts 0; part-paid counts only the Rs 3,664 still unpaid';
 end $$;
 
 rollback;

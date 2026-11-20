@@ -6,9 +6,10 @@
 --   1. The credit limit counts it. activate_quote_on_credit added up unpaid invoices + open part
 --      requests only, so a quote activated with no invoice counted for nothing and the next
 --      activation could pass the limit with no owner approval (R-2950 independent review). Now the
---      sum also takes what the customer's quotes activated without an invoice still owe (their
---      subscriptions' outstanding amount; invoice_id NULL; part requests excluded — they are in
---      open_part_requests). An invoice raised on such a quote later counts instead, never both.
+--      sum also takes what the customer's quotes activated without an invoice still owe (quote_open_balance:
+--      quote amount − received payments; invoice_id NULL; not fully paid; not cancelled; part requests
+--      excluded — they are in open_part_requests). The customer row is locked FOR NO KEY UPDATE so two
+--      activations for one customer cannot both pass the limit. An invoice raised on such a quote later counts instead, never both.
 --      Over the limit: non-owner refused, owner approves — the refusal says "this quote" on the
 --      no-invoice path (no word "invoice"), "this invoice" as before otherwise.
 --   2. Four owner tasks on the no-invoice path (final wording, no invoice number): set up seats
@@ -217,7 +218,8 @@ begin
   end if;
   select c.id, c.name, c.domain, c.allow_pay_later, c.credit_limit into v_cust
     from public.customers c where c.id = v_customer_id and c.tenant_id = v_tenant_id
-     for update;  -- R-2951: one activation per customer at a time, so two cannot both pass the credit limit
+     for no key update;  -- R-2951: one activation per customer at a time, so two cannot both pass the credit limit
+                         -- (NO KEY: an invoice row's foreign-key check on this customer is not blocked)
   if not found then
     raise exception 'Customer of quote % not found', p_quote_id using errcode = 'no_data_found';
   end if;
@@ -246,17 +248,19 @@ begin
   v_owed := v_owed + coalesce((select sum(r.still_due) from public.open_part_requests(v_customer_id, null) r
                                 where r.is_lead), 0)::int;
   /* R-2951: a quote activated WITHOUT a GST invoice (R-2950) is in no invoice, so count what it
-     still owes: the outstanding amount on its subscriptions (the first one filed carries the whole
-     quote; a payment lowers it). Once the quote has its invoice (invoice_id set) the invoice above
-     counts instead — never both. A part request (subscription_billing_id) is already in
-     open_part_requests. Same sum as lib/credit/activate-on-credit.ts uninvoicedCreditDues. */
-  select coalesce(sum(greatest(0, coalesce(s.outstanding_amount, 0))), 0)::int
+     still owes: quote_open_balance = quote amount − its received payments (the record_payment
+     rule; not the subscriptions' outstanding amount, which a bulk line never lowers). Fully paid
+     (received) and cancelled quotes owe nothing. Once the quote has its invoice (invoice_id set)
+     the invoice above counts instead — never both. A part request (subscription_billing_id) is
+     already in open_part_requests. Same sum as lib/credit/activate-on-credit.ts uninvoicedCreditDues. */
+  select coalesce(sum(public.quote_open_balance(q2.id)), 0)::int
     into v_r2951_uninvoiced
     from public.quotes q2
-    join public.subscriptions s on s.tenant_id = q2.tenant_id and s.quote_id = q2.id
    where q2.tenant_id = v_tenant_id and q2.customer_id = v_customer_id
      and q2.credit_activated_at is not null and q2.invoice_id is null
      and q2.subscription_billing_id is null
+     and q2.cancelled_at is null
+     and q2.payment_status is distinct from 'received'
      and q2.id <> p_quote_id;
   v_owed := v_owed + v_r2951_uninvoiced;
   -- An invoice already raised on this quote is inside v_owed; do not count it twice.

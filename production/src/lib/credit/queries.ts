@@ -23,29 +23,31 @@ import type { OpenPartRequest } from "@/lib/billing/part-request-dues";
 
 /**
  * R-2951: the customer's quotes activated on credit WITHOUT a GST invoice, as invoice-shaped rows
- * (uninvoicedCreditDues) — what they still owe sits on their subscriptions. [] when the database
- * has no credit columns yet.
+ * (uninvoicedCreditDues) — quote amount − received payments, as quote_open_balance in the
+ * database. [] when the database has no credit columns yet.
  */
 export async function fetchUninvoicedCreditDues(supabase: SupabaseClient, customerId: string): Promise<OpenInvoice[]> {
   const { data: quotes, error } = await supabase
     .from("quotes")
-    .select("id, invoice_id, credit_activated_at, subscription_billing_id")
+    .select("id, invoice_id, credit_activated_at, subscription_billing_id, amount, payment_status, cancelled_at")
     .eq("customer_id", customerId)
     .not("credit_activated_at", "is", null)
     .is("invoice_id", null)
-    .is("subscription_billing_id", null);
+    .is("subscription_billing_id", null)
+    .is("cancelled_at", null); // fully paid (received) is skipped in uninvoicedCreditDues (a NULL status still counts, as in SQL)
   if (error) {
     if (isMissingDbObject(error)) return [];
     throw error;
   }
   const qs = (quotes ?? []) as UninvoicedCreditQuote[];
   if (qs.length === 0) return [];
-  const { data: subs, error: subsError } = await supabase
-    .from("subscriptions")
-    .select("quote_id, outstanding_amount")
-    .in("quote_id", qs.map((q) => q.id));
-  if (subsError) throw subsError;
-  return uninvoicedCreditDues(qs, (subs ?? []) as { quote_id: string | null; outstanding_amount: number | null }[]);
+  const { data: pays, error: paysError } = await supabase
+    .from("payments")
+    .select("quote_id, amount")
+    .in("quote_id", qs.map((q) => q.id))
+    .eq("status", "received");
+  if (paysError) throw paysError;
+  return uninvoicedCreditDues(qs, (pays ?? []) as { quote_id: string | null; amount: number | null }[]);
 }
 
 /**

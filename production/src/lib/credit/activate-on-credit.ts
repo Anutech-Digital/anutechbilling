@@ -226,26 +226,34 @@ export interface UninvoicedCreditQuote {
   invoice_id: string | null;
   credit_activated_at: string | null;
   subscription_billing_id?: string | null;
+  /** Quote total, whole rupees. */
+  amount: number | null;
+  payment_status?: string | null;
+  cancelled_at?: string | null;
 }
 
 /**
- * R-2951: what the customer's quotes activated WITHOUT a GST invoice (R-2950) still owe — the
- * outstanding amount on their subscriptions — as invoice-shaped rows (id `quote:<id>`, status
- * pending), so every "owed" sum built on `owedOnInvoices` counts them. Same rule as the database
- * (activate_quote_on_credit, `v_r2951_uninvoiced`): credit_activated_at set, invoice_id empty, not a
- * part request (those are in open_part_requests). A quote with its invoice is left out — the invoice
- * counts instead, never both.
+ * R-2951: what the customer's quotes activated WITHOUT a GST invoice (R-2950) still owe — quote
+ * amount − its received payments (public.quote_open_balance, the record_payment rule; NOT the
+ * subscriptions' outstanding amount, which a bulk line never lowers) — as invoice-shaped rows (id
+ * `quote:<id>`, status pending), so every "owed" sum built on `owedOnInvoices` counts them. Same rule
+ * as the database (activate_quote_on_credit, `v_r2951_uninvoiced`): credit_activated_at set,
+ * invoice_id empty, not a part request (those are in open_part_requests), not cancelled, not fully
+ * paid (payment_status received). A quote with its invoice is left out — the invoice counts instead.
+ * `payments` = the quotes' payments with status received.
  */
 export function uninvoicedCreditDues(
   quotes: readonly UninvoicedCreditQuote[],
-  subscriptions: ReadonlyArray<{ quote_id: string | null; outstanding_amount: number | null }>,
+  payments: ReadonlyArray<{ quote_id: string | null; amount: number | null }>,
 ): OpenInvoice[] {
   const rows: OpenInvoice[] = [];
   for (const q of quotes) {
     if (!q.credit_activated_at || q.invoice_id || q.subscription_billing_id) continue;
-    const owed = subscriptions
-      .filter((s) => s.quote_id === q.id)
-      .reduce((sum, s) => sum + Math.max(0, Math.round(s.outstanding_amount ?? 0)), 0);
+    if (q.cancelled_at || q.payment_status === "received") continue;
+    const received = payments
+      .filter((p) => p.quote_id === q.id)
+      .reduce((sum, p) => sum + (p.amount ?? 0), 0);
+    const owed = Math.max(0, Math.round((q.amount ?? 0) - received));
     if (owed > 0) rows.push({ id: `quote:${q.id}`, status: "pending", amount: owed, net_payable: null, paid_amount: 0 });
   }
   return rows;
