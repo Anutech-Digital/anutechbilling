@@ -32,7 +32,7 @@ import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { IST_TZ } from "@/lib/dates/ist";
 import { buyIntentNote } from "@/app/api/public/checkout/workspace/buy-intent";
 import { buyIntentFields } from "@/app/api/public/checkout/workspace/buy-intent-schema";
-import { saveWebsiteLeadOnce } from "@/lib/leads/website-request-once";
+import { leadOnceArgs, readLeadOnce } from "@/lib/leads/website-request-once";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
@@ -118,9 +118,9 @@ export async function POST(request: NextRequest) {
     /* R-2968: the same domain / mobile / email asking again within 24 h joins the first request
        ("Asked again" in its notes) — no second lead, no second set of tasks, no second email.
        website_lead_once checks and inserts under one lock, so two clicks at once make one lead. */
-    const saved = await saveWebsiteLeadOnce(admin, BUY_PAGE_TENANT_ID, {
+    const saved = readLeadOnce(await admin.rpc("website_lead_once", leadOnceArgs(BUY_PAGE_TENANT_ID, {
       id:                leadId,
-      company:          companyName,
+      company:           companyName,
       contact_name:      fullName,
       contact_email:     email,
       contact_phone:     phone,
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
       notes,
       trial_started_at:  trialStartedAt.toISOString(),
       trial_expires_at:  trialExpiresAt.toISOString(),
-    });
+    })));
 
     if (!saved.ok) {
       console.error("[/api/public/trial/workspace] lead insert failed:", saved.error);

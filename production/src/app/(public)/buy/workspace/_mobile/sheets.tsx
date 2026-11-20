@@ -16,6 +16,7 @@ import { formConsent } from "@/lib/consent/data-notice";
 import { landingForForm } from "@/site/lib/ad-attribution";
 import { COMPANY, SLA, whatsappDisplay } from "@/site/lib/config";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { alreadyRequestedText } from "@/lib/leads/website-request-once";
 import { postJson, NOT_REACHED } from "../post-json";
 import { whatsappHref, type BuyBrand, type BuyContact } from "../_parts/brand";
 import { BUY_ANNUAL_NOTE, BUY_MONTHLY_NOTE } from "../buy-notes";
@@ -100,7 +101,7 @@ export function LeadSheet({ kind, prefill, tier, planName, seats, billing, inten
   const [optIn, setOptIn] = React.useState(false);
   const [tried, setTried] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [done, setDone] = React.useState(false);
+  const [done, setDone] = React.useState<false | "new" | "again">(false); // R-2968 "again" = joined an earlier request
   const [fail, setFail] = React.useState<string | null>(null);
   const digits = mobileDigits(v.phone);
   const errs = {
@@ -126,13 +127,13 @@ export function LeadSheet({ kind, prefill, tier, planName, seats, billing, inten
       ...(intent ? { intent } : {}), ...(domainMode ? { domainMode } : {}), ...(migrationSource ? { migrationSource } : {}), ...landingForForm(),
     };
     const r = kind === "quote"
-      ? await postJson<{ error: string }>("/api/public/enquiry/workspace", { ...common, seats, billing, ...formConsent("buy_quote", optIn) }, ts.headers)
-      : await postJson<{ error: string }>("/api/public/trial/workspace", { ...common, seats: Math.min(seats, 300), domain: v.domain.trim().toLowerCase(), ...formConsent("buy_trial", optIn) }, ts.headers);
+      ? await postJson<{ error: string; alreadyRequested: boolean }>("/api/public/enquiry/workspace", { ...common, seats, billing, ...formConsent("buy_quote", optIn) }, ts.headers)
+      : await postJson<{ error: string; alreadyRequested: boolean }>("/api/public/trial/workspace", { ...common, seats: Math.min(seats, 300), domain: v.domain.trim().toLowerCase(), ...formConsent("buy_trial", optIn) }, ts.headers);
     ts.reset();
     setBusy(false);
     if (!r.reached) { setFail(`${NOT_REACHED} Nothing was sent — check your internet and try again.`); return; }
     if (!r.ok || r.json.error) { setFail(`${r.json.error ?? "Could not send it."} Nothing was sent yet.`); return; }
-    setDone(true);
+    setDone(r.json.alreadyRequested ? "again" : "new");
   }
 
   const f = (k: keyof typeof v, label: string, extra: React.InputHTMLAttributes<HTMLInputElement>) => (
@@ -148,7 +149,7 @@ export function LeadSheet({ kind, prefill, tier, planName, seats, billing, inten
     <Sheet title={title} onClose={onClose}>
       {done ? (
         <div role="status" className="flex flex-col gap-3">
-          <p className="text-[15px] m-0">{kind === "quote" ? `Thanks! We'll call +91 ${digits} ${SLA.firstReply}.` : `Trial requested. We'll call +91 ${digits} ${SLA.firstReply} to set it up.`}</p>
+          <p className="text-[15px] m-0">{done === "again" ? alreadyRequestedText(kind === "quote" ? "quote" : "trial", SLA.firstReply) : kind === "quote" ? `Thanks! We'll call +91 ${digits} ${SLA.firstReply}.` : `Trial requested. We'll call +91 ${digits} ${SLA.firstReply} to set it up.`}</p>
           <button type="button" onClick={onClose} className={primaryBtn}>Done</button>
         </div>
       ) : (

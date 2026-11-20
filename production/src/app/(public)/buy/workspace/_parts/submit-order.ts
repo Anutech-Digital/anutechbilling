@@ -15,6 +15,7 @@ import { fbpCookie, metaConsent } from "@/site/lib/meta-pixel";
 import { consentAnonId } from "@/site/lib/consent";
 import { formConsent } from "@/lib/consent/data-notice";
 import { thanksUrl } from "../thanks/thanks-url";
+import { alreadyRequestedText } from "@/lib/leads/website-request-once";
 import { saveWorkspacePayment } from "../thanks/payment-handoff";
 import { buyerStateCode, domainValue, orderCompany, type BuyerDetails, type DomainChoice, type PayMethod } from "./checkout-form";
 import type { Billing, BuyPlan } from "./plans";
@@ -166,10 +167,12 @@ export async function startTrial(ctx: SubmitContext, retry: () => void): Promise
     phone: ctx.buyer.phone.trim(), seats: Math.min(ctx.seats, 300), domain: domainValue(ctx.domain), tierId: ctx.plan.id,
     message: ctx.domain.mode === "new" ? `New domain to register: ${domainValue(ctx.domain)}` : undefined,
   };
-  const r = await postJson<{ success: boolean; error: string }>("/api/public/trial/workspace", { ...values, ...landingForForm(), ...formConsent("buy_trial", ctx.marketingOptIn === true) }, ts.headers);
+  const r = await postJson<{ success: boolean; error: string; alreadyRequested: boolean }>("/api/public/trial/workspace", { ...values, ...landingForForm(), ...formConsent("buy_trial", ctx.marketingOptIn === true) }, ts.headers);
   ts.reset();
   if (!r.reached) { notReached("Your trial was not requested.", retry); return false; }
   if (!r.ok || r.json.error) { buyFail(r.json.error, "Could not start the trial.", "Your trial was not requested yet."); return false; }
+  /* R-2968: asked again within 24 h — the server joined it to the first request. */
+  if (r.json.alreadyRequested) { toast.success(alreadyRequestedText("trial", SLA.firstReply)); return true; }
   /* R-1116: the company answers, not one named person; WhatsApp only when the number is live. */
   toast.success(`Trial requested! Our team will ${WHATSAPP_READY ? "WhatsApp" : "call or email"} you ${SLA.firstReply}.`);
   return true;
@@ -186,10 +189,11 @@ export async function requestQuote(ctx: SubmitContext, retry: () => void): Promi
     phone: ctx.buyer.phone.trim(), seats: ctx.seats, tierId: ctx.plan.id, billing: ctx.billing, stateCode, state,
     message: domain ? `Domain: ${domain}${ctx.domain.mode === "new" ? " (new — please register it)" : ""}` : undefined,
   };
-  const r = await postJson<{ success: boolean; error: string }>("/api/public/enquiry/workspace", { ...values, ...landingForForm(), ...formConsent("buy_quote", ctx.marketingOptIn === true) }, ts.headers);
+  const r = await postJson<{ success: boolean; error: string; alreadyRequested: boolean }>("/api/public/enquiry/workspace", { ...values, ...landingForForm(), ...formConsent("buy_quote", ctx.marketingOptIn === true) }, ts.headers);
   ts.reset();
   if (!r.reached) { notReached("We did not receive your enquiry.", retry); return false; }
   if (!r.ok || r.json.error) { buyFail(r.json.error, "Could not send your enquiry.", "We did not receive it yet."); return false; }
+  if (r.json.alreadyRequested) { toast.success(alreadyRequestedText("quote", SLA.firstReply)); return true; } // R-2968
   toast.success(`Got it! We'll call you ${SLA.firstReply}.`);
   return true;
 }

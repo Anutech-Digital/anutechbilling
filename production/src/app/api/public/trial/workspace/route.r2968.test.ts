@@ -82,7 +82,7 @@ beforeEach(async () => {
   db.leads = []; db.tasks = []; db.rawLeadInserts = 0; db.emails = 0; db.now = Date.UTC(2026, 10, 20, 12, 30);
   vi.resetModules();
   ({ POST } = await import("./route"));
-});
+}, 60_000);
 afterEach(() => { process.env = { ...ENV }; });
 
 describe("R-2968 trial asked again joins the first request", { timeout: 60_000 }, () => {

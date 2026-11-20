@@ -182,10 +182,10 @@ export const PUBLIC_ADMIN_CLIENT: Record<string, PublicAdminEntry> = {
   },
   "enquiry/workspace/route.ts": {
     reason: "website Workspace enquiry: lead + draft quote + activity",
-    scope: `${WEBSITE}; Turnstile; insert + update of the lead it just made; R-2563 replace_trial_request only for an old lead named by a server-signed replace token (HMAC, same email + mobile, 24 h), this tenant only, never a sent quote`,
+    scope: `${WEBSITE}; Turnstile; insert + update of the lead it just made; R-2563 replace_trial_request only for an old lead named by a server-signed replace token (HMAC, same email + mobile, 24 h), this tenant only, never a sent quote; R-2968 website_lead_once inserts the lead or appends "Asked again" to this tenant's open identical request (same contact, plan, seats, value; 24 h)`,
     mustContain: ["websiteTenantId", "turnstileRefusalFor", "verifyReplaceTokens"],
     reads: {},
-    writes: ["leads", "quotes", "lead_activities", "next_document_number", "replace_trial_request"],
+    writes: ["leads", "quotes", "lead_activities", "next_document_number", "replace_trial_request", "website_lead_once"],
   },
   "expense-claim/manage/route.ts": {
     reason: "public expense-claim link: edit / delete a claim",
@@ -287,11 +287,11 @@ export const PUBLIC_ADMIN_CLIENT: Record<string, PublicAdminEntry> = {
     writes: ["leads", "tasks"],
   },
   "trial/workspace/route.ts": {
-    reason: "website trial request: inserts a lead + task",
-    scope: `${WEBSITE}; Turnstile; insert only`,
+    reason: "website trial request: inserts a lead (or joins the same contact's request, R-2968) + tasks",
+    scope: `${WEBSITE}; Turnstile; insert only — R-2968 website_lead_once inserts the lead or appends "Asked again" to this tenant's open request of the same form and contact (24 h)`,
     mustContain: ["websiteTenantId", "turnstileRefusalFor"],
     reads: {},
-    writes: ["leads", "tasks"],
+    writes: ["tasks", "website_lead_once"],
   },
   "privacy-request/route.ts": {
     reason: "R-2013 data-rights form: saves the unconfirmed request + the code's hash, reads the company name for the code email",

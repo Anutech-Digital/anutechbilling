@@ -62,6 +62,7 @@ import { buyIntentNote } from "@/app/api/public/checkout/workspace/buy-intent";
 import { buyIntentFields } from "@/app/api/public/checkout/workspace/buy-intent-schema";
 import { draftLeadRow, isDraftRequest, parseDraft } from "./draft-lead";
 import { signReplaceToken, verifyReplaceTokens } from "@/lib/leads/replace-trial-request";
+import { leadOnceArgs, readLeadOnce } from "@/lib/leads/website-request-once";
 
 /** replace_trial_request (R-2563) is newer than database.generated.ts. */
 type ReplaceRpc = { rpc: (fn: "replace_trial_request", args: Record<string, unknown>) => PromiseLike<{ error: { message?: string } | null }> };
@@ -194,10 +195,12 @@ export async function POST(request: NextRequest) {
       message ? `Message: ${message}` : null,
     ].filter(Boolean).join("\n");
 
-    const { error: leadErr } = await admin.from("leads").insert({
+    /* R-2968: the same mobile / email sending the SAME request (plan, seats, price) again within
+       24 h joins the first one ("Asked again" in its notes) — no second lead, quote, alert or email.
+       A changed request (other plan / seats / billing) is a new quote, so it still makes a new lead. */
+    const saved = readLeadOnce(await admin.rpc("website_lead_once", leadOnceArgs(tenantId, {
       id:            leadId,
-      tenant_id:     tenantId,
-      company:       companyName,
+      company:      companyName,
       contact_name:  fullName,
       contact_email: email,
       contact_phone: phone,
@@ -214,18 +217,25 @@ export async function POST(request: NextRequest) {
       // (R-166) and generate_invoice refuses until it is set. The name comes from the code (R-174).
       state_code:    stateCode ?? null,
       state:         stateCode ? GST_STATE_BY_CODE[stateCode] : (state ?? null),
-    });
+    }, { matchOffer: true })));
 
-    if (leadErr) {
-      console.error("[/api/public/enquiry/workspace] lead insert failed:", leadErr);
+    if (!saved.ok) {
+      console.error("[/api/public/enquiry/workspace] lead insert failed:", saved.error);
       return NextResponse.json(
         { error: "Could not save your enquiry. Please call us directly." },
         { status: 500 },
       );
     }
 
-    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
-    await recordFormConsent(admin, { tenantId, leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
+    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead
+       (R-2968: the first request's lead when this one joined it — the latest answer counts). */
+    await recordFormConsent(admin, { tenantId, leadId: saved.leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
+
+    if (saved.joined) {
+      /* A trial form still gets a replace token — for the request it joined. */
+      const replaceToken = trial ? signReplaceToken({ tenantId, leadId: saved.leadId, contact: { email, phone } }) : null;
+      return NextResponse.json({ success: true, leadId: saved.leadId, alreadyRequested: true, replaceToken });
+    }
 
     /* In-app khabar (audit B4) — lead COMMIT ke baad, best-effort. */
     await notifyTenantOwners({
