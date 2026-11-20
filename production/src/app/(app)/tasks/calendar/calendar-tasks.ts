@@ -15,13 +15,15 @@ type TasksDb = Pick<ReturnType<typeof createClient>, "from">;
 export const calendarTasksKey = (tenantId: string | null | undefined, month: string) =>
   ["tasks", "calendar", tenantId, month] as const;
 
-/** Every task (open or done, not cancelled) due in the visible grid — all pages, one tenant. */
+/** Every task (open or done, not cancelled) due in the visible grid — all pages, one tenant.
+ *  R-2957: not a goal row — its sub-tasks are the work and sit on their own due days. */
 export async function fetchCalendarTasks(supabase: TasksDb, tenantId: string, month: string): Promise<TaskWithLink[]> {
   const { fromISO, toISO } = gridRangeUtc(month);
   return fetchAllRows<TaskWithLink>((from, to) => supabase
     .from("tasks")
     .select(TASK_SELECT)
     .eq("tenant_id", tenantId)
+    .eq("is_goal", false)
     .neq("status", "cancelled")
     .gte("due_at", fromISO)
     .lt("due_at", toISO)

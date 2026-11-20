@@ -15,6 +15,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Database, Task } from "@/lib/supabase/database.types";
 import { snoozeByMinutes, snoozedMessage } from "@/lib/tasks/snooze";
 import type { TaskProgress } from "@/components/features/tasks/task-progress";
+import { goalsWithSubTasks, type GoalWithSubTasks } from "@/components/features/tasks/task-goals";
 
 type TaskInsert = Database["public"]["Tables"]["tasks"]["Insert"];
 type TaskUpdate = Database["public"]["Tables"]["tasks"]["Update"];
@@ -75,7 +76,7 @@ export function useTasks(bucket: TaskBucket = "all", opts: { enabled?: boolean }
       const supabase = createClient();
       // Embed the linked entity's display name (lead company / customer name /
       // quote customer) so the list can show who each task is about.
-      let q = supabase.from("tasks").select(TASK_SELECT);
+      let q = supabase.from("tasks").select(TASK_SELECT).eq("is_goal", false);
 
       const { startISO, endISO } = todayBoundariesIST();
 
@@ -111,7 +112,7 @@ export function useTasks(bucket: TaskBucket = "all", opts: { enabled?: boolean }
  * the 100 most recently completed, with the linked lead / customer contact embedded
  * (TASK_SELECT). Grouped into Overdue / Today / Upcoming / Done on the client by IST day
  * (components/features/tasks/task-groups.ts) — replaces five per-tab queries. Filtered by
- * tenant explicitly as well as by RLS.
+ * tenant explicitly as well as by RLS. R-2957: goal rows are not in it (fetchGoalRows reads them).
  */
 export const DONE_TASKS_SHOWN = 100;
 /** Open = still to do. The /tasks read and nav_badges().tasks (R-1541, the Overdue count) use
@@ -139,7 +140,7 @@ export function useBellTasks(
     placeholderData: keepPreviousData,
     queryFn: async (): Promise<TaskWithLink[]> => {
       const supabase = createClient();
-      let q = supabase.from("tasks").select(TASK_SELECT).in("status", [...TASK_OPEN_STATUSES]).lt("due_at", endISO);
+      let q = supabase.from("tasks").select(TASK_SELECT).eq("is_goal", false).in("status", [...TASK_OPEN_STATUSES]).lt("due_at", endISO);
       if (!scope.team && scope.userId) {
         q = scope.unassigned
           ? q.or(`owner_id.eq.${scope.userId},owner_id.is.null`)
@@ -170,6 +171,7 @@ export async function fetchTaskList(supabase: TasksDb, tenantId: string): Promis
       .from("tasks")
       .select(TASK_SELECT)
       .eq("tenant_id", tenantId)
+      .eq("is_goal", false)
       .in("status", [...TASK_OPEN_STATUSES])
       .order("due_at", { ascending: true })
       .order("id", { ascending: true })
@@ -178,12 +180,49 @@ export async function fetchTaskList(supabase: TasksDb, tenantId: string): Promis
       .from("tasks")
       .select(TASK_SELECT)
       .eq("tenant_id", tenantId)
+      .eq("is_goal", false)
       .eq("status", "done")
       .order("completed_at", { ascending: false, nullsFirst: false })
       .limit(DONE_TASKS_SHOWN),
   ]);
   if (done.error) throw done.error;
   return [...open, ...((done.data ?? []) as unknown as TaskWithLink[])];
+}
+
+/**
+ * R-2957 — a goal is a task with sub-tasks (tasks.is_goal / tasks.parent_task_id). Every read
+ * above that lists or counts WORK leaves the goal row out (is_goal = false): its
+ * sub-tasks are the work and are read like any task. This is the read FOR goals: every goal of
+ * the company and every sub-task, in one request set (pages of 1000, never a request per goal
+ * or per row). goalsWithSubTasks() turns the rows into goals with their sub-tasks and
+ * "N of M done"; goalTitleBySubTask() gives a sub-task its goal's title (task-goals.ts).
+ * Under ["tasks", …], so every task mutation refreshes it. No screen uses it yet (R-2958).
+ */
+export const GOAL_ROWS_FILTER = "is_goal.eq.true,parent_task_id.not.is.null";
+
+export async function fetchGoalRows(supabase: TasksDb, tenantId: string): Promise<TaskWithLink[]> {
+  return fetchAllRows<TaskWithLink>((from, to) => supabase
+    .from("tasks")
+    .select(TASK_SELECT)
+    .eq("tenant_id", tenantId)
+    .or(GOAL_ROWS_FILTER)
+    .order("due_at", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to) as unknown as PromiseLike<PageResponse<TaskWithLink>>);
+}
+
+export const goalsKey = (tenantId: string | null | undefined) => ["tasks", "goals", tenantId] as const;
+
+/** The company's goals with their sub-tasks and progress. `rows` is the flat list, for goalTitleBySubTask. */
+export function useGoals(tenantId: string | null | undefined) {
+  return useQuery({
+    queryKey: goalsKey(tenantId),
+    enabled: !!tenantId,
+    queryFn: async (): Promise<{ rows: TaskWithLink[]; goals: GoalWithSubTasks<TaskWithLink>[] }> => {
+      const rows = await fetchGoalRows(createClient(), tenantId!);
+      return { rows, goals: goalsWithSubTasks(rows) };
+    },
+  });
 }
 
 /**
@@ -206,6 +245,7 @@ export function useOpenTasksForLeads(leadIds: readonly string[]) {
         .from("tasks")
         .select("id, lead_id, status, due_at")
         .in("lead_id", chunkIds)
+        .eq("is_goal", false)
         .in("status", ["pending", "snoozed"])
         .order("id", { ascending: true })
         .range(from, to));
@@ -227,6 +267,7 @@ export function useTasksForLead(leadId: string | null | undefined) {
         .from("tasks")
         .select("*")
         .eq("lead_id", leadId!)
+        .eq("is_goal", false)
         .neq("status", "cancelled")
         .order("due_at", { ascending: true });
       if (error) throw error;

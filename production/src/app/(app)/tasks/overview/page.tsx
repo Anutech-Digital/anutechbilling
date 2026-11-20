@@ -84,7 +84,7 @@ export default function TasksOverviewPage() {
     enabled: !!me?.tenantId,
     queryFn: async (): Promise<number> => {
       const { count, error } = await createClient().from("tasks").select("id", { count: "exact", head: true })
-        .eq("tenant_id", me!.tenantId).eq("status", "done")
+        .eq("tenant_id", me!.tenantId).eq("status", "done").eq("is_goal", false)
         .gte("completed_at", istDayStartUtc(week.start).toISOString())
         .lt("completed_at", istDayStartUtc(addDaysISO(week.end, 1)).toISOString());
       if (error) throw error;

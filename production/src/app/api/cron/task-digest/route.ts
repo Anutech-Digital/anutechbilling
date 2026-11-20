@@ -168,6 +168,7 @@ async function handle(req: Request) {
   const taskPage = (ids: string[] | null) => (from: number, to: number) => {
     let q = db.from("tasks")
       .select("id, tenant_id, owner_id, title, due_at")
+      .eq("is_goal", false) // R-2957: a goal's sub-tasks are the work, not the goal row
       .not("status", "in", closedStatusFilter())
       .lt("due_at", dayEnd);
     if (ids) q = q.in("tenant_id", ids);

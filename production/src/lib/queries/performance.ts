@@ -139,6 +139,7 @@ export async function fetchPerformanceInputs(supabase: SupabaseClient<Database>,
       .eq("status", "received").gte("received_at", start).lt("received_at", end)
       .order("id", { ascending: true }).range(from, to)),
     fetchAllRows((from, to) => supabase.from("tasks").select("owner_id, status, due_at, completed_at")
+      .eq("is_goal", false) // R-2957: points are for the sub-tasks, never for the goal row too
       .eq("status", "done").gte("completed_at", start).lt("completed_at", end)
       .order("id", { ascending: true }).range(from, to)),
     fetchAllRows((from, to) => supabase.from("users").select("id, employee_id")
