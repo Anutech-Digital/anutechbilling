@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /* R-2942 — on a 1280 px screen the one-line task row cut names short ("Set up seats (DNS, users)
    · T…": 212 px for a name that needs 254) while the type word ("Task", "Follow-up") sat beside
-   it and the due column kept 17 px it never used. From 1280 to 1535 px the type word leaves the
-   line — the icon carries it (hover text; still read out by a screen reader) — and the due
-   column is as wide as its longest words. jsdom has no layout, so this pins the classes; the
+   it. From 1280 to 1535 px the type word leaves the line — the icon carries it (hover text; still
+   read out by a screen reader; written out in the opened row) — and the columns sit 6px apart.
+   A name still too long for the line shows whole on a click. jsdom has no layout, so this pins the classes; the
    real widths are measured by the card test (e2e/cards/R-2942.spec.ts). */
 import * as React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -78,12 +78,19 @@ describe("R-2942 the one-line row gives the name the spare room at 1280", () => 
     expect(classes(row.firstElementChild!)).toEqual(expect.arrayContaining(["gap-x-2", "xl:gap-x-1.5"]));
   });
 
-  it("the due column is 124 px at 1280 — room for 'Overdue by 120 days', no more", () => {
+  it("the opened row writes the type out where the word is off the line (a touch screen has no hover)", () => {
+    const row = renderRow(task({ kind: "meeting" }));
+    expect(within(row).queryByTestId("task-type-in-detail")).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Set up seats (DNS, users) · T-L6-19Oct" }));
+    const typed = within(row).getByTestId("task-type-in-detail");
+    expect(typed.textContent).toBe("Type: Meeting");
+    // Only from 1280 to 1535 px — below and above that the word is on the line itself.
+    expect(classes(typed)).toEqual(expect.arrayContaining(["hidden", "xl:inline", "2xl:hidden"]));
+  });
+
+  it("the due column keeps its 132 px (room for 'Overdue by 120 days' in any font)", () => {
     const row = renderRow(task());
-    const due = within(row).getByText("Overdue by 3 days");
-    expect(classes(due)).toContain("xl:w-[124px]");
-    expect(classes(due)).not.toContain("xl:w-[132px]");
-    expect(due.getAttribute("title")).toContain("Overdue by 3 days");
+    expect(classes(within(row).getByText("Overdue by 3 days"))).toContain("xl:w-[132px]");
   });
 
   it("Comfortable is untouched: the type word shows as before", () => {

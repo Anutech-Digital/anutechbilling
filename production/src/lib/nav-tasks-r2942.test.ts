@@ -54,10 +54,10 @@ describe("R-2942 sidebarAppForPath — the Team tab does not switch the sidebar 
     }
   });
 
-  it("a tab of a row that sits IN an app shows that app", () => {
+  it("a role without the Tasks row is not affected (the page answers as before)", () => {
     const model = buildSidebarApps("owner");
-    const inSales = { ...model, pinned: model.pinned.filter((p) => p.id !== "tasks"), apps: model.apps.map((a) => a.id === "sales" ? { ...a, items: [...a.items, model.pinned.find((p) => p.id === "tasks")!] } : a) };
-    expect(sidebarAppForPath(inSales, "/reports/team-tasks")).toBe("sales");
+    const noTasks = { ...model, pinned: model.pinned.filter((p) => p.id !== "tasks") };
+    expect(sidebarAppForPath(noTasks, "/reports/team-tasks")).toBe("accounts");
   });
 
   it("nothing else about the page changes: guard, Ctrl+K group and breadcrumb", () => {

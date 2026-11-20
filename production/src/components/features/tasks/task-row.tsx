@@ -309,7 +309,8 @@ export function TaskRow({ task, onEdit, assignee, meId, collaborators, density =
 
           {/* Name — a click opens the rest of the task under the line. */}
           <div className="flex items-center gap-1.5 min-w-0 flex-1 basis-[70%] xl:basis-0">
-            {/* R-2942: the hover text names the type — from 1280 to 1535 px its word is off the line. */}
+            {/* R-2942: the hover text names the type — from 1280 to 1535 px its word is off the line
+                (and in the opened row below, for a touch screen with no hover). */}
             <span className="text-sm leading-none shrink-0" aria-hidden="true" title={kindMeta.label}>{kindMeta.icon}</span>
             <button
               type="button"
@@ -386,8 +387,7 @@ export function TaskRow({ task, onEdit, assignee, meId, collaborators, density =
           <span
             title={`${dueWords.text} — ${dueWords.full}`}
             className={cn(
-              /* R-2942: 124px holds "Overdue by 120 days" (measured 122px); the 8px saved go to the name. */
-              "shrink-0 xl:w-[124px] truncate text-xs tabular-nums",
+              "shrink-0 xl:w-[132px] truncate text-xs tabular-nums",
               dueWords.tone === "overdue" ? "text-rose-ink font-medium" :
               dueWords.tone === "done"    ? "text-ink-3" :
                                             "text-ink-2",
@@ -402,6 +402,8 @@ export function TaskRow({ task, onEdit, assignee, meId, collaborators, density =
         {detailOpen && (
           <div id={detailId} className="pb-2.5 pl-8 xl:pl-7 text-[12px]">
             <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-ink-2">
+              {/* R-2942: where the type word is off the line (1280–1535 px) the opened row says it. */}
+              <span className="hidden xl:inline 2xl:hidden" data-testid="task-type-in-detail">Type: {kindMeta.label}</span>
               <span className="tabular-nums">{dueWords.full}</span>
               {task.snooze_count > 0 && <span className="text-ink-3">snoozed {task.snooze_count}×</span>}
               {lastReminded && !isDone && <span className="text-ink-3">{lastReminded}</span>}

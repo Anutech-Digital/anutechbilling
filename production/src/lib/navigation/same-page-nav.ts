@@ -51,3 +51,15 @@ export function onSamePageNav(listener: () => void): () => void {
   window.addEventListener(EVENT, listener);
   return () => window.removeEventListener(EVENT, listener);
 }
+
+/** What every URL hook listens to, in one call: Back / Forward (popstate) and a navigation to
+ *  the bare address of the page already showing. Returns the function that stops both. */
+export function onAddressChange(read: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener("popstate", read);
+  const offNav = onSamePageNav(read);
+  return () => {
+    window.removeEventListener("popstate", read);
+    offNav();
+  };
+}

@@ -152,9 +152,8 @@ export function appForPath(model: SidebarModel, pathname: string): string | null
  */
 export function sidebarAppForPath(model: SidebarModel, pathname: string): string | null {
   const owner = tabOwnerOf(pathname);
-  if (!owner) return appForPath(model, pathname);
-  if (model.pinned.some((p) => p.id === owner)) return null;
-  return model.apps.find((a) => a.items.some((i) => i.id === owner))?.id ?? appForPath(model, pathname);
+  if (owner && model.pinned.some((p) => p.id === owner)) return null;
+  return appForPath(model, pathname);
 }
 
 /**
