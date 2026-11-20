@@ -118,9 +118,9 @@ export function assertColumn(table: McpReadTable, column: string): void {
   if (SECRET_NAME.test(column) && !table.startsWith("mcp_")) throw new McpDbRefused(`${table}.${column} looks like a credential`);
 }
 
-/** Plain text for an ilike search: letters, digits, space and . @ - _ only (no PostgREST syntax). */
+/** Plain text for an ilike search: letters, digits, space and . @ - only (no PostgREST syntax, no LIKE wildcards). */
 export function searchText(raw: string): string {
-  return raw.normalize("NFKC").replace(/[^\p{L}\p{N} @._-]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  return raw.normalize("NFKC").replace(/[^\p{L}\p{N} @.-]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
 export interface McpQuery<Row> extends PromiseLike<McpResult<Row[]>> {
