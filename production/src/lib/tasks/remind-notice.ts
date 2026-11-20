@@ -28,11 +28,15 @@ export function whyNoReminder(input: {
   return null;
 }
 
-/** R-2941: the bell notice could not be written — nothing was sent and the hour was given back. */
+/** R-2941: neither the bell notice nor the email went — nothing was sent and the hour was given back. */
 export const NOTICE_NOT_SENT = "notice not sent";
+/** R-2941: nothing was sent AND the hour could not be given back (the database did not answer). */
+export const NOTICE_NOT_SENT_HOUR_KEPT = "notice not sent, hour kept";
 
 /** What the person who pressed Remind reads when nothing was sent (§24: what happened + what now). */
-export function noReminderMessage(reason: NoReminderReason | "task not found" | typeof NOTICE_NOT_SENT, lastFollowupAt?: string | null): string {
+export function noReminderMessage(
+  reason: NoReminderReason | "task not found" | typeof NOTICE_NOT_SENT | typeof NOTICE_NOT_SENT_HOUR_KEPT, lastFollowupAt?: string | null,
+): string {
   switch (reason) {
     case "reminded recently": {
       const next = lastFollowupAt ? formatDueIST(new Date(Date.parse(lastFollowupAt) + REMIND_GAP_MS).toISOString()) : null;
@@ -46,6 +50,7 @@ export function noReminderMessage(reason: NoReminderReason | "task not found" | 
     case "owner not in this company": return "The person this task is assigned to is no longer active — assign it to someone else (Edit task).";
     case "task not found": return "This task no longer exists — refresh the page.";
     case NOTICE_NOT_SENT: return "The reminder could not be sent just now — nothing went out. Press Remind again.";
+    case NOTICE_NOT_SENT_HOUR_KEPT: return "The reminder could not be sent just now — nothing went out. Tell them directly; Remind for this task opens again in an hour.";
   }
 }
 

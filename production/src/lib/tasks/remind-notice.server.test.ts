@@ -156,10 +156,10 @@ describe("R-2928 sendTaskReminder", () => {
 });
 
 describe("R-2941 a reminder that could not be sent is not lost for an hour", () => {
-  it("the bell notice is not written: nothing is emailed, the stamp is put back, and Remind works again at once", async () => {
+  it("neither the bell notice nor the email goes: the stamp is put back, and Remind works again at once", async () => {
     notifyPeople.mockResolvedValueOnce(0);
+    sendInternalEmail.mockRejectedValueOnce(new Error("smtp down"));
     expect(await run()).toEqual({ reminded: false, emailed: false, reason: "notice not sent", lastFollowupAt: null });
-    expect(sendInternalEmail).not.toHaveBeenCalled();
     expect(db.tasks[0]).toMatchObject({ last_followup_at: null, followup_count: 0 });
 
     // The next press (a second later) goes through — the hour was given back.
@@ -172,18 +172,33 @@ describe("R-2941 a reminder that could not be sent is not lost for an hour", () 
     const before = new Date(NOW.getTime() - 2 * 60 * 60_000).toISOString();
     db.tasks[0].last_followup_at = before; db.tasks[0].followup_count = 3;
     notifyPeople.mockResolvedValueOnce(0);
+    sendInternalEmail.mockResolvedValueOnce({ status: "failed", providerId: "", errorMessage: "No email provider is configured", provider: "stub" });
     expect(await run()).toMatchObject({ reminded: false, reason: "notice not sent", lastFollowupAt: before });
     expect(db.tasks[0]).toMatchObject({ last_followup_at: before, followup_count: 3 });
   });
 
-  it("a stamp that is no longer ours is left alone (someone's later reminder keeps its own)", async () => {
+  it("the bell notice is not written but the email goes: they were reminded — the stamp stays (as before R-2941)", async () => {
+    notifyPeople.mockResolvedValueOnce(0);
+    expect(await run()).toEqual({ reminded: true, emailed: true, lastFollowupAt: NOW.toISOString() });
+    expect(db.tasks[0]).toMatchObject({ last_followup_at: NOW.toISOString(), followup_count: 1 });
+  });
+
+  it("an owner with no email address and no bell notice: nothing went, the stamp is put back", async () => {
+    db.users[1].email = null;
+    notifyPeople.mockResolvedValueOnce(0);
+    expect(await run()).toMatchObject({ reminded: false, reason: "notice not sent" });
+    expect(db.tasks[0]).toMatchObject({ last_followup_at: null, followup_count: 0 });
+  });
+
+  it("a stamp that is no longer ours is left alone, and the message does not promise a retry", async () => {
+    sendInternalEmail.mockRejectedValueOnce(new Error("smtp down"));
     const theirs = new Date(NOW.getTime() + 5000).toISOString();
     notifyPeople.mockImplementationOnce(async () => {
       db.tasks[0].last_followup_at = theirs; db.tasks[0].followup_count = 2;
       return 0;
     });
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await run()).toMatchObject({ reminded: false, reason: "notice not sent" });
+    expect(await run()).toMatchObject({ reminded: false, reason: "notice not sent, hour kept" });
     expect(db.tasks[0]).toMatchObject({ last_followup_at: theirs, followup_count: 2 });
     expect(logged).toHaveBeenCalledWith(expect.stringContaining("could not be put back"), "stamp no longer ours");
     logged.mockRestore();

@@ -10,6 +10,10 @@ export const MAX_TASK_COLLABORATORS = 3;
 export const TOO_MANY_COLLABORATORS =
   `A task can have up to ${MAX_TASK_COLLABORATORS} people working with its owner — remove one to add another.`;
 
+/** A person picked who is not (any more) an active member of this company. */
+export const NOT_AN_ACTIVE_MEMBER =
+  "One of the people picked is not an active member of your team — refresh the page and pick again.";
+
 /**
  * The list to save: no blanks, nobody twice, never the task's owner (they already have the task),
  * only active members of this company. More than the limit is an error, not a silent cut.
@@ -23,7 +27,7 @@ export function cleanCollaborators(input: {
   for (const raw of input.userIds) {
     const id = raw?.trim();
     if (!id || id === input.ownerId) continue;
-    if (!input.activeMemberIds.has(id)) return { ok: false, error: "One of the people picked is not an active member of your team — refresh the page and pick again." };
+    if (!input.activeMemberIds.has(id)) return { ok: false, error: NOT_AN_ACTIVE_MEMBER };
     seen.add(id);
   }
   if (seen.size > MAX_TASK_COLLABORATORS) return { ok: false, error: TOO_MANY_COLLABORATORS };

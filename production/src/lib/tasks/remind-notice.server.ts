@@ -9,10 +9,10 @@
  * the task id. Once per task per hour (whyNoReminder); the stamp is taken BEFORE anything is
  * sent, on the value that was read, so two presses at the same moment send one reminder.
  *
- * R-2941: if the bell notice then cannot be written, the stamp is put back (only if it is still
- * ours) and the caller is told nothing went out — the reminder is not lost for an hour. The two
- * columns are written with the service client only: the database refuses them to an app session
- * (trigger tasks_followup_guard).
+ * R-2941: if NEITHER the bell notice nor the email went, the stamp is put back (only if it is
+ * still ours) and the caller is told nothing went out — the reminder is not lost for an hour.
+ * The two columns are written with the service client only: the database refuses them to a
+ * direct request login (trigger tasks_followup_guard).
  */
 import "server-only";
 import { createAdminClient, type createClient } from "@/lib/supabase/server";
@@ -21,13 +21,13 @@ import { notifyPeople } from "@/lib/notifications/notify.server";
 import { appUrl } from "@/lib/app-url";
 import { mayOpenPage } from "@/lib/api/with-route";
 import { relatedOf, type AssignedTask } from "./assign-notice";
-import { NOTICE_NOT_SENT, remindEmail, remindNotification, whyNoReminder, type NoReminderReason } from "./remind-notice";
+import { NOTICE_NOT_SENT, NOTICE_NOT_SENT_HOUR_KEPT, remindEmail, remindNotification, whyNoReminder, type NoReminderReason } from "./remind-notice";
 
 export interface RemindResult {
   reminded: boolean;
   emailed: boolean;
   /** Why nothing was sent — for the message the person reads, the log and tests. */
-  reason?: NoReminderReason | "task not found" | typeof NOTICE_NOT_SENT;
+  reason?: NoReminderReason | "task not found" | typeof NOTICE_NOT_SENT | typeof NOTICE_NOT_SENT_HOUR_KEPT;
   /** When this task was last reminded (now, after a reminder that went). */
   lastFollowupAt?: string | null;
 }
@@ -93,18 +93,8 @@ export async function sendTaskReminder(
   const n = remindNotification({ task, actorName, canOpenTasks });
   // notifyPeople never throws; 0 = the notice was not written (it logged why).
   const written = await notifyPeople({ tenantId, kind: n.kind, title: n.title, body: n.body, href: n.href, entityId: n.entityId }, { userIds: [assignee.id] });
-  if (!written) {
-    // Give the hour back — only if the stamp is still ours (a later reminder keeps its own).
-    const { data: undone, error: undoErr } = await admin.from("tasks")
-      .update(before)
-      .eq("id", task.id).eq("tenant_id", tenantId).eq("last_followup_at", stampedAt).select("id");
-    if (undoErr || !undone?.length) {
-      console.error("[tasks/remind] notice not written and the stamp could not be put back:", undoErr?.message ?? "stamp no longer ours");
-    }
-    return { reminded: false, emailed: false, reason: NOTICE_NOT_SENT, lastFollowupAt: before.last_followup_at };
-  }
 
-  // The email is best effort: the bell notice is written and the task is stamped.
+  // The email is best effort — and it still goes when the bell notice could not be written.
   let emailed = false;
   if (assignee.email) {
     try {
@@ -129,5 +119,15 @@ export async function sendTaskReminder(
       console.error("[tasks/remind] email crashed:", (e as Error).message);
     }
   }
-  return { reminded: true, emailed, lastFollowupAt: stampedAt };
+  if (written || emailed) return { reminded: true, emailed, lastFollowupAt: stampedAt };
+
+  // R-2941: nothing reached them. Give the hour back — only if the stamp is still ours (a later
+  // reminder keeps its own) — so the person can press Remind again at once.
+  const { data: undone, error: undoErr } = await admin.from("tasks")
+    .update(before).eq("id", task.id).eq("tenant_id", tenantId).eq("last_followup_at", stampedAt).select("id");
+  if (undoErr || !undone?.length) {
+    console.error("[tasks/remind] nothing was sent and the stamp could not be put back:", undoErr?.message ?? "stamp no longer ours");
+    return { reminded: false, emailed: false, reason: NOTICE_NOT_SENT_HOUR_KEPT, lastFollowupAt: stampedAt };
+  }
+  return { reminded: false, emailed: false, reason: NOTICE_NOT_SENT, lastFollowupAt: before.last_followup_at };
 }

@@ -98,7 +98,7 @@ test.describe("R-2941 database guards for 'Working with' and Remind", () => {
           begin
             insert into public.task_collaborators (tenant_id, task_id, user_id)
             select t.tenant_id, t.id, u.id from public.tasks t join public.users u on u.tenant_id = t.tenant_id
-             where t.id = ${ADDED_TASK_SQL} and u.id <> coalesce(t.owner_id, t.id)
+             where t.id = ${ADDED_TASK_SQL} and u.is_active is not false and u.id <> coalesce(t.owner_id, t.id)
                and not exists (select 1 from public.task_collaborators c where c.task_id = t.id and c.user_id = u.id)
              limit 1;
           exception when others then v_msg := sqlerrm;

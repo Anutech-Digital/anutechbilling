@@ -3,25 +3,31 @@
 --
 -- THE CASES (each FAILS LOUDLY — the file is self-asserting; every refusal must carry the
 -- guard's OWN message, so a refusal by RLS / a foreign key does not pass for the wrong reason)
---   0. Shape: both trigger functions + triggers exist and are enabled, SECURITY DEFINER,
---      search_path '', RLS still on for task_collaborators, anon has no rights on it.
+--   0. Shape: both trigger functions + triggers exist and are enabled, SECURITY INVOKER (they
+--      ask public.is_direct_request_login(), which reads current_user — R-2485), search_path '';
+--      RLS still on for task_collaborators, anon has no rights on it, the link check is there.
 --   1. Own company, own task, own teammates: 3 collaborators go in (the route's path).
 --   2. A 4th collaborator by direct insert is refused; a single INSERT of 4 rows is refused
 --      whole; a swap at the limit (delete one, add one) works; re-adding the same person hits
 --      the unique rule, not the limit.
 --   3. No "does this uuid exist" oracle: another company's task, another company's user, a task
---      that does not exist and a user that does not exist all get the SAME message; a row for
---      another company's tenant_id is refused before anything is looked up.
+--      that does not exist and a user that does not exist all get the SAME message and
+--      SQLSTATE — also when the row names the other company's tenant_id. A deactivated person
+--      of the own company is refused the same way.
 --   4. Remind columns: a normal user cannot reset last_followup_at, cannot change
 --      followup_count, cannot plant them on a new task (the insert keeps "never reminded");
 --      the same user CAN still edit the title. The server path (service_role) can stamp and
 --      roll back.
 --   5. The server path is held to the invariants too: service_role cannot add a 4th person or
 --      a person of another company.
+--   7. Updates: moving a row to another company's person is refused; the foreign key's own
+--      "added_by → NULL" when the adder's user row is deleted is NOT refused — even for a task
+--      whose collaborator was deactivated meanwhile.
 --
--- NOT PROVEN HERE: two sessions inserting at the same moment. This file is one transaction, so
--- it cannot run two sessions; case 6 proves the guard holds the row lock on the task (mode
--- "For No Key Update") that makes a second session wait and then count the first one's row.
+-- TWO SESSIONS AT THE SAME MOMENT: this file is one transaction, so it cannot run two sessions;
+-- case 6 proves the guard holds the row lock on the task (mode "For No Key Update") that makes
+-- a second session wait. The real two-session run is scripts/dev/r2941-concurrency-check.mjs
+-- (local scratch database: 3 rows with the guard, 4 with its lock line removed).
 --
 -- SAFETY: synthetic tenants + identities, one transaction ending in ROLLBACK.
 
@@ -39,8 +45,8 @@ begin
       raise exception 'FAIL 0: % does not exist — migration not applied', v_sig;
     end if;
     select p.prosecdef, p.proconfig into v_p from pg_proc p where p.oid = to_regprocedure(v_sig);
-    if not v_p.prosecdef or not ('search_path=""' = any (v_p.proconfig)) then
-      raise exception 'FAIL 0: % must be SECURITY DEFINER with search_path '''' (got %, %)', v_sig, v_p.prosecdef, v_p.proconfig;
+    if v_p.prosecdef or not ('search_path=""' = any (v_p.proconfig)) then
+      raise exception 'FAIL 0: % must be SECURITY INVOKER with search_path '''' (got definer %, %)', v_sig, v_p.prosecdef, v_p.proconfig;
     end if;
   end loop;
   for v_t in select * from (values
@@ -52,6 +58,12 @@ begin
   end loop;
   if not (select relrowsecurity from pg_class where oid = to_regclass('public.task_collaborators')) then
     raise exception 'FAIL 0: RLS is off on task_collaborators';
+  end if;
+  if not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.tasks_followup_guard()') and p.prosrc like '%public.is_direct_request_login()%') then
+    raise exception 'FAIL 0: tasks_followup_guard must ask public.is_direct_request_login() (R-2485), not keep its own role list';
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'tasks_link_url_check' and conrelid = to_regclass('public.tasks')) then
+    raise exception 'FAIL 0: tasks_link_url_check (R-2933) is missing';
   end if;
   if has_table_privilege('anon', 'public.task_collaborators', 'select')
      or has_table_privilege('anon', 'public.task_collaborators', 'insert') then
@@ -66,6 +78,8 @@ insert into auth.users (id, email) values
   ('c2941000-0000-0000-0000-0000000000a3', 'r2941-p3@example.test'),
   ('c2941000-0000-0000-0000-0000000000a4', 'r2941-p4@example.test'),
   ('c2941000-0000-0000-0000-0000000000a5', 'r2941-p5@example.test'),
+  ('c2941000-0000-0000-0000-0000000000a6', 'r2941-gone@example.test'),
+  ('c2941000-0000-0000-0000-0000000000a7', 'r2941-adder@example.test'),
   ('c2941000-0000-0000-0000-0000000000b1', 'r2941-owner-b@example.test');
 
 insert into public.tenants (id, name, email, state_code, doc_code) values
@@ -78,6 +92,8 @@ insert into public.users (id, tenant_id, email, full_name, role, is_active) valu
   ('c2941000-0000-0000-0000-0000000000a3', 'c2941000-0000-0000-0000-0000000000f1', 'r2941-p3@example.test',      'P3',      'sales', true),
   ('c2941000-0000-0000-0000-0000000000a4', 'c2941000-0000-0000-0000-0000000000f1', 'r2941-p4@example.test',      'P4',      'sales', true),
   ('c2941000-0000-0000-0000-0000000000a5', 'c2941000-0000-0000-0000-0000000000f1', 'r2941-p5@example.test',      'P5',      'sales', true),
+  ('c2941000-0000-0000-0000-0000000000a6', 'c2941000-0000-0000-0000-0000000000f1', 'r2941-gone@example.test',    'Gone',    'sales', false),
+  ('c2941000-0000-0000-0000-0000000000a7', 'c2941000-0000-0000-0000-0000000000f1', 'r2941-adder@example.test',   'Adder',   'sales', true),
   ('c2941000-0000-0000-0000-0000000000b1', 'c2941000-0000-0000-0000-0000000000f2', 'r2941-owner-b@example.test', 'Owner B', 'owner', true);
 
 insert into public.tasks (id, tenant_id, owner_id, title, due_at) values
@@ -96,6 +112,7 @@ declare
   v_a3   uuid := 'c2941000-0000-0000-0000-0000000000a3';
   v_a4   uuid := 'c2941000-0000-0000-0000-0000000000a4';
   v_a5   uuid := 'c2941000-0000-0000-0000-0000000000a5';
+  v_a6   uuid := 'c2941000-0000-0000-0000-0000000000a6';
   v_b1   uuid := 'c2941000-0000-0000-0000-0000000000b1';
   v_task uuid := 'c2941000-0000-0000-0000-0000000000d1';
   v_task2 uuid := 'c2941000-0000-0000-0000-0000000000d2';
@@ -156,18 +173,22 @@ begin
 
   ------------------------------------------------------------ 3. no existence oracle
   for v_case in select * from (values
-      ('other company''s task', v_taskb, v_a3),
-      ('other company''s user', v_task2, v_b1),
-      ('both from the other company', v_taskb, v_b1),
-      ('task that does not exist', v_none, v_a3),
-      ('user that does not exist', v_task2, v_none)) as x(what, task_id, user_id) loop
+      ('other company''s task', v_ta, v_taskb, v_a3),
+      ('other company''s user', v_ta, v_task2, v_b1),
+      ('both from the other company', v_ta, v_taskb, v_b1),
+      ('task that does not exist', v_ta, v_none, v_a3),
+      ('user that does not exist', v_ta, v_task2, v_none),
+      ('a deactivated person of the own company', v_ta, v_task2, v_a6),
+      ('a row for the other company, its task + user', v_tb, v_taskb, v_b1),
+      ('a row for the other company, nothing exists', v_tb, v_none, v_none),
+      ('a row for the other company, own task + user', v_tb, v_task2, v_a3)) as x(what, tenant_id, task_id, user_id) loop
     v_msg := null;
     begin
-      insert into public.task_collaborators (tenant_id, task_id, user_id) values (v_ta, v_case.task_id, v_case.user_id);
+      insert into public.task_collaborators (tenant_id, task_id, user_id) values (v_case.tenant_id, v_case.task_id, v_case.user_id);
     exception when others then v_msg := sqlstate || ' ' || sqlerrm;
     end;
     if v_msg is null then raise exception 'FAIL 3: % went in', v_case.what; end if;
-    if v_msg not like '% R-2941: this task or this person is not in this company%' then
+    if v_msg not like '23503 R-2941: this task or this person is not in this company%' then
       raise exception 'FAIL 3: % refused, but not by the guard: %', v_case.what, v_msg;
     end if;
     v_msgs := v_msgs || v_msg;
@@ -175,21 +196,6 @@ begin
   if (select count(distinct m) from unnest(v_msgs) m) <> 1 then
     raise exception 'FAIL 3: the refusals differ, so they tell which uuid exists: %', v_msgs;
   end if;
-
-  -- a row for the other company's tenant_id: refused before any lookup, same answer whether
-  -- the task / user exist there or not
-  v_msgs := '{}';
-  for v_case in select * from (values (v_taskb, v_b1), (v_none, v_none)) as x(task_id, user_id) loop
-    v_msg := null;
-    begin
-      insert into public.task_collaborators (tenant_id, task_id, user_id) values (v_tb, v_case.task_id, v_case.user_id);
-    exception when others then v_msg := sqlstate || ' ' || sqlerrm;
-    end;
-    if v_msg is null then raise exception 'FAIL 3b: a row for another company went in'; end if;
-    if v_msg not like '42501 R-2941:%' then raise exception 'FAIL 3b: refused, but not by the guard: %', v_msg; end if;
-    v_msgs := v_msgs || v_msg;
-  end loop;
-  if v_msgs[1] <> v_msgs[2] then raise exception 'FAIL 3b: the refusals differ: %', v_msgs; end if;
 
   ------------------------------------------------------------ 4. Remind columns
   -- the server stamps (service_role = the admin client of POST /api/tasks/remind)
@@ -262,10 +268,35 @@ begin
     raise exception 'FAIL 5b: service_role added another company''s person (or another error): %', v_msg;
   end if;
   -- and it can still add an own-company person where there is room
-  insert into public.task_collaborators (tenant_id, task_id, user_id) values (v_ta, v_task2, v_a2);
+  insert into public.task_collaborators (tenant_id, task_id, user_id, added_by) values (v_ta, v_task2, v_a2, 'c2941000-0000-0000-0000-0000000000a7');
+
+  ------------------------------------------------------------ 7. updates
+  v_msg := null;
+  begin
+    update public.task_collaborators set user_id = v_b1 where task_id = v_task2 and user_id = v_a2;
+  exception when others then v_msg := sqlerrm;
+  end;
+  if v_msg is null or v_msg not like 'R-2941: this task or this person is not in this company%' then
+    raise exception 'FAIL 7a: a row was moved to another company''s person (or another error): %', v_msg;
+  end if;
 end $$;
 
 reset role;
+
+-- 7b. The adder's user row is deleted: the foreign key sets added_by to NULL on their rows. The
+-- guard must not see that update — here the collaborator was deactivated meanwhile, so a guard
+-- that re-checked the row would refuse the delete with a message about tasks.
+do $$
+declare
+  v_n integer;
+begin
+  update public.users set is_active = false where id = 'c2941000-0000-0000-0000-0000000000a2';
+  delete from public.users where id = 'c2941000-0000-0000-0000-0000000000a7';
+  delete from auth.users where id = 'c2941000-0000-0000-0000-0000000000a7';
+  select count(*) into v_n from public.task_collaborators
+   where task_id = 'c2941000-0000-0000-0000-0000000000d2' and user_id = 'c2941000-0000-0000-0000-0000000000a2' and added_by is null;
+  if v_n <> 1 then raise exception 'FAIL 7b: deleting the adder did not leave the row with added_by NULL (got % rows)', v_n; end if;
+end $$;
 
 -- ── 6. the guard holds the task row while it counts ─────────────────────────────────
 -- A second session's insert for the same task waits on this lock, so it counts only after the
@@ -288,7 +319,7 @@ begin
   insert into public.tasks (id, tenant_id, owner_id, title, due_at) values
     ('c2941000-0000-0000-0000-0000000000d3', 'c2941000-0000-0000-0000-0000000000f1', 'c2941000-0000-0000-0000-0000000000a1', 'R2941 lock probe', now() + interval '1 day');
   insert into public.task_collaborators (tenant_id, task_id, user_id) values
-    ('c2941000-0000-0000-0000-0000000000f1', 'c2941000-0000-0000-0000-0000000000d3', 'c2941000-0000-0000-0000-0000000000a2');
+    ('c2941000-0000-0000-0000-0000000000f1', 'c2941000-0000-0000-0000-0000000000d3', 'c2941000-0000-0000-0000-0000000000a3');
   execute format($q$select l.modes from %I.pgrowlocks('public.tasks') l
              where l.locked_row = (select t.ctid from public.tasks t where t.id = 'c2941000-0000-0000-0000-0000000000d3')$q$, v_schema)
     into v_modes;

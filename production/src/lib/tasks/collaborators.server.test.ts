@@ -50,6 +50,7 @@ vi.mock("@/lib/app-url", () => ({ appUrl: () => "https://app.example.test" }));
 vi.mock("@/lib/api/with-route", () => ({ mayOpenPage: (role: string | null) => role === "owner" || role === "manager" || role === "sales" }));
 
 import { setTaskCollaborators } from "./collaborators.server";
+import { NOT_AN_ACTIVE_MEMBER } from "./collaborators";
 
 const T = "t-1", ME = "u-me", HITESH = "u-hitesh", PAWAN = "u-pawan", ABHI = "u-abhi", RIYA = "u-riya";
 const TASK = "11111111-1111-4111-8111-111111111111";
@@ -161,15 +162,13 @@ describe("R-2941 the database's own refusals reach the person as plain words", (
   });
 
   it("a person the database says is not in this company → 409, pick again", async () => {
-    insertError = { code: "23514", message: "R-2941: this task or this person is not in this company" };
-    const r = await run([PAWAN]);
-    expect(r).toMatchObject({ ok: false, status: 409 });
-    expect((r as { error: string }).error).toContain("not an active member of your team");
+    insertError = { code: "23503", message: "R-2941: this task or this person is not in this company" };
+    expect(await run([PAWAN])).toEqual({ ok: false, status: 409, error: NOT_AN_ACTIVE_MEMBER });
     expect(notifyPeople).not.toHaveBeenCalled();
   });
 
   it("any other database error is still a crash (500), never a made-up message", async () => {
-    insertError = { message: "connection reset" };
+    insertError = { code: "08006", message: "connection reset" };
     await expect(run([PAWAN])).rejects.toThrow("collaborators insert failed: connection reset");
   });
 });
