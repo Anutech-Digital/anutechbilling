@@ -99,10 +99,38 @@ export function autofitWidth(textPx: readonly number[], chromePx: number): numbe
 export function fitToContainer(
   widths: Readonly<Record<string, number>>,
   containerPx: number,
-  opts?: { shrink?: boolean },
+  opts?: { shrink?: boolean; keep?: readonly string[] },
 ): Record<string, number> {
   const keys = Object.keys(widths);
   const total = keys.reduce((s, k) => s + widths[k], 0);
+
+  /* ── R-2970 (20 Nov 2026): `keep` — atomic columns are not squeezed ───────────
+     Phone and email joined the default view, so the first fit at 1280 has ~11% more to
+     place than the box holds. Scaling every column the same cut the money ("₹3,2…") and
+     the follow-up date. With `keep`, those columns stay whole and only the text columns
+     (which wrap, with the full text in `title`) give up the room. When the kept ones alone
+     leave too little room, the plain scale below is used. */
+  if (opts?.shrink && opts.keep && opts.keep.length > 0 && total > containerPx && containerPx > 0) {
+    const keep = new Set(opts.keep);
+    const rest = keys.filter((k) => !keep.has(k));
+    const keptPx = keys.filter((k) => keep.has(k)).reduce((s, k) => s + Math.round(widths[k]), 0);
+    const restPx = rest.reduce((s, k) => s + widths[k], 0);
+    const room = containerPx - keptPx;
+    if (restPx > 0 && room >= rest.length * MIN_COL_PX) {
+      const scale = room / restPx;
+      const out: Record<string, number> = {};
+      let used = 0;
+      for (const k of keys) if (keep.has(k)) out[k] = Math.round(widths[k]);
+      rest.forEach((k, i) => {
+        if (i === rest.length - 1) out[k] = Math.max(MIN_COL_PX, Math.round(room - used));
+        else { out[k] = Math.max(MIN_COL_PX, Math.round(widths[k] * scale)); used += out[k]; }
+      });
+      /* The caller's key order — the colgroup reads it in render order. */
+      const ordered: Record<string, number> = {};
+      for (const k of keys) ordered[k] = out[k];
+      return ordered;
+    }
+  }
 
   /* ── `shrink` — pehli baar jamane ke liye, kheenchne ke baad NAHI (29 Aug 2026) ──
      Upar likha hai ki content box se bada ho to kuch nahi karna, scroll sahi jawab hai.
