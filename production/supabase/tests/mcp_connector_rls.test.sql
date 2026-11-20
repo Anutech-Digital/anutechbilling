@@ -35,7 +35,7 @@ do $$
 begin
   if to_regclass('public.tenant_memberships') is not null then
     insert into public.tenant_memberships (user_id, tenant_id, role, is_active)
-    select u.id, u.tenant_id, u.role::text, true from public.users u
+    select u.id, u.tenant_id, u.role, true from public.users u
      where u.id in ('c0dec0de-0000-0000-0000-0000000000a1', 'c0dec0de-0000-0000-0000-0000000000a2', 'c0dec0de-0000-0000-0000-0000000000b1')
     on conflict do nothing;
   end if;
