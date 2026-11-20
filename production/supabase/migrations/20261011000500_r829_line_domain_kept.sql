@@ -1,5 +1,5 @@
 -- deploy-key: r829linedomain
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-829%') and exists(select 1 from pg_proc where proname = 'activate_quote_on_credit' and pronamespace = 'public'::regnamespace and prosrc like '%R-829%') and exists(select 1 from pg_indexes where schemaname = 'public' and indexname = 'subscriptions_tenant_quote_domain_plan_unique')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-829%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-829%') and exists(select 1 from pg_indexes where schemaname = 'public' and indexname = 'subscriptions_tenant_quote_domain_plan_unique')
 -- 20261011000500_r829_line_domain_kept.sql
 --
 -- R-829 (10 Oct 2026, reported by Abhishek on staging). Quote Q-A378-27-0014-R2 had two

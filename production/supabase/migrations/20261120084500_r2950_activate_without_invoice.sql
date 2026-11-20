@@ -1,15 +1,25 @@
--- deploy-peek: to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') is null and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text,boolean)') and prosrc like '%p_issue_invoice%')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text,boolean)') and prosrc like '%v_r2950_carried%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-2950 wrapper%') and coalesce(has_function_privilege('authenticated', to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text,boolean)')::oid, 'execute') and has_function_privilege('service_role', to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text,boolean)')::oid, 'execute') and has_function_privilege('authenticated', to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)')::oid, 'execute') and has_function_privilege('service_role', to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)')::oid, 'execute') and not has_function_privilege('anon', to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text,boolean)')::oid, 'execute') and not has_function_privilege('anon', to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)')::oid, 'execute'), false)
 -- deploy-key: r2950activatenoinvoice
 -- R-2950 (owner, 20 Nov 2026): "Activate now, pay later" can switch the subscriptions on WITHOUT
 -- raising the GST invoice. Until now activate_quote_on_credit always raised it in the same save
 -- (R-346, 7 Oct). Card 1 of 5 (R-2950..R-2954): the database path only — the dialog still sends
 -- "issue the invoice", so nothing changes for users with this file alone.
 --
--- public.activate_quote_on_credit gets a 5th argument, p_issue_invoice boolean default true.
---   true / omitted / NULL  → exactly the body it replaces (20261116155537_r2723_quote_line_hint.sql,
---                            copied whole; every R-2950 line is marked).
---   false                  → subscriptions ACTIVE, draft purchase orders, the three owner tasks and
---                            the credit_* stamps as before, and:
+-- TWO functions with this name after this file (coordinator's decision, 20 Nov):
+--   1. public.activate_quote_on_credit(text, integer, boolean, text, boolean) — NEW, the real body.
+--      Fifth argument p_issue_invoice. NO argument has a default, so a call always says which
+--      way it wants, and PostgREST never has to choose: a request that names p_issue_invoice can
+--      only be this one, a request that leaves it out can only be the 4-argument one.
+--   2. public.activate_quote_on_credit(text, integer, boolean, text) — KEPT, same signature and
+--      defaults, now a thin wrapper: it calls (1) with p_issue_invoice => true. Every existing
+--      caller and test gets exactly the result it got before. It is kept (not dropped) because
+--      the deploy-peek lines of five earlier migrations find the function by this signature, and
+--      a migration staging already has is never edited.
+--
+-- (1) with p_issue_invoice true / NULL → exactly the body it replaces
+--     (20261116155537_r2723_quote_line_hint.sql, copied whole; every R-2950 line is marked).
+-- (1) with p_issue_invoice false → subscriptions ACTIVE, draft purchase orders, the three owner
+--     tasks and the credit_* stamps as before, and:
 --       - generate_invoice is NOT called: no invoices row, no invoice number, no revenue / GST /
 --         receivable; quotes.invoice_id stays NULL, payment_status stays 'awaiting';
 --       - the whole quote is the outstanding amount of the FIRST subscription filed (also when the
@@ -29,21 +39,17 @@
 -- with a bulk line (its own "not v_has_bulk" rule), so the with-invoice path keeps bulk rows at 0
 -- (R-2954).
 --
--- The 4-argument function is dropped in this file: with both, PostgREST cannot choose between
--- them for a call that leaves the new argument out. A 4-argument call keeps working (default).
--- Grants as before: authenticated + service_role, never PUBLIC or anon. No data is changed.
+-- Grants on BOTH: authenticated + service_role, never PUBLIC or anon. No data is changed.
 -- Safe to re-run. Tests: supabase/tests/r2950_activate_no_invoice.test.sql (rolled back).
 begin;
-
-drop function if exists public.activate_quote_on_credit(text, integer, boolean, text);
 
 -- Body of 20261116155537_r2723_quote_line_hint.sql (its latest) + the R-2950 lines.
 create or replace function public.activate_quote_on_credit(
   p_quote_id text,
   p_credit_days integer,
-  p_approve_over_limit boolean default false,
-  p_annual_override_reason text default null,  -- R-368
-  p_issue_invoice boolean default true         -- R-2950: false = subscriptions only, no GST invoice now
+  p_approve_over_limit boolean,
+  p_annual_override_reason text,   -- R-368
+  p_issue_invoice boolean          -- R-2950: false = subscriptions only, no GST invoice now. No default (see the header).
 )
 returns jsonb
 language plpgsql
@@ -600,6 +606,33 @@ revoke all on function public.activate_quote_on_credit(text, integer, boolean, t
 grant execute on function public.activate_quote_on_credit(text, integer, boolean, text, boolean) to authenticated, service_role;
 
 comment on function public.activate_quote_on_credit(text, integer, boolean, text, boolean) is
-  'R-346 + R-2950: Activate now, pay later. p_issue_invoice true (default) = GST invoice + subscriptions in one save; false = subscriptions only, the quote stays the payment request (no invoice, payment_status awaiting, due on the first subscription with payment_due_date).';
+  'R-346 + R-2950: Activate now, pay later. p_issue_invoice true = GST invoice + subscriptions in one save; false = subscriptions only, the quote stays the payment request (no invoice, payment_status awaiting, due on the first subscription with payment_due_date). No argument has a default - the 4-argument function of the same name is the with-invoice wrapper.';
+
+-- ── The 4-argument function: same signature and defaults as before, now a wrapper ──────────────
+-- SECURITY INVOKER: it does nothing by itself; every check and every write is in the
+-- 5-argument function, which the same roles may execute.
+create or replace function public.activate_quote_on_credit(
+  p_quote_id text,
+  p_credit_days integer,
+  p_approve_over_limit boolean default false,
+  p_annual_override_reason text default null   -- R-368
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $function$
+begin
+  /* R-2950 wrapper: the call without p_issue_invoice is "with the GST invoice", as it always was. */
+  return public.activate_quote_on_credit(
+    p_quote_id, p_credit_days, p_approve_over_limit, p_annual_override_reason, true);
+end;
+$function$;
+
+revoke all on function public.activate_quote_on_credit(text, integer, boolean, text) from public, anon;
+grant execute on function public.activate_quote_on_credit(text, integer, boolean, text) to authenticated, service_role;
+
+comment on function public.activate_quote_on_credit(text, integer, boolean, text) is
+  'R-346: Activate now, pay later WITH the GST invoice. Since R-2950 a wrapper around the 5-argument function (p_issue_invoice => true).';
 
 commit;

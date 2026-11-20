@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.quote_line_is_subscription(jsonb,uuid,boolean)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-1688%') and exists(select 1 from pg_proc where proname = 'activate_quote_on_credit' and pronamespace = 'public'::regnamespace and prosrc like '%R-1688%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.file_invoiced_quote_subscriptions(text,integer)') and prosrc like '%R-1688%')
+-- deploy-peek: to_regprocedure('public.quote_line_is_subscription(jsonb,uuid,boolean)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-1688%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-1688%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.file_invoiced_quote_subscriptions(text,integer)') and prosrc like '%R-1688%')
 -- deploy-key: r1688onetimeline
 -- 20261019164713_r1688_one_time_line_never_a_subscription.sql
 --

@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscription_billings' and column_name = 'due_on') and to_regprocedure('public.open_part_requests(uuid,uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2230%') and exists(select 1 from pg_proc where proname = 'activate_quote_on_credit' and pronamespace = 'public'::regnamespace and prosrc like '%R-2230%')
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscription_billings' and column_name = 'due_on') and to_regprocedure('public.open_part_requests(uuid,uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2230%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-2230%')
 -- deploy-key: r2230partduedates
 -- 20261101184900_r2230_part_due_dates.sql
 --

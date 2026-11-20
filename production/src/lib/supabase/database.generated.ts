@@ -15371,16 +15371,26 @@ export type Database = {
       }
       accept_project_quote: { Args: { p_project_id: string }; Returns: string }
       accept_quote: { Args: { p_quote_id: string }; Returns: Json }
-      activate_quote_on_credit: {
-        Args: {
-          p_annual_override_reason?: string
-          p_approve_over_limit?: boolean
-          p_credit_days: number
-          p_issue_invoice?: boolean
-          p_quote_id: string
-        }
-        Returns: Json
-      }
+      activate_quote_on_credit:
+        | {
+            Args: {
+              p_annual_override_reason?: string
+              p_approve_over_limit?: boolean
+              p_credit_days: number
+              p_quote_id: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_annual_override_reason: string
+              p_approve_over_limit: boolean
+              p_credit_days: number
+              p_issue_invoice: boolean
+              p_quote_id: string
+            }
+            Returns: Json
+          }
       ad_channel_guess: { Args: { p_text: string }; Returns: string }
       add_project_receipt_milestone: {
         Args: { p_amount: number; p_label: string; p_project_id: string }

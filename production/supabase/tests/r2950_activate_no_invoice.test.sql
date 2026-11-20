@@ -1,10 +1,12 @@
 -- R-2950 (20 Nov 2026): "Activate now, pay later" without a GST invoice (database path).
--- activate_quote_on_credit gets p_issue_invoice boolean default true.
+-- A new 5-argument activate_quote_on_credit (p_issue_invoice, no defaults) holds the body; the
+-- 4-argument function stays as a wrapper that calls it with p_issue_invoice => true.
 -- Self-asserting, ONE transaction, rolled back. Local / test DB only.
 --
 -- Proves:
---   A. flag omitted, true and null → exactly the R-346 result: GST invoice, payment_status
---      invoiced, three tasks naming the invoice, no payment_due_date on the subscription.
+--   A. the old call shapes (2 and 4 arguments → the wrapper) and the new one with the flag true
+--      or null → exactly the R-346 result: GST invoice, payment_status invoiced, three tasks
+--      naming the invoice, no payment_due_date on the subscription.
 --   B. flag false → subscriptions ACTIVE, draft POs, three tasks, credit_* stamps, ONE
 --      provisioning row — and NO invoice row, no invoice number spent, invoice_id null,
 --      payment_status awaiting, the whole quote outstanding on ONE subscription with
@@ -13,8 +15,8 @@
 --      carries the outstanding amount and the due date. Flag true keeps today's rows (0).
 --   D. refusals on the no-invoice path: zero amount, more than 30 credit days, over the limit
 --      (non-owner), annual without the owner's reason, split billing — nothing written.
---   E. another company's quote refused; no anon grant; the old 4-argument signature is gone and
---      a 4-argument call still works.
+--   E. another company's quote refused; exactly two functions (wrapper + body), both granted to
+--      authenticated + service_role only (no anon, no PUBLIC); the 5-argument one has no default.
 --   F. full payment later → subscriptions not filed again, outstanding 0, no second
 --      provisioning row; the GST invoice raised afterwards is dated the payment day and paid.
 --   G. part payment later → outstanding goes down, no invoice, payment_status partial.
@@ -62,10 +64,11 @@ language sql as $f$
           'accepted', 'awaiting', coalesce(p_cycle, 'yearly')::public.billing_cycle, p_lines);
 $f$;
 
--- A: three identical monthly quotes (Rs 500 + GST = Rs 590).
+-- A: four identical monthly quotes (Rs 500 + GST = Rs 590).
 select pg_temp.r2950_q('Q-R2950-A1', 590, 500, '[{"name":"Standard hosting (billed monthly)","qty":1,"rate":500,"commitment":"monthly","domain":"a1.buyer2950.in"}]');
 select pg_temp.r2950_q('Q-R2950-A2', 590, 500, '[{"name":"Standard hosting (billed monthly)","qty":1,"rate":500,"commitment":"monthly","domain":"a2.buyer2950.in"}]');
 select pg_temp.r2950_q('Q-R2950-A3', 590, 500, '[{"name":"Standard hosting (billed monthly)","qty":1,"rate":500,"commitment":"monthly","domain":"a3.buyer2950.in"}]');
+select pg_temp.r2950_q('Q-R2950-A4', 590, 500, '[{"name":"Standard hosting (billed monthly)","qty":1,"rate":500,"commitment":"monthly","domain":"a4.buyer2950.in"}]');
 -- B: annual 10 seats (Rs 10,000) + monthly hosting (Rs 500) → Rs 12,390 with GST.
 select pg_temp.r2950_q('Q-R2950-B', 12390, 10500,
   '[{"name":"Google Workspace Business Starter","qty":10,"rate":1000,"commitment":"annual_yearly"},
@@ -104,15 +107,16 @@ end $f$;
 select set_config('request.jwt.claims',
   '{"sub":"aaaaaaaa-0000-0000-0000-000000295001","role":"authenticated"}', true);
 
--- A. Flag omitted / true / null = today's result
+-- A. Old call shapes (wrapper) and flag true / null = today's result
 do $$
 declare r jsonb; v_q record; v_inv record; v_id text; v_i int := 0;
 begin
-  foreach v_id in array array['Q-R2950-A1','Q-R2950-A2','Q-R2950-A3'] loop
+  foreach v_id in array array['Q-R2950-A1','Q-R2950-A2','Q-R2950-A3','Q-R2950-A4'] loop
     v_i := v_i + 1;
-    if v_i = 1 then r := public.activate_quote_on_credit(v_id, 15);                          -- omitted (2 arguments)
-    elsif v_i = 2 then r := public.activate_quote_on_credit(v_id, 15, false, null, true);    -- explicit true
-    else r := public.activate_quote_on_credit(v_id, 15, false, null, null);                  -- null = true
+    if v_i = 1 then r := public.activate_quote_on_credit(v_id, 15);                          -- 2 arguments → the wrapper
+    elsif v_i = 2 then r := public.activate_quote_on_credit(v_id, 15, false, null);          -- 4 arguments → the wrapper
+    elsif v_i = 3 then r := public.activate_quote_on_credit(v_id, 15, false, null, true);    -- 5 arguments, true
+    else r := public.activate_quote_on_credit(v_id, 15, false, null, null);                  -- 5 arguments, null = true
     end if;
     select * into v_inv from public.invoices where id = r->>'invoice_id';
     if v_inv.id is null then raise exception 'FAIL A%: no invoice', v_i; end if;
@@ -141,7 +145,7 @@ begin
     if (r->>'amount_due')::int <> 590 or (r->>'tasks_created')::int <> 3 or (r->>'subscriptions_created')::int <> 1 then
       raise exception 'FAIL A%: result changed %', v_i, r; end if;
   end loop;
-  raise notice 'PASS A: flag omitted, true and null all give the R-346 result (invoice, invoiced, 3 tasks naming it)';
+  raise notice 'PASS A: 2-argument, 4-argument, flag true and flag null all give the R-346 result (invoice, invoiced, 3 tasks naming it)';
 end $$;
 
 -- B. Flag false: subscription only
@@ -291,27 +295,36 @@ end $$;
 select set_config('request.jwt.claims',
   '{"sub":"aaaaaaaa-0000-0000-0000-000000295003","role":"authenticated"}', true);
 do $$
-declare ok boolean := false;
+declare ok boolean := false; v_sig text;
 begin
   begin perform public.activate_quote_on_credit('Q-R2950-G', 15, false, null, false);
   exception when insufficient_privilege then ok := sqlerrm like '%does not belong to your tenant%'; end;
   if not ok then raise exception 'FAIL E: another company activated this quote'; end if;
   perform pg_temp.r2950_untouched('E', 'Q-R2950-G');
 
-  if to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') is not null then
-    raise exception 'FAIL E: the old 4-argument function still exists (PostgREST cannot choose between two)'; end if;
   if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.proname = 'activate_quote_on_credit') <> 1 then
-    raise exception 'FAIL E: more than one activate_quote_on_credit'; end if;
-  if has_function_privilege('anon', 'public.activate_quote_on_credit(text,integer,boolean,text,boolean)', 'execute') then
-    raise exception 'FAIL E: anon may execute'; end if;
-  if exists (select 1 from pg_proc p, aclexplode(p.proacl) a
-              where p.oid = 'public.activate_quote_on_credit(text,integer,boolean,text,boolean)'::regprocedure and a.grantee = 0) then
-    raise exception 'FAIL E: PUBLIC may execute'; end if;
-  if not has_function_privilege('authenticated', 'public.activate_quote_on_credit(text,integer,boolean,text,boolean)', 'execute')
-     or not has_function_privilege('service_role', 'public.activate_quote_on_credit(text,integer,boolean,text,boolean)', 'execute') then
-    raise exception 'FAIL E: authenticated / service_role lost execute'; end if;
-  raise notice 'PASS E: other company refused; one function; no anon / PUBLIC grant';
+       where n.nspname = 'public' and p.proname = 'activate_quote_on_credit') <> 2 then
+    raise exception 'FAIL E: expected exactly two activate_quote_on_credit functions (wrapper + body)'; end if;
+  foreach v_sig in array array['public.activate_quote_on_credit(text,integer,boolean,text)',
+                               'public.activate_quote_on_credit(text,integer,boolean,text,boolean)'] loop
+    if to_regprocedure(v_sig) is null then raise exception 'FAIL E: % is missing', v_sig; end if;
+    if has_function_privilege('anon', v_sig, 'execute') then raise exception 'FAIL E: anon may execute %', v_sig; end if;
+    if exists (select 1 from pg_proc p, aclexplode(p.proacl) a where p.oid = to_regprocedure(v_sig) and a.grantee = 0)
+       or (select proacl is null from pg_proc where oid = to_regprocedure(v_sig)) then
+      raise exception 'FAIL E: PUBLIC may execute %', v_sig; end if;
+    if not has_function_privilege('authenticated', v_sig, 'execute') or not has_function_privilege('service_role', v_sig, 'execute') then
+      raise exception 'FAIL E: authenticated / service_role cannot execute %', v_sig; end if;
+  end loop;
+  -- No default on the 5-argument function: a request never matches both (PostgREST picks by argument names).
+  if (select pronargdefaults from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text,boolean)')) <> 0 then
+    raise exception 'FAIL E: the 5-argument function has a default — a call without the flag would match both'; end if;
+  if (select pronargdefaults from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)')) <> 2 then
+    raise exception 'FAIL E: the 4-argument function lost its two defaults'; end if;
+  -- The 4-argument one is only the wrapper; it does not run with the owner's rights.
+  if (select length(prosrc) > 400 or prosecdef or prosrc not like '%p_annual_override_reason, true)%'
+        from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)')) then
+    raise exception 'FAIL E: the 4-argument function is not the thin with-invoice wrapper'; end if;
+  raise notice 'PASS E: other company refused; wrapper + body, both authenticated + service_role only; no default on the 5-argument one';
 end $$;
 
 -- F. Full payment later on B (as the owner), then the GST invoice

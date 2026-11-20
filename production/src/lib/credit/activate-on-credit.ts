@@ -17,10 +17,11 @@
  *     told plainly why not.
  *
  * R-2950 (owner, 20 Nov 2026): the same save can leave the GST invoice out — `issueInvoice:
- * false` sends `p_issue_invoice: false` (migration 20261120084500_r2950_activate_without_invoice):
- * subscriptions, tasks and credit stamps as above, no invoice, the quote stays "awaiting" and the
- * due sits on the first subscription with its pay-by date. The dialog does not offer it yet
- * (R-2952), so every call today still raises the invoice.
+ * false` sends `p_issue_invoice: false` to the 5-argument function (migration
+ * 20261120084500_r2950_activate_without_invoice): subscriptions, tasks and credit stamps as above,
+ * no invoice, the quote stays "awaiting" and the due sits on the first subscription with its
+ * pay-by date. The dialog does not offer it yet (R-2952), so every call today sends `true` and
+ * still raises the invoice.
  *
  * Everything here that decides something is a pure function (activate-on-credit.test.ts). The
  * database repeats every check — the screen only explains them before the click.
@@ -416,20 +417,19 @@ export async function activateQuoteOnCredit(
   if (input.days > maxCreditDays(issueInvoice)) {
     throw new Error(`Without a GST invoice, credit days can be ${CREDIT_MIN_DAYS}–${CREDIT_MAX_DAYS_NO_INVOICE}. For longer credit, issue the GST invoice now.`);
   }
-  /* R-368: an annual line needs the owner's written reason (migration 20261007123000). Sent
-     only when there is one, so a monthly quote still activates on a database that has
-     R-346's function but not this one yet. */
+  /* R-368: an annual line needs the owner's written reason (migration 20261007123000).
+     R-2950: the call ALWAYS says whether the GST invoice is raised. All five arguments are sent,
+     because the function that takes p_issue_invoice has no defaults — the 4-argument function of
+     the same name is the old with-invoice call, and PostgREST picks between the two by the
+     argument names. A database without the new function answers "function not found" (→ needs
+     a database update), never a quiet invoice nobody asked for. */
   const reason = input.annualOverrideReason?.trim();
   const { data, error } = await supabase.rpc("activate_quote_on_credit", {
     p_quote_id: input.quoteId,
     p_credit_days: input.days,
     p_approve_over_limit: input.approveOverLimit,
-    ...(reason ? { p_annual_override_reason: reason } : {}),
-    /* R-2950: sent only when the invoice is left out. A call that raises the invoice is then the
-       same call as before (the database default is true), and a database that does not have the
-       new argument yet answers "function not found" (→ needs a database update) instead of
-       quietly raising an invoice nobody asked for. */
-    ...(issueInvoice ? {} : { p_issue_invoice: false }),
+    p_annual_override_reason: reason ? reason : null,
+    p_issue_invoice: issueInvoice,
   });
   if (error) {
     if (isMissingDbObject(error)) throw new NeedsDatabaseUpdateError();
