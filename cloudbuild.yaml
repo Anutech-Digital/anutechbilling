@@ -53,6 +53,7 @@ steps:
   #    production/.dockerignore excludes it and the Dockerfile runs its own `npm ci`.
   #
   #    Cost: roughly 2-3 minutes on E2_HIGHCPU_8 (npm ci ~45s, tsc ~50s, vitest ~35s).
+  #    (That was Sep 2026. 19 Nov 2026: the whole gate took ~22 min on E2_HIGHCPU_32 — R-2943.)
   #    To ship a hotfix while a test is red, fix or skip the test in a commit — do not
   #    delete this step; a deploy that skips the gate is how 26 Aug happened.
   - id: gate
@@ -61,12 +62,22 @@ steps:
     # 2 Oct 2026 go-live: the gate died with "JavaScript heap out of memory" — Node's default
     # ~2 GB heap is too small for tsc over this app now. The machine has 8 GB (E2_HIGHCPU_8);
     # let Node use 6. Same checks, nothing skipped.
+    #
+    # 20 Nov 2026 (R-2943): staging build a3ace359 sat inside `tsc` for 57 min and hit the 60-min
+    # build limit. Measured the same day on manager-pardeep 3c6de93e1, cold
+    # `tsc --noEmit --extendedDiagnostics`: Memory used 6,172,851K (8,395 files, 2.19M types,
+    # 14.5M instantiations) — MORE than the 6144 MB heap below, so Node most likely spent
+    # its time in back-to-back garbage collections (inferred from the number — the hung build
+    # printed nothing; CI's typecheck, with 8 GB, passed the same commit). The machine is E2_HIGHCPU_32 with 32 GB now, so tsc alone gets 12 GB; npm ci
+    # and vitest keep 6144 (vitest's forks each inherit the limit). Same checks, nothing skipped.
+    # `--extendedDiagnostics` only prints tsc's own numbers (memory, check time) into the build
+    # log, so the next time this step slows down the cause is in the log.
     env:
       - NODE_OPTIONS=--max-old-space-size=6144
     entrypoint: bash
     args:
       - -c
-      - npm ci --no-audit --no-fund && npx prisma generate && npx next typegen && npx tsc --noEmit && npx vitest run
+      - npm ci --no-audit --no-fund && npx prisma generate && npx next typegen && NODE_OPTIONS=--max-old-space-size=12288 npx tsc --noEmit --extendedDiagnostics && npx vitest run
 
   # 0b. DEPS CACHE (5 Oct 2026, Pardeep: "cache kar do"). The note on --cache-from below was
   #     right: it never worked because nothing was pulled. Now the deps stage (npm ci, ~43s +

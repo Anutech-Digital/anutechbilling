@@ -2,7 +2,7 @@
  * R-2928 — "Remind" on a teammate's task: who may be reminded, how often, and what they read.
  */
 import { describe, expect, it } from "vitest";
-import { REMIND_GAP_MS, remindEmail, remindNotification, whyNoReminder } from "./remind-notice";
+import { NOTICE_NOT_SENT, NOTICE_NOT_SENT_HOUR_KEPT, noReminderMessage, REMIND_GAP_MS, remindEmail, remindNotification, whyNoReminder } from "./remind-notice";
 
 const NOW = Date.parse("2026-11-19T10:40:00Z"); // 4:10 pm IST
 const open = { status: "pending", owner_id: "u-hitesh", last_followup_at: null };
@@ -62,5 +62,13 @@ describe("R-2928 what the owner of the task reads", () => {
     expect(mail.text).not.toContain("gave you a task");
     expect(mail.html).toContain("Call Acme &lt;b&gt;");
     expect(mail.html).not.toContain("<b>");
+  });
+});
+
+describe("R-2941 the notice could not be written", () => {
+  it("says nothing went out and to press Remind again", () => {
+    expect(noReminderMessage(NOTICE_NOT_SENT)).toBe("The reminder could not be sent just now — nothing went out. Press Remind again.");
+    // …and when the hour could not be given back, it does not promise a retry that would be refused.
+    expect(noReminderMessage(NOTICE_NOT_SENT_HOUR_KEPT)).toBe("The reminder could not be sent just now — nothing went out. Tell them directly; Remind for this task opens again in an hour.");
   });
 });

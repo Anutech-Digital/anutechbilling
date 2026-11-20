@@ -17,11 +17,13 @@ import { useUpdateTask, type TaskWithLink } from "@/lib/queries/tasks";
 import { useTeamMembers } from "@/lib/queries/team";
 import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { TaskRow, taskLeadName } from "@/components/features/tasks/task-row";
+import { TASKS_PAGE_WIDTH } from "@/components/features/tasks/tasks-tabs";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LoadError } from "@/components/shared/load-error";
+import { cn } from "@/lib/utils";
 import { formatIstDate, formatMonthLabel, istMonth, toIstDate } from "@/lib/dates/ist";
 import { isMonth, moveDueToDay, shiftMonth, tasksByDay } from "./calendar-grid";
 import { useCalendarTasks } from "./calendar-tasks";
@@ -76,10 +78,10 @@ export default function TaskCalendarPage() {
   const isLoading = meLoading || (!!me?.tenantId && list.isLoading);
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1100px] mx-auto">
+    /* R-2942: the Tasks section's one width (tasks-tabs.tsx). */
+    <div className={cn(TASKS_PAGE_WIDTH, "p-4 md:p-6 lg:p-8")}>
       <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
         <div>
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Task calendar</h1>
           <p className="text-sm text-ink-3 mt-1">
             Every task on its due date. Press a day to see its tasks; drag a task to another day to move it.

@@ -3,6 +3,8 @@
    page is marked, and Team (Reports → Team tasks, owner / manager) is not offered to a role
    the route guard would bounce. */
 import * as React from "react";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 
@@ -11,7 +13,7 @@ let role: string | undefined = "owner";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: role ? { role } : undefined }) }));
 
-import { TasksTabs, activeTasksTab, tasksTabsFor } from "./tasks-tabs";
+import { TASKS_PAGE_WIDTH, TasksTabs, TasksTabsBar, activeTasksTab, tasksTabsFor } from "./tasks-tabs";
 
 afterEach(() => cleanup());
 
@@ -99,5 +101,41 @@ describe("R-2939 <TasksTabs>", () => {
     const links = show("/reports/team-tasks", undefined).getAllByRole("link");
     expect(links.map((a) => a.textContent)).toEqual(["Overview", "List", "Calendar", "Team"]);
     expect(links[3].getAttribute("aria-current")).toBe("page");
+  });
+});
+
+/* R-2942 — the strip and the four pages were capped at 1100px (long task names were cut on the
+   list while the screen had room). They share ONE width now, the app's listing width. */
+describe("R-2942 one width for the whole Tasks section", () => {
+  const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+  const PAGES = [
+    "src/app/(app)/tasks/page.tsx",
+    "src/app/(app)/tasks/overview/page.tsx",
+    "src/app/(app)/tasks/calendar/page.tsx",
+    "src/app/(app)/reports/team-tasks/page.tsx",
+  ];
+
+  it("is the listing width (production/CLAUDE.md: listing pages are max-w-[1800px])", () => {
+    expect(TASKS_PAGE_WIDTH.split(" ")).toEqual(expect.arrayContaining(["mx-auto", "max-w-[1800px]"]));
+  });
+
+  it("the tab strip uses it", () => {
+    pathname = "/tasks";
+    role = "owner";
+    render(<TasksTabsBar />);
+    const bar = screen.getByTestId("tasks-tabs-bar");
+    for (const c of TASKS_PAGE_WIDTH.split(" ")) expect(bar.className.split(" ")).toContain(c);
+  });
+
+  it.each(PAGES)("%s uses it, and carries no width of its own", (rel) => {
+    const src = read(rel);
+    expect(src).toContain("TASKS_PAGE_WIDTH");
+    expect(src).not.toContain("max-w-[1100px]");
+    // One wrapper per page: no second page-wide max width beside the shared one.
+    expect(src).not.toContain("max-w-[1800px]");
+  });
+
+  it.each(PAGES.slice(0, 3))("%s has no 'Sales' eyebrow above its title (Tasks left the Sales app in R-2939)", (rel) => {
+    expect(read(rel).replace(/[ \t\r\n]+/g, "")).not.toContain(">Sales</p>");
   });
 });

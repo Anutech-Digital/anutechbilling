@@ -15,13 +15,20 @@ import { notifyPeople } from "@/lib/notifications/notify.server";
 import { appUrl } from "@/lib/app-url";
 import { mayOpenPage } from "@/lib/api/with-route";
 import { relatedOf, type AssignedTask } from "./assign-notice";
-import { cleanCollaborators, collaboratorDiff, collaboratorEmail, collaboratorNotification } from "./collaborators";
+import { cleanCollaborators, collaboratorDiff, collaboratorEmail, collaboratorNotification, NOT_AN_ACTIVE_MEMBER, TOO_MANY_COLLABORATORS } from "./collaborators";
 
 export type SetCollaboratorsResult =
   | { ok: true; userIds: string[]; added: string[]; removed: string[]; notified: number }
   | { ok: false; status: 404 | 409; error: string };
 
 type UserClient = ReturnType<typeof createClient>;
+
+/**
+ * R-2941: the database holds the same two rules (trigger task_collaborators_guard) and answers
+ * with its own SQLSTATE — 23514 = already 3 people (a second save at the same moment),
+ * 23503 = the task or the person is not in this company (they left / were deactivated meanwhile).
+ */
+const DB_REFUSAL: Record<string, string> = { "23514": TOO_MANY_COLLABORATORS, "23503": NOT_AN_ACTIVE_MEMBER };
 
 const TASK_COLUMNS = "id, title, notes, due_at, owner_id, lead_id, quote_id, customer_id, subscription_id, leads(company, contact_name), customers(name), quotes(customer_name)";
 
@@ -69,6 +76,9 @@ export async function setTaskCollaborators(
   if (add.length) {
     const { error } = await supabase.from("task_collaborators")
       .insert(add.map((user_id) => ({ tenant_id: tenantId, task_id: task.id, user_id, added_by: actorId })));
+    // The people removed above stay removed; the dialog reloads the task after a refusal.
+    const refused = error?.code ? DB_REFUSAL[error.code] : undefined;
+    if (refused) return { ok: false, status: 409, error: refused };
     if (error) throw new Error(`collaborators insert failed: ${error.message}`);
   }
 

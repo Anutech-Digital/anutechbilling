@@ -71,8 +71,17 @@ test.describe("R-2936 — Tasks Overview page", () => {
     expect(await numberIn(cards.getByRole("link", { name: /^Overdue/ }))).toBeGreaterThanOrEqual(1);
     // No sideways scroll at 1280.
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    // The sidebar has Tasks > Overview.
-    await expect(page.getByRole("navigation").locator('a[href="/tasks/overview"]').first()).toBeVisible();
+    /* R-2942: Overview is a tab on the Tasks pages (R-2939 took its row out of the sidebar). The
+       old line looked for the link in ANY <nav>, so the tab strip passed it by accident — check
+       the strip by name: one Overview tab, to this page, marked as the open one; and the sidebar
+       has the Tasks row but no Overview row under it. */
+    const tabs = await onlyOne(page.getByRole("navigation", { name: "Tasks views" }), "the Tasks tab strip");
+    const overviewTab = await onlyOne(tabs.getByRole("link", { name: "Overview", exact: true }), "the Overview tab");
+    await expect(overviewTab).toHaveAttribute("href", "/tasks/overview");
+    await expect(overviewTab).toHaveAttribute("aria-current", "page");
+    const sidebar = page.locator("aside nav");
+    await expect(sidebar.locator('a[href="/tasks"]').filter({ hasText: "Tasks" }).first()).toBeVisible({ timeout: 60_000 });
+    await expect(sidebar.locator('a[href="/tasks/overview"]')).toHaveCount(0);
   });
 
   test("Step 2: two donuts (status, priority) whose lines add up to Open, and the due strip", async () => {

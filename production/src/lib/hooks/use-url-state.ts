@@ -17,6 +17,7 @@
  *   - the fallback value is removed from the URL, so an unfiltered list has a clean address.
  */
 import * as React from "react";
+import { onAddressChange } from "@/lib/navigation/same-page-nav";
 import { withChoice } from "@/lib/hooks/use-url-choice";
 
 export function useUrlState(key: string, fallback = ""): [string, (next: string) => void] {
@@ -25,8 +26,8 @@ export function useUrlState(key: string, fallback = ""): [string, (next: string)
   React.useEffect(() => {
     const read = () => setValue(new URLSearchParams(window.location.search).get(key) ?? fallback);
     read();
-    window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
+    // Back / Forward, and (R-2942) a link to this same page's bare address: /tasks?priority=high → "List".
+    return onAddressChange(read);
   }, [key, fallback]);
 
   const set = React.useCallback(

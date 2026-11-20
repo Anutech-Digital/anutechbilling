@@ -110,7 +110,10 @@ jobs:
   typecheck:
     # R-2828: pinned — ubuntu-latest moved to 26.04 (14 Nov 2026), Playwright has no chromium build there; revisit when Playwright supports 26.04.
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # R-2943 (20 Nov 2026): 20 -> 30. This job took 11-19 min on 19-20 Nov and was cancelled at the
+    # 20-min limit on 3553c200c (the re-run of the SAME commit took 11.6 min), which left the run
+    # "cancelled" and the workers' ci-wait locks stuck. 30 is the most ci-workflow.test.ts allows.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: production
@@ -128,6 +131,10 @@ jobs:
       # R-1802 (23 Oct 2026): 4096 is now too small too — runs for 72f27e0c, 2073625e and 1f02c2c6
       # died the same way at ~4030 MB after ~8 min. ubuntu-24.04 has 16 GB and nothing else runs
       # in this job while tsc does, so 8192.
+      # R-2943 (20 Nov 2026): measured on 3c6de93e1 — tsc's "Memory used" is 6,172,851K, i.e. 75% of
+      # 8192 already (and over the Cloud Build gate's old 6144 — that gate hung). When this job dies
+      # out of memory or crawls again, raise this TOGETHER with worker-lock's TSC_HEAP_FLAG
+      # (tests/worker-lock.test.ts keeps the two equal).
       - run: npm run typecheck
         env:
           NODE_OPTIONS: --max-old-space-size=8192

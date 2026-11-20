@@ -46,6 +46,7 @@ import { TaskRow, taskLeadName } from "@/components/features/tasks/task-row";
 import { TaskQuickAdd } from "@/components/features/tasks/task-quick-add";
 import { useTaskDensity } from "@/components/features/tasks/task-view-pref";
 import { TaskFilterBar } from "@/components/features/tasks/task-filter-bar";
+import { TASKS_PAGE_WIDTH } from "@/components/features/tasks/tasks-tabs";
 import {
   hasTaskFilters, matchesTaskFilters, taskAssigneeOptions, taskFilterCounts,
   type TaskFilters, type TaskPriorityFilter, type TaskStatusFilter,
@@ -222,9 +223,9 @@ export default function TasksPage() {
   const isLoading = meLoading || (!!me?.tenantId && list.isLoading);
 
   return (
-    /* 1100px: the width of the Tasks tabs strip above (tasks-tabs.tsx, R-2939) and of Overview /
-       Calendar, so the four pages line up. */
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1100px] mx-auto">
+    /* R-2942: the Tasks section's one width — the tab strip above, Overview, Calendar and the Team
+       report use the same TASKS_PAGE_WIDTH (the app's listing width), so the four pages line up. */
+    <div className={cn(TASKS_PAGE_WIDTH, "p-4 md:p-6 lg:p-8")}>
       {/* Header — R-2937: title, quick-add and "Add task" on one line (the list needs the height). */}
       <div className="flex items-start gap-3 flex-wrap mb-3">
         <h1 className="font-serif text-2xl md:text-3xl leading-9">Tasks</h1>

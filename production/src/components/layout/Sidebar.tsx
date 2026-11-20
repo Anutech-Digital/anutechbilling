@@ -23,8 +23,8 @@ import {
   DropdownMenuContent,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { type UserRole, type NavItem } from "@/lib/nav";
-import { buildSidebarApps, appForPath, forSellMode, withoutDistributorOnly } from "@/lib/nav-apps";
+import { tabOwnerOf, type UserRole, type NavItem } from "@/lib/nav";
+import { buildSidebarApps, sidebarAppForPath, forSellMode, withoutDistributorOnly } from "@/lib/nav-apps";
 import { DEFAULT_SELL_MODE, sellsSubscriptions } from "@/lib/sell-mode";
 import { useHasSubscriptions, useSellMode, useShowAllModules } from "@/lib/queries/sell-mode";
 import { Switch } from "@/components/ui/switch";
@@ -144,7 +144,8 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   );
   /* The toggle only when the answer would hide something (once a subscription exists, nothing is). */
   const offerShowAll = answerHides && hasSubscriptions === false;
-  const routeApp = appForPath(model, pathname);
+  /* R-2942: a page that is a tab of a pinned row (Team tasks → Tasks) does not switch the app. */
+  const routeApp = sidebarAppForPath(model, pathname);
   const [pickedApp, setPickedApp] = React.useState<string | null>(null);
   // The last app the route pointed at — so a pinned page (/dashboard) or a page outside the
   // nav keeps the app you were in instead of jumping back to the first one.
@@ -161,7 +162,10 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
     const isCurrent = pathname === it.href;
     /* R-2939: a pinned row is one link with no rows under it (Tasks — its Overview / Calendar
        pages are tabs on the page), so on one of those pages this row is the highlighted one. */
-    const isActive = isCurrent || (ownsChildPages && !!it.children?.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
+    const isActive = isCurrent
+      || (ownsChildPages && !!it.children?.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")))
+      /* R-2942: …and on a page that is one of its tabs but lives elsewhere (Reports → Team tasks). */
+      || (ownsChildPages && tabOwnerOf(pathname) === it.id);
     const isPending = !isCurrent && pendingHref === it.href;
     /* R-1541: a live count is its own link — to the filtered view whose rows it counts
        (lib/hooks/nav-badge-views.ts) — with what it means on hover. The row still opens the

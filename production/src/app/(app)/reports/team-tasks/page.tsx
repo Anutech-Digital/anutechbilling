@@ -19,7 +19,8 @@ import { LoadError } from "@/components/shared/load-error";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useTeamMembers } from "@/lib/queries/team";
-import { TasksTabsBar } from "@/components/features/tasks/tasks-tabs";
+import { TASKS_PAGE_WIDTH, TasksTabsBar } from "@/components/features/tasks/tasks-tabs";
+import { cn } from "@/lib/utils";
 import { teamWorkload, weeklyTrend, TREND_WEEKS } from "./team-tasks";
 import { useTeamTasks } from "./team-tasks-data";
 import { TrendTable, WorkloadTable } from "./workload-table";
@@ -53,7 +54,8 @@ export default function TeamTasksReportPage() {
     {/* R-2939: the Tasks tabs (Overview · List · Calendar · Team) — this report is the Team tab.
         Same bar, same place as on the Tasks pages (tasks/layout.tsx). */}
     <TasksTabsBar />
-    <div className="mx-auto max-w-[1100px] p-4 md:p-6 lg:p-8 space-y-5">
+    {/* R-2942: the Tasks section's one width (tasks-tabs.tsx). */}
+    <div className={cn(TASKS_PAGE_WIDTH, "p-4 md:p-6 lg:p-8 space-y-5")}>
       <header>
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Reports</p>
         <h1 className="font-serif text-3xl md:text-4xl leading-tight">Team tasks</h1>

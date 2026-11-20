@@ -25,6 +25,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useTaskList, type TaskWithLink } from "@/lib/queries/tasks";
 import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { taskLeadName } from "@/components/features/tasks/task-row";
+import { TASKS_PAGE_WIDTH } from "@/components/features/tasks/tasks-tabs";
 import { istWeekBounds, taskSummary } from "@/components/features/tasks/task-overview";
 import { TASK_PRIORITY_META, priorityOf, showsPriorityBadge } from "@/components/features/tasks/task-priority";
 import { KPI } from "@/components/shared/kpi";
@@ -97,10 +98,10 @@ export default function TasksOverviewPage() {
   const today = toIstDate(now);
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1100px] mx-auto space-y-5">
+    /* R-2942: the Tasks section's one width (tasks-tabs.tsx). */
+    <div className={cn(TASKS_PAGE_WIDTH, "p-4 md:p-6 lg:p-8 space-y-5")}>
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Tasks overview</h1>
           <p className="text-sm text-ink-3 mt-1">
             How much is open, what is late and what comes next. Press a number to open the Tasks list on that tab.

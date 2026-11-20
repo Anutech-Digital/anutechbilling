@@ -17,6 +17,7 @@
  * address bar always says what the screen shows and a refresh or a shared link reopens it.
  */
 import * as React from "react";
+import { onAddressChange } from "@/lib/navigation/same-page-nav";
 
 /** The value to use: `raw` when it is one of `allowed`, else `fallback`. Pure, for tests. */
 export function pickChoice<T extends string>(raw: string | null | undefined, allowed: readonly T[], fallback: T): T {
@@ -46,8 +47,8 @@ export function useUrlChoice<T extends string>(
     const read = () =>
       setValue(pickChoice(new URLSearchParams(window.location.search).get(key), allowedRef.current, fallback));
     read();
-    window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
+    // Back / Forward, and (R-2942) a link to this same page's bare address: /tasks?priority=high → "List".
+    return onAddressChange(read);
   }, [key, fallback]);
 
   const set = React.useCallback(
