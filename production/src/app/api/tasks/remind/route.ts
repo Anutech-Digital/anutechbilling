@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { RouteError, withRoute } from "@/lib/api/with-route";
 import { sendTaskReminder } from "@/lib/tasks/remind-notice.server";
-import { noReminderMessage } from "@/lib/tasks/remind-notice";
+import { NOTICE_NOT_SENT, NOTICE_NOT_SENT_HOUR_KEPT, noReminderMessage } from "@/lib/tasks/remind-notice";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +20,9 @@ export const POST = withRoute(
     const r = await sendTaskReminder(supabase, { taskId: input.taskId, tenantId, actorId: user.id });
     if (!r.reminded) {
       const reason = r.reason ?? "task not found";
-      throw new RouteError(reason === "task not found" ? 404 : 409, noReminderMessage(reason, r.lastFollowupAt));
+      // R-2941: our side could not send anything (bell and email both failed) → 503.
+      const status = reason === "task not found" ? 404 : reason === NOTICE_NOT_SENT || reason === NOTICE_NOT_SENT_HOUR_KEPT ? 503 : 409;
+      throw new RouteError(status, noReminderMessage(reason, r.lastFollowupAt));
     }
     return { reminded: true, emailed: r.emailed, lastFollowupAt: r.lastFollowupAt ?? null };
   },
