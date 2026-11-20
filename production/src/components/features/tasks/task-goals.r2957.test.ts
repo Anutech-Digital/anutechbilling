@@ -141,6 +141,7 @@ describe("R-2957 every read that lists or counts work leaves the goal row out", 
     ["src/app/(app)/reports/team-tasks/team-tasks-data.ts", 1, "Team tasks report (one base() for its three reads)"],
     ["src/app/api/cron/task-digest/route.ts", 1, "morning digest"],
     ["src/lib/queries/performance.ts", 1, "performance points"],
+    ["src/lib/inbound/ingest.ts", 1, "an enquiry mail's lead follow-up (pulls the open follow-up's date forward)"],
   ];
   it.each(WORK_READS)("%s — %i work read(s) carry .eq(\"is_goal\", false)", (file, reads) => {
     const src = readFileSync(join(process.cwd(), file), "utf8");
