@@ -41,8 +41,11 @@ describe("MCP guard", () => {
     expect(billing.filter((i) => i !== "@/lib/invoices/kpis" && i !== "@/lib/invoices/overdue")).toEqual([]);
   });
 
-  it("only db.ts builds a Supabase client", () => {
-    const builders = ALL.filter((f) => /createClient as createSupabaseJs|from "@supabase\/supabase-js"\s*;?\s*$/m.test(fs.readFileSync(path.join(ROOT, f), "utf8")) && /createSupabaseJs\(/.test(fs.readFileSync(path.join(ROOT, f), "utf8")));
-    expect(builders.map((f) => f.split(path.sep).join("/"))).toEqual(["src/lib/mcp/db.ts"]);
+  it("builds no Supabase client of its own — only the per-user one from lib/supabase/as-user", () => {
+    for (const f of ALL) {
+      const src = fs.readFileSync(path.join(ROOT, f), "utf8");
+      expect(src, f).not.toMatch(/import\s*\{[^}]*\bcreateClient\b[^}]*\}\s*from\s*"@supabase\/supabase-js"/);
+    }
+    expect(fs.readFileSync(path.join(ROOT, "src/lib/mcp/db.ts"), "utf8")).toContain("createClientAsUser(");
   });
 });

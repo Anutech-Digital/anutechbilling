@@ -12,9 +12,8 @@
  * tenant>. Tools see McpDb, never the client.
  */
 import "server-only";
-import { createClient as createSupabaseJs, type SupabaseClient } from "@supabase/supabase-js";
-import { gatewayEnabled, gatewayFetch } from "@/server/postgrest/fetch";
-import { mintSupabaseJwt } from "@/server/auth/supabase-jwt";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClientAsUser } from "@/lib/supabase/as-user";
 import { SECRET_COLUMNS, SECRET_NAME } from "@/lib/security/secret-columns";
 
 export type McpJson = string | number | boolean | null | McpJson[] | { [k: string]: McpJson };
@@ -194,25 +193,6 @@ function wrapQuery<Row>(table: McpReadTable, start: Filterable): McpQuery<Row> {
   return self;
 }
 
-const noStoreFetch = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, { ...init, cache: "no-store" });
-
-/** A Supabase client that runs as this user (their RLS), via a freshly minted 10-minute JWT. */
-function clientAsUser(userId: string, email: string, aal: "aal1" | "aal2"): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) throw new Error("NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY are not set");
-  let minted: { token: string; expiresAt: number } | null = null;
-  return createSupabaseJs(url, anon, {
-    accessToken: async () => {
-      if (!minted || minted.expiresAt - 60 < Math.floor(Date.now() / 1000)) {
-        minted = mintSupabaseJwt({ userId, email, aal });
-      }
-      return minted.token;
-    },
-    global: { fetch: gatewayEnabled() ? gatewayFetch(url, { allowService: false }) : noStoreFetch },
-  });
-}
-
 function asFilterable(x: unknown): Filterable {
   return x as Filterable;
 }
@@ -271,7 +251,7 @@ export async function readSelf(userId: string, email: string, aal: "aal1" | "aal
   row: { id: string; tenant_id: string; role: string | null; is_active: boolean | null; full_name: string | null; access_ends_on: string | null } | null;
   error: McpDbError | null;
 }> {
-  const client = clientAsUser(userId, email, aal);
+  const client = createClientAsUser(userId, email, aal);
   const r = await client.from("users").select("id, tenant_id, role, is_active, full_name, access_ends_on").eq("id", userId).maybeSingle();
   return { client, row: (r.data as never) ?? null, error: errOf(r.error) };
 }

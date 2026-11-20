@@ -24,8 +24,8 @@ export function seed(): Tables {
   const both = <T extends Record<string, unknown>>(a: T, b: T) => [{ ...a, tenant_id: TENANT_A }, { ...b, tenant_id: TENANT_B }];
   return {
     leads: both(
-      { id: "L-A1", company: "Acme Traders", contact_name: "Ravi", contact_phone: "9876543210", contact_email: "ravi@acme.test", stage: "quote", source: "manual", value: 10000, seats: 10, plan: "Business Starter", owner_id: OWNER_A, follow_up_date: "2026-11-20", expected_close_date: "2026-11-25", created_at: "2026-11-01T05:00:00Z", is_junk: false, lost_reason: null, pipeline: "new_logo" },
-      { id: "L-B1", company: B_MARK, contact_name: B_MARK, contact_phone: "9000000000", contact_email: "b@b.test", stage: "quote", source: "manual", value: 99999, seats: 1, plan: B_MARK, owner_id: OWNER_B, follow_up_date: "2026-11-20", expected_close_date: "2026-11-25", created_at: "2026-11-01T05:00:00Z", is_junk: false, lost_reason: null, pipeline: "new_logo" },
+      { id: "L-A1", company: "Acme Traders", contact_name: "Ravi", contact_phone: "9876543210", contact_email: "ravi@acme.test", stage: "demo", source: "manual", value: 10000, seats: 10, plan: "Business Starter", owner_id: OWNER_A, follow_up_date: "2026-11-20", expected_close_date: "2026-11-25", created_at: "2026-11-01T05:00:00Z", is_junk: false, lost_reason: null, pipeline: "new_logo" },
+      { id: "L-B1", company: B_MARK, contact_name: B_MARK, contact_phone: "9000000000", contact_email: "b@b.test", stage: "demo", source: "manual", value: 99999, seats: 1, plan: B_MARK, owner_id: OWNER_B, follow_up_date: "2026-11-20", expected_close_date: "2026-11-25", created_at: "2026-11-01T05:00:00Z", is_junk: false, lost_reason: null, pipeline: "new_logo" },
     ),
     lead_activities: both(
       { id: "act-a", lead_id: "L-A1", kind: "call", detail: "Spoke to Ravi", created_at: "2026-11-19T05:00:00Z" },
@@ -44,8 +44,8 @@ export function seed(): Tables {
       { id: CUST_B, name: B_MARK, display_name: null, customer_number: "C-001", customer_type: "business", contact_name: B_MARK, contact_email: "b@b.test", contact_phone: "9000000000", city: "Pune", state: "MH", gstin: null, is_active: true, since: "2025-04-01" },
     ),
     quotes: both(
-      { id: "Q-A1", customer_id: CUST_A, customer_name: "Acme Traders Pvt Ltd", lead_id: "L-A1", status: "sent", approval_status: "approved", plan: "Business Starter", seats: 10, billing_cycle: "yearly", subtotal: 32400, tax_rate: 18, amount: 38232, created_date: "2026-11-10", expires_date: "2026-11-30", invoice_id: null, is_renewal: false, payment_status: null },
-      { id: "Q-B1", customer_id: CUST_B, customer_name: B_MARK, lead_id: "L-B1", status: "sent", approval_status: "approved", plan: B_MARK, seats: 1, billing_cycle: "yearly", subtotal: 1, tax_rate: 18, amount: 1, created_date: "2026-11-10", expires_date: "2026-11-30", invoice_id: null, is_renewal: false, payment_status: null },
+      { id: "Q-A1", customer_id: CUST_A, customer_name: "Acme Traders Pvt Ltd", lead_id: "L-A1", status: "viewed", approval_status: "approved", plan: "Business Starter", seats: 10, billing_cycle: "yearly", subtotal: 32400, tax_rate: 18, amount: 38232, created_date: "2026-11-10", expires_date: "2026-11-30", invoice_id: null, is_renewal: false, payment_status: null },
+      { id: "Q-B1", customer_id: CUST_B, customer_name: B_MARK, lead_id: "L-B1", status: "viewed", approval_status: "approved", plan: B_MARK, seats: 1, billing_cycle: "yearly", subtotal: 1, tax_rate: 18, amount: 1, created_date: "2026-11-10", expires_date: "2026-11-30", invoice_id: null, is_renewal: false, payment_status: null },
     ),
     invoices: both(
       { id: "INV-A1", customer_id: CUST_A, customer_name: "Acme Traders Pvt Ltd", invoice_date: "2026-10-01", due_date: "2026-10-15", status: "pending", amount: 11800, taxable_value: 10000, tax_amount: 1800, tax_rate: 18, net_payable: 11800, paid_amount: 1800, paid_date: null, document_kind: "tax_invoice", inter_state: false, written_off_at: null, created_at: "2026-10-01T05:00:00Z" },
