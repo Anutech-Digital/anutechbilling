@@ -39,8 +39,8 @@ function seed(): void {
 const rows = (page: Page): Locator => page.getByRole("main").getByRole("listitem");
 /** The number on a tile of Overview's "Open tasks by due date" strip — the tile's own label says it ("Overdue: 3 open tasks. …"). */
 async function overviewNumber(page: Page, label: string): Promise<number> {
-  const tile = await onlyOne(page.getByRole("main").getByRole("link", { name: new RegExp(`^${label}: \d+ open tasks?\.`) }), `the Overview "${label}" tile`);
-  const m = new RegExp(`^${label}: (\d+) open`).exec((await tile.getAttribute("aria-label")) ?? "");
+  const tile = await onlyOne(page.getByRole("main").getByRole("link", { name: new RegExp(`^${label}: \\d+ open tasks?\\.`) }), `the Overview "${label}" tile`);
+  const m = new RegExp(`^${label}: (\\d+) open`).exec((await tile.getAttribute("aria-label")) ?? "");
   if (!m) throw new Error(`no number on the Overview "${label}" tile`);
   return Number(m[1]);
 }
