@@ -248,5 +248,13 @@ each would use the same preview → confirm, idempotency key, role check (`money
   revocation, per-call user/tenant/role re-check); DB wrapper (tenant filter, column allowlist, secret
   columns); routes (404 when off, 401 challenge, CSRF); guard (no service role, no billing imports).
 - SQL: `supabase/tests/mcp_connector_rls.test.sql` (own rows only, cross-tenant blocked, audit append-only,
-  revoked is final) — see the commit / summary for whether it was run locally.
-- Playwright e2e for the sign-in flow: not added (needs a running app + database with the migration).
+  revoked is final). Run 20 Nov 2026 on the local Supabase (migration + test in one rolled-back
+  transaction): **passes**; a mutated assertion turns it red, and the rollback leaves nothing behind.
+- Playwright: `e2e/mcp-auth.spec.ts` — metadata, 401 challenge, client registration, signed-out
+  authorize → login with `next=`, fake code refused, unregistered redirect never followed. Skips itself
+  when `MCP_ENABLED` is off. **3/3 pass** on localhost (20 Nov 2026). Not covered yet: the signed-in
+  Allow → token → tool call path in a browser (it needs the migration applied to the local database).
+- Gate on this branch (20 Nov 2026): typecheck exit 0, lint exit 0, lint ratchet ok (no rule above
+  baseline). Full vitest: every MCP test passes; the one remaining red file,
+  `renewals/row-facts-r2876.test.ts`, fails only because this Windows checkout has CRLF line endings
+  (`core.autocrlf=true`) and the test matches `\n` — it does not touch MCP code.
