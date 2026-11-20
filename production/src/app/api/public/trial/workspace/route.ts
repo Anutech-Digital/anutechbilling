@@ -32,6 +32,7 @@ import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { IST_TZ } from "@/lib/dates/ist";
 import { buyIntentNote } from "@/app/api/public/checkout/workspace/buy-intent";
 import { buyIntentFields } from "@/app/api/public/checkout/workspace/buy-intent-schema";
+import { saveWebsiteLeadOnce } from "@/lib/leads/website-request-once";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
@@ -114,10 +115,12 @@ export async function POST(request: NextRequest) {
     const trialStartedAt = new Date();
     const trialExpiresAt = new Date(trialStartedAt.getTime() + TRIAL_DAYS * 86400000);
 
-    const { error: leadErr } = await admin.from("leads").insert({
+    /* R-2968: the same domain / mobile / email asking again within 24 h joins the first request
+       ("Asked again" in its notes) — no second lead, no second set of tasks, no second email.
+       website_lead_once checks and inserts under one lock, so two clicks at once make one lead. */
+    const saved = await saveWebsiteLeadOnce(admin, BUY_PAGE_TENANT_ID, {
       id:                leadId,
-      tenant_id:         BUY_PAGE_TENANT_ID,
-      company:           companyName,
+      company:          companyName,
       contact_name:      fullName,
       contact_email:     email,
       contact_phone:     phone,
@@ -134,8 +137,8 @@ export async function POST(request: NextRequest) {
       trial_expires_at:  trialExpiresAt.toISOString(),
     });
 
-    if (leadErr) {
-      console.error("[/api/public/trial/workspace] lead insert failed:", leadErr);
+    if (!saved.ok) {
+      console.error("[/api/public/trial/workspace] lead insert failed:", saved.error);
       return NextResponse.json(
         /* Was "Please WhatsApp Pardeep directly" — a website visitor is told to contact a
            person by name, on a storefront that may belong to a different reseller, and with
@@ -146,8 +149,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
-    await recordFormConsent(admin, { tenantId: BUY_PAGE_TENANT_ID, leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
+    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead
+       (R-2968: the first request's lead when this one joined it — the latest answer counts). */
+    await recordFormConsent(admin, { tenantId: BUY_PAGE_TENANT_ID, leadId: saved.leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
+
+    if (saved.joined) {
+      return NextResponse.json({ success: true, leadId: saved.leadId, alreadyRequested: true });
+    }
 
     // Auto-create follow-up tasks via tasks system —
     //   T-7  (Day 7):  "Mid-trial check-in"
