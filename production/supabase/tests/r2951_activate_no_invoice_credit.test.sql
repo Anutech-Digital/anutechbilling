@@ -179,6 +179,8 @@ begin
     raise exception 'FAIL H: Credit tasks still open after the invoice was paid'; end if;
   if (pg_temp.r2951_task('Q-R2951-A2', 'Credit: due date reached')).status <> 'done' then
     raise exception 'FAIL H: the payment turned the done issue-invoice task into something else'; end if;
+  if exists (select 1 from public.subscriptions where quote_id = 'Q-R2951-A2' and (outstanding_amount <> 0 or payment_due_date is not null)) then
+    raise exception 'FAIL H: invoice first, then paid — pay-by date / outstanding left on the subscription'; end if;
   raise notice 'PASS D/H: invoice before payment closes only the issue-invoice task; the invoice counts once (owed_before 9,918); paid → reminders closed';
 end $$;
 

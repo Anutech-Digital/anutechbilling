@@ -20,9 +20,10 @@
 --      quotes, only rows with credit_activated_at): every path that marks the quote fully paid or
 --      gives it its invoice goes through this row, so it cannot be skipped —
 --        payment_status → received (fully paid, no invoice): the two payment reminders are
---          cancelled (as record_payment does on the invoice path, R-346), and the pay-by date is
---          cleared on the quote's subscriptions that owe nothing now. The issue-invoice task STAYS
---          open: the GST invoice is still owed after the money came in.
+--          cancelled (as record_payment does on the invoice path, R-346). The issue-invoice task
+--          STAYS open: the GST invoice is still owed after the money came in.
+--        any payment_status write (every payment): the pay-by date is cleared on the quote's
+--          subscriptions that owe nothing now — also when the invoice came before the money.
 --        invoice_id set: the issue-invoice task is done.
 --      The invoice path itself is unchanged: there, record_payment closes the reminders when the
 --      invoice is paid (payment_status stays 'invoiced', so this trigger's payment branch never runs).
@@ -648,14 +649,19 @@ begin
        and status in ('pending', 'snoozed')
        and title like 'Credit:%'
        and title not like 'Credit: due date reached%';   -- the GST invoice is still owed
-    -- Nothing owed any more → no pay-by date (Payments → dues, Collections, the pay-by chip).
-    update public.subscriptions
-       set payment_due_date = null
-     where tenant_id = new.tenant_id
-       and quote_id  = new.id
-       and payment_due_date is not null
-       and coalesce(outstanding_amount, 0) <= 0;
   end if;
+
+  /* Nothing owed any more → no pay-by date (Payments → dues, Collections, the pay-by chip).
+     Every payment writes payment_status (record_payment sets it each time, also 'invoiced' →
+     'invoiced' when an invoice raised before the money is paid), and the outstanding amount is
+     lowered before that write — so this also covers "invoice first, payment later". Only rows
+     that owe nothing; a part payment keeps its date. */
+  update public.subscriptions
+     set payment_due_date = null
+   where tenant_id = new.tenant_id
+     and quote_id  = new.id
+     and payment_due_date is not null
+     and coalesce(outstanding_amount, 0) <= 0;
 
   -- The GST invoice is raised (paid or not) → the reminder to raise it is done.
   if old.invoice_id is null and new.invoice_id is not null then
