@@ -24,7 +24,8 @@ describe("R-2942 tabOwnerOf — a page drawn as a tab of another row", () => {
   it("every owner is a real top-level row and every tab page a real nav page", () => {
     const top = new Set(APP_NAV.flatMap((s) => s.items.map((i) => i.id)));
     const pages = new Set(flattenNav(APP_NAV).map((e) => e.item.href));
-    for (const [href, owner] of Object.entries(TAB_PAGE_OWNER)) {
+    expect(TAB_PAGE_OWNER.size).toBeGreaterThan(0);
+    for (const [href, owner] of TAB_PAGE_OWNER) {
       expect(top.has(owner), `${owner} is a sidebar row`).toBe(true);
       expect(pages.has(href), `${href} is in the nav`).toBe(true);
     }

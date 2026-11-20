@@ -288,14 +288,16 @@ export function groupDirectory(items: NavItem[]): { group: string; items: NavIte
  * report (Accounts). page href → id of the row that owns it. The page keeps its own place in
  * the nav: route guard, Ctrl+K and breadcrumb ("Reports › Team tasks") are unchanged.
  */
-export const TAB_PAGE_OWNER: Readonly<Record<string, string>> = {
-  "/reports/team-tasks": "tasks",
-};
+export const TAB_PAGE_OWNER: ReadonlyMap<string, string> = new Map([
+  ["/reports/team-tasks", "tasks"],
+]);
 
 /** The id of the sidebar row this page is a tab of, or null. A trailing slash is ignored. */
 export function tabOwnerOf(pathname: string | null | undefined): string | null {
   const path = (pathname ?? "").replace(/\/+$/, "");
-  return TAB_PAGE_OWNER[path] ?? null;
+  // A Map, not an object read by a computed key: this file is in the Help tools' import graph
+  // (lib/security/help-tools-guard.test.ts refuses `obj[variable]` there).
+  return TAB_PAGE_OWNER.get(path) ?? null;
 }
 
 /** True when `pathname` is this item or one of its children / directory rows. */
