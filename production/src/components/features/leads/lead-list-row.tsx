@@ -30,6 +30,15 @@ import {
 import { RowActions } from "@/components/features/leads/lead-row-actions";
 import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
 import { LeadAiStatusBadge } from "@/components/features/leads/lead-ai-status";
+import { PhoneCell, EmailCell } from "@/components/features/leads/lead-contact-cells";
+import { sourceLabel } from "@/lib/leads/lead-sources";
+import type { LeadColId } from "@/lib/leads/list-columns";
+
+/** The shown cells, in the person's order (R-2970). Keyed, so React keeps each cell's state
+ *  (an inline edit in progress) when a column moves. */
+function pickCells(shown: readonly LeadColId[], cells: Record<LeadColId, React.ReactNode>): React.ReactNode[] {
+  return shown.map((id) => <React.Fragment key={id}>{cells[id]}</React.Fragment>);
+}
 
 type TeamMember = NonNullable<ReturnType<typeof useTeamMembers>["data"]>[number];
 
@@ -55,10 +64,12 @@ export interface LeadListRowProps {
   onWhatsApp?: (l: LeadListRow) => void;
   /** R-2042: leads.ai_status (useLeadAiStatuses in the list view) — the "AI: …" badge. */
   aiStatus?: string | null;
+  /** R-2970: the data columns this person shows, in order (lib/leads/list-columns.ts). */
+  shown: readonly LeadColId[];
 }
 
 export function LeadListRow({
-  lead, rowIndex, selectedIds, leadKeys, selectedLeadRef, onRowClick, toggleId, openTaskByLead,
+  shown, lead, rowIndex, selectedIds, leadKeys, selectedLeadRef, onRowClick, toggleId, openTaskByLead,
   firstReplies, nowForWait, leadQuotes, planCosts, updateLead, ownerById, dupIds, onMerge,
   onSendQuote, onFollowUp, onWhatsApp, aiStatus,
 }: LeadListRowProps) {
@@ -148,6 +159,10 @@ export function LeadListRow({
             className="w-4 h-4 accent-amber cursor-pointer"
           />
         </td>
+        {/* R-2970: the data cells are drawn in the person's chosen order (lib/leads/list-columns.ts).
+            Each cell below is keyed by its column id; `pickCells` keeps the shown ones, in order. */}
+        {pickCells(shown, {
+        contact: (
         <td
           className={cn(
             GRID_TD, STICK_L_IDENTITY,
@@ -266,7 +281,10 @@ export function LeadListRow({
 
                   Jo naam pehle hi upar chhap chuka ho wo yahan dobara nahi aata —
                   `leadContactLines` wahi tay karta hai. */}
-              {contactLines.email ? (
+              {/* R-2970: email has its own column now (shown by default). It comes back
+                  under the name only when the person removed the Email column — one fact,
+                  one place, but never nowhere. */}
+              {contactLines.email && !shown.includes("email") ? (
                 <span className="block truncate text-xs text-ink-3" title={contactLines.email}>
                   {contactLines.email}
                 </span>
@@ -294,12 +312,16 @@ export function LeadListRow({
             </div>
           </div>
         </td>
+        ),
+        phone: <PhoneCell lead={lead} onWhatsApp={onWhatsApp} />,
+        email: <EmailCell lead={lead} />,
+        wait: (
 
-        {/* ── Intezaar ka waqt ────────────────────────────────────────────────
+        /* ── Intezaar ka waqt ────────────────────────────────────────────────
             Do alag cheezein, ek column: jawab ja chuka hai to KITNI DER LAGI (ek
             record, muted), aur jawab baaki hai to KAB SE RUKI HAI (aaj ka kaam,
             rang ke saath). Inhe ek jaisa dikhana wahi galti hoti jo
-            `follow_up_date` ke saath hui — wo yojana hai, ye karz. */}
+            `follow_up_date` ke saath hui — wo yojana hai, ye karz. */
         <td className={cn(GRID_TD_ATOM, "text-right")}>
           {(() => {
             const w = waitState(lead.created_at, firstReplies.get(lead.id) ?? null, nowForWait);
@@ -337,9 +359,9 @@ export function LeadListRow({
             );
           })()}
         </td>
+        ),
 
-
-        {/* Contact — naam upar, email neeche. Ek column, do line. Header par
+        /* Contact — naam upar, email neeche. Ek column, do line. Header par
             wajah aur naap likhe hain.
 
             `title` dono par rakha hai: jo cell me kata, wo hover par poora milta
@@ -350,14 +372,15 @@ export function LeadListRow({
             Farq rang se hai, size se nahi. Dono line `text-xs` hain — naam `ink-2`,
             email `ink-3`. Chhota size dena aasan tha, par is screen par pehle se
             2,000+ element 12px se neeche hain aur WCAG AA ka 4.5:1 unpar poora
-            lagta hai; ek aur size jodne se wo ginti badhti, padhna nahi. */}
-        {/* Company — ab ek saada vivaran, pehchan nahi (29 Aug 2026). Khaali ho
+            lagta hai; ek aur size jodne se wo ginti badhti, padhna nahi. */
+        /* Company — ab ek saada vivaran, pehchan nahi (29 Aug 2026). Khaali ho
             sakti hai, aur us par "—" chhapta hai: khaali cell aur "data hai par
             dikha nahi" grid me ek jaise lagte hain.
 
             Jab company hi pehchan ban kar upar chali gayi ho (contact ka naam nahi
             tha), to yahan DOBARA nahi chhapti — ek hi naam ek row me do baar
-            dikhna galti jaisa lagta hai. Faisla `leadCompanyCell` karta hai. */}
+            dikhna galti jaisa lagta hai. Faisla `leadCompanyCell` karta hai. */
+        company: (
         <td className={GRID_TD}>
           {companyCell ? (
             <span className="block truncate text-xs text-ink-2" title={companyCell}>
@@ -368,7 +391,7 @@ export function LeadListRow({
           )}
         </td>
 
-        {/* ── Stage: PADHNE ke liye, badalne ke liye nahi (26 Aug 2026) ────────
+        /* ── Stage: PADHNE ke liye, badalne ke liye nahi (26 Aug 2026) ────────
             Pehle yahan ek <select> tha. Pardeep ne use hataane ko kaha: stage us
             baat se badle jo lead ke saath sach me hui, kisi dropdown se nahi.
 
@@ -381,9 +404,11 @@ export function LeadListRow({
             maujood hai, confirmation ke saath. Wo jaan-boojh kar ek soch-samajh
             kar kiya jane wala kaam hai, table cell nahi (CLAUDE.md §24 — koi
             dead end nahi). Wahi tarq jo pehle se `won` par lagta tha, ab har
-            stage par lagta hai. */}
-        {/* Stage ek ikai hai ("Quote Sent" ko todna use padhne me mushkil karta
-            hai), isliye ATOM. */}
+            stage par lagta hai. */
+        /* Stage ek ikai hai ("Quote Sent" ko todna use padhne me mushkil karta
+            hai), isliye ATOM. */
+        ),
+        stage: (
         <td className={GRID_TD_ATOM}>
           <div className="flex items-center gap-1.5 flex-nowrap">
             <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", STAGE_DOT[lead.stage])} />
@@ -418,12 +443,14 @@ export function LeadListRow({
             })()}
           </div>
         </td>
-        {/* Email is kept off the row to keep it tight — it shows on hover
+        /* Email is kept off the row to keep it tight — it shows on hover
             (title) with a small mail glyph as the cue. Phone stays visible
-            as it's the primary call-to-action in the pipeline. */}
-        {/* Plan. Seats yahan se apne column me chale gaye (26 Aug 2026) — pehle
+            as it's the primary call-to-action in the pipeline. */
+        /* Plan. Seats yahan se apne column me chale gaye (26 Aug 2026) — pehle
             dono ek cell me the aur us cell ki doosri line har row ko unchi kar
-            deti thi. Grid me har cell ek line ka hona chahiye. */}
+            deti thi. Grid me har cell ek line ka hona chahiye. */
+        ),
+        plan: (
         <td className={cn(GRID_TD,"text-sm text-ink-2")}>
           {/* Vendor shortened, never dropped: this catalogue has a Google, a Microsoft AND a
               Zoho "Standard", so stripping the vendor would print the same label for three
@@ -454,16 +481,20 @@ export function LeadListRow({
           })()}
         </td>
 
-        {/* Seats — apna column, daayen taraf aligned kyunki ye ginti hai. "seats"
+        /* Seats — apna column, daayen taraf aligned kyunki ye ginti hai. "seats"
             shabd header me hai, isliye har cell me dohrana sirf jagah kha raha
-            tha (aur 10 rows me wo 10 baar chhapta tha). */}
+            tha (aur 10 rows me wo 10 baar chhapta tha). */
+        ),
+        seats: (
         <td className={cn(GRID_TD_ATOM, "text-right text-sm tabular-nums text-ink-2")}>
           {lead.seats ?? "—"}
         </td>
-        {/* Value — the money, given visual precedence (serif, bold), and
+        /* Value — the money, given visual precedence (serif, bold), and
             editable in place. Parsing lives in lib/leads/inline-edit.ts:
             this figure feeds the Open Pipeline KPI, so an unparseable
-            entry is refused rather than coerced. */}
+            entry is refused rather than coerced. */
+        ),
+        value: (
         <td className={cn(GRID_TD_ATOM,"text-right tabular-nums")} onClick={(e) => e.stopPropagation()}>
           <InlineCell<number | null>
             value={lead.value ?? null}
@@ -509,12 +540,14 @@ export function LeadListRow({
             }
           />
         </td>
-        {/* Priority — inline select. */}
-        {/* Follow-up date — inline date picker. Overdue reads rose so the
-            column doubles as a "who needs chasing today" scan. */}
-        {/* Follow-up. `GRID_TD` ka nowrap zaroori hai — iske bina "26 Aug 2026"
+        /* Priority — inline select. */
+        /* Follow-up date — inline date picker. Overdue reads rose so the
+            column doubles as a "who needs chasing today" scan. */
+        /* Follow-up. `GRID_TD` ka nowrap zaroori hai — iske bina "26 Aug 2026"
             83px me teen tukdo me tootta tha aur us ek row ki unchai baaki sab se
-            alag ho jati thi. */}
+            alag ho jati thi. */
+        ),
+        followup: (
         <td className={cn(GRID_TD_ATOM, "text-sm")} onClick={(e) => e.stopPropagation()}>
           <InlineCell<string | null>
             value={lead.follow_up_date ?? null}
@@ -535,17 +568,19 @@ export function LeadListRow({
             }
           />
         </td>
-        {/* Expected close date. An empty one is not styled as an error — most
+        /* Expected close date. An empty one is not styled as an error — most
             leads legitimately have none — but the forecast counts it as undated
-            and says so, so the gap is visible somewhere rather than nowhere. */}
-        {/* ── Owner ─────────────────────────────────────────────────────────────
+            and says so, so the gap is visible somewhere rather than nowhere. */
+        /* ── Owner ─────────────────────────────────────────────────────────────
             Initials ka rang `users.color` se aata hai — wahi jo /team aur tasks
             par lagta hai, isliye ek hi aadmi har screen par ek jaisa dikhta hai.
 
             Bina owner wali lead "—" nahi, "Unassigned" dikhati hai: khaali cell
             "data nahi hai" jaisa padha jata hai, jabki bina owner hona ek ASLI
             haalat hai jispar kaam karna hai (page ki apni "unassigned" ginti isi
-            par chalti hai). */}
+            par chalti hai). */
+        ),
+        owner: (
         <td className={GRID_TD_ATOM}>
           {(() => {
             const o = lead.owner_id ? ownerById.get(lead.owner_id) : undefined;
@@ -590,6 +625,27 @@ export function LeadListRow({
             );
           })()}
         </td>
+        ),
+        /* R-2970: columns a person can add from the Columns menu — fields the row already has. */
+        source: (
+          <td className={GRID_TD}>
+            <span className="block truncate text-xs text-ink-2" title={lead.source ?? undefined}>
+              {lead.source ? sourceLabel(lead.source) : "—"}
+            </span>
+          </td>
+        ),
+        created: (
+          <td className={cn(GRID_TD_ATOM, "text-xs tabular-nums text-ink-2")}>{formatDate(lead.created_at)}</td>
+        ),
+        updated: (
+          <td className={cn(GRID_TD_ATOM, "text-xs tabular-nums text-ink-2")}>{formatDate(lead.updated_at)}</td>
+        ),
+        domain: (
+          <td className={GRID_TD}>
+            <span className="block truncate text-xs text-ink-2" title={lead.domain ?? undefined}>{lead.domain || "—"}</span>
+          </td>
+        ),
+        })}
 
         {/* Quick actions — dark panel that opens from the ⋯ (hover/click/
             focus) and stays open while the panel itself is hovered. */}

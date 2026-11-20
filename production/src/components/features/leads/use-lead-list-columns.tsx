@@ -1,6 +1,6 @@
 "use client";
 /**
- * Column widths, density and hidden columns for the lead list — moved verbatim out of
+ * Column widths, density and the shown columns (R-2970) for the lead list — moved verbatim out of
  * LeadListView (S35, 28 Sep 2026). The rules and storage are in lib/leads/use-column-widths.ts
  * (tested); this is the pointer work.
  *
@@ -15,7 +15,14 @@ import {
   MIN_COL_PX,
   type ResizeStart,
 } from "@/lib/leads/use-column-widths";
-import { LEADLIST_COL_ORDER, LEADLIST_COL_WIDTHS, type Density } from "@/components/features/leads/lead-list-grid";
+import { type Density } from "@/components/features/leads/lead-list-grid";
+import {
+  ALL_LEAD_COL_IDS, CONTROL_PX, DEFAULT_LEAD_COLS, keepWhole, leadColDef, readShownColumns,
+  renderOrder, writeShownColumns, isLeadColId, type LeadColId,
+} from "@/lib/leads/list-columns";
+
+/** Every key a stored width may carry — the checkbox, the ⋯ and every column a person can add. */
+const KNOWN_WIDTH_KEYS = ["select", "actions", ...ALL_LEAD_COL_IDS];
 
 export function useLeadListColumns(leads: readonly unknown[]) {
   /* ── Kheench kar chaudai badalna (26 Aug 2026) ─────────────────────────────
@@ -32,18 +39,22 @@ export function useLeadListColumns(leads: readonly unknown[]) {
   /* Density aur chhupe hue column — dono localStorage me, wahi tarq jo chaudai ka hai:
      ye is aadmi ki is machine ki pasand hai, uske business ka data nahi. */
   const [density, setDensity] = React.useState<"compact" | "regular" | "relaxed">("regular");
-  const [hidden, setHidden] = React.useState<ReadonlySet<string>>(new Set());
+  /* R-2970: the shown data columns, in order — replaces the old "hidden" set over a fixed
+     nine. Rules + storage: lib/leads/list-columns.ts (tested). */
+  const [shown, setShownState] = React.useState<LeadColId[]>(() => [...DEFAULT_LEAD_COLS]);
   React.useEffect(() => {
     try {
       const d = window.localStorage.getItem("resellersos.leads.density");
       if (d === "compact" || d === "regular" || d === "relaxed") setDensity(d);
-      const h = window.localStorage.getItem("resellersos.leads.hiddenCols");
-      if (h) {
-        const parsed: unknown = JSON.parse(h);
-        if (Array.isArray(parsed)) setHidden(new Set(parsed.filter((x): x is string => typeof x === "string")));
-      }
     } catch { /* private mode — pasand yaad na rehna asuvidha hai, kharabi nahi */ }
+    setShownState(readShownColumns());
   }, []);
+  const setShown = React.useCallback((next: LeadColId[]) => {
+    setShownState(next);
+    writeShownColumns(next);
+  }, []);
+  const order = React.useMemo(() => renderOrder(shown), [shown]);
+  const orderKey = order.join(",");
 
   const [colW, setColW] = React.useState<Record<string, number>>({});
   const colRefs = React.useRef<Record<string, HTMLTableColElement | null>>({});
@@ -69,7 +80,7 @@ export function useLeadListColumns(leads: readonly unknown[]) {
    * galat chaudai lagane se behtar hai.
    */
   const measureColumn = (col: string): number | null => {
-    const idx = LEADLIST_COL_ORDER.indexOf(col);
+    const idx = order.indexOf(col);
     const table = tableWrapRef.current?.querySelector("table");
     if (idx < 0 || !table) return null;
 
@@ -119,11 +130,26 @@ export function useLeadListColumns(leads: readonly unknown[]) {
      Ek hi baar chalta hai (`autofitted`), aur sirf jab user ne khud kuch na saheja ho —
      uski kheenchi hui chaudai par chadhna uska kaam mitane jaisa hoga. */
   const autofitted = React.useRef(false);
+  /* Bumped by a reset, so the first-fit effect runs again on a cleared layout. */
+  const [fitNonce, setFitNonce] = React.useState(0);
   React.useEffect(() => {
     /* Aaj ke column bhi bhejo. Saved layout me koi anjaan naam mila (jaise `email`/`phone`,
        jo 29 Aug 2026 ko hata diye gaye) to wo poora layout chhod diya jata hai — wo ek
        aur hi table ka naap tha. Wajah `readStoredWidths` par likhi hai. */
-    const stored = readStoredWidths(undefined, LEADLIST_COL_ORDER);
+    /* R-2970: a column added after the widths were set gets its default width; the table
+       then grows and scrolls sideways, Contact staying sticky. */
+    if (autofitted.current) {
+      setColW((w) => {
+        if (Object.keys(w).length === 0) return w;
+        const missing = order.filter((k) => w[k] == null);
+        if (missing.length === 0) return w;
+        const next = { ...w };
+        for (const k of missing) next[k] = isLeadColId(k) ? leadColDef(k).px : CONTROL_PX[k as "select" | "actions"];
+        return next;
+      });
+      return;
+    }
+    const stored = readStoredWidths(undefined, KNOWN_WIDTH_KEYS);
     /* ── Saheji hui chaudai SIRF tab maani jaye jab wo poori ho (26 Aug 2026) ───
        Ye bug Pardeep ne pakda: "lead ka owner kaun hai show hi nahi ho raha hai".
 
@@ -138,10 +164,10 @@ export function useLeadListColumns(leads: readonly unknown[]) {
        karte hain. Isliye jaanch coverage ki hai, khaali-pan ki nahi: agar saheji hui list
        aaj ke saare column nahi dhakti, to use chhod kar autofit chalta hai. User ki
        kheenchi hui chaudai jaati hai — par ek gायab column usse bahut bada nuksaan hai. */
-    const covers = coversAllColumns(stored, LEADLIST_COL_ORDER);
+    const covers = coversAllColumns(stored, order);
     if (covers) { setColW(stored); autofitted.current = true; return; }
 
-    if (autofitted.current || leads.length === 0) return;
+    if (leads.length === 0) return;
 
     /* ── Table taiyar hone tak KOSHISH KARTE RAHO ────────────────────────────
        Pehla version ek hi `requestAnimationFrame` par naapta tha. Wo chup-chaap fail ho
@@ -158,13 +184,13 @@ export function useLeadListColumns(leads: readonly unknown[]) {
       if (autofitted.current) return;
       const fitted: Record<string, number> = {};
       let ready = true;
-      for (const col of LEADLIST_COL_ORDER) {
+      for (const col of order) {
         /* `select` aur `actions` me CONTROL hai, text nahi — checkbox aur ⋯ button. Unhe
            text se naapne par autofit MIN_COL_PX (32px) de deta hai, aur checkbox ko
            padding + border ke saath 40px chahiye, to wo apne hi column me kat jata.
-           Inki chaudai LEADLIST_COL_WIDTHS me px me likhi hai — wahi sahi hai. */
+           Inki chaudai CONTROL_PX (lib/leads/list-columns.ts) me px me likhi hai — wahi sahi hai. */
         if (col === "select" || col === "actions") {
-          fitted[col] = parseFloat(LEADLIST_COL_WIDTHS[col]);
+          fitted[col] = CONTROL_PX[col];
           continue;
         }
         const w = measureColumn(col);
@@ -183,12 +209,14 @@ export function useLeadListColumns(leads: readonly unknown[]) {
          container se bada raha to sticky `⋯` column apne padosi ke upar chadh kar
          Follow-up ki tareekh dhak deta hai. Wajah `fitToContainer` par likhi hai.
          User ke kheenchne wale raaste par ye NAHI jata — wahan scroll hi sahi hai. */
-      setColW(fitToContainer(fitted, tableWrapRef.current?.clientWidth ?? 0, { shrink: true }));
+      /* R-2970: `keep` — phone, value and follow-up stay whole; the text columns give way. */
+      setColW(fitToContainer(fitted, tableWrapRef.current?.clientWidth ?? 0, { shrink: true, keep: keepWhole(shown) }));
     };
 
     id = requestAnimationFrame(attempt);
     return () => cancelAnimationFrame(id);
-  }, [leads.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- orderKey stands for order / shown
+  }, [leads.length, orderKey, fitNonce]);
 
   /* ── Save state ke SAATH bandha hai, drag ke ant par nahi (26 Aug 2026) ──────
      Pehle `endResize` likhta tha. Naap kar dekha: ek asli drag me CONTACT 403px ho gaya
@@ -241,7 +269,7 @@ export function useLeadListColumns(leads: readonly unknown[]) {
     e.stopPropagation();          // header ka sort click na chale
 
     const snapshot: Record<string, number> = { ...colW };
-    for (const key of LEADLIST_COL_ORDER) {
+    for (const key of order) {
       if (snapshot[key] == null) {
         /* Round: getBoundingClientRect 27.725 jaisi value deta hai, aur aadha pixel
            gridlines par har render me hilta dikhta hai. */
@@ -276,7 +304,18 @@ export function useLeadListColumns(leads: readonly unknown[]) {
      jana aasan hai — aur ek galti se 400px ka ho gaya column bina wapsi ke raaste ke wahi
      dead-end hai jise CLAUDE.md §24 mana karta hai. */
   const resetWidths = () => {
+    /* Storage first: the first-fit effect reads it in this same commit, and a stale full
+       layout there would put the old widths straight back. */
+    writeStoredWidths({});
+    autofitted.current = false;
     setColW({});
+    setFitNonce((n) => n + 1);
+  };
+
+  /** R-2970 "Reset to default": the default columns, in the default order, fitted afresh. */
+  const resetColumns = () => {
+    setShown([...DEFAULT_LEAD_COLS]);
+    resetWidths();
   };
 
   /**
@@ -308,7 +347,7 @@ export function useLeadListColumns(leads: readonly unknown[]) {
              px dena mila-jula haalat bana deta hai aur browser bachi jagah baant kar
              padosi columns hila deta. Wahi bug double-click par pehle bhi mila tha. */
           const next: Record<string, number> = { ...w };
-          for (const key of LEADLIST_COL_ORDER) {
+          for (const key of order) {
             if (next[key] == null) {
               next[key] = Math.round(colRefs.current[key]?.getBoundingClientRect().width ?? MIN_COL_PX);
             }
@@ -323,7 +362,7 @@ export function useLeadListColumns(leads: readonly unknown[]) {
   );
 
   return {
-    density, setDensity, hidden, setHidden, colW, colRefs, tableWrapRef, resetWidths, ResizeGrip,
+    density, setDensity, shown, setShown, order, colW, colRefs, tableWrapRef, resetWidths, resetColumns, ResizeGrip,
   };
 }
 

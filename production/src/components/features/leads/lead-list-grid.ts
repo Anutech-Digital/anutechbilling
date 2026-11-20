@@ -137,39 +137,13 @@ export const STICK_HEAD = "z-30";
 
    Aur ye sirf table ka badlav nahi hai: dono lead form bhi usi din badle: pehle
    `company` min(2) maangta tha aur `contact_name` optional tha — theek ulta. */
-export const LEADLIST_COL_ORDER = [
-  "select", "contact", "wait", "company",
-  "stage", "plan", "seats", "value", "followup", "owner", "actions",
-];
-export const LEADLIST_COL_WIDTHS: Record<string, string> = {
-  /* select FIXED px me — company ko uske bagal me jamana hai (sticky left), aur uske
-     liye baayen ki chaudai pakki honi chahiye. Spreadsheet me bhi row-select ka gutter
-     fixed hota hai; use kheenchne ki koi wajah bhi nahi banti. */
-  /* Wrap aane ke baad chaudai ka batwara badla (26 Aug 2026, naap kar):
-     `company` aur `email` ab TOOT sakte hain, isliye unse jagah lekar `stage` aur
-     `value` ko di gayi — wo dono nowrap hain, to unme kam jagah ka matlab KATNA hai.
-     Aur paisa katna sabse bura hai: "₹3,240" ka "₹3,2…" ban jana ek galat aankda
-     dikhata hai, khaali cell nahi. */
-  /* ⚠️ YOGFAL 100% NAHI THA — 29 Aug 2026 ko pakda gaya.
-     Upar likha hai "Yogfal theek 100% rakha gaya hai". Wo galat tha: purani ginti
-     16+7+9+10+12+10+11+10+5+9+10 = **109%** thi. `table-fixed` us 9% ko kahin se
-     nikalta nahi — table ko CHAUDA kar deta hai. Browser me naapa: table 1414px maang
-     rahi thi jabki jagah 1247px thi, yaani 167px daayin taraf bahar. Isi wajah se
-     Follow-up ki tareekh — is screen par sabse kaam ki cheez — scroll ke peeche chhupi
-     thi, aur do column hatane par bhi wo 167px waisa hi raha.
-
-     Ab: 20+6+11+16+11+12+5+9+10 = 100. Ginti badle to JODNA — comment par bharosa nahi. */
-  select: "40px",
-  contact:  "20%",   // Ab ye PEHCHAN wala column hai — naam, email, intent badge, sab yahin.
-  wait:      "6%",   // Sabse chhoti maang (73px); yahan se hi jagah nikli.
-  company:  "16%",   // Ab ek saada vivaran — khaali bhi ho sakta hai.
-  stage:    "11%",   // waisa hi
-  plan:     "12%",   // 10 → 12. "GW · Business Starter" 161px par do line me toot raha tha.
-  seats:     "5%",   // waisa hi
-  value:     "9%",   // waisa hi — nowrap hai, aur paisa katna sabse bura hai
-  followup: "10%",   // waisa hi, par ab wo DIKHTA hai — pehle scroll ke peeche tha
-  owner:    "11%",   // Aakhri data column (29 Aug) — dekha tab jata hai jab kaam kisi aur ko dena ho
-  actions:  "40px",
-};
+/* ── R-2970 (20 Nov 2026): the column list moved to lib/leads/list-columns.ts ─────────
+   The fixed LEADLIST_COL_ORDER / LEADLIST_COL_WIDTHS pair (and its 100% sum, which went
+   wrong three times above) is gone. Each person now picks the shown columns and their
+   order; the render order is renderOrder(shown), the first-paint widths are
+   fallbackPercents(shown) — computed from one px table, so the sum is 100 by
+   construction — and the measured first fit keeps phone / value / follow-up whole.
+   Phone and Email are back as their own columns; Plan, Seats and Wait went to "Add a
+   column" so the default still fits 1280 (measurements in list-columns.ts). */
 
 export type Density = "compact" | "regular" | "relaxed";

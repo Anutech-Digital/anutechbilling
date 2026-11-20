@@ -29,9 +29,10 @@ import type { LeadListRow as LeadRowData } from "@/lib/leads/list-page";
 import { STAGE_LABEL } from "@/lib/leads/stage-meta";
 import { openTaskIndex, sortLeads, type SortCol } from "@/lib/leads/list-selectors";
 import {
-  DENSITY_PY, GRID_TH, LEADLIST_COL_ORDER, LEADLIST_COL_WIDTHS, STICK_HEAD, STICK_L_IDENTITY,
+  DENSITY_PY, GRID_TH, STICK_HEAD, STICK_L_IDENTITY,
   STICK_L_SELECT, STICK_R_ACTIONS,
 } from "@/components/features/leads/lead-list-grid";
+import { CONTROL_PX, fallbackPercents, leadColDef, LOCKED_COL } from "@/lib/leads/list-columns";
 import { useLeadListColumns } from "@/components/features/leads/use-lead-list-columns";
 import { LeadListRow } from "@/components/features/leads/lead-list-row";
 import { useLeadAiStatuses } from "@/components/features/leads/lead-ai-status";
@@ -261,11 +262,12 @@ export function LeadListView({
   // doesn't need them so they're gone from this file.
 
   const {
-    density, setDensity, hidden, setHidden, colW, colRefs, tableWrapRef, resetWidths, ResizeGrip,
+    density, setDensity, shown, setShown, order, colW, colRefs, tableWrapRef, resetWidths, resetColumns, ResizeGrip,
   } = useLeadListColumns(leads);
+  const pct = React.useMemo(() => fallbackPercents(shown), [shown]);
 
 
-  const SortHeader = ({ col, label, align = "left", sticky = false }: { col: SortCol; label: string; align?: "left" | "right"; sticky?: boolean }) => (
+  const SortHeader = ({ col, label, align = "left", sticky = false, gripCol }: { col: SortCol; label: string; align?: "left" | "right"; sticky?: boolean; gripCol?: string }) => (
     <th
       onClick={() => onSort(col)}
       className={cn(
@@ -280,7 +282,7 @@ export function LeadListView({
           <Icon name={sortDir === "asc" ? "chevron_up" : "chevron_down"} size={11} />
         )}
       </span>
-      <ResizeGrip col={col} />
+      <ResizeGrip col={gripCol ?? col} />
     </th>
   );
 
@@ -368,42 +370,29 @@ export function LeadListView({
           ...(Object.keys(colW).length === 0
             ? {}
             : {
-                /* Sirf DIKHNE WALE column gine jate hain — chhupe hue ko jodne par table
-                   apni jagah se chauda reh jata aur daayen ek khaali patti bach jati. */
-                width: LEADLIST_COL_ORDER
-                  .filter((id) => !hidden.has(id))
-                  .reduce((sum, id) => sum + (colW[id] ?? 0), 0),
+                /* Sirf DIKHNE WALE column gine jate hain (R-2970: `order`) — baaki ko jodne
+                   par table apni jagah se chauda reh jata aur daayen ek khaali patti bach jati. */
+                width: order.reduce((sum, id) => sum + (colW[id] ?? 0), 0),
               }),
           /* Har cell isi ko padhta hai — dekho DENSITY_PY. */
           ["--cell-py" as string]: DENSITY_PY[density],
         } as React.CSSProperties}
       >
-        {/* ── Chhupe hue column, CSS se ────────────────────────────────────────────
-            Har cell par `{!hidden.has(...) && ...}` lagane ka matlab hota 12 cells ko
-            dobara likhna — aur is file me wahi kaam do baar galat ho chuka hai (column
-            hatate waqt colgroup chhoot jata tha, aur phir har agla column apne padosi ki
-            chaudai pehen leta tha).
-
-            `display:none` cell ko layout se poori tarah nikaal deta hai, to browser bache
-            hue cells se columns dobara ginta hai — aur colgroup me se bhi wahi hataye gaye
-            hain, isliye dono ka kram mel khata hai. Ek jagah se dono. */}
-        {hidden.size > 0 && (
-          <style>{LEADLIST_COL_ORDER
-            .map((id, i) => (hidden.has(id)
-              ? `.leads-grid > * > tr > *:nth-child(${i + 1}){display:none}`
-              : ""))
-            .filter(Boolean)
-            .join("")}</style>
-        )}
+        {/* R-2970: no CSS hiding any more — only the shown columns are rendered, in the
+            person's order, so the colgroup, the header and every row read one list (`order`). */}
         {/* Chaudai: user ne kheenchi hui (px) pehle, warna default (%). Jab tak koi drag
             nahi hua, table container ke saath bada-chhota hota hai — jo aam haalat me
             sahi hai. */}
         <colgroup>
-          {LEADLIST_COL_ORDER.filter((id) => !hidden.has(id)).map((id) => (
+          {order.map((id) => (
             <col
               key={id}
               ref={(el) => { colRefs.current[id] = el; }}
-              style={{ width: colW[id] != null ? `${colW[id]}px` : LEADLIST_COL_WIDTHS[id] }}
+              style={{
+                width: colW[id] != null ? `${colW[id]}px`
+                  : id === "select" || id === "actions" ? `${CONTROL_PX[id]}px`
+                  : pct[id],
+              }}
             />
           ))}
         </colgroup>
@@ -429,49 +418,24 @@ export function LeadListView({
             </th>
             {/* CONTACT jama hua hai (sticky) — scroll karte waqt yahi batata hai ki row
                 kiski hai. 29 Aug 2026 tak yahan Company thi; badla isliye ki bina company
-                ke lead ban sakti hai, bina contact ke nahi. Dekho STICK_L_IDENTITY. */}
-            <SortHeader col="contact" label="Contact" sticky />
-            {/* Intezaar — company ke theek baad, kyunki ye hi tay karta hai ki aaj kis
-                row par kaam karna hai. Research: 5 minute me jawab = 21 guna sambhavna. */}
-            <SortHeader col="wait" label="Wait" />
-            {/* Contact — naam AUR email ek hi column me, do line par. Phone table se
-                nikal gaya (29 Aug 2026).
+                ke lead ban sakti hai, bina contact ke nahi. Dekho STICK_L_IDENTITY.
 
-                Kyun: us din browser me naapa gaya ki 13 column us jagah me aate hi nahi.
-                Table ko 1414px chahiye the aur mili 1247px — 167px bahar. Aur ye sirf
-                kinare ki dikkat nahi thi: **har ek content column apni zaroorat se chhota
-                tha.**
-
-                    Company  chahiye 366, mili 228      Contact   150 / 113
-                    Email            277 / 210          Phone     152 / 118
-                    Owner            171 / 109          Follow-up 120 /  90
-                    Value            146 /  70          Plan      186 / 161
-
-                Yaani Company ka naam bhi poora nahi dikh raha tha, aur Follow-up ki tareekh
-                — jo is screen par sabse kaam ki cheez hai — daayin taraf scroll ke peeche
-                chhupi thi. Chaudai thoda-thoda badalne se ye theek nahi hota; kam column
-                hi ek matra hal hai.
-
-                Email ko Contact ke neeche rakha, hataya nahi — wo scan karne ke liye
-                zaroori hai (kaun sa lead kis domain se aaya). Phone HATAYA gaya kyunki wo
-                sirf padhne ke liye tha: row ke menu me "Call" (`tel:`) pehle se maujood
-                hai, aur poora number lead kholne par Details me hai. Ek number jo dekha
-                hi jata hai, dial nahi — usko 118px dena mehnga sauda tha. */}
-            <SortHeader col="company" label="Company" />
-            <SortHeader col="stage" label="Stage" />
-            <SortHeader col="plan" label="Plan" />
-            <SortHeader col="seats" label="Seats" align="right" />
-            <SortHeader col="value" label="Value" align="right" />
-            <SortHeader col="followup" label="Follow-up" />
-            {/* Owner — ye pehle se FILTER chalata tha ("My assigned", unassigned ki ginti)
-                par kahin dikhta nahi tha. Jis cheez par filter lagta hai, wo dikhni chahiye.
-
-                29 Aug 2026: SABSE AAKHIR me chala gaya (Pardeep ke kehne par). Wo ek baar
-                pehle bhi hil chuka hai, aur dono baar wajah ek hi hai — is screen par baayen
-                se daayen kram "kaun · kab · kya" hai, aur owner un teeno me nahi aata. Row
-                par kaam karne ka faisla naam, intezaar aur tareekh se hota hai; owner tab
-                dekha jata hai jab kaam kisi aur ko dena ho. */}
-            <SortHeader col="owner" label="Owner" />
+                R-2970 (20 Nov 2026): the rest follow the person's chosen order. Phone came
+                back as its own column (it left on 29 Aug when 13 columns did not fit); the
+                default is now eight data columns and Plan / Seats / Wait are under "Add a
+                column" — the measurements are in lib/leads/list-columns.ts. */}
+            {shown.map((id) => {
+              const d = leadColDef(id);
+              if (d.sort) {
+                return <SortHeader key={id} col={d.sort} gripCol={id} label={d.label} align={d.align} sticky={id === LOCKED_COL} />;
+              }
+              return (
+                <th key={id} className={cn(GRID_TH, "relative", d.align === "right" && "text-right")}>
+                  {d.label}
+                  <ResizeGrip col={id} />
+                </th>
+              );
+            })}
             {/* Actions column — quick action icons on row hover. */}
             <th className={cn("sticky top-0 bg-paper-2 px-3 py-2 text-xs font-semibold text-ink-3 uppercase tracking-wider text-right", STICK_R_ACTIONS, STICK_HEAD)}>
               <span className="sr-only">Quick actions</span>
@@ -502,6 +466,7 @@ export function LeadListView({
               onFollowUp={onFollowUp}
               onWhatsApp={onWhatsApp}
               aiStatus={aiStatuses.get(lead.id)}
+              shown={shown}
             />
           ))}
         </tbody>
@@ -513,10 +478,11 @@ export function LeadListView({
       <LeadListFooter
         density={density}
         setDensity={setDensity}
-        hidden={hidden}
-        setHidden={setHidden}
+        shown={shown}
+        setShown={setShown}
         colW={colW}
         resetWidths={resetWidths}
+        resetColumns={resetColumns}
       />
     </div>
 
