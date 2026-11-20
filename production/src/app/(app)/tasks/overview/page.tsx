@@ -9,10 +9,10 @@
  *
  * Read-only. It reads the same rows as the Tasks list (useTaskList — one shared cache), and
  * counts them with the list's own groups (overview-counts.ts), so a number here equals the tab
- * it opens. Every card, strip tile and donut line is a link to /tasks on the closest tab
- * (`?tab=`); a task name opens that task (`?task=`). Overdue and Today open exactly their
- * tasks. The Tasks list has no status / priority / due-range filter in its URL yet (R-2938) —
- * until then Open and the donut lines open the All tab, This week / This month the Upcoming tab.
+ * it opens. Every card and strip tile is a link to /tasks on the closest tab (`?tab=`); a
+ * task name opens that task (`?task=`). Overdue and Today open exactly their tasks. R-2938: a
+ * donut line opens the list with that status / priority picked (`?status=` / `?priority=`).
+ * The list has no due-range filter, so This week / This month open the Upcoming tab.
  */
 "use client";
 
@@ -40,6 +40,7 @@ import {
   dueStrip, newlyAddedTasks, prioritySlices, statusSlices, taskHref, tasksTabHref, upcomingTasks, OVERVIEW_LIST_SIZE,
 } from "./overview-counts";
 import { OverviewDonut, type DonutSlice } from "./overview-donut";
+import { tasksFilterHref } from "@/components/features/tasks/task-filters";
 
 /* Design tokens (globals.css) — they follow light / dark mode by themselves. */
 const STATUS_COLOR = { not_started: "hsl(var(--ink-3))", in_progress: "hsl(var(--indigo))", on_hold: "hsl(var(--amber))" } as const;
@@ -64,14 +65,14 @@ export default function TasksOverviewPage() {
   const strip = React.useMemo(() => dueStrip(tasks, now), [tasks, now]);
   const upcoming = React.useMemo(() => upcomingTasks(tasks, now), [tasks, now]);
   const newest = React.useMemo(() => newlyAddedTasks(tasks, OVERVIEW_LIST_SIZE, now), [tasks, now]);
-  const allOpen = tasksTabHref("all");
+  /* R-2938: each donut line opens the Tasks list with that status / priority picked in its filter bar. */
   const byStatus: DonutSlice[] = React.useMemo(
-    () => statusSlices(tasks, now).map((s) => ({ ...s, color: STATUS_COLOR[s.id], href: allOpen })),
-    [tasks, now, allOpen],
+    () => statusSlices(tasks, now).map((s) => ({ ...s, color: STATUS_COLOR[s.id], href: tasksFilterHref({ status: s.id }) })),
+    [tasks, now],
   );
   const byPriority: DonutSlice[] = React.useMemo(
-    () => prioritySlices(tasks, now).map((s) => ({ ...s, color: PRIORITY_COLOR[s.id], href: allOpen })),
-    [tasks, now, allOpen],
+    () => prioritySlices(tasks, now).map((s) => ({ ...s, color: PRIORITY_COLOR[s.id], href: tasksFilterHref({ priority: s.id }) })),
+    [tasks, now],
   );
 
   /* "Done this week" — the list holds only the 100 newest completed tasks, so the number is
