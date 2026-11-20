@@ -91,8 +91,8 @@ export const HELP_SECTIONS: HelpSection[] = [
         q: "Tasks — never forget a follow-up",
         what: "Tasks are reminders (call, follow up) tied to a lead, quote or customer. You can assign them to teammates and see everyone's workload.",
         steps: [
-          "Sales → Tasks → Add task — set who it's for and when it's due.",
-          "Use the chips (Everyone / Mine / per-person) to filter.",
+          "Tasks (top of the menu, next to Today) → Add task — set who it's for and when it's due.",
+          "Use the filter bar on the List — search, Status, Priority and Assignee (Everyone / Mine / a teammate) — to narrow the list.",
         ],
         example: "Assign “Call maal ji about payment” to yourself, due tomorrow. It shows under Mine and on the lead.",
       },

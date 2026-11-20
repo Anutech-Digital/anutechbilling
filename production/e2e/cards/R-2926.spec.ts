@@ -4,9 +4,11 @@
  * LOCAL ONLY (E2E Test Co on the local docker DB, through the Local test login). Run:
  *   node scripts/ops/card-tests.mjs R-2926
  *
- * Data: one planted Medium task "CT R2926 medium earlier" due in 2 days (so the Upcoming group is
- * not empty and has an EARLIER task). The Owner login then adds "CT R2926 high later" (due in 5 days,
- * same group) with Priority = High through Tasks > Add task.
+ * Data: one planted Medium task "CT R2926 medium earlier" due in 40 days (so its section is
+ * not empty and has an EARLIER task). The Owner login then adds "CT R2926 high later" (due in 45 days,
+ * same section) with Priority = High through Tasks > Add task.
+ * Both are far ahead on purpose: since R-2930 Upcoming shows as "This week" + "Later", and High
+ * sorts first INSIDE a section — 2 and 5 days ahead fell in different sections on a Thursday.
  * Both are removed after.
  */
 import { expect, test } from "@playwright/test";
@@ -29,7 +31,7 @@ test.describe("R-2926 task priority", () => {
       begin;
       ${CLEAN}
       insert into public.tasks (id, tenant_id, owner_id, title, kind, due_at, status)
-      values ('${T_MEDIUM}', ${E2E_TENANT_SQL}, ${OWNER}, '${MEDIUM}', 'followup', now() + interval '2 days', 'pending');
+      values ('${T_MEDIUM}', ${E2E_TENANT_SQL}, ${OWNER}, '${MEDIUM}', 'followup', now() + interval '40 days', 'pending');
       commit;`);
   });
   test.afterAll(() => { if (CARD_TESTS_ON) localDb("R-2926").psql(CLEAN); });
@@ -44,8 +46,8 @@ test.describe("R-2926 task priority", () => {
       const dlg = page.getByRole("dialog", { name: "Add follow-up task" });
       await expect(dlg).toBeVisible({ timeout: 60_000 });
       await fillKept(dlg.locator("#title"), HIGH);
-      // Due in 5 days: later than the planted Medium task, same group (Upcoming).
-      const due = new Date(Date.now() + 5 * 24 * 3600 * 1000);
+      // Due in 45 days: later than the planted Medium task, same section (Upcoming > Later).
+      const due = new Date(Date.now() + 45 * 24 * 3600 * 1000);
       const pad = (n: number) => String(n).padStart(2, "0");
       await fillKept(dlg.locator("#due_at"), `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())}T10:00`);
       await dlg.locator("#priority").click();

@@ -100,7 +100,10 @@ export function assignEmail(input: {
   related: TaskRelated | null;
   /** false for a role that cannot open the Tasks page: the mail then links the app, not a page they would be refused. */
   canOpenTasks?: boolean;
+  /** R-2928: the same mail with other opening words (a reminder). Default = "gave you a task". */
+  wording?: { subject: string; intro: string };
 }): { subject: string; text: string; html: string } {
+  const intro = input.wording?.intro ?? `${input.actorName} gave you a task in ${input.companyName}.`;
   const base = input.baseUrl.replace(/\/$/, "");
   const open = input.canOpenTasks !== false;
   const taskUrl = open ? `${base}${taskAppPath(input.task.id)}` : `${base}/dashboard`;
@@ -112,7 +115,7 @@ export function assignEmail(input: {
   const text = [
     `Hi ${input.assigneeName},`,
     "",
-    `${input.actorName} gave you a task in ${input.companyName}.`,
+    intro,
     "",
     `Task: ${input.task.title}`,
     `Due: ${due}`,
@@ -127,7 +130,7 @@ export function assignEmail(input: {
   const html = [
     `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1d2433;line-height:1.5">`,
     `<p>Hi ${esc(input.assigneeName)},</p>`,
-    `<p>${esc(input.actorName)} gave you a task in ${esc(input.companyName)}.</p>`,
+    `<p>${esc(intro)}</p>`,
     `<table style="border-collapse:collapse">`,
     row("Task", `<strong>${esc(input.task.title)}</strong>`),
     row("Due", esc(due)),
@@ -138,5 +141,5 @@ export function assignEmail(input: {
     `</div>`,
   ].join("");
 
-  return { subject: `New task: ${input.task.title}`, text, html };
+  return { subject: input.wording?.subject ?? `New task: ${input.task.title}`, text, html };
 }

@@ -42,6 +42,38 @@ export function ownerPatch(input: {
   };
 }
 
+/**
+ * Who is saving. The profile (useCurrentUser) waits on a slow call, so for the first seconds
+ * after the page opens it is not loaded; a task given to a teammate in that time was saved
+ * without delegated_by and the teammate was never told. The signed-in session answers at once
+ * (public.users.id is the session's user id). Never throws: null = really unknown.
+ */
+export async function meIdForSave(
+  profileId: string | null | undefined,
+  readSessionUserId: () => Promise<string | null | undefined>,
+): Promise<string | null> {
+  if (profileId) return profileId;
+  try {
+    return (await readSessionUserId()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * R-2933: who owns the task once this form is saved — the person picked; "Me (myself)" = me,
+ * except on an edit of a task that has NO owner (it stays unassigned). The people "working with"
+ * the owner never include this person.
+ */
+export function ownerAfterSave(input: {
+  assignee: string | null | undefined; isEdit: boolean; meId: string | null | undefined; currentOwnerId: string | null | undefined;
+}): string | null {
+  const patch = ownerPatch(input);
+  if (patch.owner_id) return patch.owner_id;
+  if (input.isEdit) return input.currentOwnerId ?? null;
+  return input.meId ?? null; // a new task defaults to its creator
+}
+
 /** "Me (myself)" was picked on a teammate's task but we do not know who "me" is yet — the save must wait. */
 export function meNotKnownYet(input: {
   assignee: string | null | undefined; isEdit: boolean; meId: string | null | undefined; currentOwnerId: string | null | undefined;

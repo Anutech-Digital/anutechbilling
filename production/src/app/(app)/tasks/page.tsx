@@ -17,13 +17,26 @@
  * (due by Sunday, IST) and "Later". Cards, tabs and list count the same tasks (person filter +
  * search); "Done this week" is counted on the server when no search is typed, because the page
  * holds only the 100 most recently completed tasks.
+ *
+ * R-2937: a task is ONE line by default (name, whom it is about, people, priority, status, due
+ * in words, actions) so a 1280×800 screen shows 12+ of them; "Comfortable" brings back the
+ * roomy card and the choice is remembered on this browser (task-view-pref.ts). The group
+ * headings (Overdue / Today / This week / Later / Done) stay stuck under the top bar while
+ * their group scrolls. The title, quick-add and "Add task" share one line to leave the list
+ * the room.
+ *
+ * R-2938: ONE filter bar — search, Status, Priority, Assignee, each option with its number
+ * (task-filters.ts) — in place of the search box plus the person chips that wrapped onto two
+ * lines. The three choices live in the address (`?status=&priority=&assignee=`), so a reload,
+ * Back or a link (the Overview donuts) opens the same view; the Summary strip, the tabs and
+ * the list all read the same filtered tasks.
  */
 "use client";
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { useUrlState } from "@/lib/hooks/use-url-state";
-import { TASK_TABS } from "@/lib/navigation/drilldown";
+import { TASK_PRIORITY_FILTERS, TASK_STATUS_FILTERS, TASK_TABS } from "@/lib/navigation/drilldown";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -31,14 +44,20 @@ import { useTaskList, TASK_SELECT, type TaskBucket, type TaskWithLink } from "@/
 import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { TaskRow, taskLeadName } from "@/components/features/tasks/task-row";
 import { TaskQuickAdd } from "@/components/features/tasks/task-quick-add";
+import { useTaskDensity } from "@/components/features/tasks/task-view-pref";
+import { TaskFilterBar } from "@/components/features/tasks/task-filter-bar";
+import {
+  hasTaskFilters, matchesTaskFilters, taskAssigneeOptions, taskFilterCounts,
+  type TaskFilters, type TaskPriorityFilter, type TaskStatusFilter,
+} from "@/components/features/tasks/task-filters";
 import { groupTasks, taskTabCounts, type TaskGroupId } from "@/components/features/tasks/task-groups";
 import { istWeekBounds, matchesTaskSearch, taskSections, taskSummary, type TaskSection } from "@/components/features/tasks/task-overview";
 import { KPI } from "@/components/shared/kpi";
 import { CollapsibleKpiStrip, StripFact } from "@/components/shared/collapsible-kpi-strip";
-import { istDayStartUtc, addDaysISO } from "@/lib/dates/ist";
-import { Input } from "@/components/ui/input";
-import { useTeamMembers, memberLabel } from "@/lib/queries/team";
+import { istDayStartUtc, addDaysISO, toIstDate } from "@/lib/dates/ist";
+import { useTeamMembers } from "@/lib/queries/team";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useTaskCollaborators } from "@/lib/queries/task-collaborators";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { FAB } from "@/components/ui/fab";
@@ -105,32 +124,31 @@ export default function TasksPage() {
 
   const { data: me, isLoading: meLoading } = useCurrentUser();
   const list = useTaskList(me?.tenantId);
-  const { data: members = [] } = useTeamMembers();
+  const { data: members = [], isSuccess: teamLoaded } = useTeamMembers();
   const memberById = React.useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
-  const [assignee, setAssignee] = useUrlState("assignee", "all"); // R-286: survives Back
+  /* R-2933: who works with each task's owner. Its own read — if it fails the list still shows. */
+  const { data: collaborators } = useTaskCollaborators(me?.tenantId);
+  const collaboratorsOf = React.useCallback(
+    (taskId: string) => (collaborators?.get(taskId) ?? []).flatMap((id) => memberById.get(id) ?? []),
+    [collaborators, memberById],
+  );
+  const [assigneeParam, setAssignee] = useUrlState("assignee", "all"); // R-286: survives Back
+  /* R-2938: my own id in the address (Reports → Team tasks links by id) is "Mine". */
+  const assignee = me?.userId && assigneeParam === me.userId ? "mine" : assigneeParam;
   const [query, setQuery] = useUrlState("q", ""); // R-2930: search, survives Back / reload
+  /* R-2938: Status and Priority live in the address too; an unknown value reads as "all". */
+  const [status, setStatus] = useUrlChoice<TaskStatusFilter>("status", TASK_STATUS_FILTERS, "all");
+  const [priority, setPriority] = useUrlChoice<TaskPriorityFilter>("priority", TASK_PRIORITY_FILTERS, "all");
+  const filters: TaskFilters = React.useMemo(() => ({ status, priority, assignee }), [status, priority, assignee]);
+  const filtered = hasTaskFilters(filters);
+  /* A Status / Priority pick is a narrowing the empty list must explain; a person alone is not
+     (their empty Overdue tab is still "Inbox zero"). */
+  const narrowedByBar = status !== "all" || priority !== "all";
+  const clearFilters = React.useCallback(() => {
+    setStatus("all"); setPriority("all"); setAssignee("all");
+  }, [setStatus, setPriority, setAssignee]);
 
   const tasks = React.useMemo(() => list.data ?? [], [list.data]);
-
-  // Per-person open task counts — the "workload at a glance".
-  const openByOwner = React.useMemo(() => {
-    const m = new Map<string, number>();
-    for (const t of tasks) {
-      if (t.status === "done" || t.status === "cancelled" || !t.owner_id) continue;
-      m.set(t.owner_id, (m.get(t.owner_id) ?? 0) + 1);
-    }
-    return m;
-  }, [tasks]);
-  const totalOpen = React.useMemo(() => tasks.filter((t) => t.status === "pending" || t.status === "snoozed").length, [tasks]);
-  const myOpen = me?.userId ? openByOwner.get(me.userId) ?? 0 : 0;
-
-  const mineOrTheirs = React.useMemo(
-    () =>
-      assignee === "all"  ? tasks :
-      assignee === "mine" ? tasks.filter((t) => t.owner_id === me?.userId) :
-                            tasks.filter((t) => t.owner_id === assignee),
-    [tasks, assignee, me?.userId],
-  );
   /* R-471: a task moves to Overdue the minute its time passes — re-group once a minute so
      the page does not wait for a reload to agree with the row's "⚠ Overdue". */
   const [now, setNow] = React.useState(() => new Date());
@@ -141,14 +159,27 @@ export default function TasksPage() {
   /* R-2930: search narrows the same set the cards, tabs and list all read. The list follows
      the typing a beat behind (deferred), so a long list never makes the box lag. */
   const search = React.useDeferredValue(query).trim();
+  const searched = React.useMemo(
+    () => (search ? tasks.filter((t) => matchesTaskSearch(t, search)) : tasks),
+    [tasks, search],
+  );
+  /* R-2938: the filter bar narrows that set; Summary, tabs and list all read `visible`. */
   const visible = React.useMemo(
-    () => (search ? mineOrTheirs.filter((t) => matchesTaskSearch(t, search)) : mineOrTheirs),
-    [mineOrTheirs, search],
+    () => (filtered ? searched.filter((t) => matchesTaskFilters(t, filters, me?.userId)) : searched),
+    [searched, filtered, filters, me?.userId],
+  );
+  /* The number beside each option: what picking it would show, the search and the other choices kept. */
+  const optionCounts = React.useMemo(() => taskFilterCounts(searched, filters, me?.userId), [searched, filters, me?.userId]);
+  const today = toIstDate(now);
+  const assigneeOptions = React.useMemo(
+    () => taskAssigneeOptions(members, tasks, me?.userId, assignee, today, teamLoaded),
+    [members, tasks, me?.userId, assignee, today, teamLoaded],
   );
   const groups = React.useMemo(() => groupTasks(visible, now), [visible, now]);
   const summary = React.useMemo(() => taskSummary(visible, now), [visible, now]);
   /* "Done this week" — the page holds only the 100 newest completed tasks, so without a search
-     the number is counted on the server (same person filter, IST week Monday–Sunday). */
+     (or a Status / Priority choice) the number is counted on the server (same person filter,
+     IST week Monday–Sunday). */
   const week = istWeekBounds(now);
   const doneOwner = assignee === "all" ? null : assignee === "mine" ? me?.userId ?? null : assignee;
   const doneWeek = useQuery({
@@ -165,7 +196,9 @@ export default function TasksPage() {
       return count ?? 0;
     },
   });
-  const doneThisWeek = search ? summary.doneThisWeek : doneWeek.data ?? summary.doneThisWeek;
+  /* The server count knows only the person. Status = Done does not narrow the done tasks, so it keeps the exact count. */
+  const narrowedOnPage = !!search || priority !== "all" || (status !== "all" && status !== "done");
+  const doneThisWeek = narrowedOnPage ? summary.doneThisWeek : doneWeek.data ?? summary.doneThisWeek;
   // R-1416: "All" counts what the All list shows — Done included.
   const counts = taskTabCounts(groups);
 
@@ -183,26 +216,23 @@ export default function TasksPage() {
     [groups, now, tab],
   );
   const [doneOpen, setDoneOpen] = React.useState(false);
+  const [density, setDensity] = useTaskDensity(me?.userId); // R-2937: one line (default) or Comfortable; remembered per user
+  const compact = density === "compact";
 
   const isLoading = meLoading || (!!me?.tenantId && list.isLoading);
 
   return (
+    /* 1100px: the width of the Tasks tabs strip above (tasks-tabs.tsx, R-2939) and of Overview /
+       Calendar, so the four pages line up. */
     <div className="p-4 md:p-6 lg:p-8 max-w-[1100px] mx-auto">
-      {/* Header */}
-      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
-        <div>
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
-          <h1 className="font-serif text-3xl md:text-4xl leading-tight">Tasks</h1>
-          <p className="text-sm text-ink-3 mt-1">
-            Follow-ups, calls, emails, meetings — everything you owe future-you.
-          </p>
-        </div>
+      {/* Header — R-2937: title, quick-add and "Add task" on one line (the list needs the height). */}
+      <div className="flex items-start gap-3 flex-wrap mb-3">
+        <h1 className="font-serif text-2xl md:text-3xl leading-9">Tasks</h1>
+        <TaskQuickAdd className="flex-1 min-w-[16rem]" />
         <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
           Add task
         </Button>
       </div>
-
-      <TaskQuickAdd />
 
       {/* R-2930: summary — the app's one KPI strip (closed: numbers on the line; open: cards).
           A failed read shows no numbers: "0 overdue" above an error would be a false all-clear. */}
@@ -229,47 +259,43 @@ export default function TasksPage() {
         </CollapsibleKpiStrip>
       )}
 
-      {/* R-2930: search — name, notes, or who the task is about. */}
-      <div className="mb-3 max-w-md">
-        <Input
-          type="search"
-          aria-label="Search tasks"
-          placeholder="Search tasks — name, notes, customer or lead"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          prefix={<Icon name="search" size={14} />}
-          autoComplete="off"
-        />
-      </div>
+      {/* R-2938: one filter bar — search, Status, Priority, Assignee. R-2937's view switch ends the line. */}
+      <TaskFilterBar
+        query={query}
+        onQuery={setQuery}
+        filters={filters}
+        onStatus={setStatus}
+        onPriority={setPriority}
+        onAssignee={setAssignee}
+        onClear={clearFilters}
+        counts={optionCounts}
+        assignees={assigneeOptions}
+        showAssignee={members.length > 1 || assignee !== "all"}
+      >
+        {/* One switch, on = the roomy card. aria-pressed says which view is showing. */}
+        <Button
+          type="button"
+          size="sm"
+          variant="default"
+          icon="layout"
+          aria-pressed={!compact}
+          title={compact ? "Show each task as a roomy card" : "Show each task on one line"}
+          onClick={() => setDensity(compact ? "comfortable" : "compact")}
+          className={cn("ml-auto shrink-0", !compact && "border-amber bg-amber-soft text-amber-ink hover:bg-amber-soft")}
+        >
+          Comfortable
+        </Button>
+      </TaskFilterBar>
 
       {/* Tabs */}
       <div className="mb-3">
         <TabBar items={tabs} value={tab} onChange={(v) => setTab(v as TaskBucket)} />
       </div>
 
-      {/* Workload — per-person open-task counts + quick "Mine" toggle. Click to filter. */}
-      {members.length > 1 && (
-        <div className="mb-4 flex flex-wrap items-center gap-1.5">
-          <WorkloadChip label="👥 Everyone" count={totalOpen} active={assignee === "all"} onClick={() => setAssignee("all")} />
-          {me?.userId && (
-            <WorkloadChip label="🙋 Mine" count={myOpen} active={assignee === "mine"} onClick={() => setAssignee("mine")} />
-          )}
-          {members.filter((m) => m.id !== me?.userId).map((m) => (
-            <WorkloadChip
-              key={m.id}
-              label={memberLabel(m)}
-              count={openByOwner.get(m.id) ?? 0}
-              active={assignee === m.id}
-              onClick={() => setAssignee(m.id)}
-            />
-          ))}
-        </div>
-      )}
-
       {/* List */}
       {isLoading ? (
         <div className="space-y-2">
-          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-20" />)}
+          {(compact ? [0, 1, 2, 3, 4, 5] : [0, 1, 2]).map((i) => <Skeleton key={i} className={compact ? "h-8" : "h-20"} />)}
         </div>
       ) : list.error ? (
         <EmptyState
@@ -279,13 +305,22 @@ export default function TasksPage() {
           action={<Button variant="primary" icon="refresh" onClick={() => void list.refetch()}>Retry</Button>}
           compact
         />
-      ) : shown.length === 0 && search && counts.all > 0 ? (
-        /* The search found tasks — just not in this tab. Say so, and take the person there. */
+      ) : shown.length === 0 && (search || narrowedByBar) && counts.all > 0 ? (
+        /* The search / filters found tasks — just not in this tab. Say so, and take the person there. */
         <EmptyState
           icon="search"
-          title={`Nothing in this tab matches “${search}”`}
+          title={search ? `Nothing in this tab matches “${search}”` : "Nothing in this tab matches the filters"}
           body={`${counts.all} matching ${counts.all === 1 ? "task is" : "tasks are"} in other tabs.`}
           action={<Button variant="primary" icon="search" onClick={() => setTab("all")}>Show all matches</Button>}
+          compact
+        />
+      ) : shown.length === 0 && narrowedByBar ? (
+        /* R-2938: nothing passes the Status / Priority / Assignee choice (with or without a search). */
+        <EmptyState
+          icon="filter"
+          title={search ? `No tasks match “${search}” with these filters` : "No tasks match these filters"}
+          body="Pick another Status, Priority or Assignee, or clear the filters to see every task."
+          action={<Button variant="default" icon="x" onClick={clearFilters}>Clear filters</Button>}
           compact
         />
       ) : shown.length === 0 && search ? (
@@ -314,12 +349,17 @@ export default function TasksPage() {
           compact
         />
       ) : (
-        <div className="space-y-4">
+        <div className={compact ? "space-y-2" : "space-y-4"} data-testid="task-list" data-density={density}>
           {shown.map((g) => {
-            const foldable = g.id === "done" && tab === "all" && !search; // a search shows its Done matches
+            const foldable = g.id === "done" && tab === "all" && !search && status !== "done"; // a search, or Status = Done, shows its Done matches
             return (
               <section key={g.id} aria-labelledby={`task-group-${g.id}`}>
-                <h2 id={`task-group-${g.id}`} className="mb-1.5 px-1">
+                {/* R-2937: the heading stays under the top bar (h-14) while its group scrolls. */}
+                <h2
+                  id={`task-group-${g.id}`}
+                  data-testid="task-group-heading"
+                  className="sticky top-14 z-10 -mx-1 mb-1 flex items-center rounded-sm bg-paper-2/95 px-2 py-1 backdrop-blur-sm"
+                >
                   {foldable ? (
                     <button
                       type="button"
@@ -339,10 +379,11 @@ export default function TasksPage() {
                   )}
                 </h2>
                 {(!foldable || doneOpen) && (
-                  <Card>
-                    <ul className="divide-y divide-hairline">
+                  /* One-line rows fill the card edge to edge (no inner padding) — the name gets the width. */
+                  <Card flush={compact ? "clip" : undefined}>
+                    <ul className={cn("divide-y divide-hairline", compact && "overflow-hidden rounded-lg")}>
                       {g.tasks.map((t) => (
-                        <TaskRow key={t.id} task={t} onEdit={setEditingTask} assignee={t.owner_id ? memberById.get(t.owner_id) : null} />
+                        <TaskRow key={t.id} task={t} onEdit={setEditingTask} assignee={t.owner_id ? memberById.get(t.owner_id) : null} meId={me?.userId} collaborators={collaboratorsOf(t.id)} density={density} now={now} />
                       ))}
                     </ul>
                   </Card>
@@ -378,28 +419,11 @@ function GroupCount({ id, n }: { id: TaskGroupId; n: number }) {
     <span
       className={cn(
         "rounded-full px-1.5 tabular-nums normal-case tracking-normal",
-        id === "overdue" ? "bg-rose text-white" : "bg-paper-2 text-ink-3",
+        /* R-2937: the heading band is paper-2, so the quiet pill is paper with a hairline. */
+        id === "overdue" ? "bg-rose text-white" : "border border-hairline bg-paper text-ink-2",
       )}
     >
       {n}
     </span>
-  );
-}
-
-// ─── Workload filter chip (per-person open-task count) ──────────────────────
-function WorkloadChip({ label, count, active, onClick }: { label: string; count: number; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-        active ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline text-ink-2 hover:bg-paper-2",
-      )}
-    >
-      <span>{label}</span>
-      <span className={cn("rounded-full px-1.5 tabular-nums", active ? "bg-amber/25 text-amber-ink" : "bg-paper-2 text-ink-3")}>{count}</span>
-    </button>
   );
 }

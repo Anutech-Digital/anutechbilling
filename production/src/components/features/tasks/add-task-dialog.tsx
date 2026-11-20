@@ -38,7 +38,11 @@ import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { toast } from "sonner";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, TASK_PRIORITY_META, priorityForCreate, priorityOf, type TaskPriority } from "./task-priority";
-import { ASSIGN_ME, NOT_TOLD_MESSAGE, assigneeToTell, meNotKnownYet, ownerPatch, tellAssignee } from "./assign";
+import { createClient } from "@/lib/supabase/client";
+import { normalizeTaskLink, sameCollaborators } from "@/lib/tasks/collaborators";
+import { useSetTaskCollaborators, useTaskCollaborators } from "@/lib/queries/task-collaborators";
+import { TaskCollaboratorsField } from "./task-collaborators-field";
+import { ASSIGN_ME, NOT_TOLD_MESSAGE, assigneeToTell, meIdForSave, meNotKnownYet, ownerAfterSave, ownerPatch, tellAssignee } from "./assign";
 import {
   TaskRelatedPicker, relatedToLinkColumns, type RelatedValue,
 } from "@/components/features/tasks/task-related-picker";
@@ -104,6 +108,8 @@ const schema = z.object({
   notes:  z.string().max(500).optional(),
   assignee: z.string().optional(),
   priority: z.enum(TASK_PRIORITIES),
+  /* R-2933: a web link for the task (Drive file, doc, page). Blank = none. */
+  link: z.string().optional().refine((v) => normalizeTaskLink(v).ok, "Enter a web link like https://drive.google.com/… (or leave it empty)."),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -124,7 +130,7 @@ export interface AddTaskDialogProps {
     Task,
     "id" | "title" | "kind" | "due_at" | "notes" | "owner_id" | "priority"
     | "lead_id" | "quote_id" | "customer_id" | "subscription_id"
-  > | null;
+  > & { link_url?: string | null } | null;
 }
 
 /** Derive the picker value from a task's link columns (only one is ever set). */
@@ -163,11 +169,27 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { title: "", kind: "followup", due_at: defaultDue, notes: "", assignee: ASSIGN_ME, priority: DEFAULT_TASK_PRIORITY },
+    defaultValues: { title: "", kind: "followup", due_at: defaultDue, notes: "", assignee: ASSIGN_ME, priority: DEFAULT_TASK_PRIORITY, link: "" },
   });
 
   // Which customer / lead / deal this task is attached to (editable in the form).
   const [related, setRelated] = React.useState<RelatedValue | null>(null);
+
+  /* R-2933: up to 3 teammates working with the owner. `savedWith` = what the task has now
+     (null until that read has answered — then the field is not shown and nothing is changed). */
+  const collab = useTaskCollaborators(me?.tenantId, { enabled: open });
+  const setCollaborators = useSetTaskCollaborators();
+  const taskId = task?.id ?? null;
+  const savedWith = React.useMemo<readonly string[] | null>(
+    () => (collab.data ? (taskId ? collab.data.get(taskId) ?? [] : []) : null),
+    [collab.data, taskId],
+  );
+  const [workingWith, setWorkingWith] = React.useState<string[]>([]);
+  const withTouched = React.useRef(false);
+  React.useEffect(() => {
+    if (!open) { withTouched.current = false; return; }
+    if (!withTouched.current) setWorkingWith(savedWith ? [...savedWith] : []);
+  }, [open, savedWith]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -180,10 +202,11 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
         notes:  task.notes ?? "",
         assignee: task.owner_id ?? ASSIGN_ME,
         priority: priorityOf(task),
+        link: task.link_url ?? "",
       });
       setRelated(relatedFromTask(task));
     } else {
-      reset({ title: "", kind: "followup", due_at: defaultDue, notes: "", assignee: ASSIGN_ME, priority: DEFAULT_TASK_PRIORITY });
+      reset({ title: "", kind: "followup", due_at: defaultDue, notes: "", assignee: ASSIGN_ME, priority: DEFAULT_TASK_PRIORITY, link: "" });
       setRelated(relatedFromLinkTo(linkTo));
     }
   }, [open, task, linkTo, defaultDue, reset]);
@@ -191,6 +214,8 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
   const watchedKind = watch("kind");
   const watchedAssignee = watch("assignee");
   const watchedPriority = watch("priority");
+  // R-2933: who will own the task — never offered (or counted) under "Working with".
+  const ownerInForm = ownerAfterSave({ assignee: watchedAssignee, isEdit, meId: me?.userId, currentOwnerId: task?.owner_id });
   /* R-471: a past due time used to save silently and land straight in Overdue. Say so
      (it is allowed — logging a missed call is real), and offer "in 1 hour". */
   const watchedDue = watch("due_at");
@@ -201,7 +226,8 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
     const dueISO = new Date(data.due_at).toISOString();
     // R-2925: "Me" on a new task leaves owner_id to the default (creator); on an edit of
     // someone else's task it takes the task. A member id assigns / reassigns to that teammate.
-    const meId = me?.userId ?? null;
+    // The profile may still be loading right after the page opens — the session knows who is saving.
+    const meId = await meIdForSave(me?.userId, async () => (await createClient().auth.getUser()).data.user?.id);
     const who = { assignee: data.assignee, isEdit: Boolean(task), meId, currentOwnerId: task?.owner_id };
     if (meNotKnownYet(who)) {
       toast.warning("Still loading your profile — please press Save again in a moment.");
@@ -214,6 +240,18 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
       void tellAssignee(taskId).then((ok) => { if (!ok) toast.warning(NOT_TOLD_MESSAGE); });
     };
 
+    const link = normalizeTaskLink(data.link);
+    const linkUrl = link.ok ? link.url : null;
+    // R-2933: the people working with the owner are saved after the task (the owner is never one of them).
+    const ownerAfter = ownerAfterSave(who);
+    const saveWith = async (id: string) => {
+      if (savedWith === null) return; // the list never loaded — leave it as it is
+      const next = workingWith.filter((u) => u !== ownerAfter);
+      if (sameCollaborators(savedWith, next)) return;
+      const r = await setCollaborators.mutateAsync({ taskId: id, userIds: next }).catch(() => ({ ok: false, message: undefined }));
+      if (!r.ok) toast.warning(r.message ?? "Task saved, but the people working with it could not be saved — open the task and try again.");
+    };
+
     if (task) {
       // Edit — editable fields + the entity link (which the user can now change).
       await updateTask.mutateAsync({
@@ -224,11 +262,13 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
           due_at: dueISO,
           notes:  data.notes?.trim() || null,
           priority: data.priority,
+          ...(linkUrl !== (task.link_url ?? null) ? { link_url: linkUrl } : {}),
           ...owner,
           ...relatedToLinkColumns(related),
         },
       });
       tell(task.id, task.owner_id);
+      await saveWith(task.id);
       onOpenChange(false);
       return;
     }
@@ -239,10 +279,11 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
       due_at: dueISO,
       notes:  data.notes?.trim() || null,
       ...priorityForCreate(data.priority),
+      ...(linkUrl ? { link_url: linkUrl } : {}),
       ...owner,
       ...relatedToLinkColumns(related),
     });
-    if (created?.id) tell(created.id, null);
+    if (created?.id) { tell(created.id, null); await saveWith(created.id); }
     onOpenChange(false);
   };
 
@@ -383,6 +424,30 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
               Only teammates with a login appear here. Invite more at{" "}
               <a href="/team" className="text-amber-ink underline">Team</a>.
             </p>
+          </FormField>
+
+          {/* R-2933: teammates working with the owner (max 3). Hidden until the current list is known. */}
+          {savedWith !== null && (
+            <FormField label="Working with (optional)">
+              <TaskCollaboratorsField
+                members={members}
+                ownerId={ownerInForm}
+                value={workingWith.filter((u) => u !== ownerInForm)}
+                onChange={(next) => { withTouched.current = true; setWorkingWith(next); }}
+              />
+            </FormField>
+          )}
+
+          <FormField label="Link (optional)" htmlFor="link">
+            <Input
+              id="link"
+              type="text"
+              inputMode="url"
+              placeholder="https://drive.google.com/…"
+              error={errors.link?.message}
+              {...register("link")}
+            />
+            <p className="text-2xs text-ink-3 mt-1">A Drive file, document or page for this task — it opens from the task&apos;s row.</p>
           </FormField>
 
           <FormField label="Related to (optional)" htmlFor="related">

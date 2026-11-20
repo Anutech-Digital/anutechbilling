@@ -9,7 +9,7 @@ import { join } from "path";
    Projects and My expenses have no list filter (only dialog / form state), so nothing to move. */
 
 const PAGES: Record<string, string[]> = {
-  tasks: ["tab", "assignee"],
+  tasks: ["tab", "assigneeParam", "query", "status", "priority"],  // R-2930 search; R-2938 Status / Priority
   contacts: ["bizParam", "relParam", "view", "missing", "search"],  // R-1740: Business / Relationship facets + Map view replaced the kind tab
   enquiries: ["folder", "query"],
   "online-orders": ["tab", "focus", "search"],

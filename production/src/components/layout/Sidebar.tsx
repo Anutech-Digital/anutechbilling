@@ -157,9 +157,12 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
     model.apps.find((a) => a.id === (pickedApp ?? routeApp ?? lastRouteApp)) ?? model.apps[0];
 
   // Reusable link (plain item + accordion children).
-  const renderLink = (it: NavItem, child = false) => {
-    const isActive = pathname === it.href;
-    const isPending = !isActive && pendingHref === it.href;
+  const renderLink = (it: NavItem, child = false, ownsChildPages = false) => {
+    const isCurrent = pathname === it.href;
+    /* R-2939: a pinned row is one link with no rows under it (Tasks — its Overview / Calendar
+       pages are tabs on the page), so on one of those pages this row is the highlighted one. */
+    const isActive = isCurrent || (ownsChildPages && !!it.children?.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
+    const isPending = !isCurrent && pendingHref === it.href;
     /* R-1541: a live count is its own link — to the filtered view whose rows it counts
        (lib/hooks/nav-badge-views.ts) — with what it means on hover. The row still opens the
        page. A count whose view this role cannot open is not drawn. */
@@ -181,7 +184,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
             : "text-ink-2 hover:bg-paper-2 hover:text-ink",
           isPending && PENDING_PULSE
         )}
-        aria-current={isActive ? "page" : undefined}
+        aria-current={isCurrent ? "page" : undefined}
         {...pendingAttrs(isPending)}
       >
         {child && !collapsed
@@ -445,7 +448,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         )}
         {model.pinned.length > 0 && (
           <div className={cn("space-y-0.5", model.apps.length > 0 && "pb-2 mb-2 border-b border-hairline")}>
-            {model.pinned.map((it) => renderLink(it))}
+            {model.pinned.map((it) => renderLink(it, false, true))}
           </div>
         )}
 

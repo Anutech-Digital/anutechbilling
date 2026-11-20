@@ -222,6 +222,16 @@ describe("R-2925 a task given to me", () => {
     expect(item.title).toBe("New task from Pardeep: Call Acme");
     expect(item.meta).toContain("Due 19 Nov 2026");
   });
+
+  it("R-2928: a teammate's reminder about my task shows with the bell, amber, and opens that task", () => {
+    const row = {
+      id: "n10", kind: "task.reminder", title: "Reminder from Pardeep: Call Acme", body: "Due 19 Nov 2026, 3:30 pm",
+      href: "/tasks?tab=all&task=T1", entity_id: "T1", read_at: null, created_at: new Date(NOW - 60_000).toISOString(),
+    } as unknown as NotificationRow;
+    const [item] = buildNotifications({ dbNotifs: [row], readIds: new Set(), now: NOW });
+    expect(item).toMatchObject({ icon: "bell", tone: "amber", unread: true, link: "/tasks?tab=all&task=T1" });
+    expect(item.title).toBe("Reminder from Pardeep: Call Acme");
+  });
 });
 
 describe("R-2924 bell shows only MY tasks; owner/manager may switch to the team's", () => {

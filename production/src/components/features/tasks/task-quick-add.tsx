@@ -25,7 +25,7 @@ import { relatedToLinkColumns } from "./task-related-picker";
 import { KIND_META } from "./task-row";
 import { TASK_PRIORITY_META, priorityForCreate, showsPriorityBadge } from "./task-priority";
 
-export function TaskQuickAdd() {
+export function TaskQuickAdd({ className }: { /** R-2937: the page places it on its header line. */ className?: string } = {}) {
   const createTask = useCreateTask();
   const [text, setText] = React.useState("");
   const parsed = React.useMemo(() => (text.trim() ? parseQuickAdd(text) : null), [text]);
@@ -67,7 +67,7 @@ export function TaskQuickAdd() {
   const guessed = parsed && (!parsed.understood.date || !parsed.understood.time);
 
   return (
-    <div className="mb-4">
+    <div className={className ?? "mb-4"}>
       <form
         className="flex gap-2"
         onSubmit={(e) => { e.preventDefault(); save(); }}

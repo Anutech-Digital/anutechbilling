@@ -33,13 +33,16 @@ export interface NavAppDef {
 }
 
 /** Always shown above the switcher, for the roles that can see them. R-2300: Team chat too —
- *  reachable from every app (and it keeps a 12-row menu like sales' flat). */
-export const PINNED_ITEM_IDS = ["today", "dashboard", "ai-entry", "team-chat"] as const;
+ *  reachable from every app (and it keeps a 12-row menu like sales' flat). R-2939: Tasks too,
+ *  right after Today — it was the fifth Sales row. A pinned row is drawn as ONE link (no
+ *  accordion), so its Overdue count shows; its Overview / Calendar pages are the tabs on the
+ *  Tasks pages (components/features/tasks/tasks-tabs.tsx). */
+export const PINNED_ITEM_IDS = ["today", "tasks", "dashboard", "ai-entry", "team-chat"] as const;
 
 export const NAV_APPS: NavAppDef[] = [
   {
     id: "sales", label: "Sales", icon: "target",
-    itemIds: ["leads", "deals", "enquiries", "online-orders", "tasks", "quotes", "customers", "items", "marketing-hub", "referrals", "partners"],
+    itemIds: ["leads", "deals", "enquiries", "online-orders", "quotes", "customers", "items", "marketing-hub", "referrals", "partners"],
   },
   {
     /* Money in and money out: what the customer pays, what we pay vendors. */

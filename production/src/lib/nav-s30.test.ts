@@ -182,7 +182,8 @@ const ADDED_3NOV_PRIVATE_PEOPLE = ["/vault/personal/people"];
 const ADDED_4NOV_ACCOUNTANT_PURCHASE_INBOX = ["/purchases/inbox"];
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 /** R-2931 (18 Nov 2026): Tasks → Calendar — a child row for everyone who has Tasks (same tasks RLS). */
-const ADDED_18NOV_TASK_CALENDAR = ["/tasks/calendar"];
+/** R-2936 (19 Nov 2026): Tasks → Overview — the same people, the same tasks (read-only counts). */
+const ADDED_18NOV_TASK_CALENDAR = ["/tasks/calendar", "/tasks/overview"];
 /** R-2932 (18 Nov 2026): Reports → Team tasks — owner / manager only (the owner's view of who is behind). */
 const ADDED_18NOV_TEAM_TASKS_REPORT = ["/reports/team-tasks"];
 const addedFor = (role: string) => [
