@@ -274,21 +274,25 @@ reset role;
 -- "For No Key Update". Where the extension is not available the case is skipped with a notice.
 do $$
 declare
-  v_modes text[];
+  v_modes  text[];
+  v_schema text;
 begin
-  if not exists (select 1 from pg_available_extensions where name = 'pgrowlocks') then
-    raise notice 'R-2941 case 6 SKIPPED: pgrowlocks is not available on this database';
+  begin
+    create extension if not exists pgrowlocks;
+  exception when others then
+    raise notice 'R-2941 case 6 SKIPPED: pgrowlocks cannot be used on this database (%)', sqlerrm;
     return;
-  end if;
-  create extension if not exists pgrowlocks with schema extensions;
+  end;
+  select n.nspname into v_schema from pg_extension e join pg_namespace n on n.oid = e.extnamespace where e.extname = 'pgrowlocks';
+
   insert into public.tasks (id, tenant_id, owner_id, title, due_at) values
     ('c2941000-0000-0000-0000-0000000000d3', 'c2941000-0000-0000-0000-0000000000f1', 'c2941000-0000-0000-0000-0000000000a1', 'R2941 lock probe', now() + interval '1 day');
   insert into public.task_collaborators (tenant_id, task_id, user_id) values
     ('c2941000-0000-0000-0000-0000000000f1', 'c2941000-0000-0000-0000-0000000000d3', 'c2941000-0000-0000-0000-0000000000a2');
-  execute $q$select l.modes from extensions.pgrowlocks('public.tasks') l
-             where l.locked_row = (select t.ctid from public.tasks t where t.id = 'c2941000-0000-0000-0000-0000000000d3')$q$
+  execute format($q$select l.modes from %I.pgrowlocks('public.tasks') l
+             where l.locked_row = (select t.ctid from public.tasks t where t.id = 'c2941000-0000-0000-0000-0000000000d3')$q$, v_schema)
     into v_modes;
-  if v_modes is null or not ('For No Key Update' = any (v_modes) or 'For Update' = any (v_modes) or 'No Key Update' = any (v_modes) or 'Update' = any (v_modes)) then
+  if v_modes is null or not ('For No Key Update' = any (v_modes) or 'For Update' = any (v_modes)) then
     raise exception 'FAIL 6: adding a person did not lock the task row against a second writer (lock modes: %)', v_modes;
   end if;
 end $$;
