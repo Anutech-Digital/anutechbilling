@@ -130,6 +130,10 @@ const HELP_GRAPH_ALLOWED: readonly string[] = [
      "/" (ANU/26-27/001) keeps its link. Read in full: no imports, only string building with encodeURIComponent /
      decodeURIComponent, no ambient power. */
   "src/app/(app)/invoices/invoice-href.ts",
+  /* R-2969 (reviewed): /payments ?focus= — company/summary.ts#collectedInMonth now sums with the same
+     one-payment test the list uses. Read in full: imports only lib/dates/ist (above); two pure
+     functions over plain rows, no React, no network, no env, no side effect at import. */
+  "src/lib/payments/focus.ts",
 ];
 /** npm packages the files on HELP_GRAPH_ALLOWED may import as values (pure formatters only). */
 const FOLLOWED_NPM_ALLOWED = ["clsx", "tailwind-merge", "zod"];
