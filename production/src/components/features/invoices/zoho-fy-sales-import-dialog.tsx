@@ -6,6 +6,8 @@
  *   1. Read from Zoho   — the server reads the year (list + each invoice), paced, resumable.
  *   2. Preview          — per month: Zoho's sales vs what will come in vs what is already in the app;
  *                         why the rest is left out (void, draft, no customer, opening invoice, …).
+ *                         R-2949: the invoices that will come in are listed, and the owner leaves
+ *                         some out (one, or a number prefix) — kept on the server, taken back here.
  *   3. Check (dry run)  — the database runs the real import and rolls it back: its own refusals.
  *   4. Import           — in parts; each part is one batch (activity log), removable while untouched.
  *
@@ -31,6 +33,8 @@ import type { StaleAddress } from "@/lib/integrations/zoho-books/sales-import/st
 import { readUntilDone, type ZohoLimitHit } from "@/lib/integrations/zoho-books/zoho-limit";
 import { ZohoBusyLine, ZohoLimitNotice } from "@/components/features/integrations/zoho-limit-notice";
 import { ZohoDayCallsLine } from "@/components/features/integrations/zoho-day-calls-line";
+import type { LeftOutView, ToImportRow } from "@/lib/integrations/zoho-books/sales-import/left-out";
+import { LeftOutByYou, ToImportList } from "./zoho-fy-sales-to-import";
 
 const API = "/api/integrations/zoho-books/sales-import";
 const FY = "2025-26";
@@ -41,6 +45,10 @@ interface Preview {
   scanned: number;
   counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number };
   parts: number;
+  /** R-2949: the invoices that will be imported (the first rows; `toImportMore` = the rest) and what the owner left out. */
+  toImport?: ToImportRow[];
+  toImportMore?: number;
+  leftOut?: LeftOutView;
   zohoByMonth: MonthTotals[]; importByMonth: MonthTotals[]; appByMonth: MonthTotals[];
   skipReasons: { reason: string; count: number }[];
   skipped: { number: string; date: string; customer: string; amount: number; reason: string | null }[];
@@ -102,6 +110,20 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
     finally { setBusy(null); }
   }
 
+  /* R-2949: Leave out / Take back — the server saves it, then the preview is built again from the
+     saved list; the old check no longer matches, so Import waits for a new one. A failed save or
+     preview leaves the screen as it was. */
+  async function changeLeftOut(action: "leaveOut" | "takeBack", what: { zohoId: string } | { prefix: string }): Promise<boolean> {
+    setBusy("preview"); setError(null);
+    try {
+      await call({ action, ...what });
+      const p = await call<Preview>({ action: "preview", useAnyway });
+      setPreview(p); setCheck(null); setDone(null);
+      return true;
+    } catch (e) { setError((e as Error).message); return false; }
+    finally { setBusy(null); }
+  }
+
   /* R-2652: Try again after Zoho's limit carries on from where the read stopped (never a restart that wipes the scan). */
   async function readZoho(resume = false) {
     const again = !resume && !!(read?.complete || preview);
@@ -147,6 +169,7 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
   React.useEffect(() => { if (open && !preview && !read) void loadPreview().catch(() => {}); }, [open, preview, read, loadPreview]);
 
   const toImport = preview?.counts.import ?? 0;
+  const hasLeftOut = !!preview?.leftOut && (preview.leftOut.prefixes.length > 0 || preview.leftOut.invoices.length > 0);
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
       <DialogContent className="max-w-4xl">
@@ -196,20 +219,26 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
               {(preview.gstinChoices?.length ?? 0) > 0 && (
                 <GstinChoices choices={preview.gstinChoices ?? []} disabled={!!busy} onToggle={toggleChoice} />
               )}
-              {preview.skipReasons.length > 0 && (
+              {(preview.toImport?.length ?? 0) > 0 && (
+                <ToImportList rows={preview.toImport ?? []} more={preview.toImportMore ?? 0} disabled={!!busy}
+                  onLeaveOut={(zohoId) => void changeLeftOut("leaveOut", { zohoId })}
+                  onLeaveOutPrefix={(prefix) => changeLeftOut("leaveOut", { prefix })} />
+              )}
+              {(preview.skipReasons.length > 0 || hasLeftOut) && (
                 <div>
                   <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Left out, and why</p>
+                  {preview.leftOut && <LeftOutByYou view={preview.leftOut} disabled={!!busy} onTakeBack={(what) => void changeLeftOut("takeBack", what)} />}
                   <ul className="text-xs text-ink-2 space-y-0.5">
                     {preview.skipReasons.slice(0, 8).map((r) => <li key={r.reason}><b>{r.count}</b> · {r.reason}</li>)}
                   </ul>
-                  <details className="mt-1 text-xs">
+                  {preview.skipped.length > 0 && <details className="mt-1 text-xs">
                     <summary className="cursor-pointer text-ink-3">Show the invoices left out</summary>
                     <ul className="max-h-48 overflow-y-auto mt-1 space-y-0.5">
                       {preview.skipped.map((s) => (
                         <li key={s.number + s.date}><span className="font-mono">{s.number}</span> · {formatDate(s.date)} · {s.customer} · {rupee(s.amount)} — {s.reason}</li>
                       ))}
                     </ul>
-                  </details>
+                  </details>}
                 </div>
               )}
               {check && <PartSummary title="Check result (nothing saved)" r={check} />}
