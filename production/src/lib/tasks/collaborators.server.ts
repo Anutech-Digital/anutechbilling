@@ -15,13 +15,16 @@ import { notifyPeople } from "@/lib/notifications/notify.server";
 import { appUrl } from "@/lib/app-url";
 import { mayOpenPage } from "@/lib/api/with-route";
 import { relatedOf, type AssignedTask } from "./assign-notice";
-import { cleanCollaborators, collaboratorDiff, collaboratorEmail, collaboratorNotification } from "./collaborators";
+import { cleanCollaborators, collaboratorDiff, collaboratorEmail, collaboratorNotification, TOO_MANY_COLLABORATORS } from "./collaborators";
 
 export type SetCollaboratorsResult =
   | { ok: true; userIds: string[]; added: string[]; removed: string[]; notified: number }
   | { ok: false; status: 404 | 409; error: string };
 
 type UserClient = ReturnType<typeof createClient>;
+
+/** Same words cleanCollaborators uses for a person who is not on the team. */
+const NOT_A_TEAM_MEMBER = "One of the people picked is not an active member of your team — refresh the page and pick again.";
 
 const TASK_COLUMNS = "id, title, notes, due_at, owner_id, lead_id, quote_id, customer_id, subscription_id, leads(company, contact_name), customers(name), quotes(customer_name)";
 
@@ -69,6 +72,10 @@ export async function setTaskCollaborators(
   if (add.length) {
     const { error } = await supabase.from("task_collaborators")
       .insert(add.map((user_id) => ({ tenant_id: tenantId, task_id: task.id, user_id, added_by: actorId })));
+    // R-2941: the database holds the same rules (trigger task_collaborators_guard) — a second
+    // save at the same moment, or a person who left meanwhile, gets the plain message.
+    if (error && /R-2941: a task can have up to 3 people/.test(error.message)) return { ok: false, status: 409, error: TOO_MANY_COLLABORATORS };
+    if (error && /R-2941: this task or this person is not in this company/.test(error.message)) return { ok: false, status: 409, error: NOT_A_TEAM_MEMBER };
     if (error) throw new Error(`collaborators insert failed: ${error.message}`);
   }
 

@@ -10,6 +10,8 @@ const db: { tasks: Row[]; users: Row[]; tenants: Row[]; task_collaborators: Row[
   { tasks: [], users: [], tenants: [], task_collaborators: [] };
 /** The most rows task_collaborators ever held for the task during a call (a swap must never hold 4). */
 let peak = 0;
+/** R-2941: what the database answers to the next insert (its guard trigger), when set. */
+let insertError: { message: string; code?: string } | null = null;
 
 /** A tiny PostgREST look-alike: eq / in filters; insert appends; delete removes the matched rows. */
 function client() {
@@ -21,6 +23,7 @@ function client() {
         select: () => q,
         delete: () => { del = true; return q; },
         insert: async (added: Row[]) => {
+          if (insertError) { const error = insertError; insertError = null; return { error }; }
           db[table].push(...added.map((r) => ({ ...r })));
           peak = Math.max(peak, db.task_collaborators.length);
           return { error: null };
@@ -57,7 +60,7 @@ const user = (id: string, name: string, role = "sales") =>
   ({ id, tenant_id: T, full_name: name, email: `${name.toLowerCase()}@example.test`, is_active: true, role });
 
 beforeEach(() => {
-  sendInternalEmail.mockClear(); notifyPeople.mockClear(); peak = 0;
+  sendInternalEmail.mockClear(); notifyPeople.mockClear(); peak = 0; insertError = null;
   db.tenants = [{ id: T, name: "E2E Test Co" }];
   db.users = [user(ME, "Pardeep", "owner"), user(HITESH, "Hitesh"), user(PAWAN, "Pawan"), user(ABHI, "Abhishek"), user(RIYA, "Riya")];
   db.tasks = [{
@@ -146,5 +149,27 @@ describe("R-2933 setTaskCollaborators", () => {
     sendInternalEmail.mockRejectedValueOnce(new Error("smtp down"));
     expect(await run([PAWAN])).toMatchObject({ ok: true, added: [PAWAN], notified: 1 });
     expect(saved()).toEqual([PAWAN]);
+  });
+});
+
+describe("R-2941 the database's own refusals reach the person as plain words", () => {
+  it("a 4th person refused by the database (two saves at the same moment) → 409 with the limit message, nobody told", async () => {
+    insertError = { code: "23514", message: "R-2941: a task can have up to 3 people working with its owner — remove one to add another" };
+    expect(await run([PAWAN])).toEqual({ ok: false, status: 409, error: "A task can have up to 3 people working with its owner — remove one to add another." });
+    expect(saved()).toEqual([]);
+    expect(notifyPeople).not.toHaveBeenCalled();
+  });
+
+  it("a person the database says is not in this company → 409, pick again", async () => {
+    insertError = { code: "23514", message: "R-2941: this task or this person is not in this company" };
+    const r = await run([PAWAN]);
+    expect(r).toMatchObject({ ok: false, status: 409 });
+    expect((r as { error: string }).error).toContain("not an active member of your team");
+    expect(notifyPeople).not.toHaveBeenCalled();
+  });
+
+  it("any other database error is still a crash (500), never a made-up message", async () => {
+    insertError = { message: "connection reset" };
+    await expect(run([PAWAN])).rejects.toThrow("collaborators insert failed: connection reset");
   });
 });

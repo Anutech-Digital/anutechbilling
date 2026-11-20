@@ -36,7 +36,8 @@ function client(staleTask?: Row) {
 }
 
 const sendInternalEmail = vi.fn(async (_m: Row) => ({ status: "sent", providerId: "x", errorMessage: null, provider: "stub" }));
-const notifyPeople = vi.fn(async (_input: Row, _to: { userIds: string[] }) => {});
+// notifyPeople answers how many notices it wrote (R-2941); 0 = not written.
+const notifyPeople = vi.fn(async (_input: Row, _to: { userIds: string[] }): Promise<number> => 1);
 vi.mock("@/lib/supabase/server", () => ({ createAdminClient: () => client() }));
 vi.mock("@/lib/messaging", () => ({ sendInternalEmail: (m: Row) => sendInternalEmail(m) }));
 vi.mock("@/lib/notifications/notify.server", () => ({ notifyPeople: (i: Row, t: { userIds: string[] }) => notifyPeople(i, t) }));
@@ -151,5 +152,40 @@ describe("R-2928 sendTaskReminder", () => {
     sendInternalEmail.mockRejectedValueOnce(new Error("smtp down"));
     expect(await run()).toEqual({ reminded: true, emailed: false, lastFollowupAt: NOW.toISOString() });
     expect(db.tasks[0].followup_count).toBe(1);
+  });
+});
+
+describe("R-2941 a reminder that could not be sent is not lost for an hour", () => {
+  it("the bell notice is not written: nothing is emailed, the stamp is put back, and Remind works again at once", async () => {
+    notifyPeople.mockResolvedValueOnce(0);
+    expect(await run()).toEqual({ reminded: false, emailed: false, reason: "notice not sent", lastFollowupAt: null });
+    expect(sendInternalEmail).not.toHaveBeenCalled();
+    expect(db.tasks[0]).toMatchObject({ last_followup_at: null, followup_count: 0 });
+
+    // The next press (a second later) goes through — the hour was given back.
+    const retry = new Date(NOW.getTime() + 1000);
+    expect(await run({ now: retry })).toEqual({ reminded: true, emailed: true, lastFollowupAt: retry.toISOString() });
+    expect(db.tasks[0]).toMatchObject({ last_followup_at: retry.toISOString(), followup_count: 1 });
+  });
+
+  it("a task reminded before goes back to exactly its earlier stamp and count", async () => {
+    const before = new Date(NOW.getTime() - 2 * 60 * 60_000).toISOString();
+    db.tasks[0].last_followup_at = before; db.tasks[0].followup_count = 3;
+    notifyPeople.mockResolvedValueOnce(0);
+    expect(await run()).toMatchObject({ reminded: false, reason: "notice not sent", lastFollowupAt: before });
+    expect(db.tasks[0]).toMatchObject({ last_followup_at: before, followup_count: 3 });
+  });
+
+  it("a stamp that is no longer ours is left alone (someone's later reminder keeps its own)", async () => {
+    const theirs = new Date(NOW.getTime() + 5000).toISOString();
+    notifyPeople.mockImplementationOnce(async () => {
+      db.tasks[0].last_followup_at = theirs; db.tasks[0].followup_count = 2;
+      return 0;
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await run()).toMatchObject({ reminded: false, reason: "notice not sent" });
+    expect(db.tasks[0]).toMatchObject({ last_followup_at: theirs, followup_count: 2 });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("could not be put back"), "stamp no longer ours");
+    logged.mockRestore();
   });
 });

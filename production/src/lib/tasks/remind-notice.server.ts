@@ -8,6 +8,11 @@
  * notice comes from that task row and the users table — nothing from the request body except
  * the task id. Once per task per hour (whyNoReminder); the stamp is taken BEFORE anything is
  * sent, on the value that was read, so two presses at the same moment send one reminder.
+ *
+ * R-2941: if the bell notice then cannot be written, the stamp is put back (only if it is still
+ * ours) and the caller is told nothing went out — the reminder is not lost for an hour. The two
+ * columns are written with the service client only: the database refuses them to an app session
+ * (trigger tasks_followup_guard).
  */
 import "server-only";
 import { createAdminClient, type createClient } from "@/lib/supabase/server";
@@ -16,13 +21,13 @@ import { notifyPeople } from "@/lib/notifications/notify.server";
 import { appUrl } from "@/lib/app-url";
 import { mayOpenPage } from "@/lib/api/with-route";
 import { relatedOf, type AssignedTask } from "./assign-notice";
-import { remindEmail, remindNotification, whyNoReminder, type NoReminderReason } from "./remind-notice";
+import { NOTICE_NOT_SENT, remindEmail, remindNotification, whyNoReminder, type NoReminderReason } from "./remind-notice";
 
 export interface RemindResult {
   reminded: boolean;
   emailed: boolean;
   /** Why nothing was sent — for the message the person reads, the log and tests. */
-  reason?: NoReminderReason | "task not found";
+  reason?: NoReminderReason | "task not found" | typeof NOTICE_NOT_SENT;
   /** When this task was last reminded (now, after a reminder that went). */
   lastFollowupAt?: string | null;
 }
@@ -70,11 +75,12 @@ export async function sendTaskReminder(
 
   // Take the stamp first, only if nobody stamped since our read (compare-and-set on the value read).
   const stampedAt = now.toISOString();
+  const before = { last_followup_at: task.last_followup_at, followup_count: task.followup_count ?? 0 };
   const stamp = admin.from("tasks")
-    .update({ last_followup_at: stampedAt, followup_count: (task.followup_count ?? 0) + 1 })
+    .update({ last_followup_at: stampedAt, followup_count: before.followup_count + 1 })
     .eq("id", task.id).eq("tenant_id", tenantId);
   const { data: stamped, error: stampErr } = await (
-    task.last_followup_at ? stamp.eq("last_followup_at", task.last_followup_at) : stamp.is("last_followup_at", null)
+    before.last_followup_at ? stamp.eq("last_followup_at", before.last_followup_at) : stamp.is("last_followup_at", null)
   ).select("id");
   if (stampErr) throw new Error(`reminder stamp failed: ${stampErr.message}`);
   if (!stamped?.length) return { reminded: false, emailed: false, reason: "reminded recently" };
@@ -85,7 +91,18 @@ export async function sendTaskReminder(
   const canOpenTasks = mayOpenPage(assignee.role, ["/tasks"]);
 
   const n = remindNotification({ task, actorName, canOpenTasks });
-  await notifyPeople({ tenantId, kind: n.kind, title: n.title, body: n.body, href: n.href, entityId: n.entityId }, { userIds: [assignee.id] });
+  // notifyPeople never throws; 0 = the notice was not written (it logged why).
+  const written = await notifyPeople({ tenantId, kind: n.kind, title: n.title, body: n.body, href: n.href, entityId: n.entityId }, { userIds: [assignee.id] });
+  if (!written) {
+    // Give the hour back — only if the stamp is still ours (a later reminder keeps its own).
+    const { data: undone, error: undoErr } = await admin.from("tasks")
+      .update(before)
+      .eq("id", task.id).eq("tenant_id", tenantId).eq("last_followup_at", stampedAt).select("id");
+    if (undoErr || !undone?.length) {
+      console.error("[tasks/remind] notice not written and the stamp could not be put back:", undoErr?.message ?? "stamp no longer ours");
+    }
+    return { reminded: false, emailed: false, reason: NOTICE_NOT_SENT, lastFollowupAt: before.last_followup_at };
+  }
 
   // The email is best effort: the bell notice is written and the task is stamped.
   let emailed = false;

@@ -35,21 +35,24 @@ export interface NotifyInput {
 }
 
 export async function notifyTenantOwners(input: NotifyInput): Promise<void> {
-  return notifyPeople(input, { roles: ["owner", "manager"] });
+  await notifyPeople(input, { roles: ["owner", "manager"] });
 }
 
 /**
  * R-1793 (23 Oct 2026): the same door, for a chosen set of people — by role (e.g. everyone in
  * billing) and/or by id (the person who asked). Same best-effort contract: never throws.
+ *
+ * R-2941: answers how many notices were written (0 = nobody to tell, or the write failed —
+ * already logged), for the caller whose own work depends on the notice (Remind).
  */
 export async function notifyPeople(
   input: NotifyInput, to: { roles?: readonly UserRole[]; userIds?: readonly string[] },
-): Promise<void> {
+): Promise<number> {
   try {
     const admin = createAdminClient();
     const roles = [...(to.roles ?? [])];
     const ids = [...(to.userIds ?? [])];
-    if (!roles.length && !ids.length) return;
+    if (!roles.length && !ids.length) return 0;
     let query = admin.from("users").select("id").eq("tenant_id", input.tenantId).eq("is_active", true);
     query = roles.length && ids.length
       ? query.or(`role.in.(${roles.join(",")}),id.in.(${ids.join(",")})`)
@@ -57,7 +60,7 @@ export async function notifyPeople(
     const { data: recipients, error: rErr } = await query;
     if (rErr || !recipients?.length) {
       if (rErr) console.error("[notify] recipients read failed:", rErr.message);
-      return;
+      return 0;
     }
 
     const rows = recipients.map((u) => ({
@@ -70,8 +73,10 @@ export async function notifyPeople(
       entity_id: input.entityId ?? null,
     }));
     const { error } = await admin.from("notifications").insert(rows);
-    if (error) console.error("[notify] insert failed:", error.message);
+    if (error) { console.error("[notify] insert failed:", error.message); return 0; }
+    return rows.length;
   } catch (e) {
     console.error("[notify] crashed:", (e as Error).message);
+    return 0;
   }
 }
