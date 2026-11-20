@@ -69,8 +69,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             decoration that costs vertical space on every screen. */}
         <WorkspaceTabBar />
         {/* Phone: pad past the bottom tab bar AND the home indicator (pb-16 alone hid ~34px
-            of the last rows on iPhone), plus room for the bulk bar / FAB above it. */}
-        <main className="flex-1 min-w-0 pb-[calc(var(--bottom-nav-h,56px)+1rem)] md:pb-0">{children}</main>
+            of the last rows on iPhone), plus room for the bulk bar / FAB above it.
+            R-2962: while AI Help is docked on a desktop it publishes --ai-help-page (its width,
+            beside the --ai-help-dock dialogs read), so no form field sits under the panel. */}
+        <main className="flex-1 min-w-0 pb-[calc(var(--bottom-nav-h,56px)+1rem)] md:pb-0 md:pr-[var(--ai-help-page,0px)]">{children}</main>
       </div>
 
       {/* Sticky mobile bottom tab bar (phone only) */}

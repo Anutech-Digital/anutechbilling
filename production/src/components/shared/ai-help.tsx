@@ -239,6 +239,19 @@ export function helpDock(panelW: number, vpW: number): HelpDock | null {
   return room >= DIALOG_MIN_ROOM ? { shift: panelW, room } : null;
 }
 
+/** R-2962: the page keeps at least this much beside docked help — the 240px sidebar + a 360px column. */
+export const PAGE_MIN_ROOM = 240 + DIALOG_MIN_ROOM;
+/**
+ * R-2962 (Pardeep: "link dabate hi box gayab — poora process follow nahi hota"): while help is
+ * docked on a desktop, the app layout's <main> is padded on the right by this much (it reads
+ * --ai-help-page, set beside --ai-help-dock), so no form field sits under the panel. 0 = no
+ * padding: a phone/tablet sheet, or a panel so wide the page would be squeezed out — then help
+ * overlays as before (the person chose Expand, and Minimize/Dock are one press away).
+ */
+export function helpPagePad(panelW: number, vpW: number): number {
+  return helpDock(panelW, vpW) && vpW - panelW >= PAGE_MIN_ROOM ? panelW : 0;
+}
+
 /**
  * R-352: "Last tested 7 Oct, 10:52 · 5 ✓ 1 ✗" at the top of AI Help, with the failed tests
  * named — so the person sees what the browser run already covered before asking for more.
@@ -366,10 +379,23 @@ export function AiHelp() {
   const router = useRouter();
   /** "<message index>:<action index>" → done / failed */
   const [acted, setActed] = React.useState<Record<string, "done" | "busy" | "failed">>({});
+  /** R-2962: the minimized bar's "Open help" — focus lands here when an answer's link folds help on a phone. */
+  const reopenRef = React.useRef<HTMLButtonElement>(null);
 
   /* R-189: run one offered fix, as the signed-in person (RLS decides what they may change). */
   async function runAction(key: string, a: HelpAction) {
-    if (a.kind === "open") { setOpen(false); router.push(a.href as never); return; }
+    if (a.kind === "open") {
+      /* R-2962: follow the steps ON the page — help stays with the same chat. Desktop: it stays
+         open (docked help pads the page, so the form is not under it) and focus stays on this
+         button, where the next step is read. Phone: the sheet would cover the page, so it folds
+         to the small bar (chat kept) and focus goes to its "Open help" button. */
+      if (viewport().w < PANEL_DESKTOP_MIN_W) {
+        setHelpUi({ minimized: true });
+        setTimeout(() => reopenRef.current?.focus(), 0);
+      }
+      router.push(a.href as never);
+      return;
+    }
     setActed((s) => ({ ...s, [key]: "busy" }));
     const supabase = createClient();
     const name = GST_STATE_BY_CODE[a.stateCode] ?? null;
@@ -468,20 +494,25 @@ export function AiHelp() {
   const dock = showing && !moved ? helpDock(shownSize.w, viewport().w) : null;
   const dockShift = dock?.shift ?? 0;
   const dockRoom = dock?.room ?? 0;
+  /* R-2962: same publish, one more value — the page's right padding (layout <main>). */
+  const pagePad = dock ? helpPagePad(shownSize.w, viewport().w) : 0;
   React.useEffect(() => {
     const root = document.documentElement;
     const clear = () => {
       root.style.removeProperty("--ai-help-dock");
       root.style.removeProperty("--ai-help-room");
+      root.style.removeProperty("--ai-help-page");
       root.removeAttribute("data-ai-help-docked");
     };
     if (dockShift > 0) {
       root.style.setProperty("--ai-help-dock", `${dockShift}px`);
       root.style.setProperty("--ai-help-room", `${dockRoom}px`);
+      if (pagePad > 0) root.style.setProperty("--ai-help-page", `${pagePad}px`);
+      else root.style.removeProperty("--ai-help-page");
       root.setAttribute("data-ai-help-docked", "");
     } else clear();
     return clear;
-  }, [dockShift, dockRoom]);
+  }, [dockShift, dockRoom, pagePad]);
   function toggleSize() {
     /* Kept unclamped: "Expand" stays full height when the window later grows (clamped on show). */
     const next = large ? PANEL_NORMAL : PANEL_LARGE;
@@ -1086,7 +1117,7 @@ export function AiHelp() {
            no longer know the click came from help and would close (browser check, 11 Oct). */
         <div role="region" aria-label="Help (minimized)" hidden={!minimized}
           className={`${minimized ? "flex" : "hidden"} fixed z-[65] right-3 bottom-[calc(var(--bottom-nav-h,56px)+0.75rem)] md:bottom-4 md:right-4 items-center gap-1 rounded-full border border-hairline bg-paper shadow-2xl pl-1 pr-1`}>
-          <button type="button" aria-label="Open help"
+          <button ref={reopenRef} type="button" aria-label="Open help"
             className="inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-ink hover:bg-paper-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
             onClick={() => setHelpUi({ minimized: false })}>
             <Icon name="sparkles" size={14} className="text-amber-ink" />
