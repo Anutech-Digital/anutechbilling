@@ -23,6 +23,11 @@
  *              The request names only Zoho ids + the matched customer / items — every amount comes
  *              from the scan in the database.
  *   undo     → { batchId, reason } — remove_zoho_fy_sales_import (while untouched).
+ *   leaveOut / takeBack → R-2949: { zohoId } (one invoice of this company's Zoho read) or { prefix }
+ *              (every number starting with it; 2–20 characters, any case). Saved per company
+ *              (zoho_fy_left_out); preview, the dry run and the import all rebuild the plan with the
+ *              saved list, so a left-out invoice is never a pick — whatever the request says.
+ *              preview also returns `toImport` (first TO_IMPORT_LIST_MAX rows), `toImportMore`, `leftOut`.
  * Zoho is never written to.
  */
 import { NextResponse, type NextRequest } from "next/server";
@@ -41,6 +46,8 @@ import { zohoSaleFacts, type ZohoSaleFacts } from "@/lib/integrations/zoho-books
 import { SALES_IMPORT_ROLES, buildSalesPlan, toPick } from "@/lib/integrations/zoho-books/sales-import/plan";
 import { readImportedByMonth, readPlanContext, readSellerState } from "@/lib/integrations/zoho-books/sales-import/store";
 import { staleAddressCount } from "@/lib/integrations/zoho-books/sales-import/stale-address";
+import { PREFIX_MESSAGE, cleanPrefix, leftOutView, toImportRows } from "@/lib/integrations/zoho-books/sales-import/left-out";
+import { LEFT_OUT_MAX, addLeftOut, readLeftOut, removeLeftOut, scannedInvoiceNumber, type SavedLeftOut } from "@/lib/integrations/zoho-books/sales-import/left-out-store";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -131,15 +138,49 @@ export async function POST(req: NextRequest) {
     return ran.value;
   }
 
+  /* R-2949: the owner's "Left out by you" list — this company's only (caller.tenantId), owner / accountant only (checked above). */
+  if (action === "leaveOut" || action === "takeBack") {
+    const hasId = typeof body.zohoId === "string" && body.zohoId.length > 0;
+    const hasPrefix = body.prefix !== undefined;
+    if (hasId === hasPrefix) return fail(400, "Choose one invoice or one number prefix.");
+    const zohoId = hasId ? String(body.zohoId).slice(0, 40) : "";
+    const prefix = hasPrefix ? cleanPrefix(body.prefix) : null;
+    if (hasPrefix && !prefix) return fail(400, PREFIX_MESSAGE);
+    try {
+      if (action === "takeBack") {
+        await removeLeftOut(db, caller.tenantId, hasId ? "doc" : "prefix", hasId ? zohoId : prefix!);
+        return NextResponse.json({ ok: true });
+      }
+      const saved = await readLeftOut(db, caller.tenantId);
+      if (hasId) {
+        if (!saved.docs.some((d) => d.zohoId === zohoId)) {
+          const number = await scannedInvoiceNumber(db, caller.tenantId, zohoId);
+          if (number === null) return fail(404, "That invoice is not in the Zoho read. Preview again.");
+          if (saved.docs.length >= LEFT_OUT_MAX.doc) return fail(409, `You have already left out ${saved.docs.length} invoices one by one — use "Leave out numbers starting with", or take one back first.`);
+          await addLeftOut(db, caller.tenantId, caller.userId, { rule: "doc", value: zohoId, number });
+        }
+      } else if (!saved.prefixes.includes(prefix!)) {
+        if (saved.prefixes.length >= LEFT_OUT_MAX.prefix) return fail(409, `You have already left out ${saved.prefixes.length} number prefixes — take one back first.`);
+        await addLeftOut(db, caller.tenantId, caller.userId, { rule: "prefix", value: prefix! });
+      }
+    } catch { return fail(500, action === "takeBack" ? "Could not take that back. Try again." : "Could not save what you left out. Try again."); }
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === "preview" || action === "import") {
     let plan, counts, run;
+    let saved: SavedLeftOut;
     try {
       [counts, run] = await Promise.all([store.counts(fy), store.readRun(fy)]);
       if (!run?.listDone || counts.detailed < counts.listed || counts.listed === 0) {
         return fail(409, "Read the year from Zoho first (Read from Zoho) — it is not complete yet.");
       }
-      const [facts, ctx] = await Promise.all([readScannedFacts<ZohoSaleFacts>(db, caller.tenantId, KIND, fy), readPlanContext(db, caller.tenantId, range)]);
-      plan = buildSalesPlan(facts, { ...ctx, useAnyway: readUseAnyway(body.useAnyway) });
+      const [facts, ctx, left] = await Promise.all([readScannedFacts<ZohoSaleFacts>(db, caller.tenantId, KIND, fy), readPlanContext(db, caller.tenantId, range),
+        readLeftOut(db, caller.tenantId)]);
+      saved = left;
+      /* R-2949: the saved list, never the request — preview, dry run and import skip the same invoices. */
+      plan = buildSalesPlan(facts, { ...ctx, useAnyway: readUseAnyway(body.useAnyway),
+        leftOut: { ids: saved.docs.map((d) => d.zohoId), prefixes: saved.prefixes } });
     } catch {
       return fail(500, "Could not build the preview. Refresh and try again.");
     }
@@ -152,13 +193,16 @@ export async function POST(req: NextRequest) {
       try {
         [appByMonth, batches] = await Promise.all([readImportedByMonth(db, caller.tenantId, range), readImportBatches(db, caller.tenantId, KIND, fy)]);
       } catch { return fail(500, "Could not read what is already imported. Refresh and try again."); }
-      const skipped = plan.rows.filter((r) => r.verdict === "skip").slice(0, 500)
+      /* R-2949: "Left out by you" has its own block (leftOut) — not a line here. */
+      const skipped = plan.rows.filter((r) => r.verdict === "skip" && !r.leftOut).slice(0, 500)
         .map((r) => ({ number: r.facts.number, date: r.facts.date, customer: r.facts.customerName, amount: r.facts.amount, reason: r.reason }));
+      const list = toImportRows(plan.rows);
       return NextResponse.json({
         ok: true, fy, scanned: counts.listed, counts: plan.counts, parts,
         zohoByMonth: plan.zohoByMonth, importByMonth: plan.importByMonth, appByMonth,
         skipReasons: plan.skipReasons, skipped, batches, gstinChoices: plan.gstinChoices,
         staleAddress: staleAddressCount(plan.rows),
+        toImport: list.rows, toImportMore: list.more, leftOut: leftOutView(plan.rows, saved),
       });
     }
 

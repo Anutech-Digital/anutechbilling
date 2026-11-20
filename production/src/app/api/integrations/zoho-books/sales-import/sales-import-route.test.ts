@@ -48,6 +48,11 @@ vi.mock("@/lib/integrations/zoho-books/sales-import/store", () => ({
   readImportedByMonth: async () => [],
   readSellerState: async () => "07",
 }));
+/* R-2949: the owner's left-out list is read from its own table — empty here (its tests: sales-import-route-r2949.test.ts). */
+vi.mock("@/lib/integrations/zoho-books/sales-import/left-out-store", () => ({
+  LEFT_OUT_MAX: { doc: 500, prefix: 20 },
+  readLeftOut: async () => ({ docs: [], prefixes: [] }),
+}));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({ rpc: async (fn: string, args: Record<string, unknown>) => { st.rpc.push({ fn, args }); return st.rpcResult; } }),
 }));

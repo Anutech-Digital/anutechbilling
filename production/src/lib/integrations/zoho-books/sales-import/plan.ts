@@ -22,12 +22,18 @@
  *     owner ticks "Use this customer anyway" for that Zoho customer (ctx.useAnyway; matchedBy "chosen");
  *   - an archived (inactive) customer does not block: when only one of the matches is active, it is used.
  *
+ * R-2949 — "Left out by you" (ctx.leftOut, left-out.ts): an invoice that WOULD be imported and
+ * matches one of the owner's rules (its Zoho id, or a number prefix) is skipped instead and counted
+ * in counts.leftOutByYou — it gets no line in skipReasons (the dialog shows it in its own block).
+ * Nothing else changes: an invoice already in the app stays "already", any other reason stays as it is.
+ *
  * The SQL import (import_zoho_fy_sales) checks the same money rules again — this is the preview.
  * Pure: no I/O.
  */
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { panFromGstin } from "@/lib/gst/customer-gst-treatment";
 import type { ZohoSaleFacts } from "./normalise";
+import { leftOutBy, leftOutReason, type LeftOutBy, type LeftOutRules } from "./left-out";
 
 /** `active` false = archived (customers.is_active false); missing = active. */
 export interface AppCustomer { id: string; name: string; gstin: string | null; active?: boolean }
@@ -49,6 +55,8 @@ export interface PlanContext {
    *  the invoice's PAN, R-2536) → app customer id. Honoured only when that customer is the one the
    *  name matched. */
   useAnyway?: Readonly<Record<string, string>>;
+  /** R-2949: the owner's "Left out by you" rules for this company (left-out-store.ts). */
+  leftOut?: LeftOutRules;
 }
 
 export type Verdict = "import" | "already" | "skip";
@@ -63,6 +71,8 @@ export interface PlannedSale {
   matchedBy: "gstin" | "name" | "pan" | "chosen" | null;
   /** Catalogue item per line (same order as facts.lines), null when none matched. */
   itemIds: (string | null)[];
+  /** R-2949: set only when the owner's rule is what keeps it out (verdict "skip"). */
+  leftOut?: LeftOutBy;
 }
 
 /** R-2530: one per Zoho customer whose name matches one app customer with a different PAN. */
@@ -84,7 +94,8 @@ export interface MonthTotals { month: string; count: number; taxable: number; ig
 
 export interface SalesPlan {
   rows: PlannedSale[];
-  counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number };
+  /** leftOutByYou (R-2949) is part of skip. */
+  counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; leftOutByYou: number };
   /** Every Zoho invoice that IS a sale (not void / draft) — what Zoho's GSTR-1 had. */
   zohoByMonth: MonthTotals[];
   /** The ones that will come in now. */
@@ -157,7 +168,7 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
   const zoho = new Map<string, MonthTotals>();
   const imp = new Map<string, MonthTotals>();
   const reasons = new Map<string, { reason: string; count: number }>();
-  const counts = { scanned: all.length, import: 0, already: 0, skip: 0, voidOrDraft: 0 };
+  const counts = { scanned: all.length, import: 0, already: 0, skip: 0, voidOrDraft: 0, leftOutByYou: 0 };
   const choices = new Map<string, GstinChoice>();
 
   const rows = all.map((f): PlannedSale => {
@@ -224,7 +235,11 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
       if (!out.customerId && !out.reason) {
         out.reason = `No app customer is named "${f.customerName}"${g ? ` or has GSTIN "${g}"` : ""} — import customers from Zoho first, then preview again.`;
       }
-      if (out.customerId) {
+      /* R-2949: the owner's own rule is the LAST check — only an invoice that would come in. */
+      const mine = out.customerId ? leftOutBy(ctx.leftOut, f) : null;
+      if (mine) {
+        out.leftOut = mine; out.reason = leftOutReason(mine);
+      } else if (out.customerId) {
         out.verdict = "import";
         /* R-2702: Zoho's adjustment line is never a catalogue item (even one named "Adjustment"). */
         out.itemIds = f.lines.map((l) => (l.kind === "adjustment" ? null : itemByName.get(normName(l.name)) ?? null));
@@ -233,6 +248,7 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
     seen.add(f.zohoId);
     if (out.verdict === "import") { counts.import += 1; addTo(imp, f); }
     else if (out.verdict === "already") counts.already += 1;
+    else if (out.leftOut) { counts.skip += 1; counts.leftOutByYou += 1; }
     else {
       counts.skip += 1;
       const k = reasonKey(out.reason ?? "");
