@@ -13106,12 +13106,14 @@ export type Database = {
           due_at: string
           followup_count: number
           id: string
+          is_goal: boolean
           kind: Database["public"]["Enums"]["task_kind"]
           last_followup_at: string | null
           lead_id: string | null
           link_url: string | null
           notes: string | null
           owner_id: string | null
+          parent_task_id: string | null
           priority: string
           progress: string
           quote_id: string | null
@@ -13132,12 +13134,14 @@ export type Database = {
           due_at: string
           followup_count?: number
           id?: string
+          is_goal?: boolean
           kind?: Database["public"]["Enums"]["task_kind"]
           last_followup_at?: string | null
           lead_id?: string | null
           link_url?: string | null
           notes?: string | null
           owner_id?: string | null
+          parent_task_id?: string | null
           priority?: string
           progress?: string
           quote_id?: string | null
@@ -13158,12 +13162,14 @@ export type Database = {
           due_at?: string
           followup_count?: number
           id?: string
+          is_goal?: boolean
           kind?: Database["public"]["Enums"]["task_kind"]
           last_followup_at?: string | null
           lead_id?: string | null
           link_url?: string | null
           notes?: string | null
           owner_id?: string | null
+          parent_task_id?: string | null
           priority?: string
           progress?: string
           quote_id?: string | null
@@ -13208,6 +13214,13 @@ export type Database = {
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_parent_task_id_fkey"
+            columns: ["parent_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
             referencedColumns: ["id"]
           },
           {

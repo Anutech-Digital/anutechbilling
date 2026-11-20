@@ -53,7 +53,9 @@ function withMemberships(tables: Record<string, Row[]>): Record<string, Row[]> {
 }
 
 /** fakePostgrest + the one thing the real table adds: unique (user_id, digest_date, kind). */
-function database(tables: Record<string, Row[]>) {
+function database(seed: Record<string, Row[]>) {
+  /* tasks.is_goal is NOT NULL DEFAULT false in the database (R-2957) — a seed row that does not say is a plain task. */
+  const tables = { ...seed, ...(seed.tasks ? { tasks: seed.tasks.map((t) => ({ is_goal: false, ...t })) } : {}) };
   const fake = fakePostgrest({ task_digest_log: [], whatsapp_templates: [], whatsapp_opt_outs: [], holidays: [], ...withMemberships(tables) });
   const client = {
     from(table: string) {
@@ -79,12 +81,14 @@ const USERS: Row[] = [
   { id: "u-meena", tenant_id: T, email: "meena@example.invalid", full_name: "Meena Shah", role: "sales", is_active: true, phone: null },
 ];
 const TASKS: Row[] = [
-  { id: "t1", tenant_id: T, owner_id: "u-ravi", title: "Call Sharma ji about renewal", due_at: "2026-11-15T06:00:00Z", status: "pending" },
+  { id: "t1", tenant_id: T, owner_id: "u-ravi", title: "Call Sharma ji about renewal", due_at: "2026-11-15T06:00:00Z", status: "pending", parent_task_id: "g1" },
   { id: "t2", tenant_id: T, owner_id: "u-ravi", title: "Send revised quote", due_at: "2026-11-17T06:00:00Z", status: "snoozed" },
   /* Not in any digest: finished, dropped, or due later. */
   { id: "t3", tenant_id: T, owner_id: "u-ravi", title: "Already done", due_at: "2026-11-10T06:00:00Z", status: "done" },
   { id: "t4", tenant_id: T, owner_id: "u-ravi", title: "Dropped", due_at: "2026-11-10T06:00:00Z", status: "cancelled" },
   { id: "t5", tenant_id: T, owner_id: "u-meena", title: "Next week", due_at: "2026-11-25T06:00:00Z", status: "pending" },
+  /* R-2957: an overdue GOAL row is not in any digest — its sub-tasks are the work (t1 is one of them). */
+  { id: "g1", tenant_id: T, owner_id: "u-ravi", title: "Goal row, not work", due_at: "2026-11-14T06:00:00Z", status: "pending", is_goal: true },
 ];
 
 const req = (qs = "", secret = "s3cret") =>

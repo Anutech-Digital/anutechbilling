@@ -20,10 +20,15 @@ export const TASK_GROUP_LABEL: Record<TaskGroupId, string> = {
   done: "Done",
 };
 
-type Groupable = Pick<Task, "status"> & { due_at: string | null; completed_at?: string | null; priority?: string | null };
+type Groupable = Pick<Task, "status"> & { due_at: string | null; completed_at?: string | null; priority?: string | null; is_goal?: boolean | null };
 
-/** The group a task falls in; null for cancelled tasks (not shown). */
+/**
+ * The group a task falls in; null for cancelled tasks (not shown) and for a goal row (R-2957):
+ * a goal's sub-tasks are the work — they are grouped and counted like any task, the goal is in
+ * no group, so no tab, card or count built on the groups counts the same work twice.
+ */
 export function taskGroupOf(task: Groupable, now: Date = new Date()): TaskGroupId | null {
+  if (task.is_goal) return null;
   if (task.status === "done") return "done";
   if (task.status === "cancelled") return null;
   if (!task.due_at) return "nodate";
