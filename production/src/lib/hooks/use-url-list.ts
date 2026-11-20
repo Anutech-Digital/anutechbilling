@@ -15,6 +15,7 @@
  * `set(prev => …)` — it is a drop-in for React.useState<T[]>.
  */
 import * as React from "react";
+import { onSamePageNav } from "@/lib/navigation/same-page-nav";
 import { withChoice } from "@/lib/hooks/use-url-choice";
 
 /** `raw` ("trial,demo") as a clean list: trimmed, de-duplicated, and — when `allowed` is
@@ -49,7 +50,12 @@ export function useUrlList<T extends string = string>(
     };
     read();
     window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
+    // R-2942: a link to the page already showing (/tasks?priority=high → "List") is no popstate.
+    const offNav = onSamePageNav(read);
+    return () => {
+      window.removeEventListener("popstate", read);
+      offNav();
+    };
   }, [key]);
 
   const set = React.useCallback<React.Dispatch<React.SetStateAction<T[]>>>(

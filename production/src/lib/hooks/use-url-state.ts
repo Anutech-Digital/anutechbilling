@@ -17,6 +17,7 @@
  *   - the fallback value is removed from the URL, so an unfiltered list has a clean address.
  */
 import * as React from "react";
+import { onSamePageNav } from "@/lib/navigation/same-page-nav";
 import { withChoice } from "@/lib/hooks/use-url-choice";
 
 export function useUrlState(key: string, fallback = ""): [string, (next: string) => void] {
@@ -26,7 +27,12 @@ export function useUrlState(key: string, fallback = ""): [string, (next: string)
     const read = () => setValue(new URLSearchParams(window.location.search).get(key) ?? fallback);
     read();
     window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
+    // R-2942: a link to the page already showing (/tasks?priority=high → "List") is no popstate.
+    const offNav = onSamePageNav(read);
+    return () => {
+      window.removeEventListener("popstate", read);
+      offNav();
+    };
   }, [key, fallback]);
 
   const set = React.useCallback(

@@ -14,6 +14,10 @@
  * <TasksTabsBar> is the strip in its page-wide wrapper: drawn by app/(app)/tasks/layout.tsx
  * for the three Tasks pages and by the Team tasks report above its own content, so the strip
  * sits at the same place on all four and does not jump when you switch.
+ *
+ * R-2942: the strip and the four pages share ONE width, TASKS_PAGE_WIDTH — the app's listing
+ * width (production/CLAUDE.md: listing pages are max-w-[1800px]). They were capped at 1100px,
+ * which cut long task names on the list while the screen had room to spare.
  */
 "use client";
 
@@ -32,6 +36,10 @@ export interface TasksTab {
   label: string;
   href: string;
 }
+
+/** R-2942: the one width of the Tasks section — the tab strip, Overview, List, Calendar and the
+ *  Team tasks report all use it, so they line up and none is narrower than the others. */
+export const TASKS_PAGE_WIDTH = "mx-auto max-w-[1800px]";
 
 /** In display order. */
 export const TASKS_TABS: readonly TasksTab[] = [
@@ -90,11 +98,11 @@ export function TasksTabs({ className }: { className?: string }) {
   );
 }
 
-/** The strip in the page-wide wrapper every Tasks page shares (max 1100px, the pages' side
+/** The strip in the page-wide wrapper every Tasks page shares (TASKS_PAGE_WIDTH, the pages' side
  *  padding), so it lines up with their headings. */
 export function TasksTabsBar() {
   return (
-    <div className="mx-auto max-w-[1100px] px-4 pt-3 md:px-6 md:pt-4 lg:px-8">
+    <div className={cn(TASKS_PAGE_WIDTH, "px-4 pt-3 md:px-6 md:pt-4 lg:px-8")} data-testid="tasks-tabs-bar">
       <TasksTabs />
     </div>
   );

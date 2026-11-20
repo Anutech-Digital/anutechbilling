@@ -17,6 +17,7 @@
  * address bar always says what the screen shows and a refresh or a shared link reopens it.
  */
 import * as React from "react";
+import { onSamePageNav } from "@/lib/navigation/same-page-nav";
 
 /** The value to use: `raw` when it is one of `allowed`, else `fallback`. Pure, for tests. */
 export function pickChoice<T extends string>(raw: string | null | undefined, allowed: readonly T[], fallback: T): T {
@@ -47,7 +48,12 @@ export function useUrlChoice<T extends string>(
       setValue(pickChoice(new URLSearchParams(window.location.search).get(key), allowedRef.current, fallback));
     read();
     window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
+    // R-2942: a link to the page already showing (/tasks?priority=high → "List") is no popstate.
+    const offNav = onSamePageNav(read);
+    return () => {
+      window.removeEventListener("popstate", read);
+      offNav();
+    };
   }, [key, fallback]);
 
   const set = React.useCallback(

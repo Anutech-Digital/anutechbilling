@@ -303,12 +303,14 @@ export function TaskRow({ task, onEdit, assignee, meId, collaborators, density =
         {/* From xl (1280) up everything sits on ONE line in fixed columns, so the list reads like
             a table and the name keeps the rest of the width. Narrower than that the columns
             wrap under the name instead of squeezing it. */}
-        <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap xl:flex-nowrap min-h-[30px] py-1 xl:py-0">
+        {/* R-2942: on one line the columns sit 6px apart (8px when wrapped) — 14px more for the name. */}
+        <div className="flex items-center gap-x-2 xl:gap-x-1.5 gap-y-0.5 flex-wrap xl:flex-nowrap min-h-[30px] py-1 xl:py-0">
           {doneCircle}
 
           {/* Name — a click opens the rest of the task under the line. */}
           <div className="flex items-center gap-1.5 min-w-0 flex-1 basis-[70%] xl:basis-0">
-            <span className="text-sm leading-none shrink-0" aria-hidden="true">{kindMeta.icon}</span>
+            {/* R-2942: the hover text names the type — from 1280 to 1535 px its word is off the line. */}
+            <span className="text-sm leading-none shrink-0" aria-hidden="true" title={kindMeta.label}>{kindMeta.icon}</span>
             <button
               type="button"
               onClick={() => setDetailOpen((o) => !o)}
@@ -316,13 +318,18 @@ export function TaskRow({ task, onEdit, assignee, meId, collaborators, density =
               aria-controls={detailOpen ? detailId : undefined}
               title={noteText ? `${task.title}\n\n${noteText}` : task.title}
               className={cn(
-                "min-w-0 min-h-9 xl:min-h-0 truncate text-left text-sm font-medium text-ink rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
+                "min-w-0 min-h-9 xl:min-h-0 text-left text-sm font-medium text-ink rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
+                /* R-2942: opened, a name too long for the line wraps and shows in full. */
+                detailOpen ? "whitespace-normal break-words py-1" : "truncate",
                 isDone && "line-through",
               )}
             >
               {task.title}
             </button>
-            <span className="shrink-0 text-2xs text-ink-3">{kindMeta.label}</span>
+            {/* R-2942: at 1280 the name was cut ("Set up seats (DNS, users) · T…") with this word
+                beside it. From xl to 2xl the icon alone says the type (the word is still read out);
+                on a wider screen, and on the wrapped phone layout, the word shows. */}
+            <span className="shrink-0 text-2xs text-ink-3 xl:sr-only 2xl:not-sr-only">{kindMeta.label}</span>
             {noteText && <Icon name="message" size={11} className="shrink-0 text-ink-3" aria-hidden="true" />}
             {/* R-2933: the task's link (Drive file, doc, page) opens in a new tab. */}
             {taskLink && (
@@ -379,7 +386,8 @@ export function TaskRow({ task, onEdit, assignee, meId, collaborators, density =
           <span
             title={`${dueWords.text} — ${dueWords.full}`}
             className={cn(
-              "shrink-0 xl:w-[132px] truncate text-xs tabular-nums",
+              /* R-2942: 124px holds "Overdue by 120 days" (measured 122px); the 8px saved go to the name. */
+              "shrink-0 xl:w-[124px] truncate text-xs tabular-nums",
               dueWords.tone === "overdue" ? "text-rose-ink font-medium" :
               dueWords.tone === "done"    ? "text-ink-3" :
                                             "text-ink-2",

@@ -21,7 +21,7 @@
  * distributor|reseller), so there is nothing to gate on. When plans arrive, filter the
  * items in buildSidebarApps() — the same place roles are applied.
  */
-import { APP_NAV, filterNavForRole, flattenNav, itemWithDescendants, visibleForSellMode, type NavItem, type NavSection, type UserRole } from "@/lib/nav";
+import { APP_NAV, filterNavForRole, flattenNav, itemWithDescendants, tabOwnerOf, visibleForSellMode, type NavItem, type NavSection, type UserRole } from "@/lib/nav";
 import type { SellMode } from "@/lib/sell-mode";
 
 export interface NavAppDef {
@@ -141,6 +141,20 @@ export function appForPath(model: SidebarModel, pathname: string): string | null
     if (hit) return hit;
   }
   return null;
+}
+
+/**
+ * R-2942 — the app the SIDEBAR should show for this page. Same as appForPath, except for a
+ * page that is a tab of another row (nav.ts TAB_PAGE_OWNER): it follows that row. Reports →
+ * Team tasks is the Team tab of Tasks, a pinned row, so it answers null and the sidebar keeps
+ * the app you were in (as on /tasks itself) instead of jumping to Accounts. Ctrl+K keeps
+ * using appForPath — there the page is still "Team tasks" under Accounts.
+ */
+export function sidebarAppForPath(model: SidebarModel, pathname: string): string | null {
+  const owner = tabOwnerOf(pathname);
+  if (!owner) return appForPath(model, pathname);
+  if (model.pinned.some((p) => p.id === owner)) return null;
+  return model.apps.find((a) => a.items.some((i) => i.id === owner))?.id ?? appForPath(model, pathname);
 }
 
 /**
