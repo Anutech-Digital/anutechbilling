@@ -15376,6 +15376,7 @@ export type Database = {
           p_annual_override_reason?: string
           p_approve_over_limit?: boolean
           p_credit_days: number
+          p_issue_invoice?: boolean
           p_quote_id: string
         }
         Returns: Json
