@@ -8,6 +8,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
+import { withNoindex } from "@/lib/security/noindex";
 import { authjsMiddlewareSession } from "@/server/auth/middleware-session";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { GENERIC_HOME, homeForRole, isRouteAllowed, type UserRole } from "@/lib/nav";
@@ -133,7 +134,13 @@ const PERSONAL_MONEY_ROW = "/money";
 const PERSONAL_MONEY_HOME = "/vault/personal";
 const serverHome = (home: string) => (home === PERSONAL_MONEY_ROW ? PERSONAL_MONEY_HOME : home);
 
+/* NOINDEX=true (staging only): every answer carries X-Robots-Tag: noindex, nofollow
+   (lib/security/noindex.ts). Unset in production → the response is returned untouched. */
 export async function middleware(request: NextRequest) {
+  return withNoindex(await routeRequest(request));
+}
+
+async function routeRequest(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   /* ── /dev is not for the internet ──────────────────────────────────────────

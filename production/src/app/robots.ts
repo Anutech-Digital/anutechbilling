@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { headers } from "next/headers";
 import { sitemapFor } from "@/site/lib/site-split";
+import { noindexEnabled } from "@/lib/security/noindex";
 
 /**
  * /robots.txt — lets the public pages be crawled and indexed, while keeping the
@@ -12,6 +13,8 @@ import { sitemapFor } from "@/site/lib/site-split";
  * reselleros.anutech.in) — each domain has its own sitemap.
  */
 export default async function robots(): Promise<MetadataRoute.Robots> {
+  /* NOINDEX=true (staging): nothing may be crawled (lib/security/noindex.ts). */
+  if (noindexEnabled()) return { rules: [{ userAgent: "*", disallow: "/" }] };
   const h = await headers();
   const { origin } = sitemapFor(h.get("x-forwarded-host") ?? h.get("host"));
   return {
