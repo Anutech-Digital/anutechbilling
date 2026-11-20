@@ -1,7 +1,7 @@
 /**
  * R-2944 (G-RECON) — "Read from Zoho again" re-checks the invoices that an OLDER normaliser left out.
  *
- * Staging (Excel), 20 Nov 2026: 79 FY 2025-26 invoices stayed "left out" with reasons the code no longer
+ * Staging, 20 Nov 2026: 79 FY 2025-26 invoices stayed "left out" with reasons the code no longer
  * has ("Zoho has TDS on the invoice itself — book it by hand or ask the CA."): R-2702 changed the sales
  * normaliser but the scan keeps only its normalised facts (no raw Zoho detail) and the invoices' facts
  * version was never raised — so Read again kept every stored row. Raising the version alone would read
