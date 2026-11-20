@@ -59,7 +59,6 @@ const KNOWN: Record<string, number> = {
   "lib/queries/advances.ts": 2,
   "lib/queries/invoices.ts": 6,
   "lib/queries/marketing.ts": 2,
-  "lib/queries/performance.ts": 1,
   "lib/queries/subscriptions.ts": 1,
   "lib/quotes/status-badge.ts": 1,
   "lib/razorpay/gateway-money.ts": 1,

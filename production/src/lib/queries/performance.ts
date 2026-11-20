@@ -18,20 +18,12 @@ import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
-import {
-  tallyKudos, badgesFor, type BadgeDef, type KudosRow,
-} from "@/lib/performance/gamification";
-
-/** Point weights — tune to taste. Documented so scores are explainable. */
-export const PERF_WEIGHTS = {
-  revenuePerRupees: 5000, // +1 pt per ₹5,000 collected
-  dealWon: 40, // +40 per lead moved to 'won'
-  quoteSent: 5, // +5 per quote raised
-  paymentRecorded: 5, // +5 per payment collected
-  taskOnTime: 3, // +3 per task completed on/before due
-  taskLate: -1, // −1 per task completed after due
-  kudosReceived: 10, // +10 per peer kudos (budgeted — see gamification.ts)
-};
+import type { KudosRow } from "@/lib/performance/gamification";
+/* R-2965: the numbers AND the rows behind them come from one pure function (kpi-records.ts),
+   so a tile and the list it opens can never disagree. Re-exported for existing importers. */
+import { buildPerfRows, PERF_WEIGHTS, type PerfRow } from "@/lib/performance/kpi-records";
+export { PERF_WEIGHTS };
+export type { PerfRow, PerfBreakdown, PerfRecords } from "@/lib/performance/kpi-records";
 
 /**
  * ⚠ KNOWN GAMING VECTOR IN `paymentRecorded`, flagged 13 Aug 2026.
@@ -45,32 +37,6 @@ export const PERF_WEIGHTS = {
  * `paymentRecorded: 0` closes it at no other cost, because `revenuePerRupees`
  * already rewards collecting. Left as-is because the weights are Pardeep's call.
  */
-
-export interface PerfBreakdown { label: string; detail: string; points: number }
-export interface PerfRow {
-  userId: string;
-  /** R-2725: the employee this login is linked to (users.employee_id), null when none — the
-   *  Employees table shows this row's score against that employee. */
-  employeeId?: string | null;
-  name: string;
-  role: string;
-  dealsWon: number;
-  revenue: number;
-  quotesSent: number;
-  paymentsCount: number;
-  tasksOnTime: number;
-  tasksLate: number;
-  presentDays: number;   // reliability (attendance) — this month
-  activityCount: number; // leading signal (activity log) — this month
-  score: number;
-  breakdown: PerfBreakdown[];
-  // ── Gamification (added 13 Aug 2026). Optional so existing consumers of
-  //    PerfRow — /scorecard — keep compiling untouched.
-  kudosReceived?: number;
-  distinctKudosGivers?: number;
-  renewalPayments?: number;
-  badges?: BadgeDef[];
-}
 
 export type PerfScope = "month" | "week";
 
@@ -88,7 +54,10 @@ export function roleFocus(role: string): { label: string; hint: string } {
   }
 }
 
-function monthWindow(period: string): { start: string; end: string } {
+/* R-2965 note: these are bare dates, which Postgres reads as UTC midnight against the
+   timestamptz columns — so the month runs 05:30 IST on the 1st to 05:30 IST on the next 1st
+   (follow-up card filed). The Sheets read the same window, so they always match the tiles. */
+export function monthWindow(period: string): { start: string; end: string } {
   const [y, m] = period.split("-").map(Number);
   const start = `${period}-01`;
   const end = `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}-01`;
@@ -127,29 +96,38 @@ async function settle<T>(read: Promise<T[]>): Promise<{ data: T[] | null; error:
  * has well over 1000 activity_log rows; read in one request, the activity count (and every
  * other count here) silently stopped at the first 1000. Each read ends its order on `id`.
  */
-export async function fetchPerformanceInputs(supabase: SupabaseClient<Database>, start: string, end: string) {
+export async function fetchPerformanceInputs(
+  supabase: SupabaseClient<Database>, start: string, end: string,
+  /** R-2965: `detail` also reads each activity row's action + table — only the Scorecards page
+   *  (its Activity Sheet) needs them; the counts never do, and a busy month has 20k+ rows. */
+  opts: { detail?: boolean } = {},
+) {
   const [leads, quotes, payments, tasks, users, att, act, kudosR] = await Promise.all([
-    fetchAllRows((from, to) => supabase.from("leads").select("owner_id, value, stage, updated_at")
+    fetchAllRows((from, to) => supabase.from("leads").select("id, owner_id, value, stage, updated_at, stage_changed_at, company, contact_name")
       .eq("stage", "won").gte("updated_at", start).lt("updated_at", end)
       .order("id", { ascending: true }).range(from, to)),
-    fetchAllRows((from, to) => supabase.from("quotes").select("owner_id, created_at")
+    fetchAllRows((from, to) => supabase.from("quotes").select("id, owner_id, created_at, customer_name, amount, status, is_renewal")
       .gte("created_at", start).lt("created_at", end)
       .order("id", { ascending: true }).range(from, to)),
-    fetchAllRows((from, to) => supabase.from("payments").select("recorded_by, amount, received_at, status, quote_id")
+    fetchAllRows((from, to) => supabase.from("payments").select("id, recorded_by, amount, received_at, status, quote_id, invoice_id, customer_id, method, reference")
       .eq("status", "received").gte("received_at", start).lt("received_at", end)
       .order("id", { ascending: true }).range(from, to)),
-    fetchAllRows((from, to) => supabase.from("tasks").select("owner_id, status, due_at, completed_at")
+    fetchAllRows((from, to) => supabase.from("tasks").select("id, owner_id, status, due_at, completed_at, title")
       .eq("is_goal", false) // R-2957: points are for the sub-tasks, never for the goal row too
       .eq("status", "done").gte("completed_at", start).lt("completed_at", end)
       .order("id", { ascending: true }).range(from, to)),
     fetchAllRows((from, to) => supabase.from("users").select("id, employee_id")
       .order("id", { ascending: true }).range(from, to)),
-    fetchAllRows((from, to) => supabase.from("attendance").select("employee_id, work_date, check_in")
+    fetchAllRows((from, to) => supabase.from("attendance").select("id, employee_id, work_date, check_in")
       .gte("work_date", start).lt("work_date", end)
       .order("id", { ascending: true }).range(from, to)),
-    fetchAllRows((from, to) => supabase.from("activity_log").select("user_id, created_at")
-      .gte("created_at", start).lt("created_at", end)
-      .order("id", { ascending: true }).range(from, to)),
+    opts.detail
+      ? fetchAllRows((from, to) => supabase.from("activity_log").select("user_id, created_at, action, entity")
+        .gte("created_at", start).lt("created_at", end)
+        .order("id", { ascending: true }).range(from, to))
+      : fetchAllRows((from, to) => supabase.from("activity_log").select("user_id, created_at")
+        .gte("created_at", start).lt("created_at", end)
+        .order("id", { ascending: true }).range(from, to)),
     // Peer kudos. Arrives with migration 0231 — before that this errors, so
     // the result is checked rather than spread, and the page still renders.
     settle(fetchAllRows((from, to) => supabase.from("task_kudos").select("user_id, awarded_by, created_at")
@@ -176,102 +154,42 @@ export async function fetchPerformanceInputs(supabase: SupabaseClient<Database>,
  * @param period 'YYYY-MM' — used when scope is 'month'.
  * @param scope  'month' (default, unchanged behaviour) or 'week' (this week).
  * @param opts   `enabled: false` reads nothing (R-2725: the Employees table asks only for
- *               owner / manager — the roles that may open Scorecards).
+ *               owner / manager — the roles that may open Scorecards). `detail: true` (R-2965,
+ *               Scorecards only) also reads what the KPI Sheets show for Activity.
  */
-export function usePerformance(period: string, scope: PerfScope = "month", opts: { enabled?: boolean } = {}) {
+export function usePerformance(period: string, scope: PerfScope = "month", opts: { enabled?: boolean; detail?: boolean } = {}) {
+  const detail = opts.detail === true;
   const enabled = opts.enabled !== false;
   const membersQ = useTeamMembers();
   const members = membersQ.data ?? [];
 
   const q = useQuery({
-    queryKey: ["performance", period, scope, members.map((m) => m.id).join(",")],
+    queryKey: ["performance", period, scope, detail, members.map((m) => m.id).join(",")],
     enabled: enabled && members.length > 0,
     queryFn: async (): Promise<PerfRow[]> => {
       const supabase = createClient();
       const { start, end } = scope === "week" ? weekWindow() : monthWindow(period);
 
       const { leadsR, quotesR, paymentsR, tasksR, usersR, attR, actR, kudosR, renewalQuotesR } =
-        await fetchPerformanceInputs(supabase, start, end);
+        await fetchPerformanceInputs(supabase, start, end, { detail });
 
-      // user → employee, then present-days per user (reliability).
-      const empOf = new Map<string, string | null>((usersR.data ?? []).map((u) => [u.id, u.employee_id]));
-      const presentByEmp = new Map<string, number>();
-      for (const a of attR.data ?? []) {
-        if (a.check_in && a.employee_id) presentByEmp.set(a.employee_id, (presentByEmp.get(a.employee_id) ?? 0) + 1);
-      }
-      const activityByUser = new Map<string, number>();
-      for (const a of actR.data ?? []) {
-        if (a.user_id) activityByUser.set(a.user_id, (activityByUser.get(a.user_id) ?? 0) + 1);
-      }
-
-      // Kudos, with the per-giver budget applied. `kudosR.error` means 0231 is
-      // not applied yet; an empty tally is the honest answer, not a crash.
-      const kudosRows: KudosRow[] = kudosR.error
+      // Kudos: `kudosR.error` means 0231 is not applied yet; an empty tally is the honest
+      // answer, not a crash.
+      const kudos: KudosRow[] = kudosR.error
         ? []
-        : (kudosR.data ?? []).map((r) => ({
-            userId: r.user_id, awardedBy: r.awarded_by, createdAt: r.created_at,
-          }));
-      const kudos = tallyKudos(kudosRows);
+        : (kudosR.data ?? []).map((r) => ({ userId: r.user_id, awardedBy: r.awarded_by, createdAt: r.created_at }));
 
-      const renewalQuoteIds = new Set((renewalQuotesR.data ?? []).map((q) => q.id));
-
-      const rows: PerfRow[] = members.map((mem) => {
-        const dealsWon = (leadsR.data ?? []).filter((l) => l.owner_id === mem.id).length;
-        const revenue = (paymentsR.data ?? []).filter((p) => p.recorded_by === mem.id)
-          .reduce((s, p) => s + (p.amount ?? 0), 0);
-        const paymentsCount = (paymentsR.data ?? []).filter((p) => p.recorded_by === mem.id).length;
-        const quotesSent = (quotesR.data ?? []).filter((q) => q.owner_id === mem.id).length;
-        const myTasks = (tasksR.data ?? []).filter((t) => t.owner_id === mem.id);
-        const tasksOnTime = myTasks.filter((t) => t.completed_at && t.due_at && t.completed_at <= t.due_at).length;
-        const tasksLate = myTasks.length - tasksOnTime;
-
-        const renewalPayments = (paymentsR.data ?? [])
-          .filter((p) => p.recorded_by === mem.id && p.quote_id && renewalQuoteIds.has(p.quote_id)).length;
-
-        const myKudos = kudos.byUser[mem.id] ?? { points: 0, received: 0, distinctGivers: 0 };
-
-        const revPts = Math.round(revenue / PERF_WEIGHTS.revenuePerRupees);
-        const breakdown: PerfBreakdown[] = [
-          { label: "Revenue collected", detail: `₹${revenue.toLocaleString("en-IN")}`, points: revPts },
-          { label: "Deals won", detail: `${dealsWon}`, points: dealsWon * PERF_WEIGHTS.dealWon },
-          { label: "Quotes sent", detail: `${quotesSent}`, points: quotesSent * PERF_WEIGHTS.quoteSent },
-          { label: "Payments collected", detail: `${paymentsCount}`, points: paymentsCount * PERF_WEIGHTS.paymentRecorded },
-          { label: "Tasks on time", detail: `${tasksOnTime}`, points: tasksOnTime * PERF_WEIGHTS.taskOnTime },
-          { label: "Tasks late", detail: `${tasksLate}`, points: tasksLate * PERF_WEIGHTS.taskLate },
-        ];
-        // Only shown once kudos exist, so the breakdown does not carry a
-        // permanent "Peer kudos 0" line on a workspace that has none yet.
-        if (myKudos.received > 0) {
-          breakdown.push({
-            label: "Peer kudos",
-            detail: `${myKudos.received} from ${myKudos.distinctGivers} ${myKudos.distinctGivers === 1 ? "person" : "people"}`,
-            points: myKudos.points,
-          });
-        }
-        const score = Math.max(0, breakdown.reduce((s, b) => s + b.points, 0));
-
-        const empId = empOf.get(mem.id);
-        const presentDays = empId ? (presentByEmp.get(empId) ?? 0) : 0;
-        const activityCount = activityByUser.get(mem.id) ?? 0;
-
-        return {
-          userId: mem.id, employeeId: empId ?? null, name: memberLabel(mem), role: mem.role,
-          dealsWon, revenue, quotesSent, paymentsCount, tasksOnTime, tasksLate,
-          presentDays, activityCount, score, breakdown,
-          kudosReceived: myKudos.received,
-          distinctKudosGivers: myKudos.distinctGivers,
-          renewalPayments,
-          badges: badgesFor({
-            score,
-            tasksOnTime,
-            renewalPayments,
-            kudosReceived: myKudos.received,
-            distinctKudosGivers: myKudos.distinctGivers,
-          }),
-        };
-      });
-
-      return rows.sort((a, b) => b.score - a.score);
+      /* R-2965: every number on a scorecard is the count / sum of the rows kept in
+         `records` — the lists the KPI Sheets show. */
+      return buildPerfRows(
+        members.map((mem) => ({ id: mem.id, name: memberLabel(mem), role: mem.role })),
+        {
+          leads: leadsR.data ?? [], quotes: quotesR.data ?? [], payments: paymentsR.data ?? [],
+          tasks: tasksR.data ?? [], users: usersR.data ?? [], attendance: attR.data ?? [],
+          activity: actR.data ?? [], kudos,
+          renewalQuoteIds: new Set((renewalQuotesR.data ?? []).map((q) => q.id)),
+        },
+      );
     },
     staleTime: 30_000,
   });
