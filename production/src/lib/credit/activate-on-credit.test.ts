@@ -7,8 +7,10 @@ import {
   planCredit, creditTaskInstant, quoteCreditState, creditSummary,
   isMissingDbObject, activateQuoteOnCredit, NeedsDatabaseUpdateError,
   maxCreditDays, CREDIT_MAX_DAYS, CREDIT_MAX_DAYS_NO_INVOICE,
-  type CreditQuoteFacts, type OpenInvoice,
+  uninvoicedCreditDues, issueInvoiceTaskDay, CREDIT_ISSUE_INVOICE_TASK, CREDIT_TASK_PREFIX,
+  type CreditQuoteFacts, type OpenInvoice, type UninvoicedCreditQuote,
 } from "./activate-on-credit";
+import { fetchUninvoicedCreditDues } from "./queries";
 
 const fmt = (n: number) => `₹${n}`;
 // 7 Oct 2026, 11:00 IST
@@ -299,5 +301,126 @@ describe("splitBillingCreditEligibility", () => {
   it("keeps the menu item visible for a split-billed quote, so the reason can be shown", () => {
     // showActivateOnCredit does not look at billing_cycle; the click explains the refusal.
     expect(showActivateOnCredit(accepted, null)).toBe(true);
+  });
+});
+
+describe("R-2951 — no-invoice activations count, four tasks", () => {
+  const q = (id: string, over: Partial<UninvoicedCreditQuote> = {}): UninvoicedCreditQuote => ({
+    id, invoice_id: null, credit_activated_at: "2026-10-07T05:30:00Z", subscription_billing_id: null, ...over,
+  });
+
+  it("an activated quote without an invoice counts what its subscriptions still owe", () => {
+    const rows = uninvoicedCreditDues(
+      [q("Q-1"), q("Q-2")],
+      [
+        { quote_id: "Q-1", outstanding_amount: 5900 },
+        { quote_id: "Q-1", outstanding_amount: 0 },   // second line's row carries nothing
+        { quote_id: "Q-2", outstanding_amount: 3900 }, // part-paid: only the rest
+      ],
+    );
+    expect(rows).toEqual([
+      { id: "quote:Q-1", status: "pending", amount: 5900, net_payable: null, paid_amount: 0 },
+      { id: "quote:Q-2", status: "pending", amount: 3900, net_payable: null, paid_amount: 0 },
+    ]);
+    expect(owedOnInvoices(rows)).toBe(9800);
+  });
+
+  it("never counts a quote twice: with its invoice, not on credit, a part request, or fully paid", () => {
+    const rows = uninvoicedCreditDues(
+      [
+        q("Q-INV", { invoice_id: "INV-1" }),           // the invoice counts instead
+        q("Q-NOT", { credit_activated_at: null }),     // not activated on credit
+        q("Q-PART", { subscription_billing_id: "b1" }), // in open_part_requests already
+        q("Q-PAID"),
+      ],
+      [
+        { quote_id: "Q-INV", outstanding_amount: 5900 },
+        { quote_id: "Q-NOT", outstanding_amount: 5900 },
+        { quote_id: "Q-PART", outstanding_amount: 5900 },
+        { quote_id: "Q-PAID", outstanding_amount: 0 },
+        { quote_id: "Q-PAID", outstanding_amount: null },
+      ],
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("screen = database: second activation of Rs 5,900 after a first of Rs 5,900 on a Rs 10,000 limit", () => {
+    const openInvoices = uninvoicedCreditDues([q("Q-1")], [{ quote_id: "Q-1", outstanding_amount: 5900 }]);
+    const e = creditExposure({ openInvoices, quoteAmount: 5900, quoteInvoiceId: null, creditLimit: 10_000 });
+    expect(e).toEqual({ owed: 5900, thisInvoice: 5900, total: 11_800, limit: 10_000, over: true });
+    expect(overLimitDecision(e, "owner", fmt)).toEqual({ kind: "owner-approve" });
+    const refused = overLimitDecision(e, "sales", fmt, false);
+    expect(refused.kind).toBe("refused");
+    if (refused.kind === "refused") {
+      expect(refused.reason).toContain("₹5900 this quote = ₹11800");
+      expect(refused.reason).not.toMatch(/invoice/i);
+    }
+    const withInvoice = overLimitDecision(e, "sales", fmt);
+    if (withInvoice.kind === "refused") expect(withInvoice.reason).toContain("this invoice");
+  });
+
+  it("issue-invoice task: the earlier of the due date and activation + 30 days", () => {
+    expect(issueInvoiceTaskDay("2026-10-07", "2026-10-22")).toBe("2026-10-22"); // 15 days → due
+    expect(issueInvoiceTaskDay("2026-10-07", "2026-11-05")).toBe("2026-11-05"); // 29 days → due
+    expect(issueInvoiceTaskDay("2026-10-07", "2026-11-06")).toBe("2026-11-06"); // 30 days → both
+    expect(issueInvoiceTaskDay("2026-10-07", "2026-11-07")).toBe("2026-11-06"); // 31+ (not allowed today) → +30
+    expect(issueInvoiceTaskDay("2026-10-07", "2027-04-05")).toBe("2026-11-06");
+  });
+
+  it("planCredit without an invoice: four tasks, the fourth on the due date; at most 30 days", () => {
+    const p = planCredit(NOW, 15, false);
+    expect(p.dueDate).toBe("2026-10-22");
+    expect(p.tasks).toEqual([
+      { title: "Set up seats (DNS, users)", day: "2026-10-07" },
+      { title: `${CREDIT_TASK_PREFIX} send payment link`, day: "2026-10-19" },
+      { title: `${CREDIT_TASK_PREFIX} payment not in — stop service?`, day: "2026-11-06" },
+      { title: "Credit: due date reached — issue the GST invoice", day: "2026-10-22" },
+    ]);
+    expect(CREDIT_ISSUE_INVOICE_TASK.startsWith(CREDIT_TASK_PREFIX)).toBe(true);
+    expect(planCredit(NOW, 30, false).tasks[3].day).toBe("2026-11-06");
+    expect(() => planCredit(NOW, 31, false)).toThrow("Credit days must be 1–30.");
+    // With the invoice: three tasks and up to 180 days, as before.
+    expect(planCredit(NOW, 15).tasks).toHaveLength(3);
+    expect(planCredit(NOW, 15, true).tasks).toHaveLength(3);
+    expect(planCredit(NOW, 180).dueDate).toBe("2027-04-05");
+  });
+});
+
+describe("fetchUninvoicedCreditDues (R-2951)", () => {
+  function fakeSupabase(quotes: unknown, subs: unknown, quotesError: unknown = null) {
+    const calls: Array<{ table: string; ops: Array<[string, unknown[]]> }> = [];
+    const make = (table: string) => {
+      const rec = { table, ops: [] as Array<[string, unknown[]]> };
+      calls.push(rec);
+      const result = table === "quotes" ? { data: quotes, error: quotesError } : { data: subs, error: null };
+      const chain: Record<string, unknown> = {};
+      for (const op of ["select", "eq", "not", "is", "in"]) {
+        chain[op] = (...args: unknown[]) => { rec.ops.push([op, args]); return chain; };
+      }
+      chain.then = (res: (v: unknown) => unknown) => Promise.resolve(result).then(res);
+      return chain;
+    };
+    return { client: { from: (t: string) => make(t) } as never, calls };
+  }
+
+  it("reads the customer's activated, uninvoiced, non-part-request quotes and their subscriptions", async () => {
+    const { client, calls } = fakeSupabase(
+      [{ id: "Q-1", invoice_id: null, credit_activated_at: "2026-10-07T05:30:00Z", subscription_billing_id: null }],
+      [{ quote_id: "Q-1", outstanding_amount: 5900 }],
+    );
+    const rows = await fetchUninvoicedCreditDues(client, "cust-1");
+    expect(rows).toEqual([{ id: "quote:Q-1", status: "pending", amount: 5900, net_payable: null, paid_amount: 0 }]);
+    expect(calls[0].ops).toEqual(expect.arrayContaining([
+      ["eq", ["customer_id", "cust-1"]],
+      ["not", ["credit_activated_at", "is", null]],
+      ["is", ["invoice_id", null]],
+      ["is", ["subscription_billing_id", null]],
+    ]));
+    expect(calls[1].ops).toEqual(expect.arrayContaining([["in", ["quote_id", ["Q-1"]]]]));
+  });
+
+  it("a database without the credit columns gives [] (the screen shows invoices only)", async () => {
+    const { client } = fakeSupabase(null, null, { code: "42703", message: "column quotes.credit_activated_at does not exist" });
+    expect(await fetchUninvoicedCreditDues(client, "cust-1")).toEqual([]);
   });
 });

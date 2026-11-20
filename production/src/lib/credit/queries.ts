@@ -8,9 +8,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  creditSummary, isMissingDbObject, NeedsDatabaseUpdateError,
-  type CreditInvoiceFacts, type CreditSummary, type OpenInvoice,
+  creditSummary, isMissingDbObject, NeedsDatabaseUpdateError, uninvoicedCreditDues,
+  type CreditInvoiceFacts, type CreditSummary, type OpenInvoice, type UninvoicedCreditQuote,
 } from "./activate-on-credit";
 import {
   interestDebitNoteGross, interestDebitNoteNote, lateInterestRefusal,
@@ -20,19 +21,54 @@ import { toIstDate } from "@/lib/dates/ist";
 import { fetchOpenPartRequests } from "@/lib/queries/payments";
 import type { OpenPartRequest } from "@/lib/billing/part-request-dues";
 
-/** Unpaid invoices of one customer — the "already owed" half of the limit check. */
+/**
+ * R-2951: the customer's quotes activated on credit WITHOUT a GST invoice, as invoice-shaped rows
+ * (uninvoicedCreditDues) — what they still owe sits on their subscriptions. [] when the database
+ * has no credit columns yet.
+ */
+export async function fetchUninvoicedCreditDues(supabase: SupabaseClient, customerId: string): Promise<OpenInvoice[]> {
+  const { data: quotes, error } = await supabase
+    .from("quotes")
+    .select("id, invoice_id, credit_activated_at, subscription_billing_id")
+    .eq("customer_id", customerId)
+    .not("credit_activated_at", "is", null)
+    .is("invoice_id", null)
+    .is("subscription_billing_id", null);
+  if (error) {
+    if (isMissingDbObject(error)) return [];
+    throw error;
+  }
+  const qs = (quotes ?? []) as UninvoicedCreditQuote[];
+  if (qs.length === 0) return [];
+  const { data: subs, error: subsError } = await supabase
+    .from("subscriptions")
+    .select("quote_id, outstanding_amount")
+    .in("quote_id", qs.map((q) => q.id));
+  if (subsError) throw subsError;
+  return uninvoicedCreditDues(qs, (subs ?? []) as { quote_id: string | null; outstanding_amount: number | null }[]);
+}
+
+/**
+ * Unpaid invoices of one customer — the "already owed" half of the limit check ("Owed now" in the
+ * Activate dialog, "Unpaid now" on the customer's Pay later card). R-2951: plus what the quotes
+ * activated without an invoice still owe (one row each, id `quote:<id>`), as the database counts.
+ */
 export function useCustomerOpenInvoices(customerId: string | null | undefined, enabled = true) {
   return useQuery({
     queryKey: ["invoices", "customer-open", customerId],
     enabled: Boolean(customerId) && enabled,
     queryFn: async (): Promise<OpenInvoice[]> => {
-      const { data, error } = await createClient()
-        .from("invoices")
-        .select("id, status, amount, net_payable, paid_amount")
-        .eq("customer_id", customerId!)
-        .in("status", ["pending", "overdue"]).is("written_off_at", null);
+      const supabase = createClient();
+      const [{ data, error }, uninvoiced] = await Promise.all([
+        supabase
+          .from("invoices")
+          .select("id, status, amount, net_payable, paid_amount")
+          .eq("customer_id", customerId!)
+          .in("status", ["pending", "overdue"]).is("written_off_at", null),
+        fetchUninvoicedCreditDues(supabase, customerId!),
+      ]);
       if (error) throw error;
-      return (data ?? []) as OpenInvoice[];
+      return [...((data ?? []) as OpenInvoice[]), ...uninvoiced];
     },
   });
 }

@@ -41,8 +41,16 @@ export const CREDIT_DEFAULT_LIMIT = 50_000;
 export const CREDIT_LINK_DAYS_BEFORE = 3;
 /** Days after the due date that the "stop service?" task falls. */
 export const CREDIT_STOP_DAYS_AFTER = 15;
-/** The two reminder tasks start with this; record_payment closes them when the invoice is paid. */
+/**
+ * The reminder tasks start with this; record_payment closes them when the invoice is paid.
+ * R-2951: without an invoice, the trigger quotes_r2951_credit_closes_tasks closes the two payment
+ * reminders on full payment and the issue-invoice task when the invoice is raised.
+ */
 export const CREDIT_TASK_PREFIX = "Credit:";
+/** R-2951: the fourth task on the no-invoice path (same title the database writes). */
+export const CREDIT_ISSUE_INVOICE_TASK = `${CREDIT_TASK_PREFIX} due date reached — issue the GST invoice`;
+/** R-2951: the GST invoice is due at the latest this many days after activation (CGST s.31, Rule 47). */
+export const CREDIT_ISSUE_INVOICE_WITHIN_DAYS = 30;
 export const CREDIT_MIGRATION = "20261007073000_activate_on_credit";
 
 const HOUR_MS = 3_600_000;
@@ -212,6 +220,37 @@ export function owedOnInvoices(invoices: readonly OpenInvoice[]): number {
   }, 0);
 }
 
+/** quotes columns that decide whether a quote is "activated on credit without an invoice". */
+export interface UninvoicedCreditQuote {
+  id: string;
+  invoice_id: string | null;
+  credit_activated_at: string | null;
+  subscription_billing_id?: string | null;
+}
+
+/**
+ * R-2951: what the customer's quotes activated WITHOUT a GST invoice (R-2950) still owe — the
+ * outstanding amount on their subscriptions — as invoice-shaped rows (id `quote:<id>`, status
+ * pending), so every "owed" sum built on `owedOnInvoices` counts them. Same rule as the database
+ * (activate_quote_on_credit, `v_r2951_uninvoiced`): credit_activated_at set, invoice_id empty, not a
+ * part request (those are in open_part_requests). A quote with its invoice is left out — the invoice
+ * counts instead, never both.
+ */
+export function uninvoicedCreditDues(
+  quotes: readonly UninvoicedCreditQuote[],
+  subscriptions: ReadonlyArray<{ quote_id: string | null; outstanding_amount: number | null }>,
+): OpenInvoice[] {
+  const rows: OpenInvoice[] = [];
+  for (const q of quotes) {
+    if (!q.credit_activated_at || q.invoice_id || q.subscription_billing_id) continue;
+    const owed = subscriptions
+      .filter((s) => s.quote_id === q.id)
+      .reduce((sum, s) => sum + Math.max(0, Math.round(s.outstanding_amount ?? 0)), 0);
+    if (owed > 0) rows.push({ id: `quote:${q.id}`, status: "pending", amount: owed, net_payable: null, paid_amount: 0 });
+  }
+  return rows;
+}
+
 export interface CreditExposure {
   owed: number;
   thisInvoice: number;
@@ -224,7 +263,9 @@ export interface CreditExposure {
  * Already owed + this invoice vs the limit. An invoice already raised on this quote is inside
  * `owed`, so it is not added twice. R-2230: `owed` also counts what the customer's open part
  * payment requests still owe (lib/billing/part-request-dues partRequestsOwed) — the same sum
- * activate_quote_on_credit adds in the database.
+ * activate_quote_on_credit adds in the database. R-2951: `openInvoices` from
+ * lib/credit/queries useCustomerOpenInvoices already carries the quotes activated without an
+ * invoice (uninvoicedCreditDues), so they count here as they do in the database.
  */
 export function creditExposure(input: {
   openInvoices: readonly OpenInvoice[];
@@ -246,13 +287,21 @@ export type OverLimitDecision =
   | { kind: "owner-approve" }
   | { kind: "refused"; reason: string };
 
-/** Over the limit: the owner gets an "Approve over limit" tick, everyone else a plain no. */
-export function overLimitDecision(exposure: CreditExposure, role: string | null | undefined, fmt: (n: number) => string): OverLimitDecision {
+/**
+ * Over the limit: the owner gets an "Approve over limit" tick, everyone else a plain no.
+ * R-2951: `issueInvoice: false` (no GST invoice now) says "this quote" — there is no invoice.
+ */
+export function overLimitDecision(
+  exposure: CreditExposure,
+  role: string | null | undefined,
+  fmt: (n: number) => string,
+  issueInvoice = true,
+): OverLimitDecision {
   if (!exposure.over) return { kind: "within" };
   if (role === "owner") return { kind: "owner-approve" };
   return {
     kind: "refused",
-    reason: `Over the credit limit: ${fmt(exposure.owed)} already owed + ${fmt(exposure.thisInvoice)} this invoice = ${fmt(exposure.total)}, limit ${fmt(exposure.limit)}. Only the owner can approve this.`,
+    reason: `Over the credit limit: ${fmt(exposure.owed)} already owed + ${fmt(exposure.thisInvoice)} this ${issueInvoice ? "invoice" : "quote"} = ${fmt(exposure.total)}, limit ${fmt(exposure.limit)}. Only the owner can approve this.`,
   };
 }
 
@@ -271,24 +320,36 @@ export interface CreditPlan {
 }
 
 /**
+ * R-2951: the day of the "issue the GST invoice" task — the EARLIER of the credit due date and
+ * activation + 30 days (the database: `least(v_due, v_today + 30)`). While credit without an
+ * invoice is capped at 30 days this is always the due date; the cap on the invoice date holds even
+ * if that limit changes.
+ */
+export function issueInvoiceTaskDay(today: string, dueDate: string): string {
+  const latest = addDaysISO(today, CREDIT_ISSUE_INVOICE_WITHIN_DAYS);
+  return dueDate < latest ? dueDate : latest;
+}
+
+/**
  * Same dates the database writes: the set-up task today, the payment-link task on due − 3 (never
  * before today), the stop-service question on due + 15. Titles without the customer suffix.
+ * R-2951: `issueInvoice: false` (no GST invoice now) — at most 30 days, and a fourth task "issue
+ * the GST invoice" on issueInvoiceTaskDay.
  */
-export function planCredit(now: Date, days: number): CreditPlan {
-  if (!validCreditDays(days)) {
-    throw new Error(`Credit days must be ${CREDIT_MIN_DAYS}–${CREDIT_MAX_DAYS}.`);
+export function planCredit(now: Date, days: number, issueInvoice = true): CreditPlan {
+  if (!validCreditDays(days) || days > maxCreditDays(issueInvoice)) {
+    throw new Error(`Credit days must be ${CREDIT_MIN_DAYS}–${maxCreditDays(issueInvoice)}.`);
   }
   const today = toIstDate(now);
   const dueDate = addDaysISO(today, days);
   const linkDay = addDaysISO(dueDate, -CREDIT_LINK_DAYS_BEFORE) < today ? today : addDaysISO(dueDate, -CREDIT_LINK_DAYS_BEFORE);
-  return {
-    dueDate,
-    tasks: [
-      { title: "Set up seats (DNS, users)", day: today },
-      { title: `${CREDIT_TASK_PREFIX} send payment link`, day: linkDay },
-      { title: `${CREDIT_TASK_PREFIX} payment not in — stop service?`, day: addDaysISO(dueDate, CREDIT_STOP_DAYS_AFTER) },
-    ],
-  };
+  const tasks: CreditTaskPlan[] = [
+    { title: "Set up seats (DNS, users)", day: today },
+    { title: `${CREDIT_TASK_PREFIX} send payment link`, day: linkDay },
+    { title: `${CREDIT_TASK_PREFIX} payment not in — stop service?`, day: addDaysISO(dueDate, CREDIT_STOP_DAYS_AFTER) },
+  ];
+  if (!issueInvoice) tasks.push({ title: CREDIT_ISSUE_INVOICE_TASK, day: issueInvoiceTaskDay(today, dueDate) });
+  return { dueDate, tasks };
 }
 
 /** 10:00 IST on an IST day, as an instant — the time the database gives each task. */

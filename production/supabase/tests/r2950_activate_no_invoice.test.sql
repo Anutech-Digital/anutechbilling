@@ -162,7 +162,7 @@ begin
   if v_series_after <> v_series_before then raise exception 'FAIL B: an invoice number was spent (% → %)', v_series_before, v_series_after; end if;
   if r->>'invoice_id' is not null then raise exception 'FAIL B: result carries an invoice id %', r->>'invoice_id'; end if;
   if (r->>'amount_due')::int <> 12390 or (r->>'due_date')::date <> public.ist_today() + 15
-     or (r->>'subscriptions_created')::int <> 2 or (r->>'tasks_created')::int <> 3 or (r->>'already_active')::boolean then
+     or (r->>'subscriptions_created')::int <> 2 or (r->>'tasks_created')::int <> 4 or (r->>'already_active')::boolean then  -- R-2951: 4 tasks
     raise exception 'FAIL B: result %', r; end if;
 
   select * into v_q from public.quotes where id = 'Q-R2950-B';
@@ -190,10 +190,10 @@ begin
   if (select count(*) from public.purchase_orders po join public.subscriptions s on s.id = po.subscription_id
        where s.quote_id = 'Q-R2950-B' and po.status = 'draft') <> 2 then raise exception 'FAIL B: expected 2 draft POs'; end if;
 
-  if (select count(*) from public.tasks where quote_id = 'Q-R2950-B' and status = 'pending') <> 3 then raise exception 'FAIL B: expected 3 tasks'; end if;
+  if (select count(*) from public.tasks where quote_id = 'Q-R2950-B' and status = 'pending') <> 4 then raise exception 'FAIL B: expected 4 tasks (R-2951: + issue the GST invoice)'; end if;
   if exists (select 1 from public.tasks where quote_id = 'Q-R2950-B' and (notes is null or notes not like '%Q-R2950-B%' or notes ~ 'Invoice\s*(\(|,|was|$)')) then
     raise exception 'FAIL B: a task note is empty or names an invoice that does not exist'; end if;
-  if (select count(*) from public.tasks where quote_id = 'Q-R2950-B' and title like 'Credit:%') <> 2
+  if (select count(*) from public.tasks where quote_id = 'Q-R2950-B' and title like 'Credit:%') <> 3  -- R-2951: + issue the GST invoice
      or not exists (select 1 from public.tasks where quote_id = 'Q-R2950-B' and title like 'Set up seats%') then
     raise exception 'FAIL B: task titles changed'; end if;
   if (select (due_at at time zone 'Asia/Kolkata')::date from public.tasks where quote_id = 'Q-R2950-B' and title like 'Credit: send%') <> public.ist_today() + 12
@@ -203,7 +203,7 @@ begin
   if (select count(*) from public.provisioning_tasks where quote_id = 'Q-R2950-B' and status = 'pending'
         and tenant_id = 'dddddddd-0000-0000-0000-000000295001') <> 1 then
     raise exception 'FAIL B: expected exactly 1 provisioning row'; end if;
-  raise notice 'PASS B: no invoice, no number spent, awaiting; 2 active subscriptions, Rs 12,390 due on one of them by the credit date; 3 tasks; 1 provisioning row';
+  raise notice 'PASS B: no invoice, no number spent, awaiting; 2 active subscriptions, Rs 12,390 due on one of them by the credit date; 4 tasks; 1 provisioning row';
 end $$;
 
 -- B2. Second click: with the flag false again, then true — nothing more is written
@@ -216,7 +216,7 @@ begin
   if not (r->>'already_active')::boolean or r->>'invoice_id' is not null then raise exception 'FAIL B2: a later call with the flag true did something %', r; end if;
   if (select count(*) from public.subscriptions where quote_id = 'Q-R2950-B') <> 2 then raise exception 'FAIL B2: subscriptions doubled'; end if;
   if exists (select 1 from public.invoices where quote_id = 'Q-R2950-B') then raise exception 'FAIL B2: an invoice appeared'; end if;
-  if (select count(*) from public.tasks where quote_id = 'Q-R2950-B') <> 3 then raise exception 'FAIL B2: tasks doubled'; end if;
+  if (select count(*) from public.tasks where quote_id = 'Q-R2950-B') <> 4 then raise exception 'FAIL B2: tasks doubled'; end if;
   if (select count(*) from public.provisioning_tasks where quote_id = 'Q-R2950-B') <> 1 then raise exception 'FAIL B2: provisioning doubled'; end if;
   raise notice 'PASS B2: a second call (false or true) is a no-op';
 end $$;
