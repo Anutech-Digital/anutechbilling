@@ -62,9 +62,11 @@ export function bucketize(lead: Lead, today: Date): TrialWithBucket {
  * All trial leads (current + historical). Bucketized + sorted by urgency
  * (expiring soon first, then in-flight, then expired, then converted).
  */
-export function useTrials() {
+export function useTrials(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["trials"],
+    /* R-2969: /subscriptions reads every trial only while ?focus=trials-month is on. */
+    enabled: opts.enabled ?? true,
     queryFn: async (): Promise<TrialWithBucket[]> => {
       const supabase = createClient();
       const data = await fetchAllRows((from, to) => supabase

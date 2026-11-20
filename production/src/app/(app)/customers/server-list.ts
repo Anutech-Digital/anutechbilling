@@ -120,8 +120,11 @@ export type CustomerListMode = "server" | "full";
  */
 export function customerListMode(o: {
   view: string; sortKey: string; sortDir: "asc" | "desc"; contactIds: readonly string[] | null;
+  /** R-2969: ?focus= (new-month) — the dashboard's exact set, tested on the full list. */
+  focus?: string;
 }): CustomerListMode {
   if (o.view !== "all") return "full";
+  if (o.focus) return "full";
   if (o.sortKey !== "recent" || o.sortDir !== "desc") return "full";
   if (o.contactIds && o.contactIds.length > CONTACT_MATCH_ID_CAP) return "full";
   return "server";
@@ -147,9 +150,12 @@ export function customerSearchFromUrl(search: string): string {
  */
 export function customerInList(
   isActive: boolean | null | undefined,
-  opts: { showArchived: boolean; viewId: string; owes: number },
+  opts: { showArchived: boolean; viewId: string; owes: number; focus?: string },
 ): boolean {
   const archived = isActive === false;
+  /* R-2969: "New customers" on the dashboard counts every customer created this IST month,
+     archived ones too (summary.ts#newCustomersInMonth) — so its list shows them, with their badge. */
+  if (opts.focus === "new-month") return true;
   if (opts.showArchived) return archived;
   if (!archived) return true;
   return opts.viewId === "unpaid" && opts.owes > 0;

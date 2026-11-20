@@ -829,7 +829,13 @@ function InvoicesPageInner() {
       {!isLoading && invoices && invoices.length > 0 && (
         <div className="mb-4">
           {focus && (
-            <FocusBanner label={INVOICE_FOCUS_LABEL[focus]} count={rows.length} onClear={() => setFocus("")} />
+            <FocusBanner
+              label={INVOICE_FOCUS_LABEL[focus]}
+              count={rows.length}
+              /* R-2969: issued-month is the dashboard's "Invoiced" — the same stored totals it adds. */
+              total={focus === "issued-month" ? rupee(rows.reduce((s, i) => s + i.amount, 0)) : undefined}
+              onClear={() => setFocus("")}
+            />
           )}
           <TabBar className="overflow-y-hidden" value={tab} onChange={tabOn} items={tabs} />
         </div>

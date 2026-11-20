@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { listProvisioningQueue } from "@/lib/provisioning/provisioning.server";
 import { isRouteAllowed, type UserRole } from "@/lib/nav";
+import { activationWaiting } from "@/lib/company/summary";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -56,7 +57,7 @@ export async function GET() {
    * that represents a customer still waiting; activated / failed / cancelled
    * are all finished, in different ways.
    */
-  const waiting = rows.filter((r) => r.status === "queued");
+  const waiting = rows.filter(activationWaiting);   // R-2969: the same test /provisioning?focus=waiting lists by
   return NextResponse.json({
     rows,
     counts: {

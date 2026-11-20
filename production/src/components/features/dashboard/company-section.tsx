@@ -6,6 +6,10 @@
  * uses — see the map at the top of lib/company/summary.ts. The rows come from the same
  * hooks those screens call, so they share the cache too.
  *
+ * R-2969 (20 Nov 2026): every row opens EXACTLY the records behind its number — a drillHref
+ * (lib/navigation/drilldown.ts) to a filter that uses the same one-record test as the number
+ * ("Invoiced · 3 invoices" opens those 3, not every invoice). A test keeps it that way.
+ *
  * A source that fails shows "—" and says so. Never ₹0: a zero here reads as "no money".
  */
 "use client";
@@ -189,12 +193,12 @@ function CompanyCards({ showSubscriptions }: { showSubscriptions: boolean }) {
           {/* R-1475: was "New leads" — it counts leads ADDED this month in any stage (the
               sum of /lead-gen's channel rows), not the "New" stage or the sidebar's "All
               leads"; Pawan read three different counts as one list. The label says which. */}
-          <Metric href="/lead-gen" label="Leads added" value={growth?.newLeads ?? null}
+          <Metric href={drillHref("leadsAddedMonth")} label="Leads added" value={growth?.newLeads ?? null}
             hint="This month, any stage" {...state(leads)} />
-          <Metric href="/lead-gen" label="From the website" value={growth?.fromWebsite ?? null}
+          <Metric href={drillHref("leadsWebsiteMonth")} label="From the website" value={growth?.fromWebsite ?? null}
             hint="Enquiry, buy and trial forms" {...state(leads)} />
           {showSubscriptions && (
-            <Metric href="/subscriptions" label="Trials started" value={trialsStarted} withHint
+            <Metric href={drillHref("trialsStartedMonth")} label="Trials started" value={trialsStarted} withHint
               hint={running.data ? `${running.data.length} running now` : undefined} {...state(trials)} />
           )}
         </FunctionCard>
@@ -207,9 +211,9 @@ function CompanyCards({ showSubscriptions }: { showSubscriptions: boolean }) {
         </FunctionCard>
 
         <FunctionCard title="Money">
-          <Metric href="/invoices" label="Invoiced" value={money$(money?.invoicedThisMonth.value)} withHint
+          <Metric href={drillHref("invoicesIssuedMonth")} label="Invoiced" value={money$(money?.invoicedThisMonth.value)} withHint
             hint={money ? plural(money.invoicedThisMonth.count, "invoice", "invoices") : undefined} {...state(invoices)} />
-          <Metric href="/payments" label="Collected" value={money$(collected)}
+          <Metric href={drillHref("paymentsReceivedMonth")} label="Collected" value={money$(collected)}
             {...state(payments, projectPayments)} />
           {/* R-1473: billed invoices only (the accrual receivable). Subscription dues not yet
               invoiced are the Collections card's "to collect" figure — the hint says so. */}
@@ -220,7 +224,7 @@ function CompanyCards({ showSubscriptions }: { showSubscriptions: boolean }) {
         </FunctionCard>
 
         <FunctionCard title="Customers & Ops">
-          <Metric href="/customers" label="New customers" value={newCustomers} {...state(customers)} />
+          <Metric href={drillHref("customersNewMonth")} label="New customers" value={newCustomers} {...state(customers)} />
           {showSubscriptions && (
             <>
               <Metric href={drillHref("subsActive")} label="Monthly revenue (MRR)" value={money$(subSummary?.mrr)} withHint
@@ -229,9 +233,9 @@ function CompanyCards({ showSubscriptions }: { showSubscriptions: boolean }) {
                 hint={subSummary ? `${money$(subSummary.renewalsDue.value)} a month` : undefined} {...state(subs)} />
             </>
           )}
-          <Metric href="/support" label="Open tickets" value={openTickets} {...state(tickets)} />
+          <Metric href={drillHref("ticketsStillOpen")} label="Open tickets" value={openTickets} {...state(tickets)} />
           {showSubscriptions && (
-            <Metric href="/provisioning" label="Waiting to activate" value={waiting} {...state(queue)} />
+            <Metric href={drillHref("activationsWaiting")} label="Waiting to activate" value={waiting} {...state(queue)} />
           )}
         </FunctionCard>
       </div>

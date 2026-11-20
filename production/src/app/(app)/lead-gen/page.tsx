@@ -35,7 +35,9 @@ import { Icon } from "@/components/ui/icon";
 import { formatDate } from "@/lib/utils";
 import type { Lead } from "@/lib/supabase/database.types";
 import { captureChannel } from "@/lib/leads/capture-channel";
-import { inIstMonth, istMonthStartUtc } from "@/lib/company/summary";
+import { istMonthStartUtc, leadAddedInMonth } from "@/lib/company/summary";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { LEADGEN_CHANNELS } from "@/lib/navigation/drilldown";
 
 // ─── Lead-source channel meta + aggregation (derived from real leads.source) ──
 
@@ -64,7 +66,9 @@ function computeCaptureChannels(leads: readonly LeadSourceRow[]): CaptureChannel
   const now = new Date();
   const byKey = new Map<string, LeadSourceRow[]>();
   for (const l of leads) {
-    if (!l.created_at || !inIstMonth(l.created_at, now)) continue;
+    /* R-2969: the dashboard's "Leads added" test (summary.ts#leadAddedInMonth), so a channel row
+       and the dashboard count the same leads. */
+    if (!leadAddedInMonth(l, "all", now)) continue;
     const key = normalizeSource(l.source);
     const arr = byKey.get(key) ?? [];
     arr.push(l);
@@ -84,6 +88,17 @@ function computeCaptureChannels(leads: readonly LeadSourceRow[]): CaptureChannel
       };
     })
     .sort((a, b) => b.count - a.count);
+}
+
+/** R-2969: every channel at once — this month's leads, any source (the dashboard's "Leads added"). */
+function allChannelsRow(channels: readonly CaptureChannel[]): CaptureChannel {
+  const leads = channels.flatMap((c) => c.leads)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const won = channels.reduce((s, c) => s + c.won, 0);
+  return {
+    id: "all", label: "All channels", icon: "inbox", count: leads.length, won,
+    conv: leads.length > 0 ? Math.round((won / leads.length) * 100) : 0, leads,
+  };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -129,8 +144,20 @@ export default function LeadGenPage() {
   // Real capture channels: this-month lead count + conversion by source.
   const captureChannels = React.useMemo(() => computeCaptureChannels(leads ?? []), [leads]);
   // Which capture channel's leads are shown in the modal (by id).
-  const [openChannel, setOpenChannel] = React.useState<string | null>(null);
-  const openCh = captureChannels.find((c) => c.id === openChannel) ?? null;
+  const [openChannel, setOpenChannelState] = React.useState<string | null>(null);
+  /* R-2969: ?channel= opens the list from a link — the dashboard's "Leads added" (all) and
+     "From the website" (website). Closing it clears the address too. */
+  const [urlChannel, setUrlChannel] = useUrlChoice<(typeof LEADGEN_CHANNELS)[number]>("channel", LEADGEN_CHANNELS, "");
+  React.useEffect(() => { if (urlChannel) setOpenChannelState(urlChannel); }, [urlChannel]);
+  const setOpenChannel = (id: string | null) => {
+    setOpenChannelState(id);
+    if (!id && urlChannel) setUrlChannel("");
+  };
+  const openCh = openChannel === "all"
+    ? allChannelsRow(captureChannels)
+    : captureChannels.find((c) => c.id === openChannel)
+      /* A link to a channel with no lead this month still opens — empty, with the reason. */
+      ?? (openChannel ? { id: openChannel, label: SOURCE_LABEL[openChannel] ?? openChannel, icon: SOURCE_ICON[openChannel] ?? "inbox", count: 0, won: 0, conv: 0, leads: [] } : null);
   // Which public page (if any) the Share sheet is open for.
   const [share, setShare]         = React.useState<ShareTarget | null>(null);
   const [addOpen, setAddOpen]     = React.useState(false);
@@ -512,14 +539,16 @@ export default function LeadGenPage() {
               {openCh?.label ?? "Channel"}
             </DialogTitle>
             <DialogDescription>
-              {openCh
+              {openCh && !isLoading
                 ? `${openCh.count} lead${openCh.count === 1 ? "" : "s"} this month · ${openCh.won} won · ${openCh.conv}% conversion`
                 : ""}
             </DialogDescription>
           </DialogHeader>
 
           <div className="max-h-[60vh] overflow-y-auto px-3 pb-4 pt-1">
-            {openCh?.leads.length ? (
+            {isLoading ? (
+              <Skeleton className="h-24 w-full" />
+            ) : openCh?.leads.length ? (
               <div className="space-y-0.5">
                 {openCh.leads.map((l) => (
                   <button
@@ -539,7 +568,7 @@ export default function LeadGenPage() {
                 ))}
               </div>
             ) : (
-              <p className="py-8 text-center text-sm text-ink-3">No leads in this channel.</p>
+              <p className="py-8 text-center text-sm text-ink-3">No leads in this channel this month.</p>
             )}
           </div>
         </DialogContent>
