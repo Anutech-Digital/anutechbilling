@@ -48,7 +48,7 @@ const CROSS_INPUT: Record<string, Record<string, unknown>> = {
 
 const WRITE_INPUT: Record<string, Record<string, unknown>> = {
   add_lead: { company: "New Co Pvt Ltd", contact_name: "Neha" },
-  update_lead_status: { id: "L-A1", stage: "demo" },
+  update_lead_status: { id: "L-A1", stage: "trial" },
   add_lead_note: { id: "L-A1", note: "Asked for a demo on Monday" },
   create_task: { title: "Send proposal", due_date: "2026-11-21", due_time: "11:00", lead_id: "L-A1" },
   complete_task: { id: TASK_A },
@@ -57,7 +57,7 @@ const WRITE_INPUT: Record<string, Record<string, unknown>> = {
 };
 
 const WRITE_CROSS: Record<string, Record<string, unknown>> = {
-  update_lead_status: { id: "L-B1", stage: "demo" },
+  update_lead_status: { id: "L-B1", stage: "trial" },
   add_lead_note: { id: "L-B1", note: "x" },
   complete_task: { id: TASK_B },
   set_followup_reminder: { lead_id: "L-B1", date: "2026-11-22" },

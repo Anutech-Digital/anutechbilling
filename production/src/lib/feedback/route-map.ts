@@ -171,6 +171,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { route: "/marketing/whatsapp", file: "src/app/(app)/marketing/whatsapp/page.tsx" },
   { route: "/marketing/whatsapp-calling", file: "src/app/(app)/marketing/whatsapp-calling/page.tsx" },
   { route: "/marketing/whatsapp/reminders", file: "src/app/(app)/marketing/whatsapp/reminders/page.tsx" },
+  { route: "/mcp/authorize", file: "src/app/(auth)/mcp/authorize/page.tsx" },
   { route: "/mfa", file: "src/app/(auth)/mfa/page.tsx" },
   { route: "/mobile", file: "src/app/(app)/mobile/page.tsx" },
   { route: "/money", file: "src/app/(app)/money/page.tsx" },

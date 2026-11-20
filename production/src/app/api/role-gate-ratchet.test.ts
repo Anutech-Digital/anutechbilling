@@ -105,6 +105,13 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "auth/verify-email": "pre-login token",
   "dev/test-login": "local/e2e only (refused outside test env)",
   "team/claim": "a fresh login claiming the users row an owner pre-created for its email",
+  // MCP connector (docs/MCP.md) — off unless MCP_ENABLED
+  "mcp": "Claude connector — Bearer token from the MCP OAuth flow; EACH TOOL is role-gated (lib/mcp/tools/types.ts deniedReason: nav page + can() + mayDo()), re-checked from the users row on every call",
+  "mcp/oauth/register": "OAuth dynamic client registration (RFC 7591) — pre-login, stateless, per-IP limit",
+  "mcp/oauth/token": "OAuth token endpoint — PKCE / refresh token, pre-session, per-IP limit",
+  "mcp/oauth/revoke": "OAuth revocation (RFC 7009) — revokes the token holder's own connection",
+  "mcp/oauth/authorize": "the caller's own consent — creates a connection for ITS OWN login only (signed ticket + same-origin)",
+  "mcp/connections": "the caller's own Claude connections — list / disconnect, RLS own rows only",
   // website / public forms, bounded by rate limits + tokens, not a session
   "enquiry": "website form",
   "public/assessment/[token]/submit": "token-bound public form",
