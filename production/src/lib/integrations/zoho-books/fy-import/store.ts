@@ -7,7 +7,7 @@
  */
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FyReadKind } from "../fy-fetch";
-import { classifyListed, factsVersionOf, receiptFactsIncomplete, type ScanFacts, type ScanStore, type ScanRun, type ListedRow } from "./scan";
+import { classifyListed, factsVersionOf, leftOutOnlyFromOf, receiptFactsIncomplete, storedLeftOut, type ScanFacts, type ScanStore, type ScanRun, type ListedRow } from "./scan";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string; code?: string } | null }>;
 /** The slice of the Supabase query builder used here (the new tables are not in the generated types yet). */
@@ -51,14 +51,19 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
          stored detail without them is read again (only those rows; no facts-version bump for all). */
       const receipts = kind === "customerpayments";
       /* review: the in-process data gateway (DATA_GATEWAY=1, src/server/postgrest/parse.ts) refuses JSON
-         paths in a select — the whole payload is read (one listed page, receipts only). */
+         paths in a select — the whole payload is read (one listed page; receipts, and R-2944 invoices). */
+      const version = factsVersionOf(kind);
+      /* R-2944: a kind whose older facts are re-read only when they were LEFT OUT (invoices) — the
+         stored facts' `problems` decide, so the payload is read too (same gateway rule: no JSON path). */
+      const leftOutOnlyFrom = leftOutOnlyFromOf(kind);
+      const byLeftOut = leftOutOnlyFrom !== null && version > 0;
       const cols = "zoho_id, zoho_status, fy, zoho_modified, detailed_at, deposit_account_id, facts_version"
-        + (receipts ? ", payload" : "");
+        + (receipts || byLeftOut ? ", payload" : "");
       const known = must(await (scan().select(cols).eq("tenant_id", tenantId).eq("kind", kind)
         .in("zoho_id", rows.map((x) => x.zohoId)) as Res<Array<{
           zoho_id: string; zoho_status: string; fy: string; zoho_modified: string | null; detailed_at: string | null;
           deposit_account_id: string | null; facts_version: number | null;
-          payload?: { currency?: unknown; foreignLines?: unknown } | null;
+          payload?: { currency?: unknown; foreignLines?: unknown; problems?: unknown } | null;
         }>>), "the Zoho read");
       const fxOf = (p: { currency?: unknown; foreignLines?: unknown } | null | undefined) => ({
         currency: typeof p?.currency === "string" ? p.currency : null,
@@ -70,16 +75,16 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
         hasDetail: k.detailed_at !== null,
         accountId: k.deposit_account_id, factsVersion: k.facts_version,
         factsIncomplete: receipts && k.detailed_at !== null && receiptFactsIncomplete(fxOf(k.payload)),
+        leftOut: byLeftOut && k.detailed_at !== null && storedLeftOut(kind, k.zoho_status, k.payload),
       }]));
       /* R-2653: never stamped before this read's start (another server's clock may be behind). */
       const startMs = Date.parse(run?.listStartedAt ?? "");
       const now = new Date(Number.isFinite(startMs) ? Math.max(Date.now(), startMs) : Date.now()).toISOString();
-      const version = factsVersionOf(kind);
       const fresh: Record<string, unknown>[] = [];
       const kept: Record<string, unknown>[] = [];
       const seen: string[] = [];
       for (const x of rows) {
-        const verdict = classifyListed(prev.get(x.zohoId), x, fy, onlyAccount, version);
+        const verdict = classifyListed(prev.get(x.zohoId), x, fy, onlyAccount, version, leftOutOnlyFrom);
         if (verdict === "skip") continue;
         if (verdict === "seen") { seen.push(x.zohoId); continue; }
         const base = {

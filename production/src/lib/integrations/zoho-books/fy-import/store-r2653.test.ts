@@ -106,14 +106,15 @@ describe("R-2653 supabaseScanStore — Read again", () => {
   });
 
   it("facts version: a kind whose normaliser version went up reads older details again; saveDetail records the version", async () => {
-    SCAN_FACTS_VERSION.invoices = 1;
-    const { db, calls } = fakeDb([{ zoho_id: "i-1", zoho_status: "sent", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: null, facts_version: null }]);
-    const s = supabaseScanStore(db, "t1", "invoices");
-    await s.addListed("2025-26", [{ zohoId: "i-1", number: "INV-1", date: "2025-06-01", status: "sent", modified: "T1", accountId: "" }]);
-    expect((calls[1].arg as Array<Record<string, unknown>>)[0]).toMatchObject({ zoho_id: "i-1", payload: null });
-    await s.saveDetail("2025-26", "i-1", { number: "INV-1", date: "2025-06-01", status: "sent" });
+    /* R-2944: bills — a list with no left-out-only rule (invoices have one: recheck-r2944.test.ts). */
+    SCAN_FACTS_VERSION.bills = 1;
+    const { db, calls } = fakeDb([{ zoho_id: "b-1", zoho_status: "open", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: null, facts_version: null }]);
+    const s = supabaseScanStore(db, "t1", "bills");
+    await s.addListed("2025-26", [{ zohoId: "b-1", number: "BILL-1", date: "2025-06-01", status: "open", modified: "T1", accountId: "" }]);
+    expect((calls[1].arg as Array<Record<string, unknown>>)[0]).toMatchObject({ zoho_id: "b-1", payload: null });
+    await s.saveDetail("2025-26", "b-1", { number: "BILL-1", date: "2025-06-01", status: "open" });
     expect(calls[2].arg).toMatchObject({ facts_version: 1 });
-    delete SCAN_FACTS_VERSION.invoices;
+    delete SCAN_FACTS_VERSION.bills;
   });
 });
 
