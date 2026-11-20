@@ -85,6 +85,32 @@ describe("Sidebar — Tasks next to Today (R-2939)", () => {
     expect(tasksRow()!.getAttribute("aria-current")).toBeNull();
   });
 
+  /* R-2942: Reports → Team tasks is the Team tab of Tasks. The row stays highlighted there and
+     the sidebar does not jump to the Accounts app (the report's own home). */
+  it("on the Team tab (/reports/team-tasks) the Tasks row is the highlighted one", async () => {
+    st.pathname = "/reports/team-tasks";
+    renderSidebar();
+    await waitFor(() => expect(tasksRow()).not.toBeNull());
+    expect(tasksRow()!.className.split(/\s+/)).toContain("bg-amber-soft");
+    expect(tasksRow()!.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("on the Team tab the sidebar does not switch to the Accounts app", async () => {
+    st.pathname = "/reports/team-tasks";
+    renderSidebar();
+    await waitFor(() => expect(tasksRow()).not.toBeNull());
+    const hrefs = rowHrefs();
+    expect(hrefs, "Accounts rows are not showing").not.toContain("/accounting/banking");
+    expect(hrefs, "the app that was showing (the first one) stays").toContain("/leads");
+    // Another report still opens Accounts — the rule is for the tab page only.
+    cleanup();
+    st.pathname = "/reports";
+    renderSidebar();
+    await waitFor(() => expect(tasksRow()).not.toBeNull());
+    expect(rowHrefs()).toContain("/accounting/banking");
+    expect(tasksRow()!.className.split(/\s+/)).not.toContain("bg-amber-soft");
+  });
+
   it("on /tasks itself it is the current page", async () => {
     renderSidebar();
     await waitFor(() => expect(tasksRow()).not.toBeNull());
