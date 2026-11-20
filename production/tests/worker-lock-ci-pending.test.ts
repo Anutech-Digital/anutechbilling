@@ -123,3 +123,69 @@ describe("R-2561 review: a finished later run still decides for a young push", (
     expect(r.lines.join("\n")).not.toContain("missing");
   });
 });
+
+/*
+ * R-2943 (20 Nov 2026): CI run 44650737207 for 3553c200c was CANCELLED because its `typecheck` job hit
+ * the 20-min job limit (not because a newer push replaced it). worker-lock read "cancelled" as
+ * "superseded", found no later run, and said "unknown — GitHub Actions par dekho"; the ci-wait locks
+ * sat there for about an hour. Now: every run of the workflow for the sha is cancelled AND no later
+ * manager-pardeep run containing the sha exists (15+ min after the push) → "cancelled", with the
+ * re-run command. The lock stays ci-wait (cancelled is neither green nor red).
+ */
+describe("R-2943: a cancelled CI run with nothing after it is called cancelled, with the re-run command", () => {
+  const cancelled = run({ databaseId: 44650737207, conclusion: "cancelled", url: "u/44650737207" });
+  const contains = (a: string, b: string) => a === SHA && b === LATER;
+
+  it("ci-all: own run cancelled, no later run → cancelled (was unknown), and the run id is handed out", () => {
+    const info: { run?: Run } = {};
+    expect(ciWaitVerdict(lock, { gh: gh([cancelled]), isAncestor: noAncestor, now: at(25), info })).toBe("cancelled");
+    expect(info.run?.databaseId).toBe(44650737207);
+    // also long before the 15-min mark: the run itself is there and finished, there is nothing to wait for
+    expect(ciWaitVerdict(lock, { gh: gh([cancelled]), isAncestor: noAncestor, now: at(4) })).toBe("cancelled");
+  });
+
+  it("cancelled because a newer push took over → the later run still decides (pending / green / red)", () => {
+    const later = (o: Partial<Run>) => gh([cancelled], [run({ databaseId: 9, headSha: LATER, ...o })]);
+    expect(ciWaitVerdict(lock, { gh: later({ status: "in_progress", conclusion: "" }), isAncestor: contains, now: at(25) })).toBe("pending");
+    expect(ciWaitVerdict(lock, { gh: later({}), isAncestor: contains, now: at(25) })).toBe("green");
+    expect(ciWaitVerdict(lock, { gh: later({ conclusion: "failure" }), isAncestor: contains, now: at(25) })).toBe("red");
+  });
+
+  it("a re-run that is going or green wins over the cancelled attempt; skipped/neutral alone stay unknown", () => {
+    expect(ciWaitVerdict(lock, { gh: gh([run({ databaseId: 44650737207, status: "in_progress", conclusion: "" })]), isAncestor: noAncestor, now: at(25) })).toBe("pending");
+    expect(ciWaitVerdict(lock, { gh: gh([cancelled, run({ databaseId: 2, createdAt: "2026-11-07T12:20:00Z" })]), isAncestor: noAncestor, now: at(25) })).toBe("green");
+    expect(ciWaitVerdict(lock, { gh: gh([run({ conclusion: "skipped" })]), isAncestor: noAncestor, now: at(25) })).toBe("unknown");
+  });
+
+  it("CI green but the SQL tests run cancelled → cancelled, naming the SQL run", () => {
+    const info: { run?: Run } = {};
+    const sqlCancelled = run({ databaseId: 77, workflowName: "SQL tests", conclusion: "cancelled" });
+    expect(ciWaitVerdict(lock, { gh: gh([run({}), sqlCancelled]), isAncestor: noAncestor, now: at(25), info })).toBe("cancelled");
+    expect(info.run?.databaseId).toBe(77);
+  });
+
+  it("ci-all line says it plainly and prints the exact re-run command; the lock is not settled", () => {
+    const settled: [string, number][] = [];
+    const r = ciAllReport([lock], {
+      verdict: (l: typeof lock, info: { run?: Run }) => ciWaitVerdict(l, { gh: gh([cancelled]), isAncestor: noAncestor, now: at(25), info }),
+      settle: (c: string, code: number) => settled.push([c, code]), at: "2026-11-20T01:30:00Z",
+    });
+    expect(r.results).toEqual([{ card: "R-1427", sha: SHA, ci: "cancelled", at: "2026-11-20T01:30:00Z" }]);
+    expect(settled).toEqual([]);
+    const text = r.lines.join("\n");
+    expect(text).toContain("CI run CANCEL hua");
+    expect(text).toContain("gh run rerun 44650737207 --failed -R Anutech-Digital/anutechbilling");
+    expect(text).not.toContain("run nahi mila");
+  });
+
+  it("ci <CARD>: stops at once with exit 8, ci: cancelled and the re-run command (no 35-min wait)", async () => {
+    let t = at(25); let sleeps = 0;
+    const r = await runCi("R-1427", { gh: gh([cancelled]), git: () => `${SHA}\n`, isAncestor: noAncestor, sha: SHA, timeoutMin: 35, readNote: () => ({ sha: SHA, at: PUSHED }), now: () => t, sleep: async (ms: number) => { sleeps++; t += ms; } });
+    expect(r.code).toBe(8);
+    expect(sleeps).toBe(0);
+    expect(r.check).toMatchObject({ ci: "cancelled", sql: "skipped" });
+    const text = r.lines.join("\n");
+    expect(text).toContain("gh run rerun 44650737207 --failed -R Anutech-Digital/anutechbilling");
+    expect(text).toContain("worker-lock ci R-1427");
+  });
+});

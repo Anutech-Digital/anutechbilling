@@ -55,10 +55,49 @@ export function parseOnlyAccount(v: unknown): string | null | undefined {
  * sales-import / purchase-import / receipts-import normalise.ts) bumps its kind here, so the next Read
  * again reads those details again (once). Rows stored before R-2653 count as version 0.
  * (R-2650 changed the sales normaliser on 10 Nov 2026 but its import reads currency + fxRate already
- * stored, so no re-read was needed — invoices stay 0.)
+ * stored, so no re-read was needed.)
+ *
+ * R-2944 (20 Nov 2026): the scan keeps only the normaliser's RESULT, never Zoho's document — so a rule
+ * change reaches a stored row only through a new detail call. R-2702 (12 Nov) made TDS-on-invoice and
+ * adjustment invoices importable but left invoices at 0: on staging 79 invoices stayed "left out" with
+ * sentences the code no longer had, and Read again read nothing. invoices → 1.
+ * fy-import/facts-version-pin.test.ts goes red when a normaliser file changes without this decision.
  */
-export const SCAN_FACTS_VERSION: Partial<Record<FyReadKind, number>> = {};
+export const SCAN_FACTS_VERSION: Partial<Record<FyReadKind, number>> = { invoices: 1 };
 export const factsVersionOf = (kind: FyReadKind): number => SCAN_FACTS_VERSION[kind] ?? 0;
+
+/**
+ * R-2944: the versions whose bump needs ONLY the left-out rows read again. By default a bump re-reads
+ * EVERY row made by an older version (one Zoho detail call per document — a 2,780-invoice year is three
+ * days of the ~900-call day budget, R-2661; the read stays incomplete, so no preview, until it is done).
+ * A version listed here says: "this change only frees or re-words documents the older rules LEFT OUT
+ * (storedLeftOut) — a document they took is stored the same today". A row is then kept without a call
+ * unless it was left out; a row that crosses ANY bump not listed here is still read again in full.
+ * So the safe default stays R-2653's: a new version that is not added here re-reads everything.
+ *
+ * invoices 1 — R-2702 turned left-out invoices (TDS on the invoice, a Zoho adjustment) into sales and
+ * changed nothing for an invoice the rules already took. Not covered by it, as before this card: facts
+ * a still OLDER normaliser stored for an invoice it took (read before R-2536's billing address or
+ * R-2650's foreign-currency figures) — those changes made their own decision then (R-2540's hint: card
+ * R-2945; R-2650: none needed), and such an invoice already in the app is not touched by any read.
+ */
+export const SCAN_FACTS_LEFT_OUT_ONLY: Partial<Record<FyReadKind, readonly number[]>> = { invoices: [1] };
+export const leftOutOnlyVersionsOf = (kind: FyReadKind): readonly number[] => SCAN_FACTS_LEFT_OUT_ONLY[kind] ?? [];
+
+/**
+ * R-2944: Zoho statuses whose documents are left out whatever the normaliser's rules are (sales:
+ * NOT_A_SALE in sales-import/normalise.ts — a test keeps the two the same). A rule change never frees
+ * them, so they are not re-read for one; a status that CHANGES in Zoho is re-read by R-2653's own rule.
+ */
+export const SCAN_NEVER_RECHECK_STATUS: Partial<Record<FyReadKind, readonly string[]>> = { invoices: ["void", "draft"] };
+
+/** R-2944: do a row's stored facts say it was left out (a non-empty `problems`) — for a reason a newer
+ *  normaliser could lift (not a never-a-sale status)? `payload` = the stored facts as they are. */
+export function storedLeftOut(kind: FyReadKind, status: string, payload: unknown): boolean {
+  if ((SCAN_NEVER_RECHECK_STATUS[kind] ?? []).includes(status)) return false;
+  const problems = payload && typeof payload === "object" ? (payload as { problems?: unknown }).problems : null;
+  return Array.isArray(problems) && problems.length > 0;
+}
 
 /** R-2653: what we already hold for a listed document. */
 export interface KnownRow {
@@ -69,6 +108,9 @@ export interface KnownRow {
   factsVersion?: number | null;
   /** R-2694: its stored facts lack what today's import needs (receiptFactsIncomplete) — read it again. */
   factsIncomplete?: boolean;
+  /** R-2944: its stored facts say it was left out (storedLeftOut) — decides the re-read of an older
+   *  facts version when every bump since is in SCAN_FACTS_LEFT_OUT_ONLY. */
+  leftOut?: boolean;
 }
 
 /**
@@ -88,7 +130,8 @@ export type ListedVerdict = "fresh" | "kept" | "seen" | "skip";
 /**
  * R-2653 — what a "Read again" does with one listed row (pure; the stores use it):
  *   "fresh" → (re)read its detail: new, no detail yet, status or FY changed, made by an older facts
- *             version, or Zoho's last_modified_time differs from the one stored (a row stored before
+ *             version (R-2944: when every bump since is in `leftOutOnly`, only a row that was left
+ *             out), or Zoho's last_modified_time differs from the one stored (a row stored before
  *             R-2653 has none: then "changed after our detail read" decides — no one-time full re-read);
  *   "kept"  → nothing changed: keep its facts, note it was listed;
  *   "seen"  → outside this read's deposit account (now AND when it was read): keep everything as it
@@ -97,10 +140,13 @@ export type ListedVerdict = "fresh" | "kept" | "seen" | "skip";
  * A payment moved INTO or OUT OF the chosen account counts as inside (its facts name the old account).
  * A row stored before R-2653 has no account: outside it is re-read only when it changed.
  */
-export function classifyListed(prev: KnownRow | null | undefined, row: ListedRow, fy: string, onlyAccount?: string | null, factsVersion = 0): ListedVerdict {
+export function classifyListed(
+  prev: KnownRow | null | undefined, row: ListedRow, fy: string, onlyAccount?: string | null, factsVersion = 0,
+  leftOutOnly: readonly number[] = [],
+): ListedVerdict {
   const rowOutside = !!onlyAccount && (row.accountId ?? "") !== onlyAccount;
   if (!prev) return rowOutside ? "skip" : "fresh";
-  const changed = changedSince(prev, row, fy, factsVersion);
+  const changed = changedSince(prev, row, fy, factsVersion, leftOutOnly);
   if (!rowOutside) return changed ? "fresh" : "kept";
   if (prev.accountId === onlyAccount) return "fresh";                 /* moved out of the chosen account */
   if (prev.fy !== fy) return "fresh";                                  /* moved into this FY — never left under the old one */
@@ -108,9 +154,18 @@ export function classifyListed(prev: KnownRow | null | undefined, row: ListedRow
   return "seen";
 }
 
-function changedSince(prev: KnownRow, row: ListedRow, fy: string, factsVersion: number): boolean {
+/** R-2944: must a row made by version `madeBy` be read again for the bumps up to `factsVersion`? */
+export function olderFactsNeedReread(madeBy: number, factsVersion: number, leftOutOnly: readonly number[], leftOut: boolean): boolean {
+  if (!(madeBy < factsVersion)) return false;
+  if (leftOut) return true;
+  /* Kept only when EVERY bump it crosses asks for the left-out rows alone. */
+  for (let v = Math.floor(madeBy) + 1; v <= factsVersion; v++) if (!leftOutOnly.includes(v)) return true;
+  return false;
+}
+
+function changedSince(prev: KnownRow, row: ListedRow, fy: string, factsVersion: number, leftOutOnly: readonly number[]): boolean {
   if (!prev.hasDetail || prev.status !== row.status || prev.fy !== fy) return true;
-  if ((prev.factsVersion ?? 0) < factsVersion) return true;
+  if (olderFactsNeedReread(prev.factsVersion ?? 0, factsVersion, leftOutOnly, prev.leftOut === true)) return true;
   if (prev.factsIncomplete) return true;   /* R-2694 */
   const mod = row.modified ?? "";
   if (!mod) return false;

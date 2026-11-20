@@ -7,7 +7,7 @@
  */
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FyReadKind } from "../fy-fetch";
-import { classifyListed, factsVersionOf, receiptFactsIncomplete, type ScanFacts, type ScanStore, type ScanRun, type ListedRow } from "./scan";
+import { classifyListed, factsVersionOf, leftOutOnlyVersionsOf, receiptFactsIncomplete, storedLeftOut, type ScanFacts, type ScanStore, type ScanRun, type ListedRow } from "./scan";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string; code?: string } | null }>;
 /** The slice of the Supabase query builder used here (the new tables are not in the generated types yet). */
@@ -52,14 +52,29 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
       const receipts = kind === "customerpayments";
       /* review: the in-process data gateway (DATA_GATEWAY=1, src/server/postgrest/parse.ts) refuses JSON
          paths in a select — the whole payload is read (one listed page, receipts only). */
+      const version = factsVersionOf(kind);
+      const leftOutOnly = leftOutOnlyVersionsOf(kind);
       const cols = "zoho_id, zoho_status, fy, zoho_modified, detailed_at, deposit_account_id, facts_version"
         + (receipts ? ", payload" : "");
       const known = must(await (scan().select(cols).eq("tenant_id", tenantId).eq("kind", kind)
         .in("zoho_id", rows.map((x) => x.zohoId)) as Res<Array<{
           zoho_id: string; zoho_status: string; fy: string; zoho_modified: string | null; detailed_at: string | null;
           deposit_account_id: string | null; facts_version: number | null;
-          payload?: { currency?: unknown; foreignLines?: unknown } | null;
+          payload?: { currency?: unknown; foreignLines?: unknown; problems?: unknown } | null;
         }>>), "the Zoho read");
+      /* R-2944: a list whose version bump re-reads only LEFT-OUT rows (invoices) — the stored facts'
+         `problems` decide, so the payload of the rows made by an OLDER version is read too (whole
+         payload: the gateway takes no JSON path). Rows already at this version need none: after the
+         first Read again every kept row is stamped (below), so later reads make no second query. */
+      const olderIds = leftOutOnly.length && !receipts
+        ? known.filter((k) => k.detailed_at !== null && (k.facts_version ?? 0) < version).map((k) => k.zoho_id)
+        : [];
+      const olderFacts = new Map<string, unknown>();
+      if (olderIds.length) {
+        const r = must(await (scan().select("zoho_id, payload").eq("tenant_id", tenantId).eq("kind", kind)
+          .in("zoho_id", olderIds) as Res<Array<{ zoho_id: string; payload: unknown }>>), "the Zoho read");
+        for (const x of r) olderFacts.set(x.zoho_id, x.payload);
+      }
       const fxOf = (p: { currency?: unknown; foreignLines?: unknown } | null | undefined) => ({
         currency: typeof p?.currency === "string" ? p.currency : null,
         foreignLines: Array.isArray(p?.foreignLines) ? "y" : null,
@@ -70,16 +85,19 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
         hasDetail: k.detailed_at !== null,
         accountId: k.deposit_account_id, factsVersion: k.facts_version,
         factsIncomplete: receipts && k.detailed_at !== null && receiptFactsIncomplete(fxOf(k.payload)),
+        /* An older row whose facts did not come back counts as left out: read again, never stamped unseen. */
+        leftOut: leftOutOnly.length > 0 && k.detailed_at !== null && (receipts
+          ? storedLeftOut(kind, k.zoho_status, k.payload)
+          : olderIds.includes(k.zoho_id) && (!olderFacts.has(k.zoho_id) || storedLeftOut(kind, k.zoho_status, olderFacts.get(k.zoho_id)))),
       }]));
       /* R-2653: never stamped before this read's start (another server's clock may be behind). */
       const startMs = Date.parse(run?.listStartedAt ?? "");
       const now = new Date(Number.isFinite(startMs) ? Math.max(Date.now(), startMs) : Date.now()).toISOString();
-      const version = factsVersionOf(kind);
       const fresh: Record<string, unknown>[] = [];
       const kept: Record<string, unknown>[] = [];
       const seen: string[] = [];
       for (const x of rows) {
-        const verdict = classifyListed(prev.get(x.zohoId), x, fy, onlyAccount, version);
+        const verdict = classifyListed(prev.get(x.zohoId), x, fy, onlyAccount, version, leftOutOnly);
         if (verdict === "skip") continue;
         if (verdict === "seen") { seen.push(x.zohoId); continue; }
         const base = {
@@ -88,7 +106,9 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
         };
         /* New, or changed since it was read (status, FY, facts version, last_modified_time): read the detail again. */
         if (verdict === "fresh") fresh.push({ ...base, payload: null, detailed_at: null });
-        else kept.push(base);
+        /* R-2944: kept = its facts stand under this version's rules (not older, or older and not asked to
+           be read again) — stamped, so the next Read again need not look at it. Never lowered. */
+        else kept.push({ ...base, facts_version: Math.max(version, prev.get(x.zohoId)?.factsVersion ?? 0) });
       }
       /* Two shapes → two upserts, so a kept payload is never nulled. */
       for (const group of [fresh, kept]) {

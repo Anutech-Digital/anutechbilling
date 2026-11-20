@@ -4,7 +4,7 @@
  *   - facts with no `currency` (read before R-2693) → re-read;
  *   - a foreign payment with no per-invoice foreign amounts (`foreignLines`, read before R-2694) → re-read;
  *   - an INR payment that has `currency`, or a foreign one with `foreignLines` → kept (no Zoho call).
- * Other kinds are never touched by this rule. The store reads the whole payload (the data gateway refuses a
+ * Other kinds are never touched by this rule (R-2944 gave invoices their own: left-out rows of an older facts version). The store reads the whole payload (the data gateway refuses a
  * JSON path in a select). The Supabase client is a recording fake; names made up.
  */
 import { describe, it, expect } from "vitest";
@@ -71,9 +71,9 @@ describe("R-2694 supabaseScanStore.addListed — targeted re-read of receipts", 
     expect(fresh.map((r) => r.zoho_id).sort()).toEqual(["inr-old", "usd-part1"]);
   });
 
-  it("another kind (invoices) does not read payload fields and keeps an unchanged row", async () => {
-    const { db, calls } = fakeDb([{ ...known("i1", null, null), payload: undefined }]);
-    await supabaseScanStore(db, "t1", "invoices").addListed("2025-26", [row("i1")]);
+  it("another kind (bills) does not read payload fields and keeps an unchanged row (R-2944: invoices read `problems` — recheck-r2944.test.ts)", async () => {
+    const { db, calls } = fakeDb([{ ...known("b1", null, null), payload: undefined }]);
+    await supabaseScanStore(db, "t1", "bills").addListed("2025-26", [row("b1")]);
     const sel = calls[0].filters.find(([k]) => k === "select")![1];
     expect(sel).not.toContain("payload");
     const fresh = calls.filter((c) => c.op === "upsert").flatMap((u) => u.arg as Array<Record<string, unknown>>).filter((r) => r.payload === null);
