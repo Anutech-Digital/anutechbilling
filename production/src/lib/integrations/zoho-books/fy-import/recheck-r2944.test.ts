@@ -7,15 +7,17 @@
  * version was never raised — so Read again kept every stored row. Raising the version alone would read
  * all 2,780 invoice details again (Zoho's day budget is ~900 calls).
  *
- * The rule tested here: invoices are at facts version 1, and a row made by an older version is read
- * again ONLY when its stored facts say "left out" (`problems`) and its Zoho status is not one that is
- * never a sale (void / draft). Fine rows, void / draft rows and rows already re-checked cost no call.
+ * The rule tested here: invoices are at facts version 1, a bump marked "left-out only": a row made by an
+ * older version is read again ONLY when its stored facts say "left out" (`problems`) and its Zoho
+ * status is not one that is never a sale (void / draft). Fine rows, void / draft rows and rows already
+ * re-checked cost no call. A LATER bump that is not marked re-reads every older row (the safe default).
  * A read imports nothing. Zoho is a fake fetch; the store is memory (same classifyListed + the same
  * helpers as the Supabase store) or a recording fake of the Supabase client. Names / figures made up.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  classifyListed, factsVersionOf, leftOutOnlyFromOf, scanStep, storedLeftOut, SCAN_FACTS_VERSION, SCAN_NEVER_RECHECK_STATUS,
+  classifyListed, factsVersionOf, leftOutOnlyVersionsOf, olderFactsNeedReread, scanStep, storedLeftOut,
+  SCAN_FACTS_LEFT_OUT_ONLY, SCAN_FACTS_VERSION, SCAN_NEVER_RECHECK_STATUS,
   type KnownRow, type ListedRow, type ScanRun, type ScanStore,
 } from "./scan";
 import { supabaseScanStore, type FyImportDb } from "./store";
@@ -31,14 +33,22 @@ const OLD_ADJ = "Zoho has an adjustment of ₹500 on it — book it by hand or a
 const OLD_MIXED = "Lines at different GST rates (0%, 18%) — one invoice here has one rate.";
 
 describe("R-2944 the invoices' facts version and its re-check rule", () => {
-  it("invoices are at version 1; an older row is re-read only when it was left out", () => {
-    expect(factsVersionOf("invoices")).toBe(1);
-    expect(leftOutOnlyFromOf("invoices")).toBe(0);
-    /* Other lists keep R-2653's rule: no version yet, and a bump would re-read every older row. */
-    for (const k of ["customerpayments", "bills", "expenses", "vendorpayments"] as const) {
-      expect(SCAN_FACTS_VERSION[k]).toBeUndefined();
-      expect(leftOutOnlyFromOf(k)).toBeNull();
-    }
+  it("invoices: version 1 is a left-out-only bump; the other lists have no such rule (a bump there re-reads every older row)", () => {
+    expect(factsVersionOf("invoices")).toBeGreaterThanOrEqual(1);
+    expect(leftOutOnlyVersionsOf("invoices")).toContain(1);
+    for (const k of ["customerpayments", "bills", "expenses", "vendorpayments"] as const) expect(leftOutOnlyVersionsOf(k)).toEqual([]);
+  });
+
+  it("olderFactsNeedReread: kept only when not left out AND every bump crossed is left-out-only", () => {
+    expect(olderFactsNeedReread(1, 1, [1], true)).toBe(false);    // current: never for a version reason
+    expect(olderFactsNeedReread(0, 1, [1], false)).toBe(false);
+    expect(olderFactsNeedReread(0, 1, [1], true)).toBe(true);
+    expect(olderFactsNeedReread(0, 1, [], false)).toBe(true);     // no rule: R-2653, every older row
+    expect(olderFactsNeedReread(0, 2, [1], false)).toBe(true);    // bump 2 is not marked → full
+    expect(olderFactsNeedReread(1, 2, [1], false)).toBe(true);
+    expect(olderFactsNeedReread(0, 3, [1, 3], false)).toBe(true); // crosses the unmarked 2
+    expect(olderFactsNeedReread(2, 3, [1, 3], false)).toBe(false);
+    expect(olderFactsNeedReread(2, 3, [1, 3], true)).toBe(true);
   });
 
   it("the statuses never re-checked are exactly the ones the sales normaliser calls not a sale", () => {
@@ -61,28 +71,33 @@ describe("R-2944 classifyListed — an older version with the left-out-only rule
   const row: ListedRow = { zohoId: "i1", number: "INV/25-26/0001", date: "2025-08-12", status: "paid", modified: T1 };
 
   it("old + left out → fresh; old + fine → kept; current + left out → kept", () => {
-    expect(classifyListed(known({ leftOut: true }), row, FY, null, 1, 0)).toBe("fresh");
-    expect(classifyListed(known({ leftOut: false }), row, FY, null, 1, 0)).toBe("kept");
-    expect(classifyListed(known({ factsVersion: 1, leftOut: true }), row, FY, null, 1, 0)).toBe("kept");
+    expect(classifyListed(known({ leftOut: true }), row, FY, null, 1, [1])).toBe("fresh");
+    expect(classifyListed(known({ leftOut: false }), row, FY, null, 1, [1])).toBe("kept");
+    expect(classifyListed(known({ factsVersion: 1, leftOut: true }), row, FY, null, 1, [1])).toBe("kept");
   });
-  it("without the rule (null) an older version is always read again — R-2653 as before", () => {
+  it("without the rule an older version is always read again — R-2653 as before", () => {
     expect(classifyListed(known({ leftOut: false }), row, FY, null, 1)).toBe("fresh");
-    expect(classifyListed(known({ leftOut: false }), row, FY, null, 1, null)).toBe("fresh");
+    expect(classifyListed(known({ leftOut: false }), row, FY, null, 1, [])).toBe("fresh");
   });
-  it("a version below the rule's start is read again in full (a later bump that changes fine rows too)", () => {
-    expect(classifyListed(known({ factsVersion: 0, leftOut: false }), row, FY, null, 2, 1)).toBe("fresh");
-    expect(classifyListed(known({ factsVersion: 1, leftOut: false }), row, FY, null, 2, 1)).toBe("kept");
-    expect(classifyListed(known({ factsVersion: 1, leftOut: true }), row, FY, null, 2, 1)).toBe("fresh");
+  it("the NEXT bump, when nobody marks it left-out-only, re-reads every older row (safe default)", () => {
+    expect(classifyListed(known({ factsVersion: 0, leftOut: false }), row, FY, null, 2, [1])).toBe("fresh");
+    expect(classifyListed(known({ factsVersion: 1, leftOut: false }), row, FY, null, 2, [1])).toBe("fresh");
+    expect(classifyListed(known({ factsVersion: 1, leftOut: false }), row, FY, null, 2, [1, 2])).toBe("kept");
+    expect(classifyListed(known({ factsVersion: 1, leftOut: true }), row, FY, null, 2, [1, 2])).toBe("fresh");
   });
   it("a change in Zoho still wins: an old fine row edited in Zoho is read again", () => {
-    expect(classifyListed(known({ leftOut: false }), { ...row, modified: "2026-11-19T10:00:00+0530" }, FY, null, 1, 0)).toBe("fresh");
-    expect(classifyListed(known({ leftOut: false }), { ...row, status: "void" }, FY, null, 1, 0)).toBe("fresh");
+    expect(classifyListed(known({ leftOut: false }), { ...row, modified: "2026-11-19T10:00:00+0530" }, FY, null, 1, [1])).toBe("fresh");
+    expect(classifyListed(known({ leftOut: false }), { ...row, status: "void" }, FY, null, 1, [1])).toBe("fresh");
   });
 });
 
 // ── a whole Read again against a fake Zoho ────────────────────────────────────────────────────────
 
 type Row = { fy: string; status: string; modified: string | null; payload: ZohoSaleFacts | null; detailedAt: string | null; listedAt: number; factsVersion: number | null };
+
+/** R-2944's rule, stated here so these tests keep meaning it after a later bump: version 1, left-out only. */
+const V = 1;
+const LEFT_OUT_ONLY: readonly number[] = [1];
 
 /** Memory twin of supabaseScanStore for invoices: same verdicts, same left-out rule, same version stamp. */
 function memoryStore() {
@@ -101,10 +116,10 @@ function memoryStore() {
           status: p.status, fy: p.fy, modified: p.modified, detailedAt: p.detailedAt, hasDetail: !!p.payload,
           factsVersion: p.factsVersion, leftOut: !!p.payload && storedLeftOut("invoices", p.status, p.payload),
         } : null;
-        const v = classifyListed(known, x, fy, null, factsVersionOf("invoices"), leftOutOnlyFromOf("invoices"));
+        const v = classifyListed(known, x, fy, null, V, LEFT_OUT_ONLY);
         const base = { fy, status: x.status, modified: x.modified || p?.modified || null, listedAt: now };
         if (v === "fresh") rows.set(x.zohoId, { ...base, payload: null, detailedAt: null, factsVersion: p?.factsVersion ?? null });
-        else if (v === "kept") rows.set(x.zohoId, { ...p!, ...base });
+        else if (v === "kept") rows.set(x.zohoId, { ...p!, ...base, factsVersion: Math.max(V, p!.factsVersion ?? 0) });
       }
     },
     async requeueUnlisted(fy, since) {
@@ -114,7 +129,7 @@ function memoryStore() {
     },
     async refresh(fy) { runs.set(fy, { nextPage: 1, listDone: false, listStartedAt: String(tick()), onlyAccount: null }); },
     async pendingDetails(fy, limit) { return [...rows.entries()].filter(([, r]) => r.fy === fy && !r.payload).map(([id]) => id).slice(0, limit); },
-    async saveDetail(_fy, id, f) { const r = rows.get(id)!; r.payload = f; r.detailedAt = "2026-11-20T05:00:00Z"; r.factsVersion = factsVersionOf("invoices"); },
+    async saveDetail(_fy, id, f) { const r = rows.get(id)!; r.payload = f; r.detailedAt = "2026-11-20T05:00:00Z"; r.factsVersion = V; },
     async drop(_fy, id) { rows.delete(id); },
     async counts(fy) { const a = [...rows.values()].filter((r) => r.fy === fy); return { listed: a.length, detailed: a.filter((r) => r.payload).length }; },
     async reset(fy) { runs.delete(fy); for (const [k, v] of rows) if (v.fy === fy) rows.delete(k); },
@@ -243,8 +258,9 @@ describe("R-2944 Read from Zoho again — only the invoices an older rule left o
     expect(verdict("mix").reason).toMatch(/R-2717/);
     expect(verdict("void")).toMatchObject({ verdict: "skip", reason: NOT_A_SALE.void });
     expect(verdict("draft")).toMatchObject({ verdict: "skip", reason: NOT_A_SALE.draft });
-    /* Untouched: same stored facts object, still the old version. */
-    expect(rows.get("f1")!.factsVersion).toBeNull();
+    /* Kept rows: the same stored facts, now stamped as checked under this version (no call was made). */
+    expect(rows.get("f1")!.factsVersion).toBe(1);
+    expect(rows.get("f1")!.payload!.problems).toEqual([]);
     expect(rows.get("void")!.payload!.problems).toEqual([NOT_A_SALE.void]);
   });
 
@@ -283,7 +299,7 @@ describe("R-2944 Read from Zoho again — only the invoices an older rule left o
     await store.refresh(FY, { onlyAccount: null, nowIso: "" });
     await expect(read(store, z.f)).rejects.toThrow(/Zoho/);
     expect(z.detailIds).toHaveLength(1);
-    expect([...rows.values()].filter((r) => r.factsVersion === 1)).toHaveLength(1);
+    expect([...rows.values()].filter((r) => !r.payload)).toHaveLength(2);   // two still wait for their detail
     const rest = await read(store, z.f);
     expect(rest).toMatchObject({ listed: 8, detailed: 8, complete: true });
     expect([...z.detailIds].sort()).toEqual(["adj", "mix", "tds"]);
@@ -314,8 +330,10 @@ describe("R-2944 Read from Zoho again — only the invoices an older rule left o
 // ── the Supabase store ───────────────────────────────────────────────────────────────────────────
 
 interface Call { table: string; op: string; arg?: unknown; filters: Array<[string, string, unknown]> }
-function fakeDb(selectRows: Record<string, unknown>[] = []) {
+/** `payloadRows` = what the SECOND select (the older rows' payloads) answers; default the same rows. */
+function fakeDb(selectRows: Record<string, unknown>[] = [], payloadRows: Record<string, unknown>[] = selectRows) {
   const calls: Call[] = [];
+  let selects = 0;
   const db: FyImportDb = {
     from(table: string) {
       const c: Call = { table, op: "", filters: [] };
@@ -325,7 +343,7 @@ function fakeDb(selectRows: Record<string, unknown>[] = []) {
       for (const f of ["eq", "in", "lt", "is", "not", "order", "limit", "or"]) q[f] = chain(f);
       q.select = (...a: unknown[]) => { if (!c.op) c.op = "select"; c.filters.push(["select", String(a[0]), undefined]); return q; };
       for (const op of ["upsert", "update", "delete"]) q[op] = (arg?: unknown) => { c.op = op; c.arg = arg; return q; };
-      q.then = (res: (v: unknown) => unknown) => res({ data: c.op === "select" ? selectRows : [], error: null });
+      q.then = (res: (v: unknown) => unknown) => res({ data: c.op === "select" ? (selects++ === 0 ? selectRows : payloadRows) : [], error: null });
       return q;
     },
   };
@@ -333,6 +351,11 @@ function fakeDb(selectRows: Record<string, unknown>[] = []) {
 }
 
 describe("R-2944 supabaseScanStore.addListed — invoices", () => {
+  /* The rule as R-2944 set it (a later bump may change the constants; these tests are about this one). */
+  const was = { version: SCAN_FACTS_VERSION.invoices, only: SCAN_FACTS_LEFT_OUT_ONLY.invoices };
+  beforeEach(() => { SCAN_FACTS_VERSION.invoices = V; SCAN_FACTS_LEFT_OUT_ONLY.invoices = LEFT_OUT_ONLY; });
+  afterEach(() => { SCAN_FACTS_VERSION.invoices = was.version; SCAN_FACTS_LEFT_OUT_ONLY.invoices = was.only; });
+
   const known = (id: string, over: Record<string, unknown> = {}) => ({
     zoho_id: id, zoho_status: "paid", fy: FY, zoho_modified: T1, detailed_at: "2026-11-06T00:00:00Z", deposit_account_id: null,
     facts_version: null, payload: { problems: [] }, ...over,
@@ -351,15 +374,21 @@ describe("R-2944 supabaseScanStore.addListed — invoices", () => {
     await supabaseScanStore(db, "t1", "invoices").addListed(FY, [
       listed("old-fine"), listed("old-tds"), listed("old-void", "void"), listed("old-draft", "draft"), listed("new-mixed"), listed("new-fine"),
     ]);
-    const sel = calls[0];
-    expect(sel.table).toBe("zoho_fy_scan");
-    const cols = sel.filters.find(([k]) => k === "select")![1];
-    expect(cols).toContain(", payload");
-    expect(cols).not.toContain("->");                 // the data gateway refuses JSON paths in a select
-    expect(() => parseSelect(cols)).not.toThrow();
-    /* §17c: the admin client bypasses RLS — the read is this company's and this list's only. */
-    expect(sel.filters).toContainEqual(["eq", "tenant_id", "t1"]);
-    expect(sel.filters).toContainEqual(["eq", "kind", "invoices"]);
+    const sels = calls.filter((c) => c.op === "select");
+    expect(sels).toHaveLength(2);
+    const colsOf = (c: Call) => c.filters.find(([k]) => k === "select")![1];
+    /* 1st: the listed rows, no payload. 2nd: the payloads of the rows made by an OLDER version only. */
+    expect(colsOf(sels[0])).not.toContain("payload");
+    expect(colsOf(sels[1])).toBe("zoho_id, payload");
+    expect(colsOf(sels[1])).not.toContain("->");       // the data gateway refuses JSON paths in a select
+    expect(() => parseSelect(colsOf(sels[1]))).not.toThrow();
+    expect(sels[1].filters).toContainEqual(["in", "zoho_id", ["old-fine", "old-tds", "old-void", "old-draft"]]);
+    /* §17c: the admin client bypasses RLS — every read is this company's and this list's only. */
+    for (const sel of sels) {
+      expect(sel.table).toBe("zoho_fy_scan");
+      expect(sel.filters).toContainEqual(["eq", "tenant_id", "t1"]);
+      expect(sel.filters).toContainEqual(["eq", "kind", "invoices"]);
+    }
 
     const ups = calls.filter((c) => c.op === "upsert").map((c) => c.arg as Array<Record<string, unknown>>);
     const fresh = ups.find((g) => g.some((r) => r.payload === null)) ?? [];
@@ -367,8 +396,35 @@ describe("R-2944 supabaseScanStore.addListed — invoices", () => {
     expect(fresh.map((r) => r.zoho_id)).toEqual(["old-tds"]);
     expect(fresh[0]).toMatchObject({ tenant_id: "t1", kind: "invoices", payload: null, detailed_at: null });
     expect(kept.map((r) => r.zoho_id).sort()).toEqual(["new-fine", "new-mixed", "old-draft", "old-fine", "old-void"]);
+    /* Kept = checked under this version: stamped, so the next Read again reads no payload for it. */
+    expect(kept.every((r) => r.facts_version === 1)).toBe(true);
+    expect(fresh.every((r) => !("facts_version" in r))).toBe(true);   // a pending row keeps its old stamp until its detail is saved
     /* A read writes the scan only — never an invoice. */
     expect([...new Set(calls.map((c) => c.table))]).toEqual(["zoho_fy_scan"]);
+  });
+
+  it("a scan already at this version makes no payload query (every later Read again)", async () => {
+    const { db, calls } = fakeDb([known("a", { facts_version: 1 }), known("b", { facts_version: 1, payload: { problems: ["still left out"] } })]);
+    await supabaseScanStore(db, "t1", "invoices").addListed(FY, [listed("a"), listed("b")]);
+    expect(calls.filter((c) => c.op === "select")).toHaveLength(1);
+    const ups = calls.filter((c) => c.op === "upsert").flatMap((c) => c.arg as Array<Record<string, unknown>>);
+    expect(ups.filter((r) => r.payload === null)).toEqual([]);
+  });
+
+  it("an older row whose facts do not come back is read again — never stamped as checked unseen", async () => {
+    const { db, calls } = fakeDb([known("old-a"), known("old-b")], [{ zoho_id: "old-a", payload: { problems: [] } }]);
+    await supabaseScanStore(db, "t1", "invoices").addListed(FY, [listed("old-a"), listed("old-b")]);
+    const ups = calls.filter((c) => c.op === "upsert").flatMap((c) => c.arg as Array<Record<string, unknown>>);
+    expect(ups.filter((r) => r.payload === null).map((r) => r.zoho_id)).toEqual(["old-b"]);
+    expect(ups.filter((r) => r.facts_version === 1).map((r) => r.zoho_id)).toEqual(["old-a"]);
+  });
+
+  it("a kept row's stamp is never lowered (an older server after a newer one)", async () => {
+    const { db, calls } = fakeDb([known("ahead", { facts_version: 3 })]);
+    await supabaseScanStore(db, "t1", "invoices").addListed(FY, [listed("ahead")]);
+    const ups = calls.filter((c) => c.op === "upsert").flatMap((c) => c.arg as Array<Record<string, unknown>>);
+    expect(ups).toHaveLength(1);
+    expect(ups[0]).toMatchObject({ zoho_id: "ahead", facts_version: 3 });
   });
 
   it("saveDetail stamps the invoices' current version, so the row is not re-checked again", async () => {
@@ -378,9 +434,11 @@ describe("R-2944 supabaseScanStore.addListed — invoices", () => {
     expect(calls[0].arg).toMatchObject({ facts_version: 1 });
   });
 
-  it("a list with no left-out rule (bills) does not read payloads", async () => {
+  it("a list with no left-out rule (bills) never reads payloads", async () => {
     const { db, calls } = fakeDb([{ ...known("b1"), payload: undefined }]);
     await supabaseScanStore(db, "t1", "bills").addListed(FY, [listed("b1")]);
-    expect(calls[0].filters.find(([k]) => k === "select")![1]).not.toContain("payload");
+    const sels = calls.filter((c) => c.op === "select");
+    expect(sels).toHaveLength(1);
+    expect(sels[0].filters.find(([k]) => k === "select")![1]).not.toContain("payload");
   });
 });

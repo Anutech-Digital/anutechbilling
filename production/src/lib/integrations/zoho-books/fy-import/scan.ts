@@ -67,18 +67,22 @@ export const SCAN_FACTS_VERSION: Partial<Record<FyReadKind, number>> = { invoice
 export const factsVersionOf = (kind: FyReadKind): number => SCAN_FACTS_VERSION[kind] ?? 0;
 
 /**
- * R-2944: how much an older facts version re-reads. A kind NOT listed here re-reads EVERY row made by an
- * older version (one Zoho detail call per document — a 2,780-invoice year is three days of the ~900-call
- * day budget, R-2661). A kind listed with N re-reads a row made by version ≥ N only when its stored
- * facts say it was LEFT OUT (storedLeftOut); rows below N are still re-read in full.
+ * R-2944: the versions whose bump needs ONLY the left-out rows read again. By default a bump re-reads
+ * EVERY row made by an older version (one Zoho detail call per document — a 2,780-invoice year is three
+ * days of the ~900-call day budget, R-2661; the read stays incomplete, so no preview, until it is done).
+ * A version listed here says: "this change only frees or re-words documents the older rules LEFT OUT
+ * (storedLeftOut) — a document they took is stored the same today". A row is then kept without a call
+ * unless it was left out; a row that crosses ANY bump not listed here is still read again in full.
+ * So the safe default stays R-2653's: a new version that is not added here re-reads everything.
  *
- * invoices: 0 — R-2702 only turned left-out invoices (TDS on the invoice, an adjustment) into sales;
- * an invoice the older rules already took has the same facts today, so it is kept without a call.
- * A later bump whose change also alters FINE rows must raise this to the new version (and say on its
- * card what the re-read costs); one that only frees or re-words left-out rows leaves it as it is.
+ * invoices 1 — R-2702 turned left-out invoices (TDS on the invoice, a Zoho adjustment) into sales and
+ * changed nothing for an invoice the rules already took. Not covered by it, as before this card: facts
+ * a still OLDER normaliser stored for an invoice it took (read before R-2536's billing address or
+ * R-2650's foreign-currency figures) — those changes made their own decision then (R-2540's hint: card
+ * R-2945; R-2650: none needed), and such an invoice already in the app is not touched by any read.
  */
-export const SCAN_FACTS_LEFT_OUT_ONLY_FROM: Partial<Record<FyReadKind, number>> = { invoices: 0 };
-export const leftOutOnlyFromOf = (kind: FyReadKind): number | null => SCAN_FACTS_LEFT_OUT_ONLY_FROM[kind] ?? null;
+export const SCAN_FACTS_LEFT_OUT_ONLY: Partial<Record<FyReadKind, readonly number[]>> = { invoices: [1] };
+export const leftOutOnlyVersionsOf = (kind: FyReadKind): readonly number[] => SCAN_FACTS_LEFT_OUT_ONLY[kind] ?? [];
 
 /**
  * R-2944: Zoho statuses whose documents are left out whatever the normaliser's rules are (sales:
@@ -105,7 +109,7 @@ export interface KnownRow {
   /** R-2694: its stored facts lack what today's import needs (receiptFactsIncomplete) — read it again. */
   factsIncomplete?: boolean;
   /** R-2944: its stored facts say it was left out (storedLeftOut) — decides the re-read of an older
-   *  facts version for a kind in SCAN_FACTS_LEFT_OUT_ONLY_FROM. */
+   *  facts version when every bump since is in SCAN_FACTS_LEFT_OUT_ONLY. */
   leftOut?: boolean;
 }
 
@@ -126,7 +130,7 @@ export type ListedVerdict = "fresh" | "kept" | "seen" | "skip";
 /**
  * R-2653 — what a "Read again" does with one listed row (pure; the stores use it):
  *   "fresh" → (re)read its detail: new, no detail yet, status or FY changed, made by an older facts
- *             version (R-2944: with `leftOutOnlyFrom` N, a row of version ≥ N only when it was left
+ *             version (R-2944: when every bump since is in `leftOutOnly`, only a row that was left
  *             out), or Zoho's last_modified_time differs from the one stored (a row stored before
  *             R-2653 has none: then "changed after our detail read" decides — no one-time full re-read);
  *   "kept"  → nothing changed: keep its facts, note it was listed;
@@ -138,11 +142,11 @@ export type ListedVerdict = "fresh" | "kept" | "seen" | "skip";
  */
 export function classifyListed(
   prev: KnownRow | null | undefined, row: ListedRow, fy: string, onlyAccount?: string | null, factsVersion = 0,
-  leftOutOnlyFrom: number | null = null,
+  leftOutOnly: readonly number[] = [],
 ): ListedVerdict {
   const rowOutside = !!onlyAccount && (row.accountId ?? "") !== onlyAccount;
   if (!prev) return rowOutside ? "skip" : "fresh";
-  const changed = changedSince(prev, row, fy, factsVersion, leftOutOnlyFrom);
+  const changed = changedSince(prev, row, fy, factsVersion, leftOutOnly);
   if (!rowOutside) return changed ? "fresh" : "kept";
   if (prev.accountId === onlyAccount) return "fresh";                 /* moved out of the chosen account */
   if (prev.fy !== fy) return "fresh";                                  /* moved into this FY — never left under the old one */
@@ -150,11 +154,18 @@ export function classifyListed(
   return "seen";
 }
 
-function changedSince(prev: KnownRow, row: ListedRow, fy: string, factsVersion: number, leftOutOnlyFrom: number | null): boolean {
+/** R-2944: must a row made by version `madeBy` be read again for the bumps up to `factsVersion`? */
+export function olderFactsNeedReread(madeBy: number, factsVersion: number, leftOutOnly: readonly number[], leftOut: boolean): boolean {
+  if (!(madeBy < factsVersion)) return false;
+  if (leftOut) return true;
+  /* Kept only when EVERY bump it crosses asks for the left-out rows alone. */
+  for (let v = Math.floor(madeBy) + 1; v <= factsVersion; v++) if (!leftOutOnly.includes(v)) return true;
+  return false;
+}
+
+function changedSince(prev: KnownRow, row: ListedRow, fy: string, factsVersion: number, leftOutOnly: readonly number[]): boolean {
   if (!prev.hasDetail || prev.status !== row.status || prev.fy !== fy) return true;
-  const madeBy = prev.factsVersion ?? 0;
-  /* R-2944: an older version — every row, or (from `leftOutOnlyFrom` up) only the ones left out. */
-  if (madeBy < factsVersion && (leftOutOnlyFrom === null || madeBy < leftOutOnlyFrom || prev.leftOut === true)) return true;
+  if (olderFactsNeedReread(prev.factsVersion ?? 0, factsVersion, leftOutOnly, prev.leftOut === true)) return true;
   if (prev.factsIncomplete) return true;   /* R-2694 */
   const mod = row.modified ?? "";
   if (!mod) return false;

@@ -11,13 +11,17 @@
  * This test pins each normaliser file to the facts version it was written for. It goes red when a
  * normaliser file changes. Then decide, in the same commit:
  *   - the change alters what is STORED for some document (facts, problems, notes, amounts) → raise that
- *     list's SCAN_FACTS_VERSION, and choose in SCAN_FACTS_LEFT_OUT_ONLY_FROM whether only the left-out
- *     rows need the re-read (cheap: tens of Zoho calls) or every row does (one detail call per document
- *     — a 2,780-invoice year is three days of Zoho's ~900-call day budget; say so on the card);
+ *     list's SCAN_FACTS_VERSION. By default every older row is then read again (one detail call per
+ *     document — a 2,780-invoice year is three days of Zoho's ~900-call day budget; say so on the
+ *     card); add the new version to SCAN_FACTS_LEFT_OUT_ONLY only when the change frees or re-words
+ *     LEFT-OUT documents and stores the same for every document the older rules took (tens of calls);
  *   - it does not (a comment, a rename, a helper only the plan uses) → keep the version;
  * and put the file's new hash + the version below. Never update the hash without that decision.
- * The hash is of the file's text with Windows line ends normalised. A rule that lives in a helper file
- * the normaliser imports is not seen here — say so in that file when it decides stored facts.
+ * The hash is of the file's text with Windows line ends normalised. NOT seen here: a rule that lives in
+ * a file the normaliser only imports — fy-fetch.ts `toDetail` (what a Zoho document is read as),
+ * `parsePlaceOfSupply`, `mapGstTreatment`; a change there that alters stored facts needs the same
+ * decision by hand. `tdsSectionOf` (purchase-import/normalise.ts) also names the SALES facts' tdsSection:
+ * when that file's pin goes red, decide for invoices too.
  */
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
