@@ -161,6 +161,8 @@ describe("ci.yml — R-2349 parallel gate jobs", () => {
       SECRET_SCAN_DENY_TERMS: "${{ secrets.SECRET_SCAN_DENY_TERMS }}",
     });
     expect(step("typecheck", "npm run typecheck").env).toEqual({ NODE_OPTIONS: "--max-old-space-size=8192" });
+    // R-2943 (20 Nov 2026): 20 -> 30 — the job ran 11-19 min and was cancelled at 20 on 3553c200c.
+    expect(wf.jobs.typecheck["timeout-minutes"]).toBe(30);
     const env = step("build", "npm run build").env ?? {};
     expect(Object.keys(env).sort()).toEqual(["CATALOG_ORIGIN", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_URL", "NODE_OPTIONS", "SKIP_BUILD_TYPECHECK"]);
     expect(env.NEXT_PUBLIC_SUPABASE_URL).toBe("https://api.anutech.in");
