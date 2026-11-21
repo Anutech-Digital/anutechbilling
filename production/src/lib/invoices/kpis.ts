@@ -16,11 +16,12 @@
  *   midnight, so on a machine west of UTC a payment on the 1st fell into last month.
  *   Now a string compare against the IST month, the same way every other screen does it.
  */
-import { istMonth, istToday } from "@/lib/dates/ist";
+import { istMonth, istToday, toIstDate } from "@/lib/dates/ist";
 import { invoiceIsOverdue, type OverdueInvoice } from "./overdue";
 import { invoiceMoneyIn, invoicePaymentState } from "./payment-state";
 import type { NoteTotals } from "./note-totals";
 import { invoiceReceivable } from "@/lib/payments/receivables";
+import { invoiceIsSale } from "@/lib/accounting/sale-documents";
 
 /** R-1709: credit / debit note totals per invoice id (useInvoiceNoteTotals). Absent = none. */
 export type InvoiceNotes = ReadonlyMap<string, NoteTotals>;
@@ -37,6 +38,25 @@ export interface KpiInvoice extends OverdueInvoice {
   paid_date?: string | null;
   /** invoices.adjusted_advances — advances adjusted at issue (money in, R-1709). */
   adjusted_advances?: unknown;
+  /** R-2969: the invoice's own date and kind — "issued this month" reads them. */
+  invoice_date?: string | null;
+  /** R-1739: absent = our sale; "opening_invoice" = imported from Zoho, never "issued" here. */
+  document_kind?: string | null;
+}
+
+/** Statuses that are not a bill anybody owes (never "issued"). */
+const NOT_ISSUED = new Set(["draft", "void", "cancelled"]);
+
+/**
+ * R-2969: a real invoice of our own (not draft / void / cancelled, not an imported Zoho opening
+ * invoice) dated in this IST month. The dashboard's Company → Money → "Invoiced" counts and sums
+ * these (lib/company/summary.ts#invoiceMoney); /invoices?focus=issued-month lists them.
+ * A bare `YYYY-MM-DD` is a calendar date; a timestamp is read in IST.
+ */
+export function invoiceIssuedInMonth(inv: KpiInvoice, now: Date = new Date()): boolean {
+  if (NOT_ISSUED.has(inv.status) || !invoiceIsSale(inv.document_kind) || !inv.invoice_date) return false;
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(inv.invoice_date) ? inv.invoice_date : toIstDate(inv.invoice_date);
+  return day.slice(0, 7) === istMonth(now);
 }
 
 /** Statuses that are a real, issued claim on the customer. Void and draft are not. */
@@ -57,16 +77,19 @@ export function invoiceBalance(inv: KpiInvoice): number {
  * the tile added up. "" = no focus. The tiles below are computed WITH these predicates, so
  * the number and the list cannot drift apart.
  */
-export const INVOICE_FOCI = ["", "unpaid", "paid-month"] as const;
+export const INVOICE_FOCI = ["", "unpaid", "paid-month", "issued-month"] as const;
 export type InvoiceFocus = (typeof INVOICE_FOCI)[number];
 export const INVOICE_FOCUS_LABEL: Record<Exclude<InvoiceFocus, "">, string> = {
   "unpaid": "Outstanding — still owed (pending, partial and overdue)",
   "paid-month": "Paid this month — fully paid in this IST month (credit-note settled ones are Credited, not paid)",
+  /* R-2969: the dashboard's Company → Money → Invoiced. */
+  "issued-month": "This month · issued (drafts, void and imported invoices left out)",
 };
 
 export function invoiceInFocus(inv: KpiInvoice, focus: InvoiceFocus, now: Date = new Date(), notes?: InvoiceNotes): boolean {
   if (focus === "") return true;
   if (focus === "unpaid") return invoiceBalance(inv) > 0;
+  if (focus === "issued-month") return invoiceIssuedInMonth(inv, now);
   /* R-1709: paid by MONEY — an invoice a credit note closed is "credited", not paid. */
   return invoicePaymentState(withNotes(inv, notes)) === "paid" && !!inv.paid_date && inv.paid_date.slice(0, 7) === istMonth(now);
 }

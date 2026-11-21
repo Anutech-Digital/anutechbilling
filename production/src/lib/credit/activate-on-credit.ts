@@ -16,6 +16,13 @@
  *     invoices + this invoice above the limit → only the OWNER may approve; anyone else is
  *     told plainly why not.
  *
+ * R-2950 (owner, 20 Nov 2026): the same save can leave the GST invoice out — `issueInvoice:
+ * false` sends `p_issue_invoice: false` to the 5-argument function (migration
+ * 20261120084500_r2950_activate_without_invoice): subscriptions, tasks and credit stamps as above,
+ * no invoice, the quote stays "awaiting" and the due sits on the first subscription with its
+ * pay-by date. The dialog does not offer it yet (R-2952), so every call today sends `true` and
+ * still raises the invoice.
+ *
  * Everything here that decides something is a pure function (activate-on-credit.test.ts). The
  * database repeats every check — the screen only explains them before the click.
  */
@@ -26,6 +33,8 @@ import { isSplitBilled } from "@/lib/payments/record-payment-invoice";
 export const CREDIT_DEFAULT_DAYS = 15;
 export const CREDIT_MIN_DAYS = 1;
 export const CREDIT_MAX_DAYS = 180;
+/** R-2950: without a GST invoice the credit is at most this many days (the database refuses more). */
+export const CREDIT_MAX_DAYS_NO_INVOICE = 30;
 /** ₹ — the limit when the customer's own is left empty. */
 export const CREDIT_DEFAULT_LIMIT = 50_000;
 /** Days before the due date that the "send payment link" task falls. */
@@ -49,6 +58,11 @@ export function defaultCreditDays(customerTermsDays: number | null | undefined):
 
 export function validCreditDays(days: number): boolean {
   return Number.isInteger(days) && days >= CREDIT_MIN_DAYS && days <= CREDIT_MAX_DAYS;
+}
+
+/** R-2950: the most credit days for this choice — 180 with the GST invoice, 30 without it. */
+export function maxCreditDays(issueInvoice: boolean): number {
+  return issueInvoice ? CREDIT_MAX_DAYS : CREDIT_MAX_DAYS_NO_INVOICE;
 }
 
 /** The customer's limit, or ₹50,000 when it is left empty. */
@@ -380,23 +394,42 @@ export interface ActivateOnCreditResult {
   overLimit: boolean;
 }
 
-/** One RPC: invoice + subscriptions + tasks in one transaction, or nothing at all. */
+/**
+ * One RPC: invoice + subscriptions + tasks in one transaction, or nothing at all.
+ * R-2950: `issueInvoice: false` = subscriptions + tasks only, no GST invoice (`invoiceId` comes
+ * back null). Left out or true = the invoice is raised, as before.
+ */
 export async function activateQuoteOnCredit(
   supabase: SupabaseClient,
-  input: { quoteId: string; days: number; approveOverLimit: boolean; annualOverrideReason?: string | null },
+  input: {
+    quoteId: string;
+    days: number;
+    approveOverLimit: boolean;
+    annualOverrideReason?: string | null;
+    /** R-2950: false = no GST invoice now. Default true. */
+    issueInvoice?: boolean;
+  },
 ): Promise<ActivateOnCreditResult> {
+  const issueInvoice = input.issueInvoice !== false;
   if (!validCreditDays(input.days)) {
     throw new Error(`Credit days must be ${CREDIT_MIN_DAYS}–${CREDIT_MAX_DAYS}.`);
   }
-  /* R-368: an annual line needs the owner's written reason (migration 20261007123000). Sent
-     only when there is one, so a monthly quote still activates on a database that has
-     R-346's function but not this one yet. */
+  if (input.days > maxCreditDays(issueInvoice)) {
+    throw new Error(`Without a GST invoice, credit days can be ${CREDIT_MIN_DAYS}–${CREDIT_MAX_DAYS_NO_INVOICE}. For longer credit, issue the GST invoice now.`);
+  }
+  /* R-368: an annual line needs the owner's written reason (migration 20261007123000).
+     R-2950: the call ALWAYS says whether the GST invoice is raised. All five arguments are sent,
+     because the function that takes p_issue_invoice has no defaults — the 4-argument function of
+     the same name is the old with-invoice call, and PostgREST picks between the two by the
+     argument names. A database without the new function answers "function not found" (→ needs
+     a database update), never a quiet invoice nobody asked for. */
   const reason = input.annualOverrideReason?.trim();
   const { data, error } = await supabase.rpc("activate_quote_on_credit", {
     p_quote_id: input.quoteId,
     p_credit_days: input.days,
     p_approve_over_limit: input.approveOverLimit,
-    ...(reason ? { p_annual_override_reason: reason } : {}),
+    p_annual_override_reason: reason ? reason : null,
+    p_issue_invoice: issueInvoice,
   });
   if (error) {
     if (isMissingDbObject(error)) throw new NeedsDatabaseUpdateError();

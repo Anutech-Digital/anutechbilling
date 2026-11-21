@@ -6,6 +6,7 @@ import {
   owedOnInvoices, creditExposure, overLimitDecision,
   planCredit, creditTaskInstant, quoteCreditState, creditSummary,
   isMissingDbObject, activateQuoteOnCredit, NeedsDatabaseUpdateError,
+  maxCreditDays, CREDIT_MAX_DAYS, CREDIT_MAX_DAYS_NO_INVOICE,
   type CreditQuoteFacts, type OpenInvoice,
 } from "./activate-on-credit";
 
@@ -199,7 +200,10 @@ describe("database not updated yet", () => {
       error: null,
     }));
     const r = await activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 15, approveOverLimit: true });
-    expect(rpc).toHaveBeenCalledWith("activate_quote_on_credit", { p_quote_id: "Q1", p_credit_days: 15, p_approve_over_limit: true });
+    // R-2950: all five arguments, always — the flag says "with the GST invoice" unless the caller leaves it out.
+    expect(rpc).toHaveBeenCalledWith("activate_quote_on_credit", {
+      p_quote_id: "Q1", p_credit_days: 15, p_approve_over_limit: true, p_annual_override_reason: null, p_issue_invoice: true,
+    });
     expect(r).toEqual({ alreadyActive: false, invoiceId: "INV-1", dueDate: "2026-10-22", amountDue: 12390, subscriptionsCreated: 2, tasksCreated: 3, overLimit: false });
   });
 
@@ -207,6 +211,71 @@ describe("database not updated yet", () => {
     const rpc = vi.fn();
     await expect(activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 0, approveOverLimit: false })).rejects.toThrow();
     expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+// R-2950: the same RPC can leave the GST invoice out. Nothing changes unless the caller says so.
+describe("activateQuoteOnCredit — issueInvoice (R-2950)", () => {
+  const ok = (data: Record<string, unknown>) => vi.fn(async () => ({ data, error: null }));
+  const WITH_INVOICE = { already_active: false, invoice_id: "INV-1", due_date: "2026-10-22", amount_due: 590, subscriptions_created: 1, tasks_created: 3, over_limit: false };
+  const NO_INVOICE = { ...WITH_INVOICE, invoice_id: null };
+
+  it("left out or true → p_issue_invoice: true is sent (the invoice is raised, as before)", async () => {
+    for (const issueInvoice of [undefined, true]) {
+      const rpc = ok(WITH_INVOICE);
+      const r = await activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 15, approveOverLimit: false, issueInvoice });
+      expect(rpc).toHaveBeenCalledWith("activate_quote_on_credit", {
+        p_quote_id: "Q1", p_credit_days: 15, p_approve_over_limit: false, p_annual_override_reason: null, p_issue_invoice: true,
+      });
+      expect(r.invoiceId).toBe("INV-1");
+    }
+  });
+
+  it("false → p_issue_invoice: false is sent, and the result has no invoice", async () => {
+    const rpc = ok(NO_INVOICE);
+    const r = await activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 15, approveOverLimit: false, annualOverrideReason: " Known customer ", issueInvoice: false });
+    expect(rpc).toHaveBeenCalledWith("activate_quote_on_credit", {
+      p_quote_id: "Q1", p_credit_days: 15, p_approve_over_limit: false, p_annual_override_reason: "Known customer", p_issue_invoice: false,
+    });
+    expect(r).toEqual({ alreadyActive: false, invoiceId: null, dueDate: "2026-10-22", amountDue: 590, subscriptionsCreated: 1, tasksCreated: 3, overLimit: false });
+  });
+
+  it("without the invoice at most 30 credit days — refused before the database is called", async () => {
+    expect(maxCreditDays(true)).toBe(CREDIT_MAX_DAYS);
+    expect(maxCreditDays(false)).toBe(CREDIT_MAX_DAYS_NO_INVOICE);
+    expect(CREDIT_MAX_DAYS_NO_INVOICE).toBe(30);
+    const rpc = ok(NO_INVOICE);
+    await expect(activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 31, approveOverLimit: false, issueInvoice: false }))
+      .rejects.toThrow("Without a GST invoice, credit days can be 1–30. For longer credit, issue the GST invoice now.");
+    expect(rpc).not.toHaveBeenCalled();
+    await activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 30, approveOverLimit: false, issueInvoice: false });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    // With the invoice 31–180 days stay allowed.
+    await activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 180, approveOverLimit: false, issueInvoice: true });
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it("every call names all five arguments — a request that leaves one out matches neither function", async () => {
+    const rpc = ok(WITH_INVOICE);
+    for (const input of [
+      { quoteId: "Q1", days: 15, approveOverLimit: false },
+      { quoteId: "Q1", days: 15, approveOverLimit: true, annualOverrideReason: "   " },
+      { quoteId: "Q1", days: 15, approveOverLimit: false, annualOverrideReason: "Known customer", issueInvoice: false },
+    ]) {
+      await activateQuoteOnCredit({ rpc } as never, input);
+      const args = (rpc.mock.calls.at(-1) as unknown as [string, Record<string, unknown>])[1];
+      expect(Object.keys(args).sort()).toEqual(["p_annual_override_reason", "p_approve_over_limit", "p_credit_days", "p_issue_invoice", "p_quote_id"]);
+      expect(typeof args.p_issue_invoice).toBe("boolean");
+    }
+  });
+
+  it("a database without the new function → 'needs a database update', never a silent invoice", async () => {
+    const rpc = vi.fn(async () => ({
+      data: null,
+      error: { code: "PGRST202", message: "Could not find the function public.activate_quote_on_credit(p_approve_over_limit, p_credit_days, p_issue_invoice, p_quote_id) in the schema cache" },
+    }));
+    await expect(activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 15, approveOverLimit: false, issueInvoice: false }))
+      .rejects.toBeInstanceOf(NeedsDatabaseUpdateError);
   });
 });
 

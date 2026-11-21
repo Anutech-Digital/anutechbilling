@@ -1,7 +1,7 @@
 /**
  * R-2932 — the tasks Reports → Team tasks counts: every open task, plus the done ones ticked
  * or due inside the last 8 weeks. Read-only, five columns, all pages, one tenant (RLS + an
- * explicit tenant filter). Under the ["tasks", …] cache key, so a task save refreshes it.
+ * explicit tenant filter). R-2957: a goal row is not counted — its sub-tasks are. Under the ["tasks", …] cache key, so a task save refreshes it.
  */
 "use client";
 
@@ -16,7 +16,7 @@ type Page = PromiseLike<PageResponse<ReportTask>>;
 
 export async function fetchTeamTasks(supabase: TasksDb, tenantId: string, now: Date = new Date()): Promise<ReportTask[]> {
   const fromISO = reportRangeStartUtc(now);
-  const base = () => supabase.from("tasks").select(REPORT_TASK_SELECT).eq("tenant_id", tenantId);
+  const base = () => supabase.from("tasks").select(REPORT_TASK_SELECT).eq("tenant_id", tenantId).eq("is_goal", false);
   const [open, doneRecently, dueRecently] = await Promise.all([
     fetchAllRows<ReportTask>((from, to) => base()
       .in("status", [...TASK_OPEN_STATUSES])

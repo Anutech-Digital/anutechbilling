@@ -20,6 +20,10 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { FocusBanner } from "@/components/shared/focus-banner";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { SUPPORT_FOCUS } from "@/lib/navigation/drilldown";
+import { ticketStillOpen } from "@/lib/company/summary";
 import { Icon } from "@/components/ui/icon";
 import { formatDate } from "@/lib/utils";
 import { supportTier, slaState, type SupportTierId } from "@/lib/support/tiers";
@@ -123,6 +127,11 @@ function extractAttachments(body: string | null): Array<{ name: string; url?: st
 export default function SupportPage() {
   const [scope, setScope] = React.useState<ViewScope>("tenant_feedback");
   const [statusFilter, setStatusFilter] = React.useState<"all" | SupportTicketStatus>("all");
+  /* R-2969: ?focus=still-open — the dashboard's "Open tickets": customer tickets that still need
+     somebody (open + in progress + awaiting customer; summary.ts#ticketStillOpen), in one list. */
+  const [focus, setFocus] = useUrlChoice<(typeof SUPPORT_FOCUS)[number]>("focus", SUPPORT_FOCUS, "");
+  const stillOpen = focus === "still-open" && scope === "tenant_feedback";
+  React.useEffect(() => { if (focus && scope !== "tenant_feedback") setFocus(""); }, [focus, scope, setFocus]);
   const [selected, setSelected] = React.useState<SupportTicketRow | null>(null);
 
   /* ── Request a live 1-on-1 call ────────────────────────────────────────────
@@ -168,8 +177,12 @@ export default function SupportPage() {
   const [previewImage, setPreviewImage] = React.useState<{ name: string; url: string } | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
 
-  const { data, isLoading, refetch } = useTickets(scope, statusFilter);
-  const tickets = data?.tickets ?? [];
+  const { data, isLoading, refetch } = useTickets(scope, stillOpen ? "all" : statusFilter);
+  const allTickets = data?.tickets;
+  const tickets = React.useMemo(
+    () => (stillOpen ? (allTickets ?? []).filter((t) => ticketStillOpen(t.status)) : allTickets ?? []),
+    [allTickets, stillOpen],
+  );
   const counts = data?.counts ?? { all: 0, open: 0, in_progress: 0, awaiting_customer: 0, resolved: 0, closed: 0 };
   const scopeCounts = data?.scopeCounts ?? { tenant_feedback: 0, team_testing: 0 };
 
@@ -268,18 +281,22 @@ export default function SupportPage() {
         </div>
       </div>
 
+      {stillOpen && (
+        <FocusBanner label="Still open — open, in progress and awaiting customer" count={visibleTickets.length} onClear={() => setFocus("")} />
+      )}
+
       {/* Sub-Status Pills */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
         <div className="flex flex-wrap gap-1.5">
           {STATUSES.map((s) => {
-            const active = statusFilter === s;
+            const active = !stillOpen && statusFilter === s;
             const count  = counts[s] ?? 0;
             const label = s === "all" ? "All Tickets" : STATUS_LABEL[s];
             return (
               <button
                 key={s}
                 type="button"
-                onClick={() => setStatusFilter(s)}
+                onClick={() => { setFocus(""); setStatusFilter(s); }}
                 className={`text-xs px-3 py-1.5 rounded-full border transition-all inline-flex items-center gap-2 ${
                   active
                     ? scope === "team_testing"

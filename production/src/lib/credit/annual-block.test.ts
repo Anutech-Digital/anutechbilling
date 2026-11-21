@@ -44,15 +44,15 @@ describe("annual plans are blocked from activate-on-credit (R-368)", () => {
 });
 
 describe("the RPC call carries the override reason", () => {
-  it("sends p_annual_override_reason only when there is one (a monthly quote still works before the migration)", async () => {
+  it("sends the reason when there is one, else null (R-2950: all five arguments are always named)", async () => {
     const rpc = vi.fn(async () => ({ data: { already_active: false }, error: null }));
     await activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 15, approveOverLimit: false });
     expect(rpc).toHaveBeenLastCalledWith("activate_quote_on_credit", {
-      p_quote_id: "Q1", p_credit_days: 15, p_approve_over_limit: false,
+      p_quote_id: "Q1", p_credit_days: 15, p_approve_over_limit: false, p_annual_override_reason: null, p_issue_invoice: true,
     });
     await activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 15, approveOverLimit: false, annualOverrideReason: "Known customer" });
     expect(rpc).toHaveBeenLastCalledWith("activate_quote_on_credit", {
-      p_quote_id: "Q1", p_credit_days: 15, p_approve_over_limit: false, p_annual_override_reason: "Known customer",
+      p_quote_id: "Q1", p_credit_days: 15, p_approve_over_limit: false, p_annual_override_reason: "Known customer", p_issue_invoice: true,
     });
   });
 });

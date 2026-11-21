@@ -24,7 +24,8 @@ import { newestFirst } from "@/lib/sort/newest-first";
 import { subscriptionFacts } from "@/lib/subscriptions/facts";
 import { sortSubscriptions, defaultDirFor, type SubSort, type SubSortKey } from "@/lib/subscriptions/sort";
 import { assessLeakage, leakageTotals } from "@/lib/vendor/leakage";
-import { useActiveTrials } from "@/lib/queries/trials";
+import { useActiveTrials, useTrials } from "@/lib/queries/trials";
+import { trialStartedInMonth } from "@/lib/company/summary";
 import ExtendSubscriptionDialog from "@/components/features/subscriptions/extend-subscription-dialog";
 import AddSeatsDialog            from "@/components/features/subscriptions/add-seats-dialog";
 import UpgradeSupportDialog      from "@/components/features/subscriptions/upgrade-support-dialog";
@@ -356,6 +357,15 @@ export default function SubscriptionsPage() {
   const [price, setPrice] = useUrlChoice<PriceFilter>("price", PRICE_FILTERS, "");
   const tabOn = (t: string) => { setFocus(""); setTab(t); };
   const focusOn = (f: SubFocus) => { setTab("all"); setFocus(f); };
+  /* R-2969: "Trials started" on the dashboard opens ?focus=trials-month — every trial started this
+     IST month (running, converted or ended; summary.ts#trialStartedInMonth), on the Trials tab. */
+  const monthTrialsOn = focus === "trials-month";
+  React.useEffect(() => { if (monthTrialsOn && tab !== "trials") setTab("trials"); }, [monthTrialsOn, tab, setTab]);
+  const { data: everyTrial } = useTrials({ enabled: monthTrialsOn });
+  const monthTrials = React.useMemo(
+    () => (everyTrial ?? []).filter((t) => trialStartedInMonth(t)),
+    [everyTrial],
+  );
   const [vendor, setVendor] = React.useState("all");
   /* R-1696: billing cycle, kept in ?cycle= like ?tab= — one rule with the row label
      (lib/subscriptions/billing-cycle.ts). */
@@ -836,7 +846,7 @@ export default function SubscriptionsPage() {
   React.useEffect(() => { setVisible(60); }, [tab, vendor, cycle, search]);
 
   // Trial-specific filter (for the Trials tab)
-  const filteredTrials = (trials ?? []).filter((t) => {
+  const filteredTrials = (monthTrialsOn ? monthTrials : trials ?? []).filter((t) => {
     if (vendor !== "all") {
       // Derive vendor from plan label (trials don't have explicit vendor column)
       const pl = (t.plan ?? "").toLowerCase();
@@ -1136,7 +1146,13 @@ export default function SubscriptionsPage() {
       {!isLoading && subs && subs.length > 0 && (
         <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
           {focus && (
-            <FocusBanner label={SUB_FOCUS_LABEL[focus]} count={filtered.length} onClear={() => setFocus("")} />
+            <FocusBanner
+              label={SUB_FOCUS_LABEL[focus]}
+              count={monthTrialsOn ? filteredTrials.length : filtered.length}
+              /* R-2969: Active = the dashboard's "Monthly revenue (MRR)" — these rows' MRR added up. */
+              total={focus === "active" ? rupee(totalMrr(filtered)) : undefined}
+              onClear={() => setFocus("")}
+            />
           )}
           {price === "missing" && (
             <FocusBanner
@@ -1893,7 +1909,7 @@ export default function SubscriptionsPage() {
         <div className="mt-6">
           <EmptyState
             icon="clock"
-            title="No active trials"
+            title={monthTrialsOn ? "No trials started this month" : "No active trials"}
             body="Trials start at /buy/workspace or via the Start Trial button on the Deal Pipeline page."
             compact
           />

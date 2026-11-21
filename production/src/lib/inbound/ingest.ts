@@ -504,6 +504,7 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
         .eq("tenant_id", tenantId)
         .eq("lead_id", leadId)
         .eq("status", "pending")
+        .eq("is_goal", false) // R-2957: the follow-up is a piece of work, never a goal row
         .order("due_at", { ascending: true })
         .limit(1)
         .maybeSingle();

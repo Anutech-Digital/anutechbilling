@@ -8,7 +8,9 @@
  */
 import { Button } from "@/components/ui/button";
 
-export function FocusBanner({ label, count, onClear }: { label: string; count: number; onClear: () => void }) {
+/** R-2969: `total` — the money the narrowed rows add up to, already formatted (₹), shown after
+ *  the count so the list can be checked against the number that opened it. */
+export function FocusBanner({ label, count, total, onClear }: { label: string; count: number; total?: string; onClear: () => void }) {
   return (
     <div
       role="status"
@@ -17,6 +19,7 @@ export function FocusBanner({ label, count, onClear }: { label: string; count: n
       <span className="text-ink">
         Showing: <strong className="font-semibold">{label}</strong>
         <span className="text-ink-3"> · {count}</span>
+        {total && <span className="text-ink-3"> · <span className="tabular-nums text-ink">{total}</span></span>}
       </span>
       <Button size="sm" variant="ghost" onClick={onClear}>Clear</Button>
     </div>

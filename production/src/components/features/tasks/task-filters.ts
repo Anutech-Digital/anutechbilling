@@ -10,7 +10,7 @@
  *     you get by picking that option with the other filters (and the search) kept. Finished
  *     tasks are counted only where Done is the status in question: the "Done" option itself,
  *     and Priority / Assignee while Status = Done is picked. Cancelled tasks are never listed,
- *     so never counted.
+ *     so never counted; a goal row (R-2957) neither — its sub-tasks are.
  *   • Who is offered under Assignee — `taskAssigneeOptions`.
  */
 import { TASK_PRIORITY_FILTERS, TASK_STATUS_FILTERS } from "@/lib/navigation/drilldown";
@@ -33,7 +33,7 @@ export function hasTaskFilters(f: TaskFilters): boolean {
   return f.status !== "all" || f.priority !== "all" || f.assignee !== "all";
 }
 
-type Filterable = { status: string; progress?: string | null; priority?: string | null; owner_id: string | null };
+type Filterable = { status: string; progress?: string | null; priority?: string | null; owner_id: string | null; is_goal?: boolean | null };
 
 const statusOk = (t: Filterable, s: TaskStatusFilter) => s === "all" || rowStatusOf(t) === s;
 const priorityOk = (t: Filterable, p: TaskPriorityFilter) => p === "all" || priorityOf(t) === p;
@@ -66,7 +66,7 @@ export function taskFilterCounts(
   const assignee = { all: 0, mine: 0, byOwner: new Map<string, number>() };
 
   for (const t of tasks) {
-    if (t.status === "cancelled") continue;
+    if (t.status === "cancelled" || t.is_goal) continue;
     const row = rowStatusOf(t);
     const open = row !== "done";
     /* "All statuses" in a number means the open ones; a picked status means exactly that status. */
@@ -123,7 +123,7 @@ export function taskAssigneeOptions(
   const hasTask = new Set<string>();
   const hasOpenTask = new Set<string>();
   for (const t of tasks) {
-    if (!t.owner_id || t.status === "cancelled") continue;
+    if (!t.owner_id || t.status === "cancelled" || t.is_goal) continue;
     hasTask.add(t.owner_id);
     if (rowStatusOf(t) !== "done") hasOpenTask.add(t.owner_id);
   }

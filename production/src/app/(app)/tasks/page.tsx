@@ -188,7 +188,7 @@ export default function TasksPage() {
     enabled: !!me?.tenantId && (assignee === "all" || !!doneOwner),
     queryFn: async (): Promise<number> => {
       let q = createClient().from("tasks").select("id", { count: "exact", head: true })
-        .eq("tenant_id", me!.tenantId).eq("status", "done")
+        .eq("tenant_id", me!.tenantId).eq("status", "done").eq("is_goal", false)
         .gte("completed_at", istDayStartUtc(week.start).toISOString())
         .lt("completed_at", istDayStartUtc(addDaysISO(week.end, 1)).toISOString());
       if (doneOwner) q = q.eq("owner_id", doneOwner);

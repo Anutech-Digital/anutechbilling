@@ -7,6 +7,7 @@
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { PAYMENT_FOCI, paymentInFocus, projectReceivedInMonth, type PaymentFocus } from "@/lib/payments/focus";
+import { cashReceived } from "@/lib/payments/cash-received";
 import { quoteInFocus } from "@/lib/quotes/focus";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { FocusBanner } from "@/components/shared/focus-banner";
@@ -655,8 +656,11 @@ function PaymentsPageInner() {
             <FocusBanner
               label={mtdProject > 0
                 ? `Received this month — sales receipts (+ ${rupee(mtdProject)} project receipts on Projects)`
-                : "Received this month"}
+                : "This month · received"}
               count={filtered.length}
+              /* R-2969: what these rows brought in (cashReceived, as the tile) + the project part —
+                 the dashboard's Company → Money → "Collected". */
+              total={rupee(filtered.reduce((sum, p) => sum + cashReceived(p), 0) + mtdProject)}
               onClear={() => setFocus("")}
             />
           )}

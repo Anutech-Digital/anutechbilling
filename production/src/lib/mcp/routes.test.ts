@@ -10,6 +10,8 @@ import * as register from "@/app/api/mcp/oauth/register/route";
 import * as token from "@/app/api/mcp/oauth/token/route";
 import * as revoke from "@/app/api/mcp/oauth/revoke/route";
 import * as authorize from "@/app/api/mcp/oauth/authorize/route";
+import { registerClient } from "@/lib/mcp/oauth/clients";
+import { continueTo, issueTicket } from "@/lib/mcp/oauth/consent";
 import * as asMeta from "@/app/.well-known/oauth-authorization-server/route";
 import * as prMeta from "@/app/.well-known/oauth-protected-resource/[[...path]]/route";
 
@@ -92,6 +94,42 @@ describe("MCP_ENABLED on", () => {
   it("consent POST refuses another site's origin (CSRF)", async () => {
     const r = await authorize.POST(req("/api/mcp/oauth/authorize", { method: "POST", headers: { origin: "https://evil.test", "content-type": "application/x-www-form-urlencoded" }, body: "decision=allow" }));
     expect(r.status).toBe(403);
+  });
+
+  /* R-2974: the answer must never be a redirect — CSP form-action 'self' makes Chrome drop a 303
+     to claude.ai after a form POST, and Allow looked dead. A same-origin page continues instead. */
+  it("consent POST (Cancel) answers a same-origin page that continues to Claude with access_denied — no Location", async () => {
+    process.env.MCP_ENABLED = "true";
+    const secret = process.env.MCP_OAUTH_SECRET!;
+    const reg = registerClient({ redirect_uris: ["https://claude.ai/api/mcp/auth_callback"], client_name: "Claude", token_endpoint_auth_method: "none" }, secret, 1_000);
+    if (!reg.ok) throw new Error("register failed");
+    const ticket = issueTicket("11111111-1111-4111-8111-111111111111", {
+      client: reg.client, redirectUri: "https://claude.ai/api/mcp/auth_callback", codeChallenge: "c".repeat(43), state: "st&<1>", scope: "mcp:read",
+    }, secret, Math.floor(Date.now() / 1000));
+    const r = await authorize.POST(req("/api/mcp/oauth/authorize", {
+      method: "POST", headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ticket, decision: "deny" }).toString(),
+    }));
+    expect(r.status).toBe(200);
+    expect(r.headers.get("location")).toBeNull();
+    expect(r.headers.get("content-type")).toContain("text/html");
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    const html = await r.text();
+    expect(html).toContain('<noscript><meta http-equiv="refresh"');
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(html).toContain("https://claude.ai/api/mcp/auth_callback?error=access_denied");
+    expect(html).toContain("state=st%26%3C1%3E");
+    expect(html).toContain("location.replace(");
+    expect(html).toContain("Continue to Claude");
+  });
+
+  it("continueTo escapes the target and the client name (no HTML or script break-out)", async () => {
+    const r = continueTo("https://claude.ai/cb?state=a\"b<c>&d", "<img src=x onerror=alert(1)>");
+    const html = await r.text();
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).toContain('href="https://claude.ai/cb?state=a&quot;b&lt;c&gt;&amp;d"');
+    expect(html).toContain('location.replace("https://claude.ai/cb?state=a\\"b\\u003cc>&d")');
   });
 
   it("answers CORS preflight", () => {

@@ -1,18 +1,22 @@
 /**
  * Consent form POST (from /mcp/authorize). Cookie session — so NO open CORS here, and the
  * Origin must be our own (CSRF). The signed ticket pins the user who saw the screen.
- * Allow → a pending grant + one-use code, 303 back to Claude. Cancel → error=access_denied.
+ * Allow → a pending grant + one-use code, back to Claude. Cancel → error=access_denied.
+ *
+ * R-2974: the way back to Claude is NOT a 303. The app's CSP has `form-action 'self'`, and
+ * Chrome applies form-action to the redirect that follows a form POST too (R-1439, sign-out), so
+ * a 303 to https://claude.ai/… was silently refused and Allow looked dead. The answer is a
+ * same-origin page that continues by itself (meta refresh + script) with a visible link.
  */
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { mcpEnabled, mcpSecret, mcpWriteEnabled } from "@/lib/mcp/config";
 import { nowSeconds } from "@/lib/mcp/crypto";
 import { mcpDbFromClient } from "@/lib/mcp/db";
 import { readClient } from "@/lib/mcp/oauth/clients";
-import { readTicket, redirectWith } from "@/lib/mcp/oauth/consent";
+import { continueTo, readTicket, redirectWith } from "@/lib/mcp/oauth/consent";
 import { createPendingGrant, normaliseScope } from "@/lib/mcp/oauth/grants";
 
 export const runtime = "nodejs";
@@ -52,7 +56,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!client || !client.redirectUris.includes(ticket.r)) return page("This connection request is not valid. Start again from Claude.");
 
   if (form.get("decision") !== "allow") {
-    return NextResponse.redirect(redirectWith(ticket.r, { error: "access_denied", error_description: "The person cancelled.", state: ticket.st }), 303);
+    return continueTo(redirectWith(ticket.r, { error: "access_denied", error_description: "The person cancelled.", state: ticket.st }), client.name);
   }
 
   const supabase = createClient();
@@ -71,5 +75,5 @@ export async function POST(req: Request): Promise<Response> {
   if ("error" in r) {
     return page(`Could not connect: ${r.error_description} If you use two-step sign-in, finish it in the app first, then try again.`, 503);
   }
-  return NextResponse.redirect(redirectWith(ticket.r, { code: r.code, state: ticket.st, iss: own }), 303);
+  return continueTo(redirectWith(ticket.r, { code: r.code, state: ticket.st, iss: own }), client.name);
 }

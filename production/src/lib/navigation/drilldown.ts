@@ -41,13 +41,25 @@ export const BILL_STATUSES = ["", "owed", "unpaid", "partial", "paid"] as const;
 
 /** /invoices ?focus= — the money tiles' exact sets (lib/invoices/kpis.ts). Kept in step
  *  with INVOICE_FOCI by a test. */
-export const INVOICE_FOCUS = ["", "unpaid", "paid-month"] as const;
+export const INVOICE_FOCUS = ["", "unpaid", "paid-month", "issued-month"] as const;
 /** /subscriptions ?focus= (lib/subscriptions/focus.ts). */
-export const SUB_FOCUS = ["", "active"] as const;
+export const SUB_FOCUS = ["", "active", "trials-month"] as const;
 /** /quotes ?focus= (lib/quotes/focus.ts). */
 export const QUOTE_FOCUS = ["", "pipeline", "review", "accepted", "partial", "to-invoice"] as const;
 /** /payments ?focus= (lib/payments/focus.ts). */
 export const PAYMENT_FOCUS = ["", "received-month"] as const;
+/** R-2969: /customers ?focus=new-month — created this IST month (summary.ts#customerNewInMonth). */
+export const CUSTOMER_FOCUS = ["", "new-month"] as const;
+/** R-2969: /support ?focus=still-open — open + in progress + awaiting customer (summary.ts#ticketStillOpen). */
+export const SUPPORT_FOCUS = ["", "still-open"] as const;
+/** R-2969: /provisioning ?focus=waiting — queued activations (summary.ts#activationWaiting). */
+export const PROVISIONING_FOCUS = ["", "waiting"] as const;
+/** R-2969: /lead-gen ?channel= — this IST month's leads, all or one capture channel
+ *  (lib/leads/capture-channel.ts ids; summary.ts#leadAddedInMonth). "" = no list open. */
+export const LEADGEN_CHANNELS = [
+  "", "all", "website", "whatsapp", "email", "referral", "linkedin", "facebook",
+  "marketplace", "seo", "cold", "ads", "import", "manual",
+] as const;
 /** /quotes ?approvals=mine — the "waiting on your approval" filter (R-1541: the Quotes badge opens it). */
 export const QUOTE_APPROVALS = ["", "mine"] as const;
 /** /enquiries ?folder= (lib/inbound/folders.ts MAIL_FOLDERS). Kept in step by a test. */
@@ -63,6 +75,15 @@ export const DRILL = {
   dealsOpen:        d("/deals", "view", "all"),
   dealsClosing:     d("/deals", "view", "closing"),
   dealsWonMonth:    d("/deals", "view", "won-mtd"),
+  /* R-2969: the dashboard Company cards — each opens exactly the records its number counts. */
+  leadsAddedMonth:    d("/lead-gen", "channel", "all"),
+  leadsWebsiteMonth:  d("/lead-gen", "channel", "website"),
+  trialsStartedMonth: d("/subscriptions", "focus", "trials-month"),
+  invoicesIssuedMonth: d("/invoices", "focus", "issued-month"),
+  paymentsReceivedMonth: d("/payments", "focus", "received-month"),
+  customersNewMonth:  d("/customers", "focus", "new-month"),
+  ticketsStillOpen:   d("/support", "focus", "still-open"),
+  activationsWaiting: d("/provisioning", "focus", "waiting"),
   /* Leads */
   leadsActive:      d("/leads", "view", "all"),
   leadsToday:       d("/leads", "view", "today"),
@@ -106,7 +127,10 @@ export const PAGE_CHOICES: Record<string, Record<string, readonly string[]>> = {
   "/subscriptions": { tab: SUBSCRIPTION_TABS, focus: SUB_FOCUS },
   "/tasks":         { tab: TASK_TABS, status: TASK_STATUS_FILTERS, priority: TASK_PRIORITY_FILTERS },
   "/renewals":      { bucket: RENEWAL_BUCKETS },
-  "/customers":     { view: CUSTOMER_VIEWS },
+  "/customers":     { view: CUSTOMER_VIEWS, focus: CUSTOMER_FOCUS },
   "/payments":      { tab: PAYMENT_TABS, focus: PAYMENT_FOCUS },
   "/enquiries":     { folder: ENQUIRY_FOLDERS },
+  "/support":       { focus: SUPPORT_FOCUS },
+  "/provisioning":  { focus: PROVISIONING_FOCUS },
+  "/lead-gen":      { channel: LEADGEN_CHANNELS },
 };

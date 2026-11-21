@@ -26,6 +26,10 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { FocusBanner } from "@/components/shared/focus-banner";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { PROVISIONING_FOCUS } from "@/lib/navigation/drilldown";
+import { activationWaiting } from "@/lib/company/summary";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -134,6 +138,13 @@ function waitingSince(iso: string): string {
 
 export default function ProvisioningQueuePage() {
   const { data, isLoading, error } = useQueue();
+  /* R-2969: ?focus=waiting — the dashboard's "Waiting to activate": only the queued rows
+     (summary.ts#activationWaiting, the test the API's `waiting` count uses). */
+  const [focus, setFocus] = useUrlChoice<(typeof PROVISIONING_FOCUS)[number]>("focus", PROVISIONING_FOCUS, "");
+  const rows = React.useMemo(
+    () => (focus === "waiting" ? (data?.rows ?? []).filter(activationWaiting) : data?.rows ?? []),
+    [data, focus],
+  );
 
   return (
     <div className="space-y-6">
@@ -181,7 +192,11 @@ export default function ProvisioningQueuePage() {
             </Card>
           </div>
 
-          {data.rows.length === 0 ? (
+          {focus === "waiting" && (
+            <FocusBanner label="Waiting to activate — paid, not turned on yet" count={rows.length} onClear={() => setFocus("")} />
+          )}
+
+          {rows.length === 0 ? (
             <Card className="p-8 text-center">
               <Icon name="check" size={20} className="mx-auto text-emerald-ink" />
               <p className="mt-2 text-sm font-medium text-ink">Nothing waiting</p>
@@ -192,7 +207,7 @@ export default function ProvisioningQueuePage() {
             </Card>
           ) : (
             <div className="space-y-3">
-              {data.rows.map((row) => {
+              {rows.map((row) => {
                 const why = explainBlocker(row.blocker);
                 const done = row.status !== "queued";
                 return (

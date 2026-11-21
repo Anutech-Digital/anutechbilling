@@ -13,7 +13,9 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
-import { CUSTOMER_VIEWS } from "@/lib/navigation/drilldown";
+import { CUSTOMER_VIEWS, CUSTOMER_FOCUS } from "@/lib/navigation/drilldown";
+import { customerNewInMonth } from "@/lib/company/summary";
+import { FocusBanner } from "@/components/shared/focus-banner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
@@ -231,6 +233,8 @@ export default function CustomersPage() {
 
   const [helpOpen, setHelpOpen] = React.useState(false);
   const [view, setView] = useUrlChoice<string>("view", CUSTOMER_VIEWS, "all"); // R-118
+  /* R-2969: ?focus=new-month — the dashboard's "New customers" (created this IST month). */
+  const [focus, setFocus] = useUrlChoice<(typeof CUSTOMER_FOCUS)[number]>("focus", CUSTOMER_FOCUS, "");
   // Archived (is_active=false) customers are hidden by default; this toggle
   // swaps the whole list to show ONLY archived ones (Zoho-style status filter).
   const [showArchived, setShowArchived] = React.useState(false);
@@ -289,7 +293,7 @@ export default function CustomersPage() {
     () => contactMatchedCustomerIds(contactIndex, serverSearch),
     [contactIndex, serverSearch],
   );
-  const mode = customerListMode({ view, sortKey: sort.key, sortDir: sort.dir, contactIds });
+  const mode = customerListMode({ view, sortKey: sort.key, sortDir: sort.dir, contactIds, focus });
   const paged = useCustomersPaged(
     /* R-1821: a role that sees masked contacts searches without phone / email. */
     { search: serverSearch, archived: showArchived, contactIds, hideContacts: contactSearchHidden(myRole) },
@@ -363,7 +367,8 @@ export default function CustomersPage() {
     const out = outstandingByCustomer.get(c.id);
     // Active by default; the Archived toggle swaps to show only inactive ones. R-1473: in
     // "Has receivables" an archived company that still owes stays listed (the tile counts it).
-    if (!customerInList(c.is_active, { showArchived, viewId: view, owes: out?.amount ?? 0 })) return false;
+    if (!customerInList(c.is_active, { showArchived, viewId: view, owes: out?.amount ?? 0, focus })) return false;
+    if (focus === "new-month" && !customerNewInMonth(c)) return false;   // R-2969: the dashboard's own test
     const ctx: ViewCtx = { amount: out?.amount ?? 0, credit: creditsByCustomer[c.id] ?? 0, hasSub: subsByCustomer.has(c.id), projects: projectsByCustomer.get(c.id) ?? NO_PROJECTS, received: receivedBy[c.id]?.total ?? 0, noState: missingInvoiceState(c) };
     if (!activeView.test(ctx)) return false;
     if (!search.trim()) return true;
@@ -737,6 +742,9 @@ export default function CustomersPage() {
       {/* Sticky Segment chips + search */}
       {toolbarShown && (
         <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-2.5">
+          {focus === "new-month" && (
+            <FocusBanner label="This month · new customers (archived ones included)" count={filtered.length} onClear={() => setFocus("")} />
+          )}
           <div className="flex justify-between items-center gap-3 flex-wrap sm:flex-nowrap">
             <div className="w-full sm:w-64 shrink-0">
               <Input

@@ -36,24 +36,44 @@ create function pg_temp.r1816_source_check() returns void language plpgsql as $f
 declare
   r record;
   v_code text;
+  v_oid  oid;   -- R-2950: the function whose body is checked
 begin
   for r in
     select n from unnest(array['accept_quote', 'record_payment', 'customer_from_prospect_quote',
       'accept_project_quote', 'create_project_sale', 'activate_quote_on_credit',
       'record_project_payment', 'fn_accrue_referral_commission', 'get_partner_metrics']) as t(n)
   loop
-    if (select count(*) from pg_proc where proname = r.n and pronamespace = 'public'::regnamespace) <> 1 then
-      raise exception 'R-1816: expected exactly one public.%', r.n;
+    /* R-2950: activate_quote_on_credit is TWO functions since 20261120084500 — the 5-argument body
+       (checked below like every other name) and the 4-argument with-invoice wrapper, which must
+       stamp no date of its own: it only calls the body. Every other name is still exactly one. */
+    if r.n = 'activate_quote_on_credit' then
+      v_oid := to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text,boolean)');
+      if v_oid is null
+         or (select count(*) from pg_proc where proname = r.n and pronamespace = 'public'::regnamespace) <> 2
+         or to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') is null then
+        raise exception 'R-1816: expected public.% as the 5-argument body + the 4-argument wrapper, nothing else', r.n;
+      end if;
+      select regexp_replace(regexp_replace(prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') into v_code
+        from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)');
+      if v_code ~* '\m(current_date|now|ist_today|current_timestamp|clock_timestamp)\M'
+         or v_code !~* 'return\s+public\.activate_quote_on_credit\(' then
+        raise exception 'R-1816: the 4-argument public.% must only call the 5-argument one (no date of its own)', r.n;
+      end if;
+    else
+      if (select count(*) from pg_proc where proname = r.n and pronamespace = 'public'::regnamespace) <> 1 then
+        raise exception 'R-1816: expected exactly one public.%', r.n;
+      end if;
+      select oid into v_oid from pg_proc where proname = r.n and pronamespace = 'public'::regnamespace;
     end if;
     select regexp_replace(regexp_replace(prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') into v_code
-      from pg_proc where proname = r.n and pronamespace = 'public'::regnamespace;
+      from pg_proc where oid = v_oid;
     if v_code ~* '\mcurrent_date\M' then
       raise exception 'R-1816: public.% still stamps CURRENT_DATE (the UTC day)', r.n;
     end if;
     if v_code !~* 'ist_today\(\)' then
       raise exception 'R-1816: public.% does not use ist_today()', r.n;
     end if;
-    if not (select prosecdef from pg_proc where proname = r.n and pronamespace = 'public'::regnamespace) then
+    if not (select prosecdef from pg_proc where oid = v_oid) then
       raise exception 'R-1816: public.% lost SECURITY DEFINER', r.n;
     end if;
   end loop;

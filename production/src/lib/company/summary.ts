@@ -17,17 +17,22 @@
  *                         open tickets ........................ /support   (its own counts)
  *                         waiting to activate ................. /provisioning (its own counts)
  *
+ * R-2969 (20 Nov 2026): every row links (lib/navigation/drilldown.ts) to a filter that lists
+ * EXACTLY the records its number counts, and that filter calls the one-record test below
+ * (leadAddedInMonth, trialStartedInMonth, invoiceIssuedInMonth, paymentInFocus,
+ * customerNewInMonth, ticketStillOpen, activationWaiting) — the number is a count / sum of it.
+ *
  * "This month" is the IST calendar month (lib/dates/ist.ts), never the browser's clock.
  * Money is read as stored — no GST is recomputed here.
  */
 import { istMonth, istToday, monthBounds, toIstDate, istDayStartUtc } from "@/lib/dates/ist";
 import { invoiceBucket, type OverdueInvoice } from "@/lib/invoices/overdue";
-import { invoiceIsSale } from "@/lib/accounting/sale-documents";
-import { invoiceBalance, invoiceInFocus } from "@/lib/invoices/kpis";
+import { invoiceBalance, invoiceInFocus, invoiceIssuedInMonth } from "@/lib/invoices/kpis";
 import { folderCounts, folderMrr, type FolderRow } from "@/lib/subscriptions/folders";
 import { totalMrr, type MrrSubLike } from "@/lib/subscriptions/mrr-of";
 import { captureChannel } from "@/lib/leads/capture-channel";
 import { cashReceived } from "@/lib/payments/cash-received";
+import { paymentInFocus, projectReceivedInMonth } from "@/lib/payments/focus";
 
 // ─── Month helpers ───────────────────────────────────────────────────────────
 
@@ -58,14 +63,30 @@ export interface GrowthSummary {
   fromWebsite: number;
 }
 
+/**
+ * R-2969: one lead — added this IST month and, unless `channel` is "all", captured through
+ * that /lead-gen channel. "Leads added" opens /lead-gen?channel=all and "From the website"
+ * /lead-gen?channel=website; that list is built with this same test.
+ */
+export function leadAddedInMonth(l: GrowthLead, channel: string = "all", now: Date = new Date()): boolean {
+  if (!inIstMonth(l.created_at, now)) return false;
+  return channel === "all" || captureChannel(l.source) === channel;
+}
+
 export function growthSummary(leads: readonly GrowthLead[], now: Date = new Date()): GrowthSummary {
   let newLeads = 0, fromWebsite = 0;
   for (const l of leads) {
-    if (!inIstMonth(l.created_at, now)) continue;
+    if (!leadAddedInMonth(l, "all", now)) continue;
     newLeads++;
-    if (captureChannel(l.source) === "website") fromWebsite++;
+    if (leadAddedInMonth(l, "website", now)) fromWebsite++;
   }
   return { newLeads, fromWebsite };
+}
+
+/** R-2969: a trial (running, converted or ended) started in this IST month — the
+ *  /subscriptions?focus=trials-month list uses this test. */
+export function trialStartedInMonth(t: { trial_started_at: string | null }, now: Date = new Date()): boolean {
+  return inIstMonth(t.trial_started_at, now);
 }
 
 /** Trials whose `trial_started_at` falls in this IST month. */
@@ -73,7 +94,7 @@ export function trialsStartedInMonth(
   trials: readonly { trial_started_at: string | null }[],
   now: Date = new Date(),
 ): number {
-  return trials.filter((t) => inIstMonth(t.trial_started_at, now)).length;
+  return trials.filter((t) => trialStartedInMonth(t, now)).length;
 }
 
 // ─── Money ───────────────────────────────────────────────────────────────────
@@ -109,7 +130,8 @@ export function invoiceMoney(invoices: readonly MoneyInvoice[], now: Date = new 
   };
   for (const inv of invoices) {
     if (NOT_A_BILL.has(inv.status)) continue;
-    if (inIstMonth(inv.invoice_date, now) && invoiceIsSale(inv.document_kind)) {
+    /* R-2969: the same test /invoices?focus=issued-month lists by (lib/invoices/kpis.ts). */
+    if (invoiceIssuedInMonth(inv, now)) {
       out.invoicedThisMonth.count++;
       out.invoicedThisMonth.value += inv.amount;
     }
@@ -139,19 +161,24 @@ export function collectedInMonth(
   let sum = 0;
   /* R-1565: only the money that came in — advance credit applied to a payment was already
      collected on the payment that created the credit (lib/payments/cash-received.ts). */
-  for (const p of payments) if (p.status === "received" && inIstMonth(p.received_at, now)) sum += cashReceived(p);
-  for (const p of projectPayments) if (inIstMonth(p.received_at, now)) sum += p.amount;
-  return sum;
+  /* R-2969: the set is /payments?focus=received-month's own test (lib/payments/focus.ts). */
+  for (const p of payments) if (paymentInFocus(p, "received-month", now)) sum += cashReceived(p);
+  return sum + projectReceivedInMonth(projectPayments, now);
 }
 
 // ─── Customers & Ops ─────────────────────────────────────────────────────────
+
+/** R-2969: a customer created this IST month, archived or not — /customers?focus=new-month. */
+export function customerNewInMonth(c: { created_at: string | null }, now: Date = new Date()): boolean {
+  return inIstMonth(c.created_at, now);
+}
 
 /** Customers created this IST month. */
 export function newCustomersInMonth(
   customers: readonly { created_at: string | null }[],
   now: Date = new Date(),
 ): number {
-  return customers.filter((c) => inIstMonth(c.created_at, now)).length;
+  return customers.filter((c) => customerNewInMonth(c, now)).length;
 }
 
 export interface SubscriptionSummary {
@@ -178,6 +205,18 @@ export function subscriptionSummary(
 
 /** Ticket statuses that still need somebody — everything but resolved and closed. */
 export const OPEN_TICKET_STATUSES = ["open", "in_progress", "awaiting_customer"] as const;
+
+/** R-2969: a ticket that still needs somebody — /support?focus=still-open lists by this. */
+export function ticketStillOpen(status: string | null | undefined): boolean {
+  return (OPEN_TICKET_STATUSES as readonly string[]).includes(status ?? "");
+}
+
+/** R-2969: an activation a customer is still waiting for — only `queued` (activated, failed
+ *  and cancelled are dealt with). /api/provisioning/queue counts `waiting` with it and
+ *  /provisioning?focus=waiting lists by it. */
+export function activationWaiting(row: { status: string }): boolean {
+  return row.status === "queued";
+}
 
 /** Open tickets from the per-status counts /api/support/tickets returns to /support. */
 export function openTicketCount(counts: Readonly<Record<string, number>> | null | undefined): number {
