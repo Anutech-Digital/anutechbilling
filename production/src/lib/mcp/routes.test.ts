@@ -115,7 +115,8 @@ describe("MCP_ENABLED on", () => {
     expect(r.headers.get("content-type")).toContain("text/html");
     expect(r.headers.get("cache-control")).toBe("no-store");
     const html = await r.text();
-    expect(html).toContain('http-equiv="refresh"');
+    expect(html).toContain('<noscript><meta http-equiv="refresh"');
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
     expect(html).toContain("https://claude.ai/api/mcp/auth_callback?error=access_denied");
     expect(html).toContain("state=st%26%3C1%3E");
     expect(html).toContain("location.replace(");

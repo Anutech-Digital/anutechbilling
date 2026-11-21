@@ -68,7 +68,8 @@ export function redirectWith(uri: string, params: Record<string, string | null>)
 /**
  * R-2974: a 200 page on OUR origin that goes on to the client's redirect URI by itself. Meta
  * refresh and script navigation are not form submissions, so `form-action 'self'` does not
- * apply; the link is the fallback when scripts are off. The URI was checked against the
+ * apply; with scripts off the <noscript> meta refresh goes, else the script — never both (one
+ * navigation per one-use code); the link is the fallback. The URI was checked against the
  * client's registered list (https or localhost, no fragment) before it got here.
  */
 export function continueTo(target: string, clientName: string): Response {
@@ -76,7 +77,7 @@ export function continueTo(target: string, clientName: string): Response {
   const url = esc(target);
   const name = esc(clientName);
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back to ${name}</title>
-<meta http-equiv="refresh" content="0;url=${url}"><meta name="robots" content="noindex">
+<noscript><meta http-equiv="refresh" content="0;url=${url}"></noscript><meta name="robots" content="noindex">
 <style>body{font-family:sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#222}a{color:#b45309}</style></head>
 <body><p>Taking you back to ${name}…</p><p><a href="${url}">Continue to ${name}</a> if nothing happens.</p>
 <script>location.replace(${JSON.stringify(target).replace(/</g, "\\u003c")});</script></body></html>`;
