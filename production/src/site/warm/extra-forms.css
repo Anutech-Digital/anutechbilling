@@ -420,6 +420,31 @@
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form div.rounded-md.border > input {
   min-height: 47px; padding: 0 14px; font-size: 16px; color: var(--w-ink);
 }
+/* One focus style per field (owner, 21 Nov 2026: "Focus part looks weird in the signup form").
+   Two rings used to draw at once: the box's own ring (white gap + 2px, red on an error) AND a
+   square teal ring on the <input> inside it, which has no rounding. Now the input draws nothing;
+   the box's border turns teal (red when the field has an error) with a soft glow in the same colour,
+   following its 12px corners. Hover darkens the border a little. */
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form div.rounded-md.border > input:is(:focus, :focus-visible) {
+  outline: none !important; box-shadow: none !important; --tw-ring-shadow: 0 0 #0000; --tw-ring-offset-shadow: 0 0 #0000;
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form div.rounded-md.border:has(> input) {
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form div.rounded-md.border:has(> input):hover { border-color: var(--w-muted-2); }
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form div.rounded-md.border:has(> input):focus-within {
+  border-color: var(--w-teal) !important; background: var(--w-surface);
+  --tw-ring-offset-shadow: 0 0 #0000; --tw-ring-shadow: 0 0 #0000;
+  box-shadow: 0 0 0 4px rgba(14, 107, 92, 0.16) !important;
+}
+/* A field with an error keeps its red border; focused, the glow is red too. */
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form div.rounded-md.border.border-rose:has(> input) { border-color: #B4321F; }
+.w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form div.rounded-md.border.border-rose:has(> input):focus-within {
+  border-color: #B4321F !important; box-shadow: 0 0 0 4px rgba(180, 50, 31, 0.14) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form div.rounded-md.border:has(> input) { transition: none; }
+}
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form .relative > button[type="button"] { right: 14px; color: var(--w-muted-2); }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form .relative > button[type="button"]:hover { color: var(--w-teal); }
 .w-scope[data-site-theme="warm"] > .auth-shell:has([data-auth-page]) form .relative > button[type="button"] svg { width: 18px; height: 18px; }
